@@ -4,6 +4,7 @@
   // 詳細情報は次を確認してください: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
+
     {
       "name": "Python: モジュール tests",
       "type": "python",
@@ -16,14 +17,16 @@
       "type": "python",
       "request": "launch",
       "cwd": "${workspaceFolder}",
-      "module": "modules.preparing._scrape_kaisai_date"
+      "module": "src.preparing._scrape_kaisai_date"
     },
     {
       "name": "Python: Current File",
       "type": "python",
       "request": "launch",
       "program": "${file}",
-      "console": "integratedTerminal"
+      "console": "integratedTerminal",
+      "env": {"PYTHONPATH": "./"},
+      "justMyCode": true
     }
   ]
 }

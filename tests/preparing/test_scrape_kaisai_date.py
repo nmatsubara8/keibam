@@ -1,4 +1,4 @@
-from modules.preparing._scrape_kaisai_date import scrape_kaisai_date
+from src.preparing._scrape_kaisai_date import scrape_kaisai_date
 
 # @pytest.fixture()
 # def test_date():

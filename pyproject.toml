@@ -67,3 +67,7 @@ line-ending = "auto"
 
 [tool.pytest.ini.options]
 testpaths="tests"
+addopts = [
+    "--import-mode=importlib",
+]
+PYTHONPATH="./"
