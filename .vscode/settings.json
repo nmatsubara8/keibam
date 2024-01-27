@@ -4,6 +4,6 @@
   ],
   "python.testing.unittestEnabled": false,
   "python.testing.pytestEnabled": true,
-  "python.formatting.provider": "Ruff",
+  "python.formatting.provider": "black",
 
 }
