@@ -14,3 +14,4 @@ ipywidgets
 webdriver-manager
 lxml
 html5lib
+pyarrow
