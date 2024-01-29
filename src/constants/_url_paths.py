@@ -17,19 +17,19 @@ class UrlPaths:
     RACE_URL: tuple = (
         "race_results_list",  # 0
         DB_DOMAIN[1] + "race/",  # 1
-        DB_DOMAIN[2] + "race_results/"  # 2
-        "temp_race_results_list.csv",  # 3
+        DB_DOMAIN[2] + "race_results/",  # 2
+        "temp_race_results_list",  # 3
         DB_DOMAIN[4] + "race_results/",  # 4
-        "race_results_list.csv",  # 5
+        "race_results_list",  # 5
     )
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: tuple = (
         "horse_results_list",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
         DB_DOMAIN[2] + "horse_results/",  # 2
-        "temp_horse_results_list.csv",  # 3
+        "temp_horse_results_list",  # 3
         DB_DOMAIN[4] + "horse_results/",  # 4
-        "horse_results_list.csv",  # 5
+        "horse_results_list",  # 5
     )
     # 血統テーブルが含まれるページ
     PED_URL: tuple = (
@@ -38,7 +38,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "ped/",  # 2
         "temp_ped_list.csv",  # 3
         DB_DOMAIN[4] + "ped/",  # 4
-        "ped_list.csv",  # 5
+        "ped_list",  # 5
     )
 
     TOP_URL: tuple = ("top_page", "https://race.netkeiba.com/top/", "./data/tmp/", None, "./data/html/", None)
@@ -46,19 +46,20 @@ class UrlPaths:
     CALENDAR_URL: tuple = (
         "kaisai_date_list",  # 0
         TOP_URL[1] + "calendar.html",  # 1
-        TOP_URL[2] + "calendar",  # 2
-        "temp_kaisai_date_list.csv",  # 3
-        TOP_URL[4] + "calendar",  # 4
-        "kaisai_date_list.csv",  # 5
+        TOP_URL[2] + "kaisai_date",  # 2
+        "temp_kaisai_date_list",  # 3
+        TOP_URL[2] + "kaisai_date",  # 4
+        "kaisai_date_list",  # 5
     )
+
     # レース一覧ページ
     RACE_LIST_URL: tuple = (
         "race_list",  # 0
         TOP_URL[1] + "race_list.html",  # 1
         TOP_URL[2] + "race_list",  # 2
-        "temp_race_list.csv",  # 3
+        "temp_race_list",  # 3
         TOP_URL[4] + "race_list",  # 4
-        "race_list.csv",  # 5
+        "race_list",  # 5
     )
 
     # 出馬表ページ
@@ -66,7 +67,7 @@ class UrlPaths:
         "shutuba_table",  # 0
         "https://race.netkeiba.com/race/shutuba.html",  # 1
         TOP_URL[2] + "shutuba_table",  # 2
-        "temp_shutuba_table.csv",  # 3
+        "temp_shutuba_table",  # 3
         TOP_URL[4] + "shutuba_table",  # 4
-        "shutuba_table.csv",  # 5
+        "shutuba_table",  # 5
     )
