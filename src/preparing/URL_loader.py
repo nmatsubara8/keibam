@@ -5,9 +5,11 @@ from urllib.request import urlopen
 
 import pandas as pd
 from bs4 import BeautifulSoup
-from tqdm.auto import tqdm
+from selenium.webdriver.common.by import By
+from tqdm import tqdm
 
 from src.preparing.DataLoader import DataLoader
+from src.preparing.prepare_chrome_driver import prepare_chrome_driver
 
 
 class KaisaiDateLoader(DataLoader):
@@ -19,13 +21,13 @@ class KaisaiDateLoader(DataLoader):
         temp_save_file_name,
         to_location,
         save_file_name,
+        batch_size,
         rerun=False,
         from_date="2020-01-01",
         to_date="2021-01-01",
-        batch_size=100,
     ):
         super().__init__(
-            alias, from_location, to_temp_location, temp_save_file_name, to_location, save_file_name, rerun, batch_size
+            alias, from_location, to_temp_location, temp_save_file_name, to_location, save_file_name, batch_size, rerun
         )
         self.from_date = from_date
         self.to_date = to_date
@@ -40,8 +42,8 @@ class KaisaiDateLoader(DataLoader):
             date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="ME")
             # 開催日一覧を入れるリスト
             kaisai_date_list = []
-
-            for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range)):
+            data_index = 1
+            for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range), dynamic_ncols=True):
                 # 取得したdate_rangeから、スクレイピング対象urlを作成する。
                 # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
                 query = [
@@ -55,11 +57,60 @@ class KaisaiDateLoader(DataLoader):
                 a_list = soup.find("table", class_="Calendar_Table").find_all("a")
                 for a in a_list:
                     kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
-                self.save_temp_file(kaisai_date_list, "txt")
+                    if data_index % self.batch_size == 0:
+                        self.save_temp_file(kaisai_date_list, ".txt")
+                    data_index += 1
+            self.save_temp_file(kaisai_date_list, ".txt")
             return kaisai_date_list
+
+    def move_temp_file(self):
+        pass
 
     def get_kaisai_date_list(self):
         pass
+
+    def scrape_race_id_date(self, kaisai_date_list):
+        if not self.rerun:
+            # """
+            # 開催日をyyyymmddの文字列形式でリストで入れると、レースid一覧が返ってくる関数。
+            # ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
+            # 要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
+            # """
+            waiting_time = 10
+            race_id_list = []
+            driver = prepare_chrome_driver()
+            # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+            driver.implicitly_wait(waiting_time)
+            max_attempt = 2
+            print("getting race_id_list")
+            for kaisai_date in tqdm(kaisai_date_list):
+                try:
+                    query = ["kaisai_date=" + str(kaisai_date)]
+                    url = self.from_location + "?" + "&".join(query)
+                    print("scraping: {}".format(url))
+                    driver.get(url)
+
+                    for i in range(1, max_attempt):
+                        try:
+                            a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
+                            break
+                        except Exception as e:
+                            # 取得できない場合は、リトライを実施
+                            print(f"error:{e} retry:{i}/{max_attempt} waiting more {waiting_time} seconds")
+
+                    for a in a_list:
+                        race_id = re.findall(
+                            r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
+                        )
+                        if len(race_id) > 0:
+                            race_id_list.append(race_id[0])
+                except Exception as e:
+                    print(e)
+                    break
+
+            driver.close()
+            driver.quit()
+        return race_id_list
 
     def get_number_of_data(self):
         if self.alias == "kaisai_date_list":

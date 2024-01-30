@@ -24,6 +24,7 @@ def reuest_by_alias(alias: str):
         to_location = getattr(url_paths, attr)[4]
         # エイリアスが表すデータの正本ファイル名をセット
         save_file_name = getattr(url_paths, attr)[5]
+        batch_size = getattr(url_paths, attr)[6]
 
         data_request = KaisaiDateLoader(
             alias=alias,
@@ -32,15 +33,23 @@ def reuest_by_alias(alias: str):
             temp_save_file_name=temp_save_file_name,
             to_location=to_location,
             save_file_name=save_file_name,
+            batch_size=batch_size,
         )
         if alias == "kaisai_date_list":
-            print("kaisai_date_list will be obtained from {} and stored in {}".format(from_location, to_temp_location))
+            # print("temp_save_file_name : ", temp_save_file_name)
+            # print("save_file_name : ", save_file_name)
+            # print("kaisai_date_list will be obtained from {} and stored in {}".format(from_location, to_temp_location))
             kaisai_date_list = data_request.scrape_kaisai_date()
+            print("len:", len(kaisai_date_list))
+            print("batch_size:", batch_size)
+            print("kaisai_date_list[:5]:", kaisai_date_list[-5:])
 
-            print(f"kaisai_date_list :\n{kaisai_date_list}")
+        elif alias == "race_id_list":
+            ############################################
+            # ここに、kaisai_date_listの取得ロジックを追加する。今は仮に前処理からのデータをそのまま、引き継ぐ
+            race_id_list = data_request.scrape_race_id_date(kaisai_date_list)
+            print("race_id_list[:5]:", race_id_list[-5:])
 
-        elif alias == "race_results_list":
-            pass
         elif alias == "horse_results_list":
             pass
         elif alias == "horse_list":
@@ -51,11 +60,12 @@ def reuest_by_alias(alias: str):
             pass
         elif alias == "shutuba_table":
             pass
-        elif alias == "race_list":
+        elif alias == "race_results_list":
             pass
-
     else:
         print("No such data")
 
 
-reuest_by_alias(alias="kaisai_date_list")
+kaisai_date_list = reuest_by_alias(alias="kaisai_date_list")
+
+race_id_list = reuest_by_alias(alias="race_id_list")
