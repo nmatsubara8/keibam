@@ -51,9 +51,9 @@ class UrlPaths:
         "kaisai_date_list",  # 0
         TOP_URL[1] + "calendar.html",  # 1
         TOP_URL[2] + "kaisai_date/",  # 2
-        "temp_kaisai_date_list",  # 3
-        TOP_URL[2] + "kaisai_date/",  # 4
-        "kaisai_date_list",  # 5
+        "temp_kaisai_date_list.txt",  # 3
+        TOP_URL[4] + "kaisai_date/",  # 4
+        "kaisai_date_list.pkl",  # 5
         50,  # 6
     )
 

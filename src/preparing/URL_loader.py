@@ -15,19 +15,28 @@ from src.preparing.prepare_chrome_driver import prepare_chrome_driver
 class KaisaiDateLoader(DataLoader):
     def __init__(
         self,
-        alias,
-        from_location,
-        to_temp_location,
-        temp_save_file_name,
-        to_location,
-        save_file_name,
-        batch_size,
+        alias="",
+        from_location="",
+        to_temp_location="",
+        temp_save_file_name="",
+        to_location="",
+        save_file_name="",
+        batch_size="",
+        target_data=None,
         rerun=False,
         from_date="2020-01-01",
         to_date="2021-01-01",
     ):
         super().__init__(
-            alias, from_location, to_temp_location, temp_save_file_name, to_location, save_file_name, batch_size, rerun
+            alias,
+            from_location,
+            to_temp_location,
+            temp_save_file_name,
+            to_location,
+            save_file_name,
+            batch_size,
+            # target_data,
+            rerun,
         )
         self.from_date = from_date
         self.to_date = to_date
@@ -58,16 +67,12 @@ class KaisaiDateLoader(DataLoader):
                 for a in a_list:
                     kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
                     if data_index % self.batch_size == 0:
-                        self.save_temp_file(kaisai_date_list, ".txt")
+                        self.target_data = kaisai_date_list
+                        self.save_temp_file("kaisai_date_list")
                     data_index += 1
-            self.save_temp_file(kaisai_date_list, ".txt")
-            return kaisai_date_list
-
-    def move_temp_file(self):
-        pass
-
-    def get_kaisai_date_list(self):
-        pass
+            self.save_temp_file("kaisai_date_list")
+            self.transfer_temp_file()
+            return self.target_data
 
     def scrape_race_id_date(self, kaisai_date_list):
         if not self.rerun:
