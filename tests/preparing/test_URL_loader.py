@@ -1,6 +1,6 @@
 import pytest
 
-from src.preparing.URL_loader import URL_Loader
+from src.preparing.url_loader import URL_Loader
 
 
 # テスト用インスタンスを作成

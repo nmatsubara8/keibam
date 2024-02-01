@@ -1,12 +1,12 @@
 import pytest
 
-from src.preparing import URL_loader
+from src.preparing import url_loader
 
 
 # テスト用インスタンスを作成
 @pytest.fixture
 def test_ins():
-    return URL_loader.URL_Loader()
+    return url_loader.URL_Loader()
 
 
 # デフォルト値を確認
@@ -32,7 +32,7 @@ def test_default_value(test_ins):
 )
 def test_ins_get_data(request):
     alias = request.param
-    return URL_loader.URL_Loader(alias=alias)
+    return url_loader.URL_Loader(alias=alias)
 
 
 def test_func(test_ins_get_data):
