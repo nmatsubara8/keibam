@@ -70,25 +70,21 @@ class DataLoader:
             print("No such data")
 
     def get_local_temp_file_path(self, alias):
-        # self.set_args(alias)
         local_temp_path = os.path.join(self.to_temp_location + self.temp_save_file_name)
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
-        # self.set_args(alias)
         local_comp_path = os.path.join(self.to_location + self.save_file_name)
         return local_comp_path
 
     def save_temp_file(self, alias):
-        # テキストファイルのパス
+        # ローカル一時保存用ファイルのパス
         local_path = self.get_local_temp_file_path(alias)
         filetype = self.temp_save_file_name[-3:]
 
         if filetype == "csv":
             # CSVファイルにデータを書き込む処理
             with open(local_path, "w", newline="\n") as csv_file:
-                # csv_writer = csv.writer(csv_file, quoting=csv.QUOTE_NONNUMERIC)
-                # リストの各要素を1行に書き込む（各要素をシングルクォーテーションで囲んでから書き込む）
                 json.dump(self.target_data, csv_file)
 
         elif filetype == "txt":
@@ -122,7 +118,7 @@ class DataLoader:
         with open(target_file_path, "rb") as f:
             if not self.skip:
                 loaded_list = pickle.load(f)
-            else:
+            else:  # skip=True時のリスト範囲限定処理
                 try:
                     ids = [int(line.strip()) for line in f]
                     index = ids.index(self.obtained_last_key)
@@ -136,7 +132,7 @@ class DataLoader:
         self.skip = False
         return loaded_list
 
-    def pre_process_display(self):
+    def pre_process_display(self):  # 処理開始時のメッセージ出力
         print(f"{self.alias}")
         print("self.from_location: ", self.from_location)
         print("to_temp_location: ", self.to_temp_location)
@@ -151,7 +147,7 @@ class DataLoader:
         if self.from_local_file_name != "":
             print(f"reloaded_{self.from_local_file_name} type: ", self.from_local_file_name)
 
-    def post_process_display(self):
+    def post_process_display(self):  # 処理終了時のメッセージ出力
         print(f"{self.alias}[:5]:", self.target_data[-5:])
         print(f"{self.alias} type: ", type(self.target_data))
         print("len:", len(self.target_data))

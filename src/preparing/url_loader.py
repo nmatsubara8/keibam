@@ -1,4 +1,3 @@
-import os
 import re
 import time
 from urllib.parse import urlencode
@@ -53,7 +52,6 @@ class KaisaiDateLoader(DataLoader):
 
     def scrape_kaisai_date(self):
         if not self.skip:
-            # self.clear_temp_to_location()
             # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
             # to_の月は含まないので注意。
             print("getting race date from {} to {}".format(self.from_date, self.to_date))
@@ -90,10 +88,7 @@ class KaisaiDateLoader(DataLoader):
     def scrape_race_id_list(self):
         if not self.skip:
             # """
-            # 開催日をyyyymmddの文字列形式でリストで入れると、レースid一覧が返ってくる関数。
-            # ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
-            # 要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
-            # """
+
             kaisai_date_list = self.load_file_pkl()
 
             waiting_time = 10
@@ -139,40 +134,3 @@ class KaisaiDateLoader(DataLoader):
             self.transfer_temp_file()
             driver.close()
             driver.quit()
-
-        else:  # 前回終了時のキー項目までskip処理を行う
-            pass
-
-    def get_number_of_data(self):
-        if self.alias == "kaisai_date_list":
-            date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="ME")
-            num_of_data = len(date_range)
-            return num_of_data
-
-        elif self.alias == "race_results_list":
-            pass
-        elif self.alias == "horse_results_list":
-            pass
-        elif self.alias == "horse_list":
-            pass
-        elif self.alias == "pede_list":
-            pass
-        elif self.alias == "race_results_list":
-            pass
-        elif self.alias == "shutuba_table":
-            pass
-        elif self.alias == "race_list":
-            pass
-
-    def clear_temp_to_location(self):
-        # フォルダ内のファイルを全て取得
-        file_list = os.listdir(self.to_temp_location)
-
-        # フォルダ内の各ファイルを削除
-        for file_name in file_list:
-            file_path = os.path.join(self.to_temp_location, file_name)
-            try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-            except Exception as e:
-                print(f"Failed to delete {file_path}: {e}")

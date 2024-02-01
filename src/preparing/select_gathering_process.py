@@ -1,9 +1,8 @@
 from src.preparing.url_loader import KaisaiDateLoader
 
 
-def url_loader(alias):
+def select_process(alias):
     data_request = KaisaiDateLoader()
-
     data_request.set_args(alias)
     data_request.pre_process_display()
 
@@ -11,8 +10,6 @@ def url_loader(alias):
         data_request.scrape_kaisai_date()
 
     elif alias == "race_id_list":
-        ############################################
-        # ここに、kaisai_date_listの取得ロジックを追加する。今は仮に前処理からのデータをそのまま、引き継ぐ
         data_request.scrape_race_id_list()
 
     elif alias == "horse_results_list":
@@ -32,5 +29,4 @@ def url_loader(alias):
 
 
 # kaisai_date_list = url_loader(alias="kaisai_date_list")
-
-race_id_list = url_loader(alias="race_id_list")
+# race_id_list = url_loader(alias="race_id_list")
