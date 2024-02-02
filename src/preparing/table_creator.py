@@ -5,6 +5,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
+from src.constants._master import Master
 from src.preparing.DataLoader import DataLoader
 
 
@@ -132,4 +133,99 @@ class TableCreator(DataLoader):
         # 列名に半角スペースがあれば除去する
         self.target_data = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
         self.save_temp_file("race_results_table")
+        self.copy_files()
+
+    def create_race_info_table(self):
+        """
+        raceページのhtmlを受け取って、レース情報テーブルに変換する関数。
+        """
+        # skip対象ではないゴミファイルの掃除
+        if not self.skip:
+            self.delete_files()
+
+        race_html_list = self.get_file_list(self.from_local_location)
+
+        data_index = 1
+        print("preparing raw race_info table")
+        race_infos = {}
+        for race_html in tqdm(race_html_list):
+            race_html_path = os.path.join(self.from_local_location, race_html)
+            with open(race_html_path, "rb") as f:
+                try:
+                    # 保存してあるbinファイルを読み込む
+                    html = f.read()
+
+                    # htmlをsoupオブジェクトに変換
+                    soup = BeautifulSoup(html, "lxml")
+
+                    # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+                    texts = (
+                        soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+                        + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+                    )
+                    info = re.findall(r"\w+", texts)
+                    df = pd.DataFrame()
+                    # 障害レースフラグを初期化
+                    hurdle_race_flg = False
+                    for text in info:
+                        if text in ["芝", "ダート"]:
+                            df["race_type"] = [text]
+                        if "障" in text:
+                            df["race_type"] = ["障害"]
+                            hurdle_race_flg = True
+                        if "m" in text:
+                            # 20211212：[0]→[-1]に修正
+                            df["course_len"] = [int(re.findall(r"\d+", text)[-1])]
+                        if text in Master.GROUND_STATE_LIST:
+                            df["ground_state"] = [text]
+                        if text in Master.WEATHER_LIST:
+                            df["weather"] = [text]
+                        if "年" in text:
+                            df["date"] = [text]
+                        if "右" in text:
+                            df["around"] = [Master.AROUND_LIST[0]]
+                        if "左" in text:
+                            df["around"] = [Master.AROUND_LIST[1]]
+                        if "直線" in text:
+                            df["around"] = [Master.AROUND_LIST[2]]
+                        if "新馬" in text:
+                            df["race_class"] = [Master.RACE_CLASS_LIST[0]]
+                        if "未勝利" in text:
+                            df["race_class"] = [Master.RACE_CLASS_LIST[1]]
+                        if ("1勝クラス" in text) or ("500万下" in text):
+                            df["race_class"] = [Master.RACE_CLASS_LIST[2]]
+                        if ("2勝クラス" in text) or ("1000万下" in text):
+                            df["race_class"] = [Master.RACE_CLASS_LIST[3]]
+                        if ("3勝クラス" in text) or ("1600万下" in text):
+                            df["race_class"] = [Master.RACE_CLASS_LIST[4]]
+                        if "オープン" in text:
+                            df["race_class"] = [Master.RACE_CLASS_LIST[5]]
+
+                    # グレードレース情報の取得
+                    grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
+                    if "G3" in grade_text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+                    elif "G2" in grade_text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+                    elif "G1" in grade_text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+
+                    # 障害レースの場合
+                    if hurdle_race_flg:
+                        df["around"] = [Master.AROUND_LIST[3]]
+                        df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+
+                    # インデックスをrace_idにする
+                    race_id = re.findall(r"race\W(\d+).bin", race_html)[0]
+                    df.index = [race_id] * len(df)
+
+                    race_infos[race_id] = df
+                except Exception as e:
+                    print("error at {}".format(race_html))
+                    print(e)
+            data_index += 1
+        # pd.DataFrame型にして一つのデータにまとめる
+        race_infos_df = pd.concat([race_infos[key] for key in race_infos])
+        self.target_data = race_infos_df
+        self.save_temp_file("race_info_table")
         self.copy_files()

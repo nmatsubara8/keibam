@@ -73,10 +73,25 @@ class UrlPaths:
         "race_results_table.h5",  # 5
         100,  # 6
         DB_DOMAIN[4] + "race/",  # 7
-        "*.bin",  # 8 "race_results_list"においては、使わないこととする
+        "*.bin",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9
         False,  # 10
     )
+    # レース結果テーブル、レース情報テーブル、払い戻しテーブルが含まれるページ
+    RACE_INFO: tuple = (
+        "race_info_table",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race_info/",  # 2
+        "temp_race_info_table.csv",  # 3
+        DB_DOMAIN[4] + "race_info/",  # 4
+        "race_info_table.h5",  # 5
+        100,  # 6
+        DB_DOMAIN[4] + "race/",  # 7
+        "*.bin",  # 8 "race_info_table"においては、使わないこととする
+        "",  # 9
+        False,  # 10
+    )
+
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: tuple = (
         "horse_results_list",  # 0

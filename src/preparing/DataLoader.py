@@ -74,7 +74,7 @@ class DataLoader:
 
     def get_filetype(self):
         text = self.temp_save_file_name
-        if text.endswith("race_results_table.csv"):
+        if text.endswith("_table.csv"):
             filetype = "df"
         elif text.endswith(".txt"):
             filetype = "txt"
