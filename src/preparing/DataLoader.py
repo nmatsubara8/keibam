@@ -155,6 +155,17 @@ class DataLoader:
         self.skip = False
         return loaded_list
 
+    def get_file_list(self):
+        file_list = []
+        # 指定したフォルダ内の全てのファイルおよびディレクトリのリストを取得
+        items = os.listdir(self.from_local_location)
+
+        for item in items:
+            # ファイルの場合のみリストに追加
+            if os.path.isfile(os.path.join(self.from_local_location, item)):
+                file_list.append(item)
+        return file_list
+
     def delete_files(self):
         files = os.listdir(self.to_temp_location)
         # ファイルを削除

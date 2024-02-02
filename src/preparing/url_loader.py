@@ -1,3 +1,4 @@
+import os
 import re
 import time
 from urllib.parse import urlencode
@@ -161,7 +162,36 @@ class KaisaiDateLoader(DataLoader):
             updated_html_path_list.append(self.target_data)
             if data_index % self.batch_size == 0:
                 self.save_temp_file("race_html")
+                self.obtained_last_key = race_id
             data_index += 1
         self.save_temp_file("race_html")
+        self.obtained_last_key = race_id
         self.transfer_temp_html_files()
-        return updated_html_path_list
+
+
+# この関数はまだ
+def scrape_html_horse(self):
+    """
+    netkeiba.comのhorseページのhtmlをスクレイピングしてdata/html/horseに保存する関数。
+    skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+    返り値：新しくスクレイピングしたhtmlのファイルパス
+    """
+    updated_html_path_list = []
+    for horse_id in tqdm(horse_id_list):
+        # 保存するファイル名
+        filename = os.path.join(LocalPaths.HTML_HORSE_DIR, horse_id + ".bin")
+        # skipがTrueで、かつbinファイルがすでに存在する場合は飛ばす
+        if skip and os.path.isfile(filename):
+            print("horse_id {} skipped".format(horse_id))
+        else:
+            # horse_idからurlを作る
+            url = UrlPaths.HORSE_URL + horse_id
+            # 相手サーバーに負担をかけないように1秒待機する
+            time.sleep(1)
+            # スクレイピング実行
+            html = urlopen(url).read()
+            # 保存するファイルパスを指定
+            with open(filename, "wb") as f:
+                # 保存
+                f.write(html)
+            updated_html_path_list.append(filename)
