@@ -52,11 +52,11 @@ class UrlPaths:
     # レースhtmlページ
     RACE_HTML: tuple = (
         "race_html",  # 0
-        TOP_URL[1] + "race/",  # 1
-        TOP_URL[2] + "race/",  # 2
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race/",  # 2
         "temp_race_html",  # 3
         DB_DOMAIN[4] + "race/",  # 4
-        "race_html",  # 5
+        "race_html",  # 5  #
         1,  # 6
         DB_DOMAIN[4] + "race_id_list/",  # 7
         "race_id_list.pkl",  # 8
@@ -82,9 +82,9 @@ class UrlPaths:
         "horse_results_list",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
         DB_DOMAIN[2] + "horse_results/",  # 2
-        "temp_horse_results_list",  # 3
+        "temp_horse_results_tabel",  # 3
         DB_DOMAIN[4] + "horse_results/",  # 4
-        "horse_results_list",  # 5
+        "horse_results_table",  # 5
         100,  # 6
         "",  # 7
         "",  # 8

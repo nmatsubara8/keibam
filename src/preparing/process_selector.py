@@ -21,7 +21,7 @@ def select_process(alias):
         data_request.pre_process_display()
         data_request.scrape_html_race()
 
-    elif alias == "race_results_list":
+    elif alias == "race_results_table":
         data_request = TableCreator()
         data_request.set_args(alias)
         data_request.pre_process_display()
@@ -47,5 +47,5 @@ def select_process(alias):
 
 # kaisai_date_list = select_process(alias="kaisai_date_list")
 # race_id_list = select_process(alias="race_id_list")
-# race_html = select_process(alias="race_html")
-race_results_table = select_process(alias="race_results_table")
+race_html = select_process(alias="race_html")
+# race_results_table = select_process(alias="race_results_table")

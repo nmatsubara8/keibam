@@ -87,6 +87,9 @@ class DataLoader:
         local_comp_path = os.path.join(self.to_location + self.save_file_name)
         return local_comp_path
 
+    def get_local_comp_path(self, alias):
+        return self.to_location
+
     def save_temp_file(self, alias):
         # ローカル一時保存用ファイルのパス
         local_path = self.get_local_temp_file_path(alias)
@@ -131,10 +134,16 @@ class DataLoader:
     def transfer_temp_html_files(self):
         files = os.listdir(self.to_temp_location)
         for file in files:
-            # ファイルのフルパスを取得
-            src_file_path = os.path.join(self.to_temp_location, file)
-            # ファイルをフォルダBにコピー
-            shutil.copy(src_file_path, self.to_location)
+            source_path = os.path.join(self.to_temp_location, file)
+            destination_path = os.path.join(self.to_location, file)
+            # Copy the file from source to destination
+            try:
+                shutil.copy2(source_path, destination_path)
+                print(f"File {file} copied successfully.")
+            except FileNotFoundError:
+                print(f"File {file} not found.")
+            except IOError as e:
+                print(f"Error copying file {file}: {e}")
 
     def load_file_pkl(self):
         target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
@@ -155,10 +164,10 @@ class DataLoader:
         self.skip = False
         return loaded_list
 
-    def get_file_list(self):
+    def get_file_list(self, location):
         file_list = []
         # 指定したフォルダ内の全てのファイルおよびディレクトリのリストを取得
-        items = os.listdir(self.from_local_location)
+        items = os.listdir(location)
 
         for item in items:
             # ファイルの場合のみリストに追加
@@ -167,15 +176,23 @@ class DataLoader:
         return file_list
 
     def delete_files(self):
-        files = os.listdir(self.to_temp_location)
+        files_to_temp = os.listdir(self.to_temp_location)
+        files_to = os.listdir(self.to_location)
         # ファイルを削除
-        for file in files:
-            file_path = os.path.join(self.to_temp_location, file)
+        for file in files_to_temp:
+            file_path_to_temp = os.path.join(self.to_temp_location, file)
             try:
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
+                if os.path.isfile(file_path_to_temp):
+                    os.remove(file_path_to_temp)
             except Exception as e:
-                print(f"Error deleting {file_path}: {e}")
+                print(f"Error deleting {file_path_to_temp}: {e}")
+        for file in files_to:
+            file_path_to = os.path.join(self.to_location, file)
+            try:
+                if os.path.isfile(file_path_to):
+                    os.remove(file_path_to)
+            except Exception as e:
+                print(f"Error deleting {file_path_to}: {e}")
 
     def pre_process_display(self):  # 処理開始時のメッセージ出力
         print(f"{self.alias}")

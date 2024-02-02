@@ -147,23 +147,25 @@ class KaisaiDateLoader(DataLoader):
 
         race_id_list = self.load_file_pkl()
 
-        updated_html_path_list = []
         data_index = 1
         for race_id in tqdm(race_id_list):
-            self.processing_id = race_id
-            # race_idからurlを作る
-            url = self.from_location + race_id
-            # 相手サーバーに負担をかけないように1秒待機する
-            time.sleep(1)
-            # スクレイピング実行
-            self.target_data = urlopen(url).read()
+            try:
+                self.processing_id = race_id
+                # race_idからurlを作る
+                url = self.from_location + race_id
 
-            # 保存するファイルパスを指定
-            updated_html_path_list.append(self.target_data)
-            if data_index % self.batch_size == 0:
-                self.save_temp_file("race_html")
-                self.obtained_last_key = race_id
-            data_index += 1
+                # 相手サーバーに負担をかけないように1秒待機する
+                time.sleep(1)
+                # スクレイピング実行
+                self.target_data = urlopen(url).read()
+                # 保存するファイルパスを指定
+
+                if data_index % self.batch_size == 0:
+                    self.save_temp_file("race_html")
+                    self.obtained_last_key = race_id
+                data_index += 1
+            except Exception as e:
+                print("Error at {}: {}".format(race_id, e))
         self.save_temp_file("race_html")
         self.obtained_last_key = race_id
         self.transfer_temp_html_files()
