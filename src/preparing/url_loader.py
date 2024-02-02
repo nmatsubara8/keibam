@@ -168,7 +168,7 @@ class KaisaiDateLoader(DataLoader):
                 print("Error at {}: {}".format(race_id, e))
         self.save_temp_file("race_html")
         self.obtained_last_key = race_id
-        self.transfer_temp_html_files()
+        self.copy_files()
 
 
 # この関数はまだ

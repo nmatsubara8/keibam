@@ -47,5 +47,5 @@ def select_process(alias):
 
 # kaisai_date_list = select_process(alias="kaisai_date_list")
 # race_id_list = select_process(alias="race_id_list")
-race_html = select_process(alias="race_html")
-# race_results_table = select_process(alias="race_results_table")
+# race_html = select_process(alias="race_html")
+race_results_table = select_process(alias="race_results_table")

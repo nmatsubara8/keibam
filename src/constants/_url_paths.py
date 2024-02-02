@@ -70,7 +70,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_results/",  # 2
         "temp_race_results_table.csv",  # 3
         DB_DOMAIN[4] + "race_results/",  # 4
-        "race_results_table.pkl",  # 5
+        "race_results_table.h5",  # 5
         100,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_results_list"においては、使わないこととする

@@ -73,7 +73,20 @@ class DataLoader:
             print("No such data")
 
     def get_filetype(self):
-        filetype = self.temp_save_file_name[-4:]
+        text = self.temp_save_file_name
+        if text.endswith("race_results_table.csv"):
+            filetype = "df"
+        elif text.endswith(".txt"):
+            filetype = "txt"
+        elif text.endswith(".pkl"):
+            filetype = "pkl"
+        elif text.endswith("html"):
+            filetype = "html"
+        elif text.endswith(".h5"):
+            filetype = "h5"
+        elif text.endswith(".csv"):
+            filetype = "csv"
+
         return filetype
 
     def get_local_temp_file_path(self, alias):
@@ -95,31 +108,45 @@ class DataLoader:
         local_path = self.get_local_temp_file_path(alias)
         filetype = self.get_filetype()
 
-        if filetype == ".csv":
+        if filetype == "csv":
             # CSVファイルにデータを書き込む処理
             with open(local_path, "w", newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
+                self.obtained_last_key = self.target_data[-1]
 
-        elif filetype == ".txt":
+        elif filetype == "txt":
             # テキストファイルにデータを書き込む処理
             # リストをファイルに保存
             with open(local_path, "w") as file:
                 for item in self.target_data:
                     file.write("%s\n" % item)
+                    self.obtained_last_key = self.target_data[-1]
 
-        elif filetype == ".pkl":
+        elif filetype == "pkl":
             # pickleファイルにデータを書き込む処理
             with open(local_path, "wb") as pkl_file:
                 pickle.dump(self.target_data, pkl_file)
+                self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "html":
-            # pickleファイルにデータを書き込む処理
+            # ファイルにデータを書き込む処理
             with open(local_path, "wb") as html_file:
                 html_file.write(self.target_data)
+                self.obtained_last_key = self.target_data[-1]
+        elif filetype == "df":
+            # CSVファイルに保存
+            self.target_data.to_csv(os.path.join(self.to_temp_location, self.temp_save_file_name), index=True)
+            self.obtained_last_key = self.target_data.index[-1]
+
+        elif filetype == "h5":
+            # ファイルにデータを書き込む処理
+            # HDF5形式で保存
+            self.target_data.to_hdf(
+                os.path.join(self.to_location, self.save_file_name), key=self.target_data.index, mode="w"
+            )
+            self.obtained_last_key = self.target_data[-1]
         else:
             print("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
-
-        self.obtained_last_key = self.target_data[-1]
 
     def transfer_temp_file(self):
         from_target_file = self.get_local_temp_file_path(self.alias)
@@ -131,7 +158,7 @@ class DataLoader:
         with open(to_target_file, "wb") as pkl_file:
             pickle.dump(from_target_file, pkl_file)
 
-    def transfer_temp_html_files(self):
+    def copy_files(self):
         files = os.listdir(self.to_temp_location)
         for file in files:
             source_path = os.path.join(self.to_temp_location, file)

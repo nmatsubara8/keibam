@@ -52,21 +52,22 @@ class TableCreator(DataLoader):
         if not self.skip:
             self.delete_files()
 
-        race_html_list = self.get_file_list()
-        path = self.get_local_comp_path("race_html")  # race_htmlへのパス
+        race_html_list = self.get_file_list(self.from_local_location)
 
         data_index = 1
 
         print("creating race_results_table")
         race_results = {}
         for race_html in tqdm(race_html_list):
-            race_html_path = os.path.join(path, race_html)
+            race_html_path = os.path.join(self.from_local_location, race_html)
             with open(race_html_path, "rb") as f:
                 try:
                     # 保存してあるbinファイルを読み込む
                     html = f.read()
+
                     # メインとなるレース結果テーブルデータを取得
                     df = pd.read_html(html)[0]
+
                     # htmlをsoupオブジェクトに変換
                     soup = BeautifulSoup(html, "lxml")
                     # 馬IDをスクレイピング
@@ -131,4 +132,4 @@ class TableCreator(DataLoader):
         # 列名に半角スペースがあれば除去する
         self.target_data = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
         self.save_temp_file("race_results_table")
-        self.transfer_temp_file()
+        self.copy_files()
