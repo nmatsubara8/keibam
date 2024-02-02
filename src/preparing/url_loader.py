@@ -27,6 +27,7 @@ class KaisaiDateLoader(DataLoader):
         from_local_location="",
         from_local_file_name="",
         target_data=None,
+        processing_id="",
         obtained_last_key="",
         skip=False,
         from_date="2020-01-01",
@@ -43,6 +44,7 @@ class KaisaiDateLoader(DataLoader):
             from_local_location,
             from_local_file_name,
             target_data,
+            processing_id,
             obtained_last_key,
             skip,
         )
@@ -86,51 +88,80 @@ class KaisaiDateLoader(DataLoader):
             pass
 
     def scrape_race_id_list(self):
+        kaisai_date_list = self.load_file_pkl()
+
+        waiting_time = 10
+        race_id_list = []
+        driver = prepare_chrome_driver()
+        # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+        # driver.implicitly_wait(waiting_time)
+
+        data_index = 1
+        for kaisai_date in tqdm(kaisai_date_list):
+            try:
+                query_params = {"kaisai_date": kaisai_date}
+                query_strings = urlencode(query_params)
+                url = self.from_location + "?" + query_strings
+
+                # print("url: ", url)
+                # print("scraping: {}".format(url))
+                driver.get(url)
+                wait = WebDriverWait(driver, waiting_time)
+                race_list_box = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "RaceList_Box")))
+                a_list = race_list_box.find_elements(By.TAG_NAME, "a")
+
+                for a in a_list:
+                    race_id = re.findall(
+                        r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
+                    )
+                    if len(race_id) > 0:
+                        race_id_list.append(race_id[0])
+
+            except Exception as e:
+                print(e)
+                break
+
+            if data_index % self.batch_size == 0:
+                self.target_data = race_id_list
+                self.save_temp_file("race_id_list")
+                self.obtained_last_key = kaisai_date
+            data_index += 1
+        # リストの要素を昇順にソート
+        self.target_data = sorted(map(str.strip, self.target_data), key=lambda x: float(x))
+        self.save_temp_file("race_id_list")
+        self.obtained_last_key = kaisai_date
+        self.transfer_temp_file()
+        driver.close()
+        driver.quit()
+
+    def scrape_html_race(self):
+        """
+        netkeiba.comのraceページのhtmlをスクレイピングしてdata/html/raceに保存する関数。
+        skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+        返り値：新しくスクレイピングしたhtmlのファイルパス
+        """
+        # skip対象ではないゴミファイルの掃除
         if not self.skip:
-            # """
+            self.delete_files()
 
-            kaisai_date_list = self.load_file_pkl()
+        race_id_list = self.load_file_pkl()
 
-            waiting_time = 10
-            race_id_list = []
-            driver = prepare_chrome_driver()
-            # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
-            # driver.implicitly_wait(waiting_time)
+        updated_html_path_list = []
+        data_index = 1
+        for race_id in tqdm(race_id_list):
+            self.processing_id = race_id
+            # race_idからurlを作る
+            url = self.from_location + race_id
+            # 相手サーバーに負担をかけないように1秒待機する
+            time.sleep(1)
+            # スクレイピング実行
+            self.target_data = urlopen(url).read()
 
-            data_index = 1
-            for kaisai_date in tqdm(kaisai_date_list):
-                try:
-                    query_params = {"kaisai_date": kaisai_date}
-                    query_strings = urlencode(query_params)
-                    url = self.from_location + "?" + query_strings
-
-                    # print("url: ", url)
-                    # print("scraping: {}".format(url))
-                    driver.get(url)
-                    wait = WebDriverWait(driver, waiting_time)
-                    race_list_box = wait.until(EC.presence_of_element_located((By.CLASS_NAME, "RaceList_Box")))
-                    a_list = race_list_box.find_elements(By.TAG_NAME, "a")
-
-                    for a in a_list:
-                        race_id = re.findall(
-                            r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
-                        )
-                        if len(race_id) > 0:
-                            race_id_list.append(race_id[0])
-
-                except Exception as e:
-                    print(e)
-                    break
-
-                if data_index % self.batch_size == 0:
-                    self.target_data = race_id_list
-                    self.save_temp_file("race_id_list")
-                    self.obtained_last_key = kaisai_date
-                data_index += 1
-            # リストの要素を昇順にソート
-            self.target_data = sorted(map(str.strip, self.target_data), key=lambda x: float(x))
-            self.save_temp_file("race_id_list")
-            self.obtained_last_key = kaisai_date
-            self.transfer_temp_file()
-            driver.close()
-            driver.quit()
+            # 保存するファイルパスを指定
+            updated_html_path_list.append(self.target_data)
+            if data_index % self.batch_size == 0:
+                self.save_temp_file("race_html")
+            data_index += 1
+        self.save_temp_file("race_html")
+        self.transfer_temp_html_files()
+        return updated_html_path_list

@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import shutil
 
 from src.constants._url_paths import UrlPaths
 
@@ -17,6 +18,7 @@ class DataLoader:
         batch_size="",
         from_local_location="",
         from_local_file_name="",
+        processing_id="",
         obtained_last_key="",
         target_data=None,
         skip=False,
@@ -32,6 +34,7 @@ class DataLoader:
         self.from_local_file_name = from_local_file_name
         target_data = []
         self.target_data = target_data
+        self.processing_id = processing_id
         self.obtained_last_key = obtained_last_key
         self.skip = skip
 
@@ -69,8 +72,15 @@ class DataLoader:
         else:
             print("No such data")
 
+    def get_filetype(self):
+        filetype = self.temp_save_file_name[-4:]
+        return filetype
+
     def get_local_temp_file_path(self, alias):
-        local_temp_path = os.path.join(self.to_temp_location + self.temp_save_file_name)
+        if self.get_filetype() != "html":
+            local_temp_path = os.path.join(self.to_temp_location + self.temp_save_file_name)
+        else:
+            local_temp_path = os.path.join(self.to_temp_location, self.processing_id + ".bin")
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
@@ -80,24 +90,29 @@ class DataLoader:
     def save_temp_file(self, alias):
         # ローカル一時保存用ファイルのパス
         local_path = self.get_local_temp_file_path(alias)
-        filetype = self.temp_save_file_name[-3:]
+        filetype = self.get_filetype()
 
-        if filetype == "csv":
+        if filetype == ".csv":
             # CSVファイルにデータを書き込む処理
             with open(local_path, "w", newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
 
-        elif filetype == "txt":
+        elif filetype == ".txt":
             # テキストファイルにデータを書き込む処理
             # リストをファイルに保存
             with open(local_path, "w") as file:
                 for item in self.target_data:
                     file.write("%s\n" % item)
 
-        elif filetype == "pkl":
+        elif filetype == ".pkl":
             # pickleファイルにデータを書き込む処理
             with open(local_path, "wb") as pkl_file:
                 pickle.dump(self.target_data, pkl_file)
+
+        elif filetype == "html":
+            # pickleファイルにデータを書き込む処理
+            with open(local_path, "wb") as html_file:
+                html_file.write(self.target_data)
         else:
             print("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
 
@@ -112,6 +127,14 @@ class DataLoader:
 
         with open(to_target_file, "wb") as pkl_file:
             pickle.dump(from_target_file, pkl_file)
+
+    def transfer_temp_html_files(self):
+        files = os.listdir(self.to_temp_location)
+        for file in files:
+            # ファイルのフルパスを取得
+            src_file_path = os.path.join(self.to_temp_location, file)
+            # ファイルをフォルダBにコピー
+            shutil.copy(src_file_path, self.to_location)
 
     def load_file_pkl(self):
         target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
@@ -131,6 +154,17 @@ class DataLoader:
                     print("指定したIDがリスト内に見つかりません。")
         self.skip = False
         return loaded_list
+
+    def delete_files(self):
+        files = os.listdir(self.to_temp_location)
+        # ファイルを削除
+        for file in files:
+            file_path = os.path.join(self.to_temp_location, file)
+            try:
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            except Exception as e:
+                print(f"Error deleting {file_path}: {e}")
 
     def pre_process_display(self):  # 処理開始時のメッセージ出力
         print(f"{self.alias}")

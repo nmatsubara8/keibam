@@ -84,9 +84,24 @@ class UrlPaths:
         "temp_race_id_list.txt",  # 3
         TOP_URL[4] + "race_id_list/",  # 4
         "race_id_list.pkl",  # 5
-        20,  # 6
+        50,  # 6
         CALENDAR_URL[4],  # 7
         CALENDAR_URL[5],  # 8
+        "",  # 9
+        False,  # 10
+    )
+
+    # レースhtmlページ
+    RACE_HTML: tuple = (
+        "race_html",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        TOP_URL[2] + "race/",  # 2
+        "temp_race_html",  # 3
+        TOP_URL[4] + "race/",  # 4
+        "race_html",  # 5
+        1,  # 6
+        TOP_URL[4] + "race_id_list/",  # 7
+        "race_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
     )
