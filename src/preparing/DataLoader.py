@@ -33,9 +33,9 @@ class DataLoader:
         self.from_local_location = from_local_location
         self.from_local_file_name = from_local_file_name
         target_data = []
-        self.target_data = target_data
         self.processing_id = processing_id
         self.obtained_last_key = obtained_last_key
+        self.target_data = target_data
         self.skip = skip
 
     def set_args(self, alias):
@@ -91,9 +91,10 @@ class DataLoader:
 
     def get_local_temp_file_path(self, alias):
         if self.get_filetype() != "html":
-            local_temp_path = os.path.join(self.to_temp_location + self.temp_save_file_name)
+            local_temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
         else:
-            local_temp_path = os.path.join(self.to_temp_location, self.processing_id + ".bin")
+            # print("self.processing_id:", self.processing_id)
+            local_temp_path = os.path.join(self.to_temp_location, self.processing_id, ".bin")
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
@@ -173,23 +174,24 @@ class DataLoader:
                 print(f"Error copying file {file}: {e}")
 
     def load_file_pkl(self):
-        target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
-        with open(target_file_path, "rb") as f:
-            if not self.skip:
-                loaded_list = pickle.load(f)
-            else:  # skip=True時のリスト範囲限定処理
-                try:
-                    ids = [int(line.strip()) for line in f]
-                    index = ids.index(self.obtained_last_key)
-                    # 範囲外の場合や最後の要素の場合に注意
-                    if index < len(ids) - 1:
-                        loaded_list = ids[index + 1 :]
-                    else:
-                        print("指定したIDがリストの最後にあります。")
-                except ValueError:
-                    print("指定したIDがリスト内に見つかりません。")
-        self.skip = False
-        return loaded_list
+        if (self.from_local_file_name and self.from_local_location) is not None:
+            target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
+            with open(target_file_path, "rb") as f:
+                if not self.skip:
+                    loaded_list = pickle.load(f)
+                else:  # skip=True時のリスト範囲限定処理
+                    try:
+                        ids = [int(line.strip()) for line in f]
+                        index = ids.index(self.obtained_last_key)
+                        # 範囲外の場合や最後の要素の場合に注意
+                        if index < len(ids) - 1:
+                            loaded_list = ids[index + 1 :]
+                        else:
+                            print("指定したIDがリストの最後にあります。")
+                    except ValueError:
+                        print("指定したIDがリスト内に見つかりません。")
+            self.skip = False
+            return loaded_list
 
     def get_file_list(self, location):
         file_list = []

@@ -48,6 +48,20 @@ class UrlPaths:
         "",  # 9
         False,  # 10
     )
+    # 馬一覧ページ
+    HORSE_LIST_URL: tuple = (
+        "horse_id_list",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "horse_id_list/",  # 2
+        "temp_horse_id_list.txt",  # 3
+        DB_DOMAIN[4] + "horse_id_list/",  # 4
+        "horse_id_list.pkl",  # 5
+        5,  # 6
+        TOP_URL[4] + "race_id_list/",  # 7
+        "race_id_list.pkl",
+        "",  # 9
+        False,  # 10
+    )
 
     # レースhtmlページ
     RACE_HTML: tuple = (
@@ -60,6 +74,20 @@ class UrlPaths:
         1,  # 6
         DB_DOMAIN[4] + "race_id_list/",  # 7
         "race_id_list.pkl",  # 8
+        "",  # 9
+        False,  # 10
+    )
+    # レースhtmlページ
+    HORSE_HTML: tuple = (
+        "horse_html",  # 0
+        DB_DOMAIN[1] + "horse/",  # 1
+        DB_DOMAIN[2] + "horse/",  # 2
+        "temp_horse_html",  # 3
+        DB_DOMAIN[4] + "horse/",  # 4
+        "horse_html",  # 5  #
+        1,  # 6
+        DB_DOMAIN[4] + "horse_id_list/",  # 7
+        "horse_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
     )
@@ -91,7 +119,20 @@ class UrlPaths:
         "",  # 9
         False,  # 10
     )
-
+    # レース結果テーブル、レース情報テーブル、払い戻しテーブルが含まれるページ
+    RETURN_INFO: tuple = (
+        "race_return_table",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race_return/",  # 2
+        "temp_race_return_table.csv",  # 3
+        DB_DOMAIN[4] + "race_return/",  # 4
+        "race_return_table.h5",  # 5
+        100,  # 6
+        DB_DOMAIN[4] + "race/",  # 7
+        "*.bin",  # 8 "race_info_table"においては、使わないこととする
+        "",  # 9
+        False,  # 10
+    )
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: tuple = (
         "horse_results_list",  # 0
