@@ -1,0 +1,35 @@
+
+"""
+    def scrape_race_id_race_time_list(kaisai_date: str, waiting_time=10):
+        """
+        開催日をyyyymmddの文字列形式で指定すると、レースidとレース時刻の一覧が返ってくる関数。
+        ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
+        要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
+        """
+
+    def create_active_race_id_list(minus_time=-50):
+        """
+        馬体重の発表されたレースidとレース時刻の一覧が返ってくる関数。
+        馬体重の発表時刻は、引数で指定されたminus_timeをレース時刻から引いた時刻で算出します。
+        """
+    def scrape_html_horse_with_master(horse_id_list: list, skip: bool = True):
+        """
+        netkeiba.comのhorseページのhtmlをスクレイピングしてdata/html/horseに保存する関数。
+        skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
+        返り値：新しくスクレイピングしたhtmlのファイルパス
+        また、horse_idごとに、最後にスクレイピングした日付を記録し、data/master/horse_results_updated_at.csvに保存する。
+        """
+
+    def get_rawdata_horse_info(html_path_list: list):
+        """
+        horseページのhtmlを受け取って、馬の基本情報のDataFrameに変換する関数。
+        """
+
+    def update_rawdata(filepath: str, new_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        filepathにrawテーブルのpickleファイルパスを指定し、new_dfに追加したいDataFrameを指定。
+        元々のテーブルにnew_dfが追加されてpickleファイルが更新される。
+        pickleファイルが存在しない場合は、filepathに新たに作成される。
+        """
+
+"""

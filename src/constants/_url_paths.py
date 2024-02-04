@@ -19,7 +19,7 @@ class UrlPaths:
     TOP_URL: tuple = ("top_page", "https://race.netkeiba.com/top/", "./data/tmp/", None, "./data/html/", None)
     DB_DOMAIN: tuple = ("db_dmain", "https://db.netkeiba.com/", "./data/tmp/", None, "./data/html/", None)
 
-    # 開催日程ページ
+    # 開催日程ページ Done
     CALENDAR_URL: tuple = (
         "kaisai_date_list",  # 0
         TOP_URL[1] + "calendar.html",  # 1
@@ -34,7 +34,7 @@ class UrlPaths:
         False,  # 10
     )
 
-    # レース一覧ページ
+    # レース一覧ページ Done
     RACE_LIST_URL: tuple = (
         "race_id_list",  # 0
         TOP_URL[1] + "race_list.html",  # 1
@@ -48,7 +48,66 @@ class UrlPaths:
         "",  # 9
         False,  # 10
     )
-    # 馬一覧ページ
+
+    # レースhtmlスクレイピング用binファイル管理 Done
+    RACE_HTML: tuple = (
+        "race_html",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race/",  # 2
+        "temp_race_html",  # 3
+        DB_DOMAIN[4] + "race/",  # 4
+        "race_html",  # 5  #
+        1,  # 6
+        DB_DOMAIN[4] + "race_id_list/",  # 7
+        "race_id_list.pkl",  # 8
+        "",  # 9
+        False,  # 10
+    )
+
+    # レース結果の取得ページ Done
+    RACE_URL: tuple = (
+        "race_results_table",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race_results/",  # 2
+        "temp_race_results_table.csv",  # 3
+        DB_DOMAIN[4] + "race_results/",  # 4
+        "race_results_table.h5",  # 5
+        100,  # 6
+        DB_DOMAIN[4] + "race/",  # 7
+        "*.bin",  # 8 "race_results_table"においては、使わないこととする
+        "",  # 9
+        False,  # 10
+    )
+    # レース結果（詳細レース情報）の取得ページ Done
+    RACE_INFO: tuple = (
+        "race_info_table",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race_info/",  # 2
+        "temp_race_info_table.csv",  # 3
+        DB_DOMAIN[4] + "race_info/",  # 4
+        "race_info_table.h5",  # 5
+        100,  # 6
+        DB_DOMAIN[4] + "race/",  # 7
+        "*.bin",  # 8 "race_info_table"においては、使わないこととする
+        "",  # 9
+        False,  # 10
+    )
+    # レース結果（払い戻しテーブル）の取得ページ Done
+    RETURN_INFO: tuple = (
+        "race_return_table",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "race_return/",  # 2
+        "temp_race_return_table.csv",  # 3
+        DB_DOMAIN[4] + "race_return/",  # 4
+        "race_return_table.h5",  # 5
+        100,  # 6
+        DB_DOMAIN[4] + "race/",  # 7
+        "*.bin",  # 8 "race_info_table"においては、使わないこととする
+        "",  # 9
+        False,  # 10
+    )
+
+    # 馬一覧ページ Done
     HORSE_LIST_URL: tuple = (
         "horse_id_list",  # 0
         DB_DOMAIN[1] + "race/",  # 1
@@ -63,21 +122,7 @@ class UrlPaths:
         False,  # 10
     )
 
-    # レースhtmlページ
-    RACE_HTML: tuple = (
-        "race_html",  # 0
-        DB_DOMAIN[1] + "race/",  # 1
-        DB_DOMAIN[2] + "race/",  # 2
-        "temp_race_html",  # 3
-        DB_DOMAIN[4] + "race/",  # 4
-        "race_html",  # 5  #
-        1,  # 6
-        DB_DOMAIN[4] + "race_id_list/",  # 7
-        "race_id_list.pkl",  # 8
-        "",  # 9
-        False,  # 10
-    )
-    # レースhtmlページ
+    # 馬htmlスクレイピング用binファイル管理 Done
     HORSE_HTML: tuple = (
         "horse_html",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
@@ -91,56 +136,15 @@ class UrlPaths:
         "",  # 9
         False,  # 10
     )
-    # レース結果テーブル、レース情報テーブル、払い戻しテーブルが含まれるページ
-    RACE_URL: tuple = (
-        "race_results_table",  # 0
-        DB_DOMAIN[1] + "race/",  # 1
-        DB_DOMAIN[2] + "race_results/",  # 2
-        "temp_race_results_table.csv",  # 3
-        DB_DOMAIN[4] + "race_results/",  # 4
-        "race_results_table.h5",  # 5
-        100,  # 6
-        DB_DOMAIN[4] + "race/",  # 7
-        "*.bin",  # 8 "race_results_table"においては、使わないこととする
-        "",  # 9
-        False,  # 10
-    )
-    # レース結果テーブル、レース情報テーブル、払い戻しテーブルが含まれるページ
-    RACE_INFO: tuple = (
-        "race_info_table",  # 0
-        DB_DOMAIN[1] + "race/",  # 1
-        DB_DOMAIN[2] + "race_info/",  # 2
-        "temp_race_info_table.csv",  # 3
-        DB_DOMAIN[4] + "race_info/",  # 4
-        "race_info_table.h5",  # 5
-        100,  # 6
-        DB_DOMAIN[4] + "race/",  # 7
-        "*.bin",  # 8 "race_info_table"においては、使わないこととする
-        "",  # 9
-        False,  # 10
-    )
-    # レース結果テーブル、レース情報テーブル、払い戻しテーブルが含まれるページ
-    RETURN_INFO: tuple = (
-        "race_return_table",  # 0
-        DB_DOMAIN[1] + "race/",  # 1
-        DB_DOMAIN[2] + "race_return/",  # 2
-        "temp_race_return_table.csv",  # 3
-        DB_DOMAIN[4] + "race_return/",  # 4
-        "race_return_table.h5",  # 5
-        100,  # 6
-        DB_DOMAIN[4] + "race/",  # 7
-        "*.bin",  # 8 "race_info_table"においては、使わないこととする
-        "",  # 9
-        False,  # 10
-    )
+
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: tuple = (
         "horse_results_list",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
         DB_DOMAIN[2] + "horse_results/",  # 2
-        "temp_horse_results_tabel",  # 3
+        "temp_horse_results_list.csv",  # 3
         DB_DOMAIN[4] + "horse_results/",  # 4
-        "horse_results_table",  # 5
+        "horse_results_list",  # 5
         100,  # 6
         "",  # 7
         "",  # 8
@@ -162,12 +166,27 @@ class UrlPaths:
         "",  # 9
         False,  # 10
     )
+
+    HORSE_INFO: tuple = (
+        "horse_info_table",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "horse_info/",  # 2
+        "temp_horse_info_table.csv",  # 3
+        DB_DOMAIN[4] + "horse_info/",  # 4
+        "horse_info_table",  # 5
+        100,  # 6
+        "",  # 7
+        "",  # 8
+        "",  # 9
+        False,  # 10
+    )
+
     # 出馬表ページ
     SHUTUBA_TABLE: tuple = (
         "shutuba_table",  # 0
-        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        RACE_URL[1] + "shutuba.html",  # 1
         TOP_URL[2] + "shutuba_table/",  # 2
-        "temp_shutuba_table",  # 3
+        "temp_shutuba_table.csv",  # 3
         TOP_URL[4] + "shutuba_table/",  # 4
         "shutuba_table",  # 5
         100,  # 6

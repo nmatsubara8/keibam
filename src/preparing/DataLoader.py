@@ -72,6 +72,8 @@ class DataLoader:
         else:
             print("No such data")
 
+        self.pre_process_display()
+
     def get_filetype(self):
         text = self.temp_save_file_name
         if text.endswith("_table.csv"):
@@ -94,7 +96,7 @@ class DataLoader:
             local_temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
         else:
             # print("self.processing_id:", self.processing_id)
-            local_temp_path = os.path.join(self.to_temp_location, self.processing_id, ".bin")
+            local_temp_path = os.path.join(self.to_temp_location, self.processing_id + ".bin")
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
@@ -106,7 +108,7 @@ class DataLoader:
 
     def save_temp_file(self, alias):
         # ローカル一時保存用ファイルのパス
-        local_path = self.get_local_temp_file_path(alias)
+        local_path = self.get_local_temp_file_path(self.alias)
         filetype = self.get_filetype()
 
         if filetype == "csv":
