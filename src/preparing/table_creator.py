@@ -358,7 +358,7 @@ class TableCreator(DataLoader):
 
     ################################################################################################################
     # この関数はまだ
-    def create_horse_results_table(self):
+    def update_horse_table(self):
         """
         horse_htmlを受け取って、結果テーブルに変換する関数。data/html/horse_resultsに保存する
 

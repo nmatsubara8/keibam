@@ -44,7 +44,7 @@ def select_process(alias):
         data_request.create_race_return_table()
 
     elif alias == "horse_results_table":
-        data_request = TableCreator()
+        data_request = KaisaiDateLoader()
         data_request.set_args(alias)
         data_request.create_horse_results_table()
 
@@ -63,10 +63,16 @@ def select_process(alias):
         data_request.set_args(alias)
         data_request.scrape_peds_list()
 
-    elif alias == "race_schedule":  #
+    elif alias == "scheduled_race":  #
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
-        data_request.scrape_race_schedule()
+        data_request.scrape_scheduled_race()
+
+    elif alias == "scheduled_horse":  #
+        data_request = KaisaiDateLoader()
+        data_request.set_args(alias)
+        data_request.scrape_scheduled_horse()
+
     elif alias == "shutuba_table":
         pass
     else:
@@ -88,4 +94,5 @@ def select_process(alias):
 # peds_list = select_process(alias="peds_list")
 # race_info_table = select_process(alias="race_info_table")
 # race_return_table = select_process(alias="race_return_table")
-race_schedule = select_process(alias="race_schedule")
+# scheduled_race = select_process(alias="scheduled_race")
+scheduled_horse = select_process(alias="scheduled_horse")

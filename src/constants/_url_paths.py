@@ -146,7 +146,7 @@ class UrlPaths:
         DB_DOMAIN[4] + "horse_results/",  # 4
         "horse_results_table",  # 5
         100,  # 6
-        "",  # 7
+        DB_DOMAIN[4] + "horse/",  # 7
         "",  # 8
         "",  # 9
         False,  # 10
@@ -195,18 +195,33 @@ class UrlPaths:
     )
     # レース予定ページ
     RACE_SCHEDULE: tuple = (
-        "race_schedule",  # 0
+        "scheduled_race",  # 0
         TOP_URL[1] + "race_list.html",  # 1
-        TOP_URL[2] + "race_schedule/",  # 2
-        "temp_race_schedule.csv",  # 3
-        TOP_URL[4] + "race_schedule/",  # 4
-        "race_schedule",  # 5
+        TOP_URL[2] + "scheduled_race/",  # 2
+        "temp_schedule_race.txt",  # 3
+        TOP_URL[4] + "scheduled_race/",  # 4
+        "scheduled_race.pkl",  # 5
         10,  # 6
         "",  # 7
         "",  # 8
         "",  # 9
         False,  # 10
     )
+
+    HORSE_SCHEDULE: tuple = (
+        "scheduled_horse",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        TOP_URL[2] + "scheduled_horse/",  # 2
+        "temp_scheduled_horse.txt",  # 3
+        TOP_URL[4] + "scheduled_horse/",  # 4
+        "scheduled_horse.csv",  # 5
+        10,  # 6
+        TOP_URL[4] + "scheduled_race/",  # 7
+        "scheduled_race.pkl",  # 8
+        "",  # 9
+        False,  # 10
+    )
+
     # 出馬表ページ
     SHUTUBA_TABLE: tuple = (
         "shutuba_table",  # 0

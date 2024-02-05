@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import pickle
@@ -173,7 +174,7 @@ class DataLoader:
 
         to_target_file = self.get_local_comp_file_path(self.alias)
 
-        with open(to_target_file, "wb") as pkl_file:
+        with open(to_target_file, "ab") as pkl_file:
             pickle.dump(from_target_file, pkl_file)
 
     def copy_files(self):
@@ -207,6 +208,58 @@ class DataLoader:
                             print("指定したIDがリストの最後にあります。")
                     except ValueError:
                         print("指定したIDがリスト内に見つかりません。")
+            self.skip = False
+            return loaded_list
+
+    def load_file_txt(self):
+        if (self.from_local_location and self.from_local_file_name) is not None:
+            target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
+            with open(target_file_path, "rb", encoding="UTF-8") as f:
+                if not self.skip:
+                    loaded_list = [line.strip() for line in f]
+                else:  # skip=True時のリスト範囲限定処理
+                    try:
+                        lines = f.readlines()
+                        ids = [int(line.split()[0]) for line in lines]
+                        index = ids.index(self.obtained_last_key)
+                        # 範囲外の場合や最後の要素の場合に注意
+                        if index < len(ids) - 1:
+                            f.seek(0)  # Rewind the file to the beginning
+                            for _ in range(index + 1):
+                                next(f)
+                            loaded_list = [line.strip() for line in f]
+                        else:
+                            print("指定したIDがリストの最後にあります。")
+                            loaded_list = []
+                    except UnicodeDecodeError:
+                        print("指定したIDがリスト内に見つかりません。")
+                        loaded_list = []
+            self.skip = False
+            return loaded_list
+
+    def load_file_csv(self):
+        if (self.from_local_location and self.from_local_file_name) is not None:
+            target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
+            with open(target_file_path, "r", newline="") as f:
+                reader = csv.reader(f)
+                if not self.skip:
+                    loaded_list = [row for row in reader]
+                else:  # skip=True時のリスト範囲限定処理
+                    try:
+                        ids = [int(row[0]) for row in reader]
+                        index = ids.index(self.obtained_last_key)
+                        # 範囲外の場合や最後の要素の場合に注意
+                        if index < len(ids) - 1:
+                            f.seek(0)  # Rewind the file to the beginning
+                            for _ in range(index + 1):
+                                next(reader)
+                            loaded_list = [row for row in reader]
+                        else:
+                            print("指定したIDがリストの最後にあります。")
+                            loaded_list = []
+                    except ValueError:
+                        print("指定したIDがリスト内に見つかりません。")
+                        loaded_list = []
             self.skip = False
             return loaded_list
 
@@ -246,9 +299,7 @@ class DataLoader:
         print("to_temp_location: ", self.to_temp_location)
         print("to_location: ", self.to_location)
         if self.from_local_location != "":
-            print(
-                "self.from_local_location: ",
-            )
+            print("self.from_local_location: ", self.from_local_location)
         if self.from_local_file_name != "":
             print("self.from_local_file_name: ", self.from_local_file_name)
         if len(self.target_data) != 0:

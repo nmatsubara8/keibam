@@ -257,6 +257,67 @@ class KaisaiDateLoader(DataLoader):
         self.obtained_last_key = horse_id
         self.copy_files()
 
+    def create_horse_results_table(self):
+        #
+        # horseページのhtmlを受け取って、馬の過去成績のDataFrameに変換する関数。
+        #
+        # skip対象ではないゴミファイルの掃除
+        if not self.skip:
+            self.delete_files()
+        data_index = 1
+        horse_id_file_list = self.get_file_list(self.from_local_location)
+
+        print("scraping horse_results_table")
+        horse_results = {}
+        for horse_html in tqdm(horse_id_file_list):
+            horse_html_path = os.path.join(self.from_local_location, horse_html)
+            with open(horse_html_path, "rb") as f:
+                try:
+                    # 保存してあるbinファイルを読み込む
+                    html = f.read()
+
+                    df = pd.read_html(html)[3]
+                    # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
+                    if df.columns[0] == "受賞歴":
+                        df = pd.read_html(html)[4]
+
+                    # 新馬の競走馬レビューが付いた場合、
+                    # 列名に0が付与されるため、次のhtmlへ飛ばす
+                    if df.columns[0] == 0:
+                        print("horse_results empty case1 {}".format(horse_html))
+                        continue
+
+                    horse_id = re.findall(r"(\d+).bin", horse_html)[0]
+
+                    df.index = [horse_id] * len(df)
+                    horse_results[horse_id] = df
+
+                # 競走データが無い場合（新馬）を飛ばす
+                except IndexError:
+                    print("horse_results empty case2 {}".format(horse_html))
+                    continue
+
+                except Exception as e:
+                    print("Error at {}: {}".format(horse_html, e))
+                    continue
+
+            # pd.DataFrame型にして一つのデータにまとめる
+            horse_results_df = pd.concat([horse_results[key] for key in horse_results])
+            # 列名に半角スペースがあれば除去する
+
+            if data_index % self.batch_size == 0:
+                self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
+                self.save_temp_file("horse_results_table")
+                self.obtained_last_key = horse_id
+                horse_results = {}
+                df = []
+            else:
+                data_index += 1
+        self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
+        self.save_temp_file("horse_results_table")
+        self.obtained_last_key = horse_id
+        self.copy_files()
+
     def scrape_html_ped(self):
         """
         netkeiba.comのhorse/pedページのhtmlをスクレイピングしてdata/html/pedに保存する関数。
@@ -341,12 +402,16 @@ class KaisaiDateLoader(DataLoader):
         self.save_temp_file("peds_list")
         self.obtained_last_key = ped_html
 
-    def scrape_race_schedule(self):
+    def scrape_scheduled_race(self):
         """
         開催日をyyyymmddの文字列形式で指定すると、レースidとレース時刻の一覧が返ってくる関数。
         ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
         要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
         """
+        # skip対象ではないゴミファイルの掃除
+        if not self.skip:
+            self.delete_files()
+
         kaisai_date = 20240210
         race_id_list = []
         race_time_list = []
@@ -364,7 +429,7 @@ class KaisaiDateLoader(DataLoader):
 
             a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
             span_list = driver.find_element(By.CLASS_NAME, "RaceList_Box")
-
+            time.sleep(1)
             for a in a_list:
                 race_id = re.findall(
                     r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
@@ -381,13 +446,54 @@ class KaisaiDateLoader(DataLoader):
         finally:
             driver.close()
             driver.quit()
-            self.target_data = list(zip(race_id_list, race_time_list))
-            self.save_temp_file("race_schedule")
+            self.target_data = [f"{race_id} {race_time}" for race_id, race_time in zip(race_id_list, race_time_list)]
+            self.save_temp_file("scheduled_race")
             self.obtained_last_key = kaisai_date
             self.transfer_temp_file()
 
     ############################################################################################################
     # この関数はまだ
+    def scrape_scheduled_horse(self):
+        """
+        当日出走するhorse_id一覧を取得
+        """
+        if not self.skip:
+            self.delete_files()
+
+        scheduled_race_id_list = self.load_file_pkl()
+        print("scheduled_race_id_list ", scheduled_race_id_list)
+        scheduled_horse_id_list = []
+        # Convert the string list to a list of lists
+        # Convert the string list to a list of lists using json
+        # Safely evaluate the string as a Python literal
+        # parsed_scheduled_race_id_list = ast.literal_eval(scheduled_race_id_list[0][0])
+
+        # Flatten the nested list
+        # flat_scheduled_race_id_list = [item[0] for item in parsed_scheduled_race_id_list]
+
+        # print("flat_race_id_list ", flat_scheduled_race_id_list)
+        for race_id in tqdm(scheduled_race_id_list):
+            scheduled_race_id = race_id[:12]
+            # print("scheduled_race_id ", scheduled_race_id)
+            query = "?race_id=" + scheduled_race_id
+
+            url = self.from_location + query
+            time.sleep(1)
+            print("url", url)
+            html = urlopen(url)
+            soup = BeautifulSoup(html, "lxml", from_encoding="utf-8")
+            horse_td_list = soup.find_all("td", attrs={"class": "HorseInfo"})
+            # print("horse_td_list", horse_td_list)
+            for td in horse_td_list:
+                scheduled_horse_id = re.findall(r"\d+", td.find("a")["href"])[0]
+                scheduled_horse_id_list.append(scheduled_horse_id)
+        self.target_data = scheduled_horse_id_list
+        self.save_temp_file("scheduled_horse")
+        self.obtained_last_key = scheduled_race_id
+        self.transfer_temp_file()
+
+    # この関数はまだ
+
     def create_active_race_id_list(minus_time=-50):
         """
         馬体重の発表されたレースidとレース時刻の一覧が返ってくる関数。
@@ -435,21 +541,3 @@ class KaisaiDateLoader(DataLoader):
             from_time = race_time
 
         return target_race_id_list, target_race_time_list
-
-    # この関数はまだ
-    def scrape_horse_id_list(race_id_list: list) -> list:
-        """
-        当日出走するhorse_id一覧を取得
-        """
-        print("sraping horse_id_list")
-        horse_id_list = []
-        for race_id in tqdm(race_id_list):
-            query = "?race_id=" + race_id
-            url = UrlPaths.SHUTUBA_TABLE + query
-            html = urlopen(url)
-            soup = BeautifulSoup(html, "lxml", from_encoding="utf-8")
-            horse_td_list = soup.find_all("td", attrs={"class": "HorseInfo"})
-            for td in horse_td_list:
-                horse_id = re.findall(r"\d+", td.find("a")["href"])[0]
-                horse_id_list.append(horse_id)
-        return horse_id_list
