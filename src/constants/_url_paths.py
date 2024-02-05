@@ -160,24 +160,24 @@ class UrlPaths:
         DB_DOMAIN[4] + "ped/",  # 4
         "ped_html",  # 5
         1,  # 6
-        DB_DOMAIN[4] + "horse_id_list/",  # 7
+        DB_DOMAIN[4] + "race_id_list",  # 7
         "horse_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
     )
     # 血統テーブルが含まれるページ
     PED_URL: tuple = (
-        "ped_list",  # 0
-        HORSE_URL[1] + "ped/",  # 1
-        DB_DOMAIN[2] + "ped/",  # 2
-        "temp_ped_list.csv",  # 3
-        DB_DOMAIN[4] + "ped/",  # 4
-        "ped_list",  # 5
-        20,  # 6
-        DB_DOMAIN[4] + "horse_id_list/",  # 7
-        "horse_id_list.pkl",  # 8
+        "peds_list",  # 0
+        DB_DOMAIN[1] + "peds/",  # 1
+        DB_DOMAIN[2] + "peds_list/",  # 2
+        "temp_peds_table.csv",  # 3
+        DB_DOMAIN[4] + "peds_list/",  # 4
+        "peds_table",  # 5
+        1000,  # 6
+        PED_HTML[4],  # 7
+        "",  # 7
+        "",  # 8
         "",  # 9
-        False,  # 10
     )
 
     HORSE_INFO: tuple = (

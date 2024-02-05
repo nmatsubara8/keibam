@@ -88,6 +88,8 @@ class DataLoader:
             filetype = "h5"
         elif text.endswith(".csv"):
             filetype = "csv"
+        elif text.endswith(".bin"):
+            filetype = "bin"
 
         return filetype
 
@@ -113,39 +115,39 @@ class DataLoader:
 
         if filetype == "csv":
             # CSVファイルにデータを書き込む処理
-            with open(local_path, "w", newline="\n") as csv_file:
+            with open(local_path, "a", newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
                 self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "txt":
             # テキストファイルにデータを書き込む処理
             # リストをファイルに保存
-            with open(local_path, "w") as file:
+            with open(local_path, "a") as file:
                 for item in self.target_data:
                     file.write("%s\n" % item)
                     self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "pkl":
             # pickleファイルにデータを書き込む処理
-            with open(local_path, "wb") as pkl_file:
+            with open(local_path, "ab") as pkl_file:
                 pickle.dump(self.target_data, pkl_file)
                 self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "html":
             # ファイルにデータを書き込む処理
-            with open(local_path, "wb") as html_file:
+            with open(local_path, "ab") as html_file:
                 html_file.write(self.target_data)
                 self.obtained_last_key = self.target_data[-1]
         elif filetype == "df":
             # CSVファイルに保存
-            self.target_data.to_csv(os.path.join(self.to_temp_location, self.temp_save_file_name), index=True)
+            self.target_data.to_csv(os.path.join(self.to_temp_location, self.temp_save_file_name), index=True, mode="a")
             self.obtained_last_key = self.target_data.index[-1]
 
         elif filetype == "h5":
             # ファイルにデータを書き込む処理
             # HDF5形式で保存
             self.target_data.to_hdf(
-                os.path.join(self.to_location, self.save_file_name), key=self.target_data.index, mode="w"
+                os.path.join(self.to_location, self.save_file_name), key=self.target_data.index, mode="a"
             )
             self.obtained_last_key = self.target_data[-1]
         else:
@@ -176,7 +178,7 @@ class DataLoader:
                 print(f"Error copying file {file}: {e}")
 
     def load_file_pkl(self):
-        if (self.from_local_file_name and self.from_local_location) is not None:
+        if (self.from_local_location and self.from_local_file_name) is not None:
             target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
             with open(target_file_path, "rb") as f:
                 if not self.skip:
@@ -231,7 +233,9 @@ class DataLoader:
         print("to_temp_location: ", self.to_temp_location)
         print("to_location: ", self.to_location)
         if self.from_local_location != "":
-            print("self.from_local_location: ", self.from_local_location)
+            print(
+                "self.from_local_location: ",
+            )
         if self.from_local_file_name != "":
             print("self.from_local_file_name: ", self.from_local_file_name)
         if len(self.target_data) != 0:

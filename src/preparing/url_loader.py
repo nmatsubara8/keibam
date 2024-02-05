@@ -1,4 +1,5 @@
 import datetime
+import os
 import re
 import time
 from urllib.parse import urlencode
@@ -128,7 +129,7 @@ class KaisaiDateLoader(DataLoader):
                     self.obtained_last_key = kaisai_date
 
             except Exception as e:
-                print(e)
+                print("Error at {}: {}".format(race_id, e))
                 break
 
             data_index += 1
@@ -172,7 +173,7 @@ class KaisaiDateLoader(DataLoader):
                     self.obtained_last_key = race_id
 
             except Exception as e:
-                print(e)
+                print("Error at {}: {}".format(race_id, e))
                 break
 
             data_index += 1
@@ -230,7 +231,7 @@ class KaisaiDateLoader(DataLoader):
         # skip対象ではないゴミファイルの掃除
         if not self.skip:
             self.delete_files()
-        data_index = +1
+        data_index = 1
         horse_id_list = self.load_file_pkl()
         # "print("horse_id_list", horse_id_list)
         for horse_id in tqdm(horse_id_list):
@@ -250,7 +251,7 @@ class KaisaiDateLoader(DataLoader):
                     self.obtained_last_key = horse_id
             except Exception as e:
                 print("Error at {}: {}".format(horse_id, e))
-            data_index = +1
+            data_index += 1
 
         self.save_temp_file("horse_html")
         self.obtained_last_key = horse_id
@@ -287,6 +288,58 @@ class KaisaiDateLoader(DataLoader):
         self.save_temp_file("ped_html")
         self.obtained_last_key = horse_id
         self.copy_files()
+
+    def scrape_peds_list(self):
+        """
+        horse/pedページのhtmlを受け取って、血統のDataFrameに変換する関数。
+        """
+        # skip対象ではないゴミファイルの掃除
+        if not self.skip:
+            self.delete_files()
+
+        ped_html_list = self.get_file_list(self.from_local_location)
+
+        data_index = 1
+        peds = {}
+        print("preparing peds table")
+
+        for ped_html in tqdm(ped_html_list):
+            ped_html_path = os.path.join(self.from_local_location, ped_html)
+            # print("ped_html_path", ped_html_path)
+            try:
+                with open(ped_html_path, "rb") as f:
+                    # 保存してあるbinファイルを読み込む
+                    html = f.read()
+                    # horse_idを取得
+                    horse_id = re.findall(r"(\d+).bin", ped_html)[0]
+                    # htmlをsoupオブジェクトに変換
+                    soup = BeautifulSoup(html, "lxml")
+                    peds_id_list = []
+                    # 血統データからhorse_idを取得する
+                    horse_a_list = soup.find("table", attrs={"summary": "5代血統表"}).find_all(
+                        "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
+                    )
+                    for a in horse_a_list:
+                        # 血統データのhorse_idを抜き出す
+                        work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
+                        peds_id_list.append(work_peds_id)
+                    peds[horse_id] = peds_id_list
+
+                    # pd.DataFrame型にして一つのデータにまとめて、列と行の入れ替えして、列名をpeds_0, ..., peds_61にする
+                    peds_df = pd.DataFrame.from_dict(peds, orient="index").add_prefix("peds_")
+
+            except Exception as e:
+                print("Error at {}: {}".format(ped_html, e))
+
+            if data_index % self.batch_size == 0:
+                self.target_data = peds_df
+                self.save_temp_file("peds_list")
+                peds = {}
+                self.obtained_last_key = ped_html
+            data_index += 1
+        self.target_data = peds_df
+        self.save_temp_file("peds_list")
+        self.obtained_last_key = ped_html
 
     # この関数はまだ
     def create_active_race_id_list(minus_time=-50):

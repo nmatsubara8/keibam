@@ -53,10 +53,10 @@ def select_process(alias):
         data_request.set_args(alias)
         data_request.scrape_html_ped()
 
-    elif alias == "ped_list":
+    elif alias == "peds_list":
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
-        data_request.scrape_html_ped()
+        data_request.scrape_peds_list()
 
     elif alias == "shutuba_table":
         pass
@@ -74,6 +74,7 @@ def select_process(alias):
 # horse_html = select_process(alias="horse_html")
 
 # horse_results_table = select_process(alias="horse_results_table")
-ped_html = select_process(alias="ped_html")
+# ped_html = select_process(alias="ped_html")
+peds_list = select_process(alias="peds_list")
 # race_info_table = select_process(alias="race_info_table")
 # race_retunr_table = select_process(alias="race_return_table")
