@@ -114,8 +114,14 @@ class DataLoader:
         filetype = self.get_filetype()
 
         if filetype == "csv":
+            # CSVファイルに保存
+            if not os.listdir(self.to_temp_location):
+                mode = "w"
+            else:
+                mode = "a"
+
             # CSVファイルにデータを書き込む処理
-            with open(local_path, "a", newline="\n") as csv_file:
+            with open(local_path, mode=mode, newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
                 self.obtained_last_key = self.target_data[-1]
 
@@ -140,7 +146,14 @@ class DataLoader:
                 self.obtained_last_key = self.target_data[-1]
         elif filetype == "df":
             # CSVファイルに保存
-            self.target_data.to_csv(os.path.join(self.to_temp_location, self.temp_save_file_name), index=True, mode="a")
+            if not os.listdir(self.to_temp_location):
+                header = True
+            else:
+                header = False
+
+            self.target_data.to_csv(
+                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode="a"
+            )
             self.obtained_last_key = self.target_data.index[-1]
 
         elif filetype == "h5":
@@ -250,3 +263,36 @@ class DataLoader:
         print("len:", len(self.target_data))
         print("Done / obtained_last_key: ", self.obtained_last_key)
         print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name}")
+
+
+"""
+    def update_rawdata(filepath: str, new_df: pd.DataFrame) -> pd.DataFrame:
+
+    filepathにrawテーブルのpickleファイルパスを指定し、new_dfに追加したいDataFrameを指定。
+    元々のテーブルにnew_dfが追加されてpickleファイルが更新される。
+    pickleファイルが存在しない場合は、filepathに新たに作成される。
+
+    # pickleファイルが存在する場合の更新処理
+    if os.path.isfile(filepath):
+        backupfilepath = filepath + '.bak'
+        # 結合データがない場合
+        if new_df.empty:
+            print('preparing update raw data empty')
+        else:
+            # 元々のテーブルを読み込み
+            filedf = pd.read_pickle(filepath)
+            # new_dfに存在しないindexのみ、旧データを使う
+            filtered_old = filedf[~filedf.index.isin(new_df.index)]
+            # bakファイルが存在する場合
+            if os.path.isfile(backupfilepath):
+                os.remove(backupfilepath)
+            # バックアップ
+            os.rename(filepath, backupfilepath)
+            # 結合
+            updated = pd.concat([filtered_old, new_df])
+            # 保存
+            updated.to_pickle(filepath)
+    else:
+        # pickleファイルが存在しない場合、新たに作成
+        new_df.to_pickle(filepath)
+"""

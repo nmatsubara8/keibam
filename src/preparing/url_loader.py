@@ -341,6 +341,52 @@ class KaisaiDateLoader(DataLoader):
         self.save_temp_file("peds_list")
         self.obtained_last_key = ped_html
 
+    def scrape_race_schedule(self):
+        """
+        開催日をyyyymmddの文字列形式で指定すると、レースidとレース時刻の一覧が返ってくる関数。
+        ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
+        要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
+        """
+        kaisai_date = 20240210
+        race_id_list = []
+        race_time_list = []
+        driver = prepare_chrome_driver()
+        waiting_time = 10
+        # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+        driver.implicitly_wait(waiting_time)
+        print("getting race_id_list")
+
+        try:
+            query = ["kaisai_date=" + str(kaisai_date)]
+            url = self.from_location + "?" + "&".join(query)
+            print("scraping: {}".format(url))
+            driver.get(url)
+
+            a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
+            span_list = driver.find_element(By.CLASS_NAME, "RaceList_Box")
+
+            for a in a_list:
+                race_id = re.findall(
+                    r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
+                )
+                if len(race_id) > 0:
+                    race_id_list.append(race_id[0])
+
+            for item in span_list.text.split("\n"):
+                if ":" in item:
+                    race_time_list.append(item.split(" ")[0])
+
+        except Exception as e:
+            print("Error at {}: {}".format(kaisai_date, e))
+        finally:
+            driver.close()
+            driver.quit()
+            self.target_data = list(zip(race_id_list, race_time_list))
+            self.save_temp_file("race_schedule")
+            self.obtained_last_key = kaisai_date
+            self.transfer_temp_file()
+
+    ############################################################################################################
     # この関数はまだ
     def create_active_race_id_list(minus_time=-50):
         """

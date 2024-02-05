@@ -139,12 +139,12 @@ class UrlPaths:
 
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: tuple = (
-        "horse_results_list",  # 0
+        "horse_results_table",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
         DB_DOMAIN[2] + "horse_results/",  # 2
-        "temp_horse_results_list.csv",  # 3
+        "temp_horse_results_table.csv",  # 3
         DB_DOMAIN[4] + "horse_results/",  # 4
-        "horse_results_list",  # 5
+        "horse_results_table",  # 5
         100,  # 6
         "",  # 7
         "",  # 8
@@ -188,12 +188,25 @@ class UrlPaths:
         DB_DOMAIN[4] + "horse_info/",  # 4
         "horse_info_table",  # 5
         100,  # 6
+        DB_DOMAIN[4] + "horse/",  # 7
+        "",  # 8
+        "",  # 9
+        False,  # 10
+    )
+    # レース予定ページ
+    RACE_SCHEDULE: tuple = (
+        "race_schedule",  # 0
+        TOP_URL[1] + "race_list.html",  # 1
+        TOP_URL[2] + "race_schedule/",  # 2
+        "temp_race_schedule.csv",  # 3
+        TOP_URL[4] + "race_schedule/",  # 4
+        "race_schedule",  # 5
+        10,  # 6
         "",  # 7
         "",  # 8
         "",  # 9
         False,  # 10
     )
-
     # 出馬表ページ
     SHUTUBA_TABLE: tuple = (
         "shutuba_table",  # 0
