@@ -388,7 +388,7 @@ class TableCreator(DataLoader):
                     info = re.findall(r"\w+", texts)
                     print("info", info)
                     df = pd.DataFrame()
-                    df = pd.DataFrame()
+
                     # メインのテーブルの取得
                     for tr in soup.find_elements(By.CLASS_NAME, "HorseList"):
                         print("tr", tr)

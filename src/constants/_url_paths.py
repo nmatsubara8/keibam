@@ -257,12 +257,12 @@ class UrlPaths:
         "tentative_info",  # 0
         "https://race.netkeiba.com/race/shutuba.html",  # 1
         TOP_URL[2] + "tentative_info/",  # 2
-        "temp_tentative_info.csv",  # 3
+        "temp_tentative_info_table.csv",  # 3
         TOP_URL[4] + "tentative_info/",  # 4
-        "tentative_info.csv",  # 5
+        "tentative_info_table.csv",  # 5
         10,  # 6
-        TOP_URL[4] + "scheduled_race/",  # 7
-        "scheduled_race.pkl",  # 8
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8
         "",  # 9
         False,  # 10
         SCHEDULE[11],  # 11
@@ -274,12 +274,12 @@ class UrlPaths:
         "actual_info",  # 0
         "https://race.netkeiba.com/race/shutuba.html",  # 1
         TOP_URL[2] + "actual_info/",  # 2
-        "temp_actual_info.csv",  # 3
+        "temp_actual_info_table.csv",  # 3
         TOP_URL[4] + "actual_info/",  # 4
-        "actual_info.csv",  # 5
+        "actual_info_table.csv",  # 5
         10,  # 6
-        TOP_URL[4] + "scheduled_race/",  # 7
-        "scheduled_race.pkl",  # 8
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8
         "",  # 9
         False,  # 10
         SCHEDULE[11],  # 11

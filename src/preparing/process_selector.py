@@ -74,14 +74,14 @@ def select_process(alias):
         data_request.scrape_scheduled_race_html()
 
     elif alias == "tentative_info":
-        data_request = TableCreator()
+        data_request = KaisaiDateLoader()
         data_request.set_args(alias)
-        data_request.create_table_for_predict()
+        data_request.scrape_latest_info()
 
     elif alias == "actual_info":
-        data_request = TableCreator()
+        data_request = KaisaiDateLoader()
         data_request.set_args(alias)
-        data_request.create_table_for_predict()
+        data_request.scrape_latest_info()
 
     else:
         pass
@@ -103,7 +103,7 @@ def select_process(alias):
 # race_info_table = select_process(alias="race_info_table")
 # race_return_table = select_process(alias="race_return_table")
 # schedule = select_process(alias="schedule")
-scheduled_horse = select_process(alias="schedule")
+# scheduled_horse = select_process(alias="schedule")
 # scheduled_race = select_process(alias="scheduled_race_html")
-# tentative_info = select_process(alias="tentative_info")
+tentative_info = select_process(alias="tentative_info")
 # actual_info = select_process(alias="actual_info")

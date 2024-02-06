@@ -446,16 +446,17 @@ class KaisaiDateLoader(DataLoader):
                 for item in span_list.text.split("\n"):
                     if ":" in item:
                         race_time_list.append(item.split(" ")[0])
+
                 tentative_list = [
-                    f"{race_time},{race_id}\\n" for race_time, race_id in zip(race_time_list, race_id_list)
+                    (kaisai_date_str, race_time, race_id) for race_time, race_id in zip(race_time_list, race_id_list)
                 ]
-                tentative_store.append(tentative_list)
+                tentative_store.extend(tentative_list)
                 self.obtained_last_key = kaisai_date
 
             except Exception as e:
                 print(f"Error at {kaisai_date}: {e}")
-
-        self.target_data = sorted(tentative_store, key=lambda x: x[0])
+        tentative_store = sorted(tentative_store, key=lambda x: (x[0], x[1]))
+        self.target_data = [f"{race_time},{race_id}" for kaisai_date_str, race_time, race_id in tentative_store]
         self.obtained_last_key = kaisai_date
         self.save_temp_file("scheduled_race")
         # ループの外でドライバーをクローズ
@@ -493,8 +494,6 @@ class KaisaiDateLoader(DataLoader):
                 print("Error at {}: {}".format(race_id, e))
         self.copy_files()
 
-    # 不要かも
-
     ############################################################################################################
     def scrape_latest_info(self):
         """
@@ -507,15 +506,21 @@ class KaisaiDateLoader(DataLoader):
         time_race_id_list = self.load_file_pkl()
         # 時刻とレースidの組みあわせからレースidだけを抽出
         race_id_list = [element.split(",")[1] for element in time_race_id_list]
-        driver = prepare_chrome_driver()
         # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
-        driver.implicitly_wait(10)
+
+        date = self.from_date
 
         df = pd.DataFrame()
         for race_id in tqdm(race_id_list):
+            # print("race_id_list", race_id_list)
+            driver = prepare_chrome_driver()
+            driver.implicitly_wait(10)
+
+            # print("race_id", race_id)
             try:
                 query = "?race_id=" + race_id
                 url = self.from_location + query
+                # print("url", url)
                 driver.get(url)
 
                 # メインのテーブルの取得
@@ -553,6 +558,7 @@ class KaisaiDateLoader(DataLoader):
                 # レース情報の取得
                 texts = driver.find_element(By.CLASS_NAME, "RaceList_Item02").text
                 texts = re.findall(r"\w+", texts)
+                print("texts", texts)
                 # 障害レースフラグを初期化
                 hurdle_race_flg = False
                 for text in texts:
@@ -607,15 +613,18 @@ class KaisaiDateLoader(DataLoader):
                     df["race_class"] = [Master.RACE_CLASS_LIST[9]] * len(df)
 
                 df["date"] = [date] * len(df)
+                print("df", df)
+                # 取消された出走馬を削除
+                df = df[df[Cols.WEIGHT_AND_DIFF] != "--"]
+                self.target_data = df
+                self.save_temp_file("tentative_info")
+                self.obtained_last_key = race_id
+
             except Exception as e:
                 print(e)
-            finally:
-                driver.close()
-                driver.quit()
 
-        # 取消された出走馬を削除
-        df = df[df[Cols.WEIGHT_AND_DIFF] != "--"]
-        df.to_pickle(file_path)
+        driver.close()
+        driver.quit()
 
     # この関数はまだ（不要かも）
     def scrape_scheduled_horse(self):
