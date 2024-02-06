@@ -14,7 +14,10 @@ class UrlPaths:
     # 6 スクレイピング時のバッチサイズ
     # 7 外部キーを保有するローカルファイルへのパス
     # 8 外部キーを保有するローカルファイル名称
-    # 9 skip処理するかどうかのフラグ(デフォルトはFalse)
+    # 9 Target_data用に準備した（が、使っていない）
+    # 10 skip処理するかどうかのフラグ(デフォルトはFalse)
+    # 11 処理対象のデータ範囲の起点日付
+    # 12 処理対象のデータ範囲の終端日付
 
     TOP_URL: tuple = ("top_page", "https://race.netkeiba.com/top/", "./data/tmp/", None, "./data/html/", None)
     DB_DOMAIN: tuple = ("db_dmain", "https://db.netkeiba.com/", "./data/tmp/", None, "./data/html/", None)
@@ -32,6 +35,8 @@ class UrlPaths:
         "",  # 8
         "",  # 9
         False,  # 10
+        "2020-01-01",  # 11
+        "2021-01-01",  # 12
     )
 
     # レース一覧ページ Done
@@ -47,6 +52,8 @@ class UrlPaths:
         DB_DOMAIN[5],  # 8
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     # レースhtmlスクレイピング用binファイル管理 Done
@@ -62,6 +69,8 @@ class UrlPaths:
         "race_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     # レース結果の取得ページ Done
@@ -77,6 +86,8 @@ class UrlPaths:
         "*.bin",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
     # レース結果（詳細レース情報）の取得ページ Done
     RACE_INFO: tuple = (
@@ -91,6 +102,8 @@ class UrlPaths:
         "*.bin",  # 8 "race_info_table"においては、使わないこととする
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
     # レース結果（払い戻しテーブル）の取得ページ Done
     RETURN_INFO: tuple = (
@@ -105,6 +118,8 @@ class UrlPaths:
         "*.bin",  # 8 "race_info_table"においては、使わないこととする
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     # 馬一覧ページ Done
@@ -120,6 +135,8 @@ class UrlPaths:
         "race_id_list.pkl",
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     # 馬htmlスクレイピング用binファイル管理 Done
@@ -135,6 +152,8 @@ class UrlPaths:
         "horse_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     # 馬の過去成績テーブルが含まれるページ
@@ -150,6 +169,8 @@ class UrlPaths:
         "",  # 8
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
     # 血統テーブルが含まれるページ
     PED_HTML: tuple = (
@@ -164,6 +185,8 @@ class UrlPaths:
         "horse_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
     # 血統テーブルが含まれるページ
     PED_URL: tuple = (
@@ -178,6 +201,9 @@ class UrlPaths:
         "",  # 7
         "",  # 8
         "",  # 9
+        False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     HORSE_INFO: tuple = (
@@ -192,6 +218,8 @@ class UrlPaths:
         "",  # 8
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
     )
     # レース予定ページ
     SCHEDULE: tuple = (
@@ -206,38 +234,10 @@ class UrlPaths:
         "",  # 8
         "",  # 9
         False,  # 10
+        "2024-02-10",  # 11
+        "2024-02-11",  # 12
     )
-    # 予定されている出馬表ページ
-    TENTATIVE_INFO: tuple = (
-        "tentative_info",  # 0
-        "https://race.netkeiba.com/race/shutuba.html",  # 1
-        TOP_URL[2] + "tentative_info/",  # 2
-        "temp_tentative_info.csv",  # 3
-        TOP_URL[4] + "tentative_info/",  # 4
-        "tentative_info.csv",  # 5
-        10,  # 6
-        TOP_URL[4] + "schedule/",  # 7
-        "schedule.pkl",  # 8
-        "",  # 9
-        False,  # 10
-    )
-
-    # 当日の出馬表ページ
-    ACTUAL_info: tuple = (
-        "actual_info",  # 0
-        "https://race.netkeiba.com/race/shutuba.html",  # 1
-        TOP_URL[2] + "actual_info/",  # 2
-        "temp_actual_info.csv",  # 3
-        TOP_URL[4] + "actual_info/",  # 4
-        "actual_info.csv",  # 5
-        10,  # 6
-        TOP_URL[4] + "schedule/",  # 7
-        "schedule.pkl",  # 8
-        "",  # 9
-        False,  # 10
-    )
-
-    SCHEDULED_RACE: tuple = (
+    SCHEDULED_RACE_HTML: tuple = (
         "scheduled_race_html",  # 0
         "https://race.netkeiba.com/race/shutuba.html",  # 1
         DB_DOMAIN[2] + "scheduled_race/",  # 2
@@ -249,4 +249,39 @@ class UrlPaths:
         "schedule.pkl",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9
         False,  # 10
+        "",  # 11
+        "",  # 12
+    )
+    # 予定されている出馬表ページ
+    TENTATIVE_INFO: tuple = (
+        "tentative_info",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        TOP_URL[2] + "tentative_info/",  # 2
+        "temp_tentative_info.csv",  # 3
+        TOP_URL[4] + "tentative_info/",  # 4
+        "tentative_info.csv",  # 5
+        10,  # 6
+        TOP_URL[4] + "scheduled_race/",  # 7
+        "scheduled_race.pkl",  # 8
+        "",  # 9
+        False,  # 10
+        SCHEDULE[11],  # 11
+        SCHEDULE[12],  # 12
+    )
+
+    # 当日の出馬表ページ
+    ACTUAL_info: tuple = (
+        "actual_info",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        TOP_URL[2] + "actual_info/",  # 2
+        "temp_actual_info.csv",  # 3
+        TOP_URL[4] + "actual_info/",  # 4
+        "actual_info.csv",  # 5
+        10,  # 6
+        TOP_URL[4] + "scheduled_race/",  # 7
+        "scheduled_race.pkl",  # 8
+        "",  # 9
+        False,  # 10
+        SCHEDULE[11],  # 11
+        SCHEDULE[12],  # 12
     )

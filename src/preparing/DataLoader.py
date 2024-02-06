@@ -23,6 +23,8 @@ class DataLoader:
         obtained_last_key="",
         target_data=None,
         skip=False,
+        from_date="",
+        to_date="",
     ):
         self.alias = alias
         self.from_location = from_location
@@ -36,8 +38,11 @@ class DataLoader:
         target_data = []
         self.processing_id = processing_id
         self.obtained_last_key = obtained_last_key
+
         self.target_data = target_data
         self.skip = skip
+        self.from_date = from_date
+        self.to_date = to_date
 
     def set_args(self, alias):
         # クラスの属性を取得
@@ -69,6 +74,9 @@ class DataLoader:
             # 異常終了時に使うskip処理を実施させるためのキーとフラグ
             self.obtained_last_key = getattr(url_paths, attr)[9]
             self.skip = getattr(url_paths, attr)[10]  # デフォルトはFalse
+            # 処理対象データ範囲を指定する
+            self.from_date = getattr(url_paths, attr)[11]
+            self.to_date = getattr(url_paths, attr)[12]
 
         else:
             print("No such data")

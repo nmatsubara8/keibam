@@ -104,8 +104,6 @@ def select_process(alias):
 # race_return_table = select_process(alias="race_return_table")
 # schedule = select_process(alias="schedule")
 scheduled_horse = select_process(alias="schedule")
+# scheduled_race = select_process(alias="scheduled_race_html")
 # tentative_info = select_process(alias="tentative_info")
 # actual_info = select_process(alias="actual_info")
-
-
-# scheduled_race = select_process(alias="scheduled_race_html")

@@ -12,6 +12,8 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tqdm import tqdm
 
+from src.constants._master import Master
+from src.constants._results_cols import ResultsCols as Cols
 from src.preparing.DataLoader import DataLoader
 from src.preparing.prepare_chrome_driver import prepare_chrome_driver
 
@@ -49,10 +51,10 @@ class KaisaiDateLoader(DataLoader):
             obtained_last_key,
             target_data,
             skip,
+            from_date,
+            to_date,
         )
         self.target_data = []
-        self.from_date = from_date
-        self.to_date = to_date
 
     def scrape_kaisai_date(self):
         # skip対象ではないゴミファイルの掃除
@@ -412,140 +414,208 @@ class KaisaiDateLoader(DataLoader):
         if not self.skip:
             self.delete_files()
 
-        kaisai_date = 20240210
-        race_id_list = []
-        race_time_list = []
-        driver = prepare_chrome_driver()
+        date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="D")
         waiting_time = 10
-        # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
-        driver.implicitly_wait(waiting_time)
-        print("getting race_id_list")
+        # ループの外で一度だけドライバーを生成
+        driver = prepare_chrome_driver()
+        tentative_store = []
+        for kaisai_date in tqdm(date_range):
+            race_id_list = []
+            race_time_list = []
+            tentative_list = []
+            # ループごとに初期化
+            try:
+                kaisai_date_str = str(kaisai_date.strftime("%Y%m%d"))
+                # print("kaisai_date_str", kaisai_date_str)
+                query = ["kaisai_date=" + kaisai_date_str]
 
-        try:
-            query = ["kaisai_date=" + str(kaisai_date)]
-            url = self.from_location + "?" + "&".join(query)
-            print("scraping: {}".format(url))
-            driver.get(url)
+                url = self.from_location + "?" + "&".join(query)
+                print("scraping: {}".format(url))
+                driver.get(url)
+                driver.implicitly_wait(waiting_time)
 
-            a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
-            span_list = driver.find_element(By.CLASS_NAME, "RaceList_Box")
+                a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
+                span_list = driver.find_element(By.CLASS_NAME, "RaceList_Box")
+                for a in a_list:
+                    race_id = re.findall(
+                        r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
+                    )
+                    if len(race_id) > 0:
+                        race_id_list.append(race_id[0])
 
-            time.sleep(1)
+                for item in span_list.text.split("\n"):
+                    if ":" in item:
+                        race_time_list.append(item.split(" ")[0])
+                tentative_list = [
+                    f"{race_time},{race_id}\\n" for race_time, race_id in zip(race_time_list, race_id_list)
+                ]
+                tentative_store.append(tentative_list)
+                self.obtained_last_key = kaisai_date
 
-            for a in a_list:
-                race_id = re.findall(
-                    r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
-                )
-                if len(race_id) > 0:
-                    race_id_list.append(race_id[0].split(" "))
+            except Exception as e:
+                print(f"Error at {kaisai_date}: {e}")
 
-            for item in span_list.text.split("\n"):
-                if ":" in item:
-                    race_time_list.append(item.split(" ")[0])
+        self.target_data = sorted(tentative_store, key=lambda x: x[0])
+        self.obtained_last_key = kaisai_date
+        self.save_temp_file("scheduled_race")
+        # ループの外でドライバーをクローズ
+        driver.close()
+        driver.quit()
+        self.transfer_temp_file()
 
-        except Exception as e:
-            print("Error at {}: {}".format(kaisai_date, e))
-        finally:
-            driver.close()
-            driver.quit()
-            tentative_list = [f"{race_time} {race_id} " for race_time, race_id in zip(race_time_list, race_id_list)]
-            self.target_data = sorted(tentative_list, key=lambda x: datetime.strptime(x.split()[0], "%H:%M").time())
-            self.save_temp_file("scheduled_race")
-            self.obtained_last_key = kaisai_date
-            self.transfer_temp_file()
-
-    # 不要かも
-
-    ############################################################################################################
-    def scrape_scheduled_items(self):
+    def scrape_scheduled_race_html(self):
         """
-        race_htmlを受け取って、レース結果テーブルに変換する関数。
+        netkeiba.comのraceページのhtmlをスクレイピングしてscheduled_raceに保存する関数。
+
         """
         # skip対象ではないゴミファイルの掃除
         if not self.skip:
             self.delete_files()
 
-        race_html_list = self.get_file_list(self.from_local_location)
+        time_race_id_list = self.load_file_pkl()
+        # 時刻とレースidの組みあわせからレースidだけを抽出
+        race_id_list = [element.split(",")[1] for element in time_race_id_list]
+        driver = prepare_chrome_driver()
 
-        data_index = 1
+        for race_id in tqdm(race_id_list):
+            try:
+                self.processing_id = race_id
+                query = ["?race_id=" + str(race_id)]
+                url = self.from_location + query[0]
 
-        print("scraping scheduled items")
-        race_results = {}
-        for race_html in tqdm(race_html_list):
-            race_html_path = os.path.join(self.from_local_location, race_html)
-            with open(race_html_path, "rb") as f:
-                try:
-                    # 保存してあるbinファイルを読み込む
-                    html = f.read()
+                driver.get(url)
+                # スクレイピング実行
+                self.target_data = urlopen(url).read()
+                self.save_temp_file("scheduled_race_html")
+                self.obtained_last_key = race_id
 
-                    # メインとなるレース結果テーブルデータを取得
-                    df = pd.read_html(html)[0]
-
-                    # htmlをsoupオブジェクトに変換
-                    soup = BeautifulSoup(html, "lxml")
-                    # 馬IDをスクレイピング
-                    horse_id_list = []
-                    horse_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/horse")}
-                    )
-                    for a in horse_a_list:
-                        horse_id = re.findall(r"\d+", a["href"])
-                        horse_id_list.append(horse_id[0])
-                    df["horse_id"] = horse_id_list
-
-                    # 騎手IDをスクレイピング
-                    jockey_id_list = []
-                    jockey_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/jockey")}
-                    )
-                    for a in jockey_a_list:
-                        #'jockey/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-                        jockey_id = re.findall(r"jockey/result/recent/(\w*)", a["href"])
-                        jockey_id_list.append(jockey_id[0])
-                    df["jockey_id"] = jockey_id_list
-
-                    # 調教師IDをスクレイピング
-                    trainer_id_list = []
-                    trainer_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/trainer")}
-                    )
-                    for a in trainer_a_list:
-                        #'trainer/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-                        trainer_id = re.findall(r"trainer/result/recent/(\w*)", a["href"])
-                        trainer_id_list.append(trainer_id[0])
-                    df["trainer_id"] = trainer_id_list
-
-                    # 馬主IDをスクレイピング
-                    owner_id_list = []
-                    owner_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/owner")}
-                    )
-                    for a in owner_a_list:
-                        #'owner/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-                        owner_id = re.findall(r"owner/result/recent/(\w*)", a["href"])
-                        owner_id_list.append(owner_id[0])
-                    df["owner_id"] = owner_id_list
-
-                    # インデックスをrace_idにする
-                    race_id = re.findall(r"race\(\d+).bin", race_html_path)[0]
-                    df.index = [race_id] * len(df)
-                    if not df.empty:
-                        race_results[race_id] = df
-
-                    # for key in race_results:
-                    #    print("Columns for race_id {}: {}".format(key, race_results[key].columns))
-                    data_index += 1
-                    self.obtained_last_key = race_html
-                except Exception as e:
-                    print("Error at {}: {}".format(race_html_path, e))
-
-        # pd.DataFrame型にして一つのデータにまとめる
-        race_results_df = pd.concat([race_results[key] for key in race_results])
-
-        # 列名に半角スペースがあれば除去する
-        self.target_data = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
-        self.save_temp_file("race_results_table")
+            except Exception as e:
+                print("Error at {}: {}".format(race_id, e))
         self.copy_files()
+
+    # 不要かも
+
+    ############################################################################################################
+    def scrape_latest_info(self):
+        """
+        当日の出馬表をスクレイピング。
+        dateはyyyy/mm/ddの形式。
+        """
+        if not self.skip:
+            self.delete_files()
+
+        time_race_id_list = self.load_file_pkl()
+        # 時刻とレースidの組みあわせからレースidだけを抽出
+        race_id_list = [element.split(",")[1] for element in time_race_id_list]
+        driver = prepare_chrome_driver()
+        # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+        driver.implicitly_wait(10)
+
+        df = pd.DataFrame()
+        for race_id in tqdm(race_id_list):
+            try:
+                query = "?race_id=" + race_id
+                url = self.from_location + query
+                driver.get(url)
+
+                # メインのテーブルの取得
+                for tr in driver.find_elements(By.CLASS_NAME, "HorseList"):
+                    row = []
+                    for td in tr.find_elements(By.TAG_NAME, "td"):
+                        if td.get_attribute("class") in ["HorseInfo"]:
+                            href = td.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            row.append(re.findall(r"horse/(\d*)", href)[0])
+                        elif td.get_attribute("class") in ["Jockey"]:
+                            href = td.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            row.append(re.findall(r"jockey/result/recent/(\w*)", href)[0])
+                        elif td.get_attribute("class") in ["Trainer"]:
+                            href = td.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            row.append(re.findall(r"trainer/result/recent/(\w*)", href)[0])
+                        row.append(td.text)
+                    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+
+                # レース結果テーブルと列を揃える
+                df = df[[0, 1, 5, 6, 12, 13, 11, 3, 7, 9]]
+                df.columns = [
+                    Cols.WAKUBAN,
+                    Cols.UMABAN,
+                    Cols.SEX_AGE,
+                    Cols.KINRYO,
+                    Cols.TANSHO_ODDS,
+                    Cols.POPULARITY,
+                    Cols.WEIGHT_AND_DIFF,
+                    "horse_id",
+                    "jockey_id",
+                    "trainer_id",
+                ]
+                df.index = [race_id] * len(df)
+
+                # レース情報の取得
+                texts = driver.find_element(By.CLASS_NAME, "RaceList_Item02").text
+                texts = re.findall(r"\w+", texts)
+                # 障害レースフラグを初期化
+                hurdle_race_flg = False
+                for text in texts:
+                    if "m" in text:
+                        # 20211212：[0]→[-1]に修正
+                        df["course_len"] = [int(re.findall(r"\d+", text)[-1])] * len(df)
+                    if text in Master.WEATHER_LIST:
+                        df["weather"] = [text] * len(df)
+                    if text in Master.GROUND_STATE_LIST:
+                        df["ground_state"] = [text] * len(df)
+                    if "稍" in text:
+                        df["ground_state"] = [Master.GROUND_STATE_LIST[1]] * len(df)
+                    if "不" in text:
+                        df["ground_state"] = [Master.GROUND_STATE_LIST[3]] * len(df)
+                    if "芝" in text:
+                        df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[0]] * len(df)
+                    if "ダ" in text:
+                        df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[1]] * len(df)
+                    if "障" in text:
+                        df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[2]] * len(df)
+                        hurdle_race_flg = True
+                    if "右" in text:
+                        df["around"] = [Master.AROUND_LIST[0]] * len(df)
+                    if "左" in text:
+                        df["around"] = [Master.AROUND_LIST[1]] * len(df)
+                    if "直線" in text:
+                        df["around"] = [Master.AROUND_LIST[2]] * len(df)
+                    if "新馬" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[0]] * len(df)
+                    if "未勝利" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[1]] * len(df)
+                    if "１勝クラス" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[2]] * len(df)
+                    if "２勝クラス" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[3]] * len(df)
+                    if "３勝クラス" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[4]] * len(df)
+                    if "オープン" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[5]] * len(df)
+
+                # グレードレース情報の取得
+                if len(driver.find_elements(By.CLASS_NAME, "Icon_GradeType3")) > 0:
+                    df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+                elif len(driver.find_elements(By.CLASS_NAME, "Icon_GradeType2")) > 0:
+                    df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+                elif len(driver.find_elements(By.CLASS_NAME, "Icon_GradeType1")) > 0:
+                    df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+
+                # 障害レースの場合
+                if hurdle_race_flg:
+                    df["around"] = [Master.AROUND_LIST[3]] * len(df)
+                    df["race_class"] = [Master.RACE_CLASS_LIST[9]] * len(df)
+
+                df["date"] = [date] * len(df)
+            except Exception as e:
+                print(e)
+            finally:
+                driver.close()
+                driver.quit()
+
+        # 取消された出走馬を削除
+        df = df[df[Cols.WEIGHT_AND_DIFF] != "--"]
+        df.to_pickle(file_path)
 
     # この関数はまだ（不要かも）
     def scrape_scheduled_horse(self):
@@ -636,39 +706,3 @@ class KaisaiDateLoader(DataLoader):
             from_time = race_time
 
         return target_race_id_list, target_race_time_list
-
-    def scrape_scheduled_race_html(self):
-        """
-        netkeiba.comのraceページのhtmlをスクレイピングしてdata/html/raceに保存する関数。
-        skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
-        返り値：新しくスクレイピングしたhtmlのファイルパス
-        """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
-
-        race_id_list = self.load_file_pkl()
-        driver = prepare_chrome_driver()
-
-        for race_id_time in tqdm(race_id_list):
-            try:
-                race_id = race_id_time[:12]
-                self.processing_id = race_id
-
-                query = ["?race_id=" + str(race_id)]
-
-                url = self.from_location + query[0]
-                # print("url", url)
-                # print("scraping: {}".format(url))
-                driver.get(url)
-                # スクレイピング実行
-                self.target_data = urlopen(url).read()
-                # 保存するファイルパスを指定
-                # print("self.target_data", self.target_data)
-
-                self.save_temp_file("scheduled_items")
-                self.obtained_last_key = race_id
-
-            except Exception as e:
-                print("Error at {}: {}".format(race_id, e))
-        self.copy_files()
