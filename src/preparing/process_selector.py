@@ -63,18 +63,26 @@ def select_process(alias):
         data_request.set_args(alias)
         data_request.scrape_peds_list()
 
-    elif alias == "scheduled_race":  #
+    elif alias == "schedule":  #
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
-        data_request.scrape_scheduled_race()
+        data_request.scrape_schedule()
 
-    elif alias == "scheduled_horse":  #
+    elif alias == "scheduled_race_html":
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
-        data_request.scrape_scheduled_horse()
+        data_request.scrape_scheduled_race_html()
 
-    elif alias == "shutuba_table":
-        pass
+    elif alias == "tentative_info":
+        data_request = TableCreator()
+        data_request.set_args(alias)
+        data_request.create_table_for_predict()
+
+    elif alias == "actual_info":
+        data_request = TableCreator()
+        data_request.set_args(alias)
+        data_request.create_table_for_predict()
+
     else:
         pass
 
@@ -94,5 +102,10 @@ def select_process(alias):
 # peds_list = select_process(alias="peds_list")
 # race_info_table = select_process(alias="race_info_table")
 # race_return_table = select_process(alias="race_return_table")
-# scheduled_race = select_process(alias="scheduled_race")
-scheduled_horse = select_process(alias="scheduled_horse")
+# schedule = select_process(alias="schedule")
+scheduled_horse = select_process(alias="schedule")
+# tentative_info = select_process(alias="tentative_info")
+# actual_info = select_process(alias="actual_info")
+
+
+# scheduled_race = select_process(alias="scheduled_race_html")

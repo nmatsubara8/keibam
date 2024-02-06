@@ -356,64 +356,17 @@ class TableCreator(DataLoader):
         self.obtained_last_key = horse_html
         self.copy_files()
 
-    ################################################################################################################
     # この関数はまだ
-    def update_horse_table(self):
+    def create_table_for_predict(self):
         """
-        horse_htmlを受け取って、結果テーブルに変換する関数。data/html/horse_resultsに保存する
-
-        """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
-
-        horse_html_list = self.get_file_list(self.from_local_location)
-
-        data_index = 1
-        print("creating horse_results_table")
-        horse_results = {}
-        for horse_html in tqdm(horse_html_list):
-            horse_html_path = os.path.join(self.from_local_location, horse_html)
-            with open(horse_html_path, "rb") as f:
-                try:
-                    # 保存してあるbinファイルを読み込む
-                    html = f.read()
-                    # パスから正規表現でhorse_id_listを取得
-                    # horse_id_list = [re.findall(r"horse\(\d+).bin", horse_html)[0] for horse_html in horse_html_path]
-                    # DataFrameにしておく
-                    horse_id_df = pd.DataFrame({"horse_id": horse_html_list})
-
-                    ### 取得日マスタの更新 ###
-                    print("updating master")
-                    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 現在日時を取得
-
-                    pd.DataFrame(columns=["horse_id", "updated_at"])
-                    # マスタを読み込み
-                    master = pd.read_csv("horse_results.pickle", dtype=object)
-                    # horse_id列に新しい馬を追加
-                    new_master = master.merge(horse_id_df, on="horse_id", how="outer")
-                    # マスタ更新
-                    new_master.loc[new_master["horse_id"].isin(horse_id_list), "updated_at"] = now
-                    # 列が入れ替わってしまう場合があるので、修正しつつ保存
-                    self.target_data = new_master[["horse_id", "updated_at"]]
-                    self.obtained_last_key = horse_html
-                except Exception as e:
-                    print("Error at {}: {}".format(horse_html_path, e))
-
-            data_index += 1
-        self.save_temp_file("horse_results_table")
-        self.copy_files()
-
-    # この関数はまだ
-    def scrape_shutuba_table(self):
-        """
-        当日の出馬表をスクレイピング。
+        出馬表をスクレイピング。
         dateはyyyy/mm/ddの形式。
         """
         if not self.skip:
             self.delete_files()
 
-        race_html_list = self.get_file_list(self.from_local_location)
+        race_html_list = self.load_file_pkl()
+        print("race_html_list", race_html_list)
 
         data_index = 1
         race_return = {}
@@ -526,3 +479,52 @@ class TableCreator(DataLoader):
         # 取消された出走馬を削除
         df = df[df[Cols.WEIGHT_AND_DIFF] != "--"]
         df.to_pickle(file_path)
+
+    ################################################################################################################
+    # この関数はまだ
+
+    def update_horse_table(self):
+        """
+        horse_htmlを受け取って、結果テーブルに変換する関数。data/html/horse_resultsに保存する
+
+        """
+        # skip対象ではないゴミファイルの掃除
+        if not self.skip:
+            self.delete_files()
+
+        horse_html_list = self.get_file_list(self.from_local_location)
+
+        data_index = 1
+        print("creating horse_results_table")
+        horse_results = {}
+        for horse_html in tqdm(horse_html_list):
+            horse_html_path = os.path.join(self.from_local_location, horse_html)
+            with open(horse_html_path, "rb") as f:
+                try:
+                    # 保存してあるbinファイルを読み込む
+                    html = f.read()
+                    # パスから正規表現でhorse_id_listを取得
+                    # horse_id_list = [re.findall(r"horse\(\d+).bin", horse_html)[0] for horse_html in horse_html_path]
+                    # DataFrameにしておく
+                    horse_id_df = pd.DataFrame({"horse_id": horse_html_list})
+
+                    ### 取得日マスタの更新 ###
+                    print("updating master")
+                    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 現在日時を取得
+
+                    pd.DataFrame(columns=["horse_id", "updated_at"])
+                    # マスタを読み込み
+                    master = pd.read_csv("horse_results.pickle", dtype=object)
+                    # horse_id列に新しい馬を追加
+                    new_master = master.merge(horse_id_df, on="horse_id", how="outer")
+                    # マスタ更新
+                    new_master.loc[new_master["horse_id"].isin(horse_id_list), "updated_at"] = now
+                    # 列が入れ替わってしまう場合があるので、修正しつつ保存
+                    self.target_data = new_master[["horse_id", "updated_at"]]
+                    self.obtained_last_key = horse_html
+                except Exception as e:
+                    print("Error at {}: {}".format(horse_html_path, e))
+
+            data_index += 1
+        self.save_temp_file("horse_results_table")
+        self.copy_files()

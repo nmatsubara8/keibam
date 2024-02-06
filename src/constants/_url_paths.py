@@ -194,45 +194,59 @@ class UrlPaths:
         False,  # 10
     )
     # レース予定ページ
-    RACE_SCHEDULE: tuple = (
-        "scheduled_race",  # 0
+    SCHEDULE: tuple = (
+        "schedule",  # 0
         TOP_URL[1] + "race_list.html",  # 1
-        TOP_URL[2] + "scheduled_race/",  # 2
-        "temp_schedule_race.txt",  # 3
-        TOP_URL[4] + "scheduled_race/",  # 4
-        "scheduled_race.pkl",  # 5
+        TOP_URL[2] + "schedule/",  # 2
+        "temp_schedule.txt",  # 3
+        TOP_URL[4] + "schedule/",  # 4
+        "schedule.pkl",  # 5
         10,  # 6
         "",  # 7
         "",  # 8
         "",  # 9
         False,  # 10
     )
-
-    HORSE_SCHEDULE: tuple = (
-        "scheduled_horse",  # 0
+    # 予定されている出馬表ページ
+    TENTATIVE_INFO: tuple = (
+        "tentative_info",  # 0
         "https://race.netkeiba.com/race/shutuba.html",  # 1
-        TOP_URL[2] + "scheduled_horse/",  # 2
-        "temp_scheduled_horse.txt",  # 3
-        TOP_URL[4] + "scheduled_horse/",  # 4
-        "scheduled_horse.csv",  # 5
+        TOP_URL[2] + "tentative_info/",  # 2
+        "temp_tentative_info.csv",  # 3
+        TOP_URL[4] + "tentative_info/",  # 4
+        "tentative_info.csv",  # 5
         10,  # 6
-        TOP_URL[4] + "scheduled_race/",  # 7
-        "scheduled_race.pkl",  # 8
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8
         "",  # 9
         False,  # 10
     )
 
-    # 出馬表ページ
-    SHUTUBA_TABLE: tuple = (
-        "shutuba_table",  # 0
-        RACE_URL[1] + "shutuba.html",  # 1
-        TOP_URL[2] + "shutuba_table/",  # 2
-        "temp_shutuba_table.csv",  # 3
-        TOP_URL[4] + "shutuba_table/",  # 4
-        "shutuba_table",  # 5
+    # 当日の出馬表ページ
+    ACTUAL_info: tuple = (
+        "actual_info",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        TOP_URL[2] + "actual_info/",  # 2
+        "temp_actual_info.csv",  # 3
+        TOP_URL[4] + "actual_info/",  # 4
+        "actual_info.csv",  # 5
+        10,  # 6
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8
+        "",  # 9
+        False,  # 10
+    )
+
+    SCHEDULED_RACE: tuple = (
+        "scheduled_race_html",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        DB_DOMAIN[2] + "scheduled_race/",  # 2
+        "temp_scheduled_race.html",  # 3
+        DB_DOMAIN[4] + "scheduled_race/",  # 4
+        "scheduled_race.html",  # 5
         100,  # 6
-        "",  # 7
-        "",  # 8
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9
         False,  # 10
     )
