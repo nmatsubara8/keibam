@@ -3,22 +3,32 @@ import re
 
 import pandas as pd
 from bs4 import BeautifulSoup
+from numpy import NaN
 from tqdm import tqdm
 
+from src.constants._master import Master
 
-def bin_file_proccesing_common_setting(self, callback):
+
+def process_bin_file(self, process_function):
+    """
+    binファイルを受け取って、テーブルに変換する関数。
+    process_functionを入れ替えながら汎用的に使う共通モジュール
+    対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
+    """
+
     target_bin_files = sorted(self.get_file_list(self.from_local_location))
     total_batches = (len(target_bin_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_bin_files)  # 処理対象の全データ数
+    print(f"# of input files: {total_files}")
     processed_files = 0  # 処理済みのファイル数
+    # target_data_name = {}
     match = re.search(r"([^/]+)/$", self.to_location)
     if match:
         target_data_name = match.group(1)
     print(f"creating {target_data_name} table")
-    target_data_name = {}
 
     # tqdmインスタンスの作成
-    pbar = tqdm(total=total_files, desc="Processing Batches", position=0, unit="%", unit_scale=True, leave=True)
+    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=True)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
@@ -28,10 +38,38 @@ def bin_file_proccesing_common_setting(self, callback):
         for target_bin_file in batch_target_bin_files:  # race_html binファイル
             target_bin_file_path = os.path.join(self.from_local_location, target_bin_file)
 
-            callback(target_bin_file_path)
+            try:
+                temp_df = process_function(target_bin_file_path, target_data_name)
+
+            except Exception as e:
+                print("Error at {}: {}".format(target_bin_file_path, e))
+                break
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
+            temp_df = pd.concat([temp_df[key] for key in temp_df])
+
+            # if self.alias == "race_results_table":
+            #    self.target_data = trim_function(temp_df)
+            self.target_data = temp_df
+
+            self.save_temp_file("race_results_table")
+            target_data_name = {}  # バッチ処理が完了したので辞書をクリア
+            temp_df = []
+        self.obtained_last_key = target_bin_files[-1]
+        self.transfer_temp_file()
+    print(f"# of processed files: {processed_files}")
+
+
+def trim_function(temp_df):
+    """
+    process_bin_file()のヘルパー関数
+
+    process_functionとして呼び出したエイリアスによって異なる後処理を定義している
+    """
+    # 列名に半角スペースがあれば除去する
+    results_df = temp_df.str.replace(" ", "")
+    return results_df
 
 
 def create_raw_horse_results(target_bin_file_path, target_data_name):
@@ -88,6 +126,85 @@ def create_raw_horse_results(target_bin_file_path, target_data_name):
         df["owner_id"] = owner_id_list
 
         # インデックスをrace_idにする
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        # print(f"race_id:{race_id}")
+        df.index = [race_id] * len(df)
+        # print(f"df.index:{df.index}")
+        df[race_id] = df.index
+        # print(f"df:{df}")
+        # print("type df:", type(df))
+    return df
+
+
+def create_raw_race_info(target_bin_file_path, target_data_name):
+    target_data_name = {}
+    # print(f"target_bin_file_path:{target_bin_file_path}")
+    with open(target_bin_file_path, "rb") as f:
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
+
+        # htmlをsoupオブジェクトに変換
+        soup = BeautifulSoup(html, "lxml")
+
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        texts = (
+            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        )
+        info = re.findall(r"\w+", texts)
+        df = pd.DataFrame()
+        # 障害レースフラグを初期化
+        hurdle_race_flg = False
+        for text in info:
+            if text in ["芝", "ダート"]:
+                df["race_type"] = [text]
+            if "障" in text:
+                df["race_type"] = ["障害"]
+                hurdle_race_flg = True
+            if "m" in text:
+                # 20211212：[0]→[-1]に修正
+                df["course_len"] = [int(re.findall(r"\d+", text)[-1])]
+            if text in Master.GROUND_STATE_LIST:
+                df["ground_state"] = [text]
+            if text in Master.WEATHER_LIST:
+                df["weather"] = [text]
+            if "年" in text:
+                df["date"] = [text]
+            if "右" in text:
+                df["around"] = [Master.AROUND_LIST[0]]
+            if "左" in text:
+                df["around"] = [Master.AROUND_LIST[1]]
+            if "直線" in text:
+                df["around"] = [Master.AROUND_LIST[2]]
+            if "新馬" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
+            if "未勝利" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
+            if ("1勝クラス" in text) or ("500万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
+            if ("2勝クラス" in text) or ("1000万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
+            if ("3勝クラス" in text) or ("1600万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
+            if "オープン" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
+
+        # グレードレース情報の取得
+        grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
+        if "G3" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+        elif "G2" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+        elif "G1" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+
+        # 障害レースの場合
+        if hurdle_race_flg:
+            df["around"] = [Master.AROUND_LIST[3]]
+            df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+
+        # インデックスをrace_idにする
+
         race_id = re.findall(r"race\W(\d+).bin", target_bin_file_path)[0]
         df.index = [race_id] * len(df)
         target_data_name[race_id] = df
@@ -95,53 +212,76 @@ def create_raw_horse_results(target_bin_file_path, target_data_name):
     return target_data_name
 
 
-def process_bin_file(self, process_function):
-    """
-    race_html binファイルを受け取って、レース結果テーブルに変換する関数。
-    """
+def create_raw_horse_info(target_bin_file_path, target_data_name):
+    with open(target_bin_file_path, "rb") as f:
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
 
-    target_bin_files = sorted(self.get_file_list(self.from_local_location))
-    total_batches = (len(target_bin_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
-    total_files = len(target_bin_files)  # 処理対象の全データ数
-    processed_files = 0  # 処理済みのファイル数
-    match = re.search(r"([^/]+)/$", self.to_location)
-    if match:
-        target_data_name = match.group(1)
-    print(f"creating {target_data_name} table")
-    target_data_name = {}
+        # 馬の基本情報を取得
+        df = pd.read_html(html)[1].set_index(0).T
 
-    # tqdmインスタンスの作成
-    pbar = tqdm(total=total_files, desc="Processing Batches", position=0, unit="%", unit_scale=True, leave=True)
+        # htmlをsoupオブジェクトに変換
+        soup = BeautifulSoup(html, "lxml")
 
-    for batch_index in range(total_batches):
-        start_index = batch_index * self.batch_size
-        end_index = min((batch_index + 1) * self.batch_size, len(target_bin_files))
-        batch_target_bin_files = target_bin_files[start_index:end_index]
+        # 調教師IDをスクレイピング
+        try:
+            trainer_a_list = soup.find("table", attrs={"summary": "のプロフィール"}).find_all(
+                "a", attrs={"href": re.compile("^/trainer")}
+            )
+            trainer_id = re.findall(r"trainer/(\w*)", trainer_a_list[0]["href"])[0]
+        except IndexError:
+            # 調教師IDを取得できない場合
+            # print('trainer_id empty {}'.format(race_html))
+            trainer_id = NaN
+        df["trainer_id"] = trainer_id
 
-        for target_bin_file in batch_target_bin_files:  # race_html binファイル
-            target_bin_file_path = os.path.join(self.from_local_location, target_bin_file)
+        # 馬主IDをスクレイピング
+        try:
+            owner_a_list = soup.find("table", attrs={"summary": "のプロフィール"}).find_all(
+                "a", attrs={"href": re.compile("^/owner")}
+            )
+            owner_id = re.findall(r"owner/(\w*)", owner_a_list[0]["href"])[0]
+        except IndexError:
+            # 馬主IDを取得できない場合
+            # print('owner_id empty {}'.format(race_html))
+            owner_id = NaN
+        df["owner_id"] = owner_id
 
-            try:
-                temp_df = process_function(target_bin_file_path, target_data_name)
+        # 生産者IDをスクレイピング
+        try:
+            breeder_a_list = soup.find("table", attrs={"summary": "のプロフィール"}).find_all(
+                "a", attrs={"href": re.compile("^/breeder")}
+            )
+            breeder_id = re.findall(r"breeder/(\w*)", breeder_a_list[0]["href"])[0]
+        except IndexError:
+            # 生産者IDを取得できない場合
+            # print('breeder_id empty {}'.format(race_html))
+            breeder_id = NaN
+        df["breeder_id"] = breeder_id
 
-            except Exception as e:
-                print("Error at {}: {}".format(target_bin_file_path, e))
-                break
-
-            processed_files += 1
-            pbar.update(1)  # 処理済みのファイル数を1増やす
-
-            self.target_data = trim_function(temp_df)
-            self.save_temp_file("race_results_table")
-            target_data_name.clear()  # バッチ処理が完了したので辞書をクリア
-            temp_df = []
-        self.obtained_last_key = target_bin_files[-1]
-        self.transfer_temp_file()
+        # インデックスをrace_idにする
+        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
+        df.index = [horse_id] * len(df)
+        df[horse_id] = df.index
+    return df
 
 
-def trim_function(target_data_name):
-    # バッチごとに途中経過を保存
-    race_results_df = pd.concat([target_data_name[key] for key in target_data_name])
-    # 列名に半角スペースがあれば除去する
-    race_results_df = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
-    return race_results_df
+def create_raw_race_return(target_bin_file_path, target_data_name):
+    with open(target_bin_file_path, "rb") as f:
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
+        html = html.replace(b"<br />", b"br")
+        dfs = pd.read_html(html)
+
+        # dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
+        df = pd.concat([dfs[1], dfs[2]])
+
+        # インデックスをrace_idにする
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        # print(f"race_id:{race_id}")
+        df.index = [race_id] * len(df)
+        # print(f"df.index:{df.index}")
+        df[race_id] = df.index
+        # print(f"df:{df}")
+        # print("type df:", type(df))
+    return df

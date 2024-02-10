@@ -96,8 +96,8 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_info/",  # 2
         "temp_race_info_table.csv",  # 3
         DB_DOMAIN[4] + "race_info/",  # 4
-        "race_info_table.h5",  # 5
-        100,  # 6
+        "race_info_table.pkl",  # 5
+        1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_info_table"においては、使わないこととする
         "",  # 9
@@ -112,8 +112,8 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_return/",  # 2
         "temp_race_return_table.csv",  # 3
         DB_DOMAIN[4] + "race_return/",  # 4
-        "race_return_table.h5",  # 5
-        100,  # 6
+        "race_return_table.pkl",  # 5
+        1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_info_table"においては、使わないこととする
         "",  # 9
@@ -212,8 +212,8 @@ class UrlPaths:
         DB_DOMAIN[2] + "horse_info/",  # 2
         "temp_horse_info_table.csv",  # 3
         DB_DOMAIN[4] + "horse_info/",  # 4
-        "horse_info_table",  # 5
-        100,  # 6
+        "horse_info_table.pkl",  # 5
+        1000,  # 6
         DB_DOMAIN[4] + "horse/",  # 7
         "",  # 8
         "",  # 9

@@ -1,5 +1,4 @@
 import datetime
-import os
 import re
 import time
 from urllib.parse import urlencode
@@ -244,65 +243,6 @@ class KaisaiDateLoader(DataLoader):
                 break
         self.copy_files()
 
-    def create_horse_results_table(self):
-        #
-        # horseページのhtmlを受け取って、馬の過去成績のDataFrameに変換する関数。
-        #
-
-        data_index = 1
-        horse_id_file_list = self.get_file_list(self.from_local_location)
-
-        print("scraping horse_results_table")
-        horse_results = {}
-        for horse_html in tqdm(horse_id_file_list):
-            horse_html_path = os.path.join(self.from_local_location, horse_html)
-            with open(horse_html_path, "rb") as f:
-                try:
-                    # 保存してあるbinファイルを読み込む
-                    html = f.read()
-
-                    df = pd.read_html(html)[3]
-                    # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
-                    if df.columns[0] == "受賞歴":
-                        df = pd.read_html(html)[4]
-
-                    # 新馬の競走馬レビューが付いた場合、
-                    # 列名に0が付与されるため、次のhtmlへ飛ばす
-                    if df.columns[0] == 0:
-                        print("horse_results empty case1 {}".format(horse_html))
-                        continue
-
-                    horse_id = re.findall(r"(\d+).bin", horse_html)[0]
-
-                    df.index = [horse_id] * len(df)
-                    horse_results[horse_id] = df
-
-                # 競走データが無い場合（新馬）を飛ばす
-                except IndexError:
-                    print("horse_results empty case2 {}".format(horse_html))
-                    continue
-
-                except Exception as e:
-                    print("Error at {}: {}".format(horse_html, e))
-                    break
-
-            # pd.DataFrame型にして一つのデータにまとめる
-            horse_results_df = pd.concat([horse_results[key] for key in horse_results])
-            # 列名に半角スペースがあれば除去する
-
-            if data_index % self.batch_size == 0:
-                self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
-                self.save_temp_file("horse_results_table")
-                self.obtained_last_key = horse_id
-                horse_results = {}
-                df = []
-            else:
-                data_index += 1
-        self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
-        self.save_temp_file("horse_results_table")
-        self.obtained_last_key = horse_id
-        self.transfer_temp_file()
-
     def scrape_html_ped(self):
         """
         netkeiba.comのhorse/pedページのhtmlをスクレイピングしてdata/html/pedに保存する関数。
@@ -333,56 +273,6 @@ class KaisaiDateLoader(DataLoader):
                 print("Error at {}: {}".format(horse_id, e))
                 break
         self.copy_files()
-
-    def scrape_peds_list(self):
-        """
-        horse/pedページのhtmlを受け取って、血統のDataFrameに変換する関数。
-        """
-
-        ped_html_list = self.get_file_list(self.from_local_location)
-
-        data_index = 1
-        peds = {}
-        print("preparing peds table")
-
-        for ped_html in tqdm(ped_html_list):
-            ped_html_path = os.path.join(self.from_local_location, ped_html)
-            # print("ped_html_path", ped_html_path)
-            try:
-                with open(ped_html_path, "rb") as f:
-                    # 保存してあるbinファイルを読み込む
-                    html = f.read()
-                    # horse_idを取得
-                    horse_id = re.findall(r"(\d+).bin", ped_html)[0]
-                    # htmlをsoupオブジェクトに変換
-                    soup = BeautifulSoup(html, "lxml")
-                    peds_id_list = []
-                    # 血統データからhorse_idを取得する
-                    horse_a_list = soup.find("table", attrs={"summary": "5代血統表"}).find_all(
-                        "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
-                    )
-                    for a in horse_a_list:
-                        # 血統データのhorse_idを抜き出す
-                        work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
-                        peds_id_list.append(work_peds_id)
-                    peds[horse_id] = peds_id_list
-
-                    # pd.DataFrame型にして一つのデータにまとめて、列と行の入れ替えして、列名をpeds_0, ..., peds_61にする
-                    peds_df = pd.DataFrame.from_dict(peds, orient="index").add_prefix("peds_")
-
-            except Exception as e:
-                print("Error at {}: {}".format(ped_html, e))
-                break
-            if data_index % self.batch_size == 0:
-                self.target_data = peds_df
-                self.save_temp_file("peds_list")
-                peds = {}
-                self.obtained_last_key = ped_html
-            data_index += 1
-        self.target_data = peds_df
-        self.save_temp_file("peds_list")
-        self.obtained_last_key = ped_html
-        self.transfer_temp_file()
 
     def scrape_schedule(self):
         """

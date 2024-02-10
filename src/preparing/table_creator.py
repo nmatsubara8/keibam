@@ -4,14 +4,16 @@ import re
 
 import pandas as pd
 from bs4 import BeautifulSoup
-from numpy import NaN
 from selenium.webdriver.common.by import By
 from tqdm import tqdm
 
 from src.constants._master import Master
 from src.constants._results_cols import ResultsCols as Cols
 from src.preparing.DataLoader import DataLoader
+from src.preparing.modules import create_raw_horse_info
 from src.preparing.modules import create_raw_horse_results
+from src.preparing.modules import create_raw_race_info
+from src.preparing.modules import create_raw_race_return
 from src.preparing.modules import process_bin_file
 
 
@@ -51,139 +53,81 @@ class TableCreator(DataLoader):
         )
         self.target_data = []
 
-
-def create_race_results_table(self, process_function):
-    """
-    race_html binファイルを受け取って、レース結果テーブルに変換する関数。
-    """
-    process_bin_file(create_raw_horse_results)
+    def create_race_results_table(self):
+        """
+        race_html binファイルを受け取って、レース結果テーブルに変換する関数。
+        """
+        process_bin_file(self, create_raw_horse_results)
 
     def create_race_info_table(self):
         """
         raceページのhtmlを受け取って、レース情報テーブルに変換する関数。
         """
-
-        race_html_list = self.get_file_list(self.from_local_location)
-
-        print("preparing raw race_info table")
-        race_infos = {}
-        for race_html in tqdm(race_html_list):
-            race_html_path = os.path.join(self.from_local_location, race_html)
-            with open(race_html_path, "rb") as f:
-                try:
-                    # 保存してあるbinファイルを読み込む
-                    html = f.read()
-
-                    # htmlをsoupオブジェクトに変換
-                    soup = BeautifulSoup(html, "lxml")
-
-                    # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-                    texts = (
-                        soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-                        + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-                    )
-                    info = re.findall(r"\w+", texts)
-                    df = pd.DataFrame()
-                    # 障害レースフラグを初期化
-                    hurdle_race_flg = False
-                    for text in info:
-                        if text in ["芝", "ダート"]:
-                            df["race_type"] = [text]
-                        if "障" in text:
-                            df["race_type"] = ["障害"]
-                            hurdle_race_flg = True
-                        if "m" in text:
-                            # 20211212：[0]→[-1]に修正
-                            df["course_len"] = [int(re.findall(r"\d+", text)[-1])]
-                        if text in Master.GROUND_STATE_LIST:
-                            df["ground_state"] = [text]
-                        if text in Master.WEATHER_LIST:
-                            df["weather"] = [text]
-                        if "年" in text:
-                            df["date"] = [text]
-                        if "右" in text:
-                            df["around"] = [Master.AROUND_LIST[0]]
-                        if "左" in text:
-                            df["around"] = [Master.AROUND_LIST[1]]
-                        if "直線" in text:
-                            df["around"] = [Master.AROUND_LIST[2]]
-                        if "新馬" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[0]]
-                        if "未勝利" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[1]]
-                        if ("1勝クラス" in text) or ("500万下" in text):
-                            df["race_class"] = [Master.RACE_CLASS_LIST[2]]
-                        if ("2勝クラス" in text) or ("1000万下" in text):
-                            df["race_class"] = [Master.RACE_CLASS_LIST[3]]
-                        if ("3勝クラス" in text) or ("1600万下" in text):
-                            df["race_class"] = [Master.RACE_CLASS_LIST[4]]
-                        if "オープン" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[5]]
-
-                    # グレードレース情報の取得
-                    grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
-                    if "G3" in grade_text:
-                        df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
-                    elif "G2" in grade_text:
-                        df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
-                    elif "G1" in grade_text:
-                        df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
-
-                    # 障害レースの場合
-                    if hurdle_race_flg:
-                        df["around"] = [Master.AROUND_LIST[3]]
-                        df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-
-                    # インデックスをrace_idにする
-                    race_id = re.findall(r"(\d+).bin", race_html)[0]
-                    df.index = [race_id] * len(df)
-                    race_infos[race_id] = df
-                    self.obtained_last_key = race_html
-                except Exception as e:
-                    print("Error at {}: {}".format(race_html_path, e))
-                    break
-
-        # pd.DataFrame型にして一つのデータにまとめる
-        self.target_data = pd.concat([race_infos[key] for key in race_infos])
-
-        self.save_temp_file("race_info_table")
-        self.transfer_temp_file()
+        process_bin_file(self, create_raw_race_info)
 
     def create_race_return_table(self):
         """
         raceページのhtmlを受け取って、払い戻しテーブルに変換する関数。
         """
+        process_bin_file(self, create_raw_race_return)
 
-        race_html_list = self.get_file_list(self.from_local_location)
+    def create_horse_results_table(self):
+        #
+        # horseページのhtmlを受け取って、馬の過去成績のDataFrameに変換する関数。
+        #
 
-        race_return = {}
-        print("preparing raw return table")
-        race_return = {}
-        for race_html in tqdm(race_html_list):
-            race_html_path = os.path.join(self.from_local_location, race_html)
-            with open(race_html_path, "rb") as f:
+        data_index = 1
+        horse_id_file_list = self.get_file_list(self.from_local_location)
+
+        print("scraping horse_results_table")
+        horse_results = {}
+        for horse_html in tqdm(horse_id_file_list):
+            horse_html_path = os.path.join(self.from_local_location, horse_html)
+            with open(horse_html_path, "rb") as f:
                 try:
                     # 保存してあるbinファイルを読み込む
                     html = f.read()
 
-                    html = html.replace(b"<br />", b"br")
-                    dfs = pd.read_html(html)
+                    df = pd.read_html(html)[3]
+                    # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
+                    if df.columns[0] == "受賞歴":
+                        df = pd.read_html(html)[4]
 
-                    # dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
-                    df = pd.concat([dfs[1], dfs[2]])
+                    # 新馬の競走馬レビューが付いた場合、
+                    # 列名に0が付与されるため、次のhtmlへ飛ばす
+                    if df.columns[0] == 0:
+                        print("horse_results empty case1 {}".format(horse_html))
+                        continue
 
-                    race_id = re.findall(r"(\d+).bin", race_html)[0]
-                    df.index = [race_id] * len(df)
-                    race_return[race_id] = df
-                    self.obtained_last_key = race_html
+                    horse_id = re.findall(r"(\d+).bin", horse_html)[0]
+
+                    df.index = [horse_id] * len(df)
+                    horse_results[horse_id] = df
+
+                # 競走データが無い場合（新馬）を飛ばす
+                except IndexError:
+                    print("horse_results empty case2 {}".format(horse_html))
+                    continue
+
                 except Exception as e:
-                    print("error at {}".format(race_html))
-                    print(e)
+                    print("Error at {}: {}".format(horse_html, e))
                     break
 
-        # pd.DataFrame型にして一つのデータにまとめる
-        self.target_data = pd.concat([race_return[key] for key in race_return])
-        self.save_temp_file("race_info_table")
+            # pd.DataFrame型にして一つのデータにまとめる
+            horse_results_df = pd.concat([horse_results[key] for key in horse_results])
+            # 列名に半角スペースがあれば除去する
+
+            if data_index % self.batch_size == 0:
+                self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
+                self.save_temp_file("horse_results_table")
+                self.obtained_last_key = horse_id
+                horse_results = {}
+                df = []
+            else:
+                data_index += 1
+        self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
+        self.save_temp_file("horse_results_table")
+        self.obtained_last_key = horse_id
         self.transfer_temp_file()
 
     def create_horse_info_table(self):
@@ -191,84 +135,56 @@ def create_race_results_table(self, process_function):
         horseページのhtmlを受け取って、馬の基本情報のDataFrameに変換する関数。
         """
 
-        horse_html_list = self.get_file_list(self.from_local_location)
+        process_bin_file(self, create_raw_horse_info)
+
+    def scrape_peds_list(self):
+        """
+        horse/pedページのhtmlを受け取って、血統のDataFrameに変換する関数。
+        """
+
+        ped_html_list = self.get_file_list(self.from_local_location)
 
         data_index = 1
+        peds = {}
+        print("preparing peds table")
 
-        print("preparing horse_info table")
-        horse_info_df = pd.DataFrame()
-        horse_info = {}
-        for horse_html in tqdm(horse_html_list):
-            horse_html_path = os.path.join(self.from_local_location, horse_html)
+        for ped_html in tqdm(ped_html_list):
+            ped_html_path = os.path.join(self.from_local_location, ped_html)
+            # print("ped_html_path", ped_html_path)
             try:
-                with open(horse_html_path, "rb") as f:
+                with open(ped_html_path, "rb") as f:
                     # 保存してあるbinファイルを読み込む
                     html = f.read()
-
-                    # 馬の基本情報を取得
-                    df_info = pd.read_html(html)[1].set_index(0).T
-
+                    # horse_idを取得
+                    horse_id = re.findall(r"(\d+).bin", ped_html)[0]
                     # htmlをsoupオブジェクトに変換
                     soup = BeautifulSoup(html, "lxml")
+                    peds_id_list = []
+                    # 血統データからhorse_idを取得する
+                    horse_a_list = soup.find("table", attrs={"summary": "5代血統表"}).find_all(
+                        "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
+                    )
+                    for a in horse_a_list:
+                        # 血統データのhorse_idを抜き出す
+                        work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
+                        peds_id_list.append(work_peds_id)
+                    peds[horse_id] = peds_id_list
 
-                    # 調教師IDをスクレイピング
-                    try:
-                        trainer_a_list = soup.find("table", attrs={"summary": "のプロフィール"}).find_all(
-                            "a", attrs={"href": re.compile("^/trainer")}
-                        )
-                        trainer_id = re.findall(r"trainer/(\w*)", trainer_a_list[0]["href"])[0]
-                    except IndexError:
-                        # 調教師IDを取得できない場合
-                        # print('trainer_id empty {}'.format(race_html))
-                        trainer_id = NaN
-                    df_info["trainer_id"] = trainer_id
-
-                    # 馬主IDをスクレイピング
-                    try:
-                        owner_a_list = soup.find("table", attrs={"summary": "のプロフィール"}).find_all(
-                            "a", attrs={"href": re.compile("^/owner")}
-                        )
-                        owner_id = re.findall(r"owner/(\w*)", owner_a_list[0]["href"])[0]
-                    except IndexError:
-                        # 馬主IDを取得できない場合
-                        # print('owner_id empty {}'.format(race_html))
-                        owner_id = NaN
-                    df_info["owner_id"] = owner_id
-
-                    # 生産者IDをスクレイピング
-                    try:
-                        breeder_a_list = soup.find("table", attrs={"summary": "のプロフィール"}).find_all(
-                            "a", attrs={"href": re.compile("^/breeder")}
-                        )
-                        breeder_id = re.findall(r"breeder/(\w*)", breeder_a_list[0]["href"])[0]
-                    except IndexError:
-                        # 生産者IDを取得できない場合
-                        # print('breeder_id empty {}'.format(race_html))
-                        breeder_id = NaN
-                    df_info["breeder_id"] = breeder_id
-
-                    # インデックスをrace_idにする
-                    horse_id = re.findall(r"(\d+).bin", horse_html)[0]
-                    df_info.index = [horse_id] * len(df_info)
-                    horse_info[horse_id] = df_info
-                    self.obtained_last_key = horse_html
+                    # pd.DataFrame型にして一つのデータにまとめて、列と行の入れ替えして、列名をpeds_0, ..., peds_61にする
+                    peds_df = pd.DataFrame.from_dict(peds, orient="index").add_prefix("peds_")
 
             except Exception as e:
-                print("Error at {}: {}".format(horse_html, e))
+                print("Error at {}: {}".format(ped_html, e))
                 break
-
-            # pd.DataFrame型にして一つのデータにまとめる
-            horse_info_df = pd.concat([horse_info[key] for key in horse_info])
             if data_index % self.batch_size == 0:
-                self.target_data = horse_info_df
-                self.save_temp_file("horse_info_table")
-                horse_info_df = []
-                horse_info = {}
-                self.obtained_last_key = horse_html
+                self.target_data = peds_df
+                self.save_temp_file("peds_list")
+                peds = {}
+                self.obtained_last_key = ped_html
             data_index += 1
-        self.target_data = horse_info_df
-        self.save_temp_file("horse_info_table")
-        self.obtained_last_key = horse_html
+        self.target_data = peds_df
+        self.save_temp_file("peds_list")
+        self.obtained_last_key = ped_html
         self.transfer_temp_file()
 
     ################################################################################################################

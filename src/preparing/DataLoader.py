@@ -163,13 +163,14 @@ class DataLoader:
             # CSVファイルに保存
             if not os.listdir(self.to_temp_location):
                 header = True
+                mode = "w"
             else:
                 header = False
+                mode = "a"
 
             self.target_data.to_csv(
-                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode="a"
+                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode=mode
             )
-            # self.obtained_last_key = self.target_data.index[-1]
 
         elif filetype == "h5":
             # ファイルにデータを書き込む処理
@@ -328,7 +329,7 @@ class DataLoader:
                 print(f"Error deleting {file_path_to}: {e}")
 
     def pre_process_display(self):  # 処理開始時のメッセージ出力
-        print(f"{self.alias}")
+        print(f"処理対象:{self.alias}")
         print("self.from_location: ", self.from_location)
         print("to_temp_location: ", self.to_temp_location)
         print("to_location: ", self.to_location)
@@ -336,8 +337,6 @@ class DataLoader:
             print("self.from_local_location: ", self.from_local_location)
         if self.from_local_file_name != "":
             print("self.from_local_file_name: ", self.from_local_file_name)
-        if len(self.target_data) != 0:
-            print("len:", len(self.target_data))
         print("batch_size:", self.batch_size)
         if self.from_local_file_name != "":
             print(f"reloaded_{self.from_local_file_name} type: ", self.from_local_file_name)
@@ -345,7 +344,7 @@ class DataLoader:
     def post_process_display(self):  # 処理終了時のメッセージ出力
         print(f"{self.alias}[:5]:", self.target_data[-5:])
         print(f"{self.alias} type: ", type(self.target_data))
-        print("len:", len(self.target_data))
+        print("len:", len(os.path.join(self.to_location, self.save_file_name)))
         print("Done / obtained_last_key: ", self.obtained_last_key)
         print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name}")
 
