@@ -72,7 +72,7 @@ def trim_function(temp_df):
     return results_df
 
 
-def create_raw_horse_results(target_bin_file_path, target_data_name):
+def create_raw_race_results(target_bin_file_path, target_data_name):
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
@@ -211,6 +211,38 @@ def create_raw_race_info(target_bin_file_path, target_data_name):
 
     return target_data_name
 
+def create_raw_horse_results(target_bin_file_path, target_data_name):
+    with open(target_bin_file_path, "rb") as f:
+
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
+
+        df = pd.read_html(html)[3]
+        # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
+        if df.columns[0] == "受賞歴":
+            df = pd.read_html(html)[4]
+
+        # 新馬の競走馬レビューが付いた場合、
+        # 列名に0が付与されるため、次のhtmlへ飛ばす
+        if df.columns[0] == 0:
+            print("horse_results empty case1 {}".format(horse_html))
+            continue
+
+        horse_id = re.findall(r"(\d+).bin", horse_html)[0]
+
+        df.index = [horse_id] * len(df)
+        horse_results[horse_id] = df
+
+        # 競走データが無い場合（新馬）を飛ばす
+        except IndexError:
+            continue
+
+        # インデックスをhorse_idにする
+        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
+        df.index = [horse_id] * len(df)
+        df[horse_id] = df.index
+    return df
+
 
 def create_raw_horse_info(target_bin_file_path, target_data_name):
     with open(target_bin_file_path, "rb") as f:
@@ -259,12 +291,38 @@ def create_raw_horse_info(target_bin_file_path, target_data_name):
             breeder_id = NaN
         df["breeder_id"] = breeder_id
 
-        # インデックスをrace_idにする
+        # インデックスをhorse_idにする
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df[horse_id] = df.index
     return df
 
+def create_raw_horse_ped(target_bin_file_path, target_data_name):
+    with open(target_bin_file_path, "rb") as f:
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
+        # horse_idを取得
+        horse_id = re.findall(r"(\d+).bin", ped_html)[0]
+        # htmlをsoupオブジェクトに変換
+        soup = BeautifulSoup(html, "lxml")
+        peds_id_list = []
+        # 血統データからhorse_idを取得する
+        horse_a_list = soup.find("table", attrs={"summary": "5代血統表"}).find_all(
+            "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
+        )
+        for a in horse_a_list:
+            # 血統データのhorse_idを抜き出す
+            work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
+            peds_id_list.append(work_peds_id)
+        peds[horse_id] = peds_id_list
+
+        # pd.DataFrame型にして一つのデータにまとめて、列と行の入れ替えして、列名をpeds_0, ..., peds_61にする
+        peds_df = pd.DataFrame.from_dict(peds, orient="index").add_prefix("peds_")
+        # インデックスをhorse_idにする
+        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
+        df.index = [horse_id] * len(df)
+        df[horse_id] = df.index
+    return df
 
 def create_raw_race_return(target_bin_file_path, target_data_name):
     with open(target_bin_file_path, "rb") as f:
