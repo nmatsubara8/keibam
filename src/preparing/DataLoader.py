@@ -72,14 +72,20 @@ class DataLoader:
             self.from_local_location = getattr(url_paths, attr)[7]
             self.from_local_file_name = getattr(url_paths, attr)[8]
             # 異常終了時に使うskip処理を実施させるためのキーとフラグ
-            self.obtained_last_key = getattr(url_paths, attr)[9]
             self.skip = getattr(url_paths, attr)[10]  # デフォルトはFalse
+            if not self.skip:
+                self.obtained_last_key = getattr(url_paths, attr)[9]
+
             # 処理対象データ範囲を指定する
             self.from_date = getattr(url_paths, attr)[11]
             self.to_date = getattr(url_paths, attr)[12]
 
         else:
             print("No such data")
+
+        # skip対象ではないゴミファイルの掃除
+        if not self.skip:
+            self.delete_files()
 
         self.pre_process_display()
 
@@ -132,7 +138,7 @@ class DataLoader:
             # CSVファイルにデータを書き込む処理
             with open(local_path, mode=mode, newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
-                self.obtained_last_key = self.target_data[-1]
+                # self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "txt":
             # テキストファイルにデータを書き込む処理
@@ -140,19 +146,19 @@ class DataLoader:
             with open(local_path, "a") as file:
                 for item in self.target_data:
                     file.write("%s\n" % item)
-                    self.obtained_last_key = self.target_data[-1]
+                    # self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "pkl":
             # pickleファイルにデータを書き込む処理
             with open(local_path, "ab") as pkl_file:
                 pickle.dump(self.target_data, pkl_file)
-                self.obtained_last_key = self.target_data[-1]
+                # self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "html":
             # ファイルにデータを書き込む処理
             with open(local_path, "ab") as html_file:
                 html_file.write(self.target_data)
-                self.obtained_last_key = self.target_data[-1]
+                # self.obtained_last_key = self.target_data[-1]
         elif filetype == "df":
             # CSVファイルに保存
             if not os.listdir(self.to_temp_location):
@@ -163,7 +169,7 @@ class DataLoader:
             self.target_data.to_csv(
                 os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode="a"
             )
-            self.obtained_last_key = self.target_data.index[-1]
+            # self.obtained_last_key = self.target_data.index[-1]
 
         elif filetype == "h5":
             # ファイルにデータを書き込む処理
@@ -171,19 +177,29 @@ class DataLoader:
             self.target_data.to_hdf(
                 os.path.join(self.to_location, self.save_file_name), key=self.target_data.index, mode="a"
             )
-            self.obtained_last_key = self.target_data[-1]
+            # self.obtained_last_key = self.target_data[-1]
         else:
             print("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
 
     def transfer_temp_file(self):
-        from_target_file = self.get_local_temp_file_path(self.alias)
-        with open(from_target_file, "r") as file:
-            from_target_file = [line.strip() for line in file]
+        local_temp_file_path = self.get_local_temp_file_path(self.alias)
+        with open(local_temp_file_path, "r") as base_file:
+            temp_target_data = [line.strip() for line in base_file]
+
+            # ソート処理を追加
+            temp_target_data.sort()
+            # ユニークにする処理を追加
+            temp_target_data = sorted(set(temp_target_data))
+
+        # ソートしたデータを元のファイルに保存
+        with open(local_temp_file_path, "w") as new_file:
+            for line in temp_target_data:
+                new_file.write(line + "\n")
 
         to_target_file = self.get_local_comp_file_path(self.alias)
 
         with open(to_target_file, "ab") as pkl_file:
-            pickle.dump(from_target_file, pkl_file)
+            pickle.dump(temp_target_data, pkl_file)
 
     def copy_files(self):
         files = os.listdir(self.to_temp_location)
@@ -207,15 +223,25 @@ class DataLoader:
                     loaded_list = pickle.load(f)
                 else:  # skip=True時のリスト範囲限定処理
                     try:
-                        ids = [int(line.strip()) for line in f]
-                        index = ids.index(self.obtained_last_key)
-                        # 範囲外の場合や最後の要素の場合に注意
-                        if index < len(ids) - 1:
-                            loaded_list = ids[index + 1 :]
+                        # ファイルfから1行ずつ読み込んで、文字列としてリストに追加する
+                        lines = [line.strip() for line in f]
+                        target_number = self.obtained_last_key
+                        # self.obtained_last_keyで始まる文字列を検索し、そのインデックスを取得する
+                        index = next((i for i, line in enumerate(lines) if line == target_number), None)
+
+                        if index is not None:
+                            # 範囲外の場合や最後の要素の場合に注意
+                            if index < len(lines):
+                                loaded_list = lines[: index + 1]
+                                return loaded_list
+                            else:
+                                print("指定したIDがリストの最後にあります。")
                         else:
-                            print("指定したIDがリストの最後にあります。")
+                            print("指定したIDがリスト内に見つかりません。")
+
                     except ValueError:
-                        print("指定したIDがリスト内に見つかりません。")
+                        print("ファイルからの読み込み中にエラーが発生しました。")
+
             self.skip = False
             return loaded_list
 

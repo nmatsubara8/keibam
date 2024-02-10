@@ -11,6 +11,8 @@ from tqdm import tqdm
 from src.constants._master import Master
 from src.constants._results_cols import ResultsCols as Cols
 from src.preparing.DataLoader import DataLoader
+from src.preparing.modules import create_raw_horse_results
+from src.preparing.modules import process_bin_file
 
 
 class TableCreator(DataLoader):
@@ -49,107 +51,20 @@ class TableCreator(DataLoader):
         )
         self.target_data = []
 
-    def create_race_results_table(self):
-        """
-        race_htmlを受け取って、レース結果テーブルに変換する関数。
-        """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
-        race_html_list = self.get_file_list(self.from_local_location)
-
-        data_index = 1
-
-        print("creating race_results_table")
-        race_results = {}
-        for race_html in tqdm(race_html_list):
-            race_html_path = os.path.join(self.from_local_location, race_html)
-            with open(race_html_path, "rb") as f:
-                try:
-                    # 保存してあるbinファイルを読み込む
-                    html = f.read()
-
-                    # メインとなるレース結果テーブルデータを取得
-                    df = pd.read_html(html)[0]
-
-                    # htmlをsoupオブジェクトに変換
-                    soup = BeautifulSoup(html, "lxml")
-                    # 馬IDをスクレイピング
-                    horse_id_list = []
-                    horse_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/horse")}
-                    )
-                    for a in horse_a_list:
-                        horse_id = re.findall(r"\d+", a["href"])
-                        horse_id_list.append(horse_id[0])
-                    df["horse_id"] = horse_id_list
-
-                    # 騎手IDをスクレイピング
-                    jockey_id_list = []
-                    jockey_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/jockey")}
-                    )
-                    for a in jockey_a_list:
-                        #'jockey/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-                        jockey_id = re.findall(r"jockey/result/recent/(\w*)", a["href"])
-                        jockey_id_list.append(jockey_id[0])
-                    df["jockey_id"] = jockey_id_list
-
-                    # 調教師IDをスクレイピング
-                    trainer_id_list = []
-                    trainer_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/trainer")}
-                    )
-                    for a in trainer_a_list:
-                        #'trainer/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-                        trainer_id = re.findall(r"trainer/result/recent/(\w*)", a["href"])
-                        trainer_id_list.append(trainer_id[0])
-                    df["trainer_id"] = trainer_id_list
-
-                    # 馬主IDをスクレイピング
-                    owner_id_list = []
-                    owner_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-                        "a", attrs={"href": re.compile("^/owner")}
-                    )
-                    for a in owner_a_list:
-                        #'owner/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-                        owner_id = re.findall(r"owner/result/recent/(\w*)", a["href"])
-                        owner_id_list.append(owner_id[0])
-                    df["owner_id"] = owner_id_list
-
-                    # インデックスをrace_idにする
-                    race_id = re.findall(r"race\(\d+).bin", race_html_path)[0]
-                    df.index = [race_id] * len(df)
-                    if not df.empty:
-                        race_results[race_id] = df
-
-                    # for key in race_results:
-                    #    print("Columns for race_id {}: {}".format(key, race_results[key].columns))
-                    data_index += 1
-                    self.obtained_last_key = race_html
-                except Exception as e:
-                    print("Error at {}: {}".format(race_html_path, e))
-
-        # pd.DataFrame型にして一つのデータにまとめる
-        race_results_df = pd.concat([race_results[key] for key in race_results])
-
-        # 列名に半角スペースがあれば除去する
-        self.target_data = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
-        self.save_temp_file("race_results_table")
-        self.copy_files()
+def create_race_results_table(self, process_function):
+    """
+    race_html binファイルを受け取って、レース結果テーブルに変換する関数。
+    """
+    process_bin_file(create_raw_horse_results)
 
     def create_race_info_table(self):
         """
         raceページのhtmlを受け取って、レース情報テーブルに変換する関数。
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
         race_html_list = self.get_file_list(self.from_local_location)
 
-        data_index = 1
         print("preparing raw race_info table")
         race_infos = {}
         for race_html in tqdm(race_html_list):
@@ -223,25 +138,24 @@ class TableCreator(DataLoader):
                     race_id = re.findall(r"(\d+).bin", race_html)[0]
                     df.index = [race_id] * len(df)
                     race_infos[race_id] = df
+                    self.obtained_last_key = race_html
                 except Exception as e:
                     print("Error at {}: {}".format(race_html_path, e))
-            data_index += 1
+                    break
+
         # pd.DataFrame型にして一つのデータにまとめる
         self.target_data = pd.concat([race_infos[key] for key in race_infos])
 
         self.save_temp_file("race_info_table")
-        self.copy_files()
+        self.transfer_temp_file()
 
     def create_race_return_table(self):
         """
         raceページのhtmlを受け取って、払い戻しテーブルに変換する関数。
         """
-        if not self.skip:
-            self.delete_files()
 
         race_html_list = self.get_file_list(self.from_local_location)
 
-        data_index = 1
         race_return = {}
         print("preparing raw return table")
         race_return = {}
@@ -261,21 +175,21 @@ class TableCreator(DataLoader):
                     race_id = re.findall(r"(\d+).bin", race_html)[0]
                     df.index = [race_id] * len(df)
                     race_return[race_id] = df
+                    self.obtained_last_key = race_html
                 except Exception as e:
                     print("error at {}".format(race_html))
                     print(e)
-            data_index += 1
+                    break
+
         # pd.DataFrame型にして一つのデータにまとめる
         self.target_data = pd.concat([race_return[key] for key in race_return])
         self.save_temp_file("race_info_table")
-        self.copy_files()
+        self.transfer_temp_file()
 
     def create_horse_info_table(self):
         """
         horseページのhtmlを受け取って、馬の基本情報のDataFrameに変換する関数。
         """
-        if not self.skip:
-            self.delete_files()
 
         horse_html_list = self.get_file_list(self.from_local_location)
 
@@ -337,8 +251,11 @@ class TableCreator(DataLoader):
                     horse_id = re.findall(r"(\d+).bin", horse_html)[0]
                     df_info.index = [horse_id] * len(df_info)
                     horse_info[horse_id] = df_info
+                    self.obtained_last_key = horse_html
+
             except Exception as e:
                 print("Error at {}: {}".format(horse_html, e))
+                break
 
             # pd.DataFrame型にして一つのデータにまとめる
             horse_info_df = pd.concat([horse_info[key] for key in horse_info])
@@ -352,7 +269,7 @@ class TableCreator(DataLoader):
         self.target_data = horse_info_df
         self.save_temp_file("horse_info_table")
         self.obtained_last_key = horse_html
-        self.copy_files()
+        self.transfer_temp_file()
 
     ################################################################################################################
     # この関数はまだ
@@ -361,8 +278,6 @@ class TableCreator(DataLoader):
         scheduled_raceに保管したhtmlをスクレイピング。
         dateはyyyy/mm/ddの形式。
         """
-        if not self.skip:
-            self.delete_files()
 
         race_html_list = self.get_file_list(self.from_local_location)
         # print("race_html_list", race_html_list)
@@ -482,6 +397,7 @@ class TableCreator(DataLoader):
                     df["date"] = [date] * len(df)
                 except Exception as e:
                     print(e)
+                    break
                 # finally:
                 #    driver.close()
                 #    driver.quit()
@@ -497,9 +413,6 @@ class TableCreator(DataLoader):
         horse_htmlを受け取って、結果テーブルに変換する関数。data/html/horse_resultsに保存する
 
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
         horse_html_list = self.get_file_list(self.from_local_location)
 
@@ -533,6 +446,7 @@ class TableCreator(DataLoader):
                     self.obtained_last_key = horse_html
                 except Exception as e:
                     print("Error at {}: {}".format(horse_html_path, e))
+                    break
 
             data_index += 1
         self.save_temp_file("horse_results_table")

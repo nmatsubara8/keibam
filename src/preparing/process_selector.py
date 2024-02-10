@@ -92,7 +92,8 @@ def select_process(alias):
 # kaisai_date_list = select_process(alias="kaisai_date_list")
 # race_id_list = select_process(alias="race_id_list")
 # race_html = select_process(alias="race_html")
-# race_results_table = select_process(alias="race_results_table")
+
+race_results_table = select_process(alias="race_results_table")
 # horse_id_lis = select_process(alias="horse_id_list")
 # horse_html = select_process(alias="horse_html")
 
@@ -105,5 +106,6 @@ def select_process(alias):
 # schedule = select_process(alias="schedule")
 # scheduled_horse = select_process(alias="schedule")
 # scheduled_race = select_process(alias="scheduled_race_html")
-tentative_info = select_process(alias="tentative_info")
+
+# tentative_info = select_process(alias="tentative_info")
 # actual_info = select_process(alias="actual_info")

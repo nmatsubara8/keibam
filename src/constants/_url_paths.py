@@ -36,7 +36,7 @@ class UrlPaths:
         "",  # 9
         False,  # 10
         "2020-01-01",  # 11
-        "2021-01-01",  # 12
+        "2020-12-31",  # 12
     )
 
     # レース一覧ページ Done
@@ -47,9 +47,9 @@ class UrlPaths:
         "temp_race_id_list.txt",  # 3
         TOP_URL[4] + "race_id_list/",  # 4
         "race_id_list.pkl",  # 5
-        50,  # 6
-        DB_DOMAIN[4],  # 7
-        DB_DOMAIN[5],  # 8
+        10,  # 6
+        CALENDAR_URL[4],  # 7
+        CALENDAR_URL[5],  # 8
         "",  # 9
         False,  # 10
         "",  # 11
@@ -80,8 +80,8 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_results/",  # 2
         "temp_race_results_table.csv",  # 3
         DB_DOMAIN[4] + "race_results/",  # 4
-        "race_results_table.h5",  # 5
-        100,  # 6
+        "race_results_table.pkl",  # 5
+        1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9
@@ -244,7 +244,7 @@ class UrlPaths:
         "temp_scheduled_race.html",  # 3
         DB_DOMAIN[4] + "scheduled_race/",  # 4
         "scheduled_race.html",  # 5
-        100,  # 6
+        1,  # 6
         TOP_URL[4] + "schedule/",  # 7
         "schedule.pkl",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9

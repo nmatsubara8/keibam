@@ -57,10 +57,6 @@ class KaisaiDateLoader(DataLoader):
         self.target_data = []
 
     def scrape_kaisai_date(self):
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
-
         # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
         # to_の月は含まないので注意。
         print("getting race date from {} to {}".format(self.from_date, self.to_date))
@@ -93,17 +89,12 @@ class KaisaiDateLoader(DataLoader):
         self.transfer_temp_file()
 
     def scrape_race_id_list(self):
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
-
         kaisai_date_list = self.load_file_pkl()
 
         waiting_time = 10
-        race_id_list = []
         driver = prepare_chrome_driver()
         data_index = 1
-
+        race_id_list = []
         print("scraping race_id_list")
         for kaisai_date in tqdm(kaisai_date_list):
             try:
@@ -125,18 +116,17 @@ class KaisaiDateLoader(DataLoader):
                     if len(race_id) > 0:
                         race_id_list.append(race_id[0])
 
-                if data_index % self.batch_size == 0:
-                    self.target_data = race_id_list
-                    self.save_temp_file("race_id_list")
-                    self.obtained_last_key = kaisai_date
-
             except Exception as e:
-                print("Error at {}: {}".format(race_id, e))
+                print("Error at {}: {}".format(kaisai_date, e))
                 break
 
+            if data_index % self.batch_size == 0:
+                self.target_data = race_id_list
+                self.save_temp_file("race_id_list")
+                race_id_list = []
+                self.obtained_last_key = kaisai_date
             data_index += 1
-        # リストの要素を昇順にソート
-        self.target_data = sorted(map(str.strip, self.target_data), key=lambda x: int(x))
+
         self.save_temp_file("race_id_list")
         self.obtained_last_key = kaisai_date
         self.transfer_temp_file()
@@ -147,11 +137,10 @@ class KaisaiDateLoader(DataLoader):
         """
         当日出走するhorse_id一覧を取得
         """
-        if not self.skip:
-            self.delete_files()
 
         race_id_list = self.load_file_pkl()
-        # waiting_time = 10
+        waiting_time = 10
+        driver = prepare_chrome_driver()
         horse_id_list = []
         # driver = prepare_chrome_driver()
         data_index = 1
@@ -159,12 +148,15 @@ class KaisaiDateLoader(DataLoader):
         print("scraping horse_id_list")
 
         for race_id in tqdm(race_id_list):
-            # wait = WebDriverWait(driver, waiting_time)
             try:
                 url = self.from_location + race_id
+                driver.get(url)
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
                 html = urlopen(url)
-                soup = BeautifulSoup(html, "lxml")
                 time.sleep(1)
+                soup = BeautifulSoup(html, "lxml")
+                # time.sleep(1)
                 horse_td_list = soup.find_all("td", attrs={"class": "txt_l"})
                 horse_ids = [a["href"] for td in horse_td_list if (a := td.find("a")) and "/horse/" in a["href"]]
                 horse_id = [re.search(r"/horse/(\d+)/", href).group(1) for href in horse_ids]
@@ -173,12 +165,12 @@ class KaisaiDateLoader(DataLoader):
                     self.target_data = [item for sublist in horse_id_list for item in sublist]
                     self.save_temp_file("horse_id_list")
                     self.obtained_last_key = race_id
-
+                    horse_id_list = []
+                data_index += 1
             except Exception as e:
                 print("Error at {}: {}".format(race_id, e))
                 break
 
-            data_index += 1
         # リストの要素を昇順にソート
         flat_list = [item for sublist in horse_id_list for item in sublist]
         self.target_data = sorted(set(flat_list))
@@ -192,36 +184,32 @@ class KaisaiDateLoader(DataLoader):
         skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
         返り値：新しくスクレイピングしたhtmlのファイルパス
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
         race_id_list = self.load_file_pkl()
+        driver = prepare_chrome_driver()
+        waiting_time = 10
 
-        data_index = 1
         for race_id in tqdm(race_id_list):
             try:
                 self.processing_id = race_id
                 # print("self.processing_id", self.processing_id)
                 # race_idからurlを作る
                 url = self.from_location + race_id
-
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
                 # 相手サーバーに負担をかけないように1秒待機する
-                time.sleep(1)
+
                 # スクレイピング実行
                 self.target_data = urlopen(url).read()
                 # 保存するファイルパスを指定
-
-                if data_index % self.batch_size == 0:
-                    self.save_temp_file("race_html")
-                    self.obtained_last_key = race_id
+                self.save_temp_file("race_html")
+                self.obtained_last_key = race_id
 
             except Exception as e:
                 print("Error at {}: {}".format(race_id, e))
-
-            data_index += 1
-        self.save_temp_file("race_html")
-        self.obtained_last_key = race_id
+                break
+        # ドライバーのクローズ
+        driver.quit()
         self.copy_files()
 
     def scrape_html_horse(self):
@@ -230,10 +218,9 @@ class KaisaiDateLoader(DataLoader):
         skip=Trueにすると、すでにhtmlが存在する場合はスキップされ、Falseにすると上書きされる。
         返り値：新しくスクレイピングしたhtmlのファイルパス
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
-        data_index = 1
+
+        waiting_time = 10
+        driver = prepare_chrome_driver()
         horse_id_list = self.load_file_pkl()
         # "print("horse_id_list", horse_id_list)
         for horse_id in tqdm(horse_id_list):
@@ -242,30 +229,26 @@ class KaisaiDateLoader(DataLoader):
                 # print("self.processing_id", self.processing_id)
                 # horse_idからurlを作る
                 url = self.from_location + horse_id
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
                 # 相手サーバーに負担をかけないように1秒待機する
                 time.sleep(1)
                 # スクレイピング実行
                 self.target_data = urlopen(url).read()
                 # 保存するファイルパスを指定
 
-                if data_index % self.batch_size == 0:
-                    self.save_temp_file("horse_html")
-                    self.obtained_last_key = horse_id
+                self.save_temp_file("horse_html")
+                self.obtained_last_key = horse_id
             except Exception as e:
                 print("Error at {}: {}".format(horse_id, e))
-            data_index += 1
-
-        self.save_temp_file("horse_html")
-        self.obtained_last_key = horse_id
+                break
         self.copy_files()
 
     def create_horse_results_table(self):
         #
         # horseページのhtmlを受け取って、馬の過去成績のDataFrameに変換する関数。
         #
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
+
         data_index = 1
         horse_id_file_list = self.get_file_list(self.from_local_location)
 
@@ -301,7 +284,7 @@ class KaisaiDateLoader(DataLoader):
 
                 except Exception as e:
                     print("Error at {}: {}".format(horse_html, e))
-                    continue
+                    break
 
             # pd.DataFrame型にして一つのデータにまとめる
             horse_results_df = pd.concat([horse_results[key] for key in horse_results])
@@ -318,47 +301,43 @@ class KaisaiDateLoader(DataLoader):
         self.target_data = horse_results_df.rename(columns=lambda x: x.replace(" ", ""))
         self.save_temp_file("horse_results_table")
         self.obtained_last_key = horse_id
-        self.copy_files()
+        self.transfer_temp_file()
 
     def scrape_html_ped(self):
         """
         netkeiba.comのhorse/pedページのhtmlをスクレイピングしてdata/html/pedに保存する関数。
 
         """
-        if not self.skip:
-            self.delete_files()
 
+        waiting_time = 10
+        driver = prepare_chrome_driver()
         horse_id_list = self.load_file_pkl()
-        data_index = 1
+
         for horse_id in tqdm(horse_id_list):
             try:
                 self.processing_id = horse_id
                 # horse_idからurlを作る
                 url = self.from_location + horse_id
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
+
                 # 相手サーバーに負担をかけないように1秒待機する
                 time.sleep(1)
                 self.target_data = urlopen(url).read()
                 # 保存するファイルパスを指定
 
-                if data_index % self.batch_size == 0:
-                    self.save_temp_file("ped_html")
-                    self.obtained_last_key = horse_id
+                self.save_temp_file("ped_html")
+                self.obtained_last_key = horse_id
 
             except Exception as e:
                 print("Error at {}: {}".format(horse_id, e))
-
-            data_index += 1
-        self.save_temp_file("ped_html")
-        self.obtained_last_key = horse_id
+                break
         self.copy_files()
 
     def scrape_peds_list(self):
         """
         horse/pedページのhtmlを受け取って、血統のDataFrameに変換する関数。
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
         ped_html_list = self.get_file_list(self.from_local_location)
 
@@ -393,7 +372,7 @@ class KaisaiDateLoader(DataLoader):
 
             except Exception as e:
                 print("Error at {}: {}".format(ped_html, e))
-
+                break
             if data_index % self.batch_size == 0:
                 self.target_data = peds_df
                 self.save_temp_file("peds_list")
@@ -403,6 +382,7 @@ class KaisaiDateLoader(DataLoader):
         self.target_data = peds_df
         self.save_temp_file("peds_list")
         self.obtained_last_key = ped_html
+        self.transfer_temp_file()
 
     def scrape_schedule(self):
         """
@@ -410,9 +390,6 @@ class KaisaiDateLoader(DataLoader):
         ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
         要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
         date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="D")
         waiting_time = 10
@@ -455,6 +432,7 @@ class KaisaiDateLoader(DataLoader):
 
             except Exception as e:
                 print(f"Error at {kaisai_date}: {e}")
+                break
         tentative_store = sorted(tentative_store, key=lambda x: (x[0], x[1]))
         self.target_data = [f"{race_time},{race_id}" for kaisai_date_str, race_time, race_id in tentative_store]
         self.obtained_last_key = kaisai_date
@@ -469,10 +447,8 @@ class KaisaiDateLoader(DataLoader):
         netkeiba.comのraceページのhtmlをスクレイピングしてscheduled_raceに保存する関数。
 
         """
-        # skip対象ではないゴミファイルの掃除
-        if not self.skip:
-            self.delete_files()
 
+        waiting_time = 10
         time_race_id_list = self.load_file_pkl()
         # 時刻とレースidの組みあわせからレースidだけを抽出
         race_id_list = [element.split(",")[1] for element in time_race_id_list]
@@ -485,6 +461,8 @@ class KaisaiDateLoader(DataLoader):
                 url = self.from_location + query[0]
 
                 driver.get(url)
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
                 # スクレイピング実行
                 self.target_data = urlopen(url).read()
                 self.save_temp_file("scheduled_race_html")
@@ -492,6 +470,7 @@ class KaisaiDateLoader(DataLoader):
 
             except Exception as e:
                 print("Error at {}: {}".format(race_id, e))
+                break
         self.copy_files()
 
     ############################################################################################################
@@ -500,8 +479,6 @@ class KaisaiDateLoader(DataLoader):
         当日の出馬表をスクレイピング。
         dateはyyyy/mm/ddの形式。
         """
-        if not self.skip:
-            self.delete_files()
 
         time_race_id_list = self.load_file_pkl()
         # 時刻とレースidの組みあわせからレースidだけを抽出
@@ -509,12 +486,11 @@ class KaisaiDateLoader(DataLoader):
         # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
 
         date = self.from_date
-
+        waiting_time = 10
+        driver = prepare_chrome_driver()
         df = pd.DataFrame()
         for race_id in tqdm(race_id_list):
             # print("race_id_list", race_id_list)
-            driver = prepare_chrome_driver()
-            driver.implicitly_wait(10)
 
             # print("race_id", race_id)
             try:
@@ -522,7 +498,8 @@ class KaisaiDateLoader(DataLoader):
                 url = self.from_location + query
                 # print("url", url)
                 driver.get(url)
-
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
                 # メインのテーブルの取得
                 for tr in driver.find_elements(By.CLASS_NAME, "HorseList"):
                     row = []
@@ -619,10 +596,9 @@ class KaisaiDateLoader(DataLoader):
                 self.target_data = df
                 self.save_temp_file("tentative_info")
                 self.obtained_last_key = race_id
-
             except Exception as e:
-                print(e)
-
+                print("Error at {}: {}".format(race_id, e))
+                break
         driver.close()
         driver.quit()
 
@@ -631,9 +607,9 @@ class KaisaiDateLoader(DataLoader):
         """
         当日出走するhorse_id一覧を取得
         """
-        if not self.skip:
-            self.delete_files()
 
+        waiting_time = 10
+        driver = prepare_chrome_driver()
         scheduled_race_id_list = self.load_file_pkl()
         print("scheduled_race_id_list ", scheduled_race_id_list)
         scheduled_horse_id_list = []
@@ -652,6 +628,8 @@ class KaisaiDateLoader(DataLoader):
             query = "?race_id=" + scheduled_race_id
 
             url = self.from_location + query
+            wait = WebDriverWait(driver, waiting_time)
+            wait.until(EC.presence_of_all_elements_located)
             time.sleep(1)
             print("url", url)
             html = urlopen(url)
