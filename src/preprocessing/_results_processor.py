@@ -17,7 +17,7 @@ class ResultsProcessor(AbstractDataProcessor):
         前処理
         """
         df = self.raw_data.copy()
-
+        print("df:", df)
         # 着順の前処理
         df = self._preprocess_rank(df)
 
@@ -54,6 +54,7 @@ class ResultsProcessor(AbstractDataProcessor):
         """
         df = raw.copy()
         # 着順に数字以外の文字列が含まれているものを取り除く
+        print(f"type(df){type(df)}")
         df[Cols.RANK] = pd.to_numeric(df[Cols.RANK], errors="coerce")
         df.dropna(subset=[Cols.RANK], inplace=True)
         df[Cols.RANK] = df[Cols.RANK].astype(int)
