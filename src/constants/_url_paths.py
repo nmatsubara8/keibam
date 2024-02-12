@@ -22,6 +22,7 @@ class UrlPaths:
     TOP_URL: tuple = ("top_page", "https://race.netkeiba.com/top/", "./data/tmp/", None, "./data/html/", None)
     DB_DOMAIN: tuple = ("db_dmain", "https://db.netkeiba.com/", "./data/tmp/", None, "./data/html/", None)
 
+    ################################# Done ####################################
     # 開催日程ページ Done
     CALENDAR_URL: tuple = (
         "kaisai_date_list",  # 0
@@ -36,9 +37,9 @@ class UrlPaths:
         "",  # 9
         False,  # 10
         "2020-01-01",  # 11
-        "2020-12-31",  # 12
+        "2020-02-01",  # 12
     )
-
+    ################################# Done ####################################
     # レース一覧ページ Done
     RACE_LIST_URL: tuple = (
         "race_id_list",  # 0
@@ -49,22 +50,22 @@ class UrlPaths:
         "race_id_list.pkl",  # 5
         10,  # 6
         CALENDAR_URL[4],  # 7
-        CALENDAR_URL[5],  # 8
+        "kaisai_date_list.pkl",  # 8
         "",  # 9
         False,  # 10
         "",  # 11
         "",  # 12
     )
-
+    ################################# Done ####################################
     # レースhtmlスクレイピング用binファイル管理 Done
     RACE_HTML: tuple = (
         "race_html",  # 0
         DB_DOMAIN[1] + "race/",  # 1
-        DB_DOMAIN[2] + "race/",  # 2
+        DB_DOMAIN[4] + "race/",  # 2
         "temp_race_html",  # 3
         DB_DOMAIN[4] + "race/",  # 4
         "race_html",  # 5  #
-        1,  # 6
+        50,  # 6
         DB_DOMAIN[4] + "race_id_list/",  # 7
         "race_id_list.pkl",  # 8
         "",  # 9
@@ -72,7 +73,7 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
-
+    ################################# Done ####################################
     # レース結果の取得ページ Done
     RACE_URL: tuple = (
         "race_results_table",  # 0
@@ -89,6 +90,7 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
+
     # レース結果（詳細レース情報）の取得ページ Done
     RACE_INFO: tuple = (
         "race_info_table",  # 0
@@ -105,6 +107,7 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
+    ################################# Done ####################################
     # レース結果（払い戻しテーブル）の取得ページ Done
     RETURN_INFO: tuple = (
         "race_return_table",  # 0
@@ -121,7 +124,7 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
-
+    ################################# Done ####################################
     # 馬一覧ページ Done
     HORSE_LIST_URL: tuple = (
         "horse_id_list",  # 0
@@ -130,7 +133,7 @@ class UrlPaths:
         "temp_horse_id_list.txt",  # 3
         DB_DOMAIN[4] + "horse_id_list/",  # 4
         "horse_id_list.pkl",  # 5
-        5,  # 6
+        50,  # 6
         TOP_URL[4] + "race_id_list/",  # 7
         "race_id_list.pkl",
         "",  # 9
@@ -138,16 +141,16 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
-
+    ################################# Done ####################################
     # 馬htmlスクレイピング用binファイル管理 Done
     HORSE_HTML: tuple = (
         "horse_html",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
-        DB_DOMAIN[2] + "horse/",  # 2
+        DB_DOMAIN[4] + "horse/",  # 2
         "temp_horse_html",  # 3
         DB_DOMAIN[4] + "horse/",  # 4
         "horse_html",  # 5  #
-        1,  # 6
+        50,  # 6
         DB_DOMAIN[4] + "horse_id_list/",  # 7
         "horse_id_list.pkl",  # 8
         "",  # 9
@@ -155,7 +158,7 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
-
+    ################################# Done ####################################
     # 馬の過去成績テーブルが含まれるページ
     HORSE_URL: tuple = (
         "horse_results_table",  # 0
@@ -172,16 +175,17 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
+    ################################# Done ####################################
     # 血統テーブルが含まれるページ
     PED_HTML: tuple = (
         "ped_html",  # 0
         HORSE_URL[1] + "ped/",  # 1
-        DB_DOMAIN[2] + "ped/",  # 2
+        DB_DOMAIN[4] + "ped/",  # 2
         "temp_ped_html",  # 3
         DB_DOMAIN[4] + "ped/",  # 4
         "ped_html",  # 5
-        1,  # 6
-        DB_DOMAIN[4] + "race_id_list",  # 7
+        50,  # 6
+        DB_DOMAIN[4] + "horse_id_list",  # 7
         "horse_id_list.pkl",  # 8
         "",  # 9
         False,  # 10
@@ -205,7 +209,7 @@ class UrlPaths:
         "",  # 11
         "",  # 12
     )
-
+    ################################# Done ####################################
     HORSE_INFO: tuple = (
         "horse_info_table",  # 0
         DB_DOMAIN[1] + "race/",  # 1

@@ -127,36 +127,48 @@ class DataLoader:
         # ローカル一時保存用ファイルのパス
         local_path = self.get_local_temp_file_path(self.alias)
         filetype = self.get_filetype()
-
+        if not os.listdir(self.to_temp_location):
+            mode = "w"
+        else:
+            mode = "a"
         if filetype == "csv":
-            # CSVファイルに保存
             if not os.listdir(self.to_temp_location):
                 mode = "w"
             else:
                 mode = "a"
-
-            # CSVファイルにデータを書き込む処理
+                # CSVファイルにデータを書き込む処理
             with open(local_path, mode=mode, newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
                 # self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "txt":
-            # テキストファイルにデータを書き込む処理
-            # リストをファイルに保存
-            with open(local_path, "a") as file:
+            if not os.listdir(self.to_temp_location):
+                mode = "w"
+            else:
+                mode = "a"
+            # TXTファイルにデータを書き込む処理
+            with open(local_path, mode=mode, newline="\n") as txt_file:
                 for item in self.target_data:
-                    file.write("%s\n" % item)
-                    # self.obtained_last_key = self.target_data[-1]
+                    txt_file.write(str(item) + "\n")
 
         elif filetype == "pkl":
+            if not os.listdir(self.to_temp_location):
+                mode = "wb"
+            else:
+                mode = "ab"
             # pickleファイルにデータを書き込む処理
-            with open(local_path, "ab") as pkl_file:
+            with open(local_path, mode=mode) as pkl_file:
                 pickle.dump(self.target_data, pkl_file)
                 # self.obtained_last_key = self.target_data[-1]
 
         elif filetype == "html":
+            if not os.listdir(self.to_temp_location):
+                mode = "wb"
+            else:
+                mode = "ab"
+
             # ファイルにデータを書き込む処理
-            with open(local_path, "ab") as html_file:
+            with open(local_path, mode=mode) as html_file:
                 html_file.write(self.target_data)
                 # self.obtained_last_key = self.target_data[-1]
         elif filetype == "df":
@@ -220,20 +232,25 @@ class DataLoader:
         if (self.from_local_location and self.from_local_file_name) is not None:
             target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
             with open(target_file_path, "rb") as f:
+                data = pickle.load(f)
                 if not self.skip:
-                    loaded_list = pickle.load(f)
+                    loaded_list = data
                 else:  # skip=True時のリスト範囲限定処理
                     try:
                         # ファイルfから1行ずつ読み込んで、文字列としてリストに追加する
-                        lines = [line.strip() for line in f]
-                        target_number = self.obtained_last_key
+                        lines = [line.strip() for line in data]
+                        target_number = "202008010710"
                         # self.obtained_last_keyで始まる文字列を検索し、そのインデックスを取得する
                         index = next((i for i, line in enumerate(lines) if line == target_number), None)
 
                         if index is not None:
                             # 範囲外の場合や最後の要素の場合に注意
-                            if index < len(lines):
-                                loaded_list = lines[: index + 1]
+                            length = len(lines)
+                            if index < length:
+                                loaded_list = lines[index:length]
+                                print(f"re-entered from {loaded_list[0]} to  {loaded_list[-1]} ")
+
+                                self.skip = False
                                 return loaded_list
                             else:
                                 print("指定したIDがリストの最後にあります。")
@@ -243,8 +260,7 @@ class DataLoader:
                     except ValueError:
                         print("ファイルからの読み込み中にエラーが発生しました。")
 
-            self.skip = False
-            return loaded_list
+                return loaded_list
 
     def load_file_txt(self):
         if (self.from_local_location and self.from_local_file_name) is not None:

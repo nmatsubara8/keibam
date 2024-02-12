@@ -17,12 +17,12 @@ class LocalPaths:
 
     ### rawディレクトリのパス
     RAW_DIR: str = os.path.join(DATA_DIR, "raw")
-    RAW_RESULTS_PATH: str = os.path.join(RAW_DIR, "results.pickle")
-    RAW_RACE_INFO_PATH: str = os.path.join(RAW_DIR, "race_info.pickle")
-    RAW_RETURN_TABLES_PATH: str = os.path.join(RAW_DIR, "return_tables.pickle")
-    RAW_HORSE_RESULTS_PATH: str = os.path.join(RAW_DIR, "horse_results.pickle")
-    RAW_HORSE_INFO_PATH: str = os.path.join(RAW_DIR, "horse_info.pickle")
-    RAW_PEDS_PATH: str = os.path.join(RAW_DIR, "peds.pickle")
+    RAW_RESULTS_PATH: str = os.path.join(RAW_DIR, "results.pkl")
+    RAW_RACE_INFO_PATH: str = os.path.join(RAW_DIR, "race_info.pkl")
+    RAW_RETURN_TABLES_PATH: str = os.path.join(RAW_DIR, "return_tables.pkl")
+    RAW_HORSE_RESULTS_PATH: str = os.path.join(RAW_DIR, "horse_results.pkl")
+    RAW_HORSE_INFO_PATH: str = os.path.join(RAW_DIR, "horse_info.pkl")
+    RAW_PEDS_PATH: str = os.path.join(RAW_DIR, "peds.pkl")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

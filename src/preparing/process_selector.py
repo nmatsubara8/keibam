@@ -3,16 +3,17 @@ from src.preparing.url_loader import KaisaiDateLoader
 
 
 def select_process(alias):
+    ################################# Done ####################################
     if alias == "kaisai_date_list":
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
         data_request.scrape_kaisai_date()
-
+    ################################# Done ####################################
     elif alias == "race_id_list":
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
         data_request.scrape_race_id_list()
-
+    ################################# Done ####################################
     elif alias == "horse_id_list":
         data_request = KaisaiDateLoader()
         data_request.set_args(alias)
@@ -89,23 +90,28 @@ def select_process(alias):
     data_request.post_process_display()
 
 
-## kaisai_date_list = select_process(alias="kaisai_date_list")
-## race_id_list = select_process(alias="race_id_list")
-## race_html = select_process(alias="race_html")
+#############kaisai_date_list = select_process(alias="kaisai_date_list")
+#############race_id_list = select_process(alias="race_id_list")
+#############horse_id_list = select_process(alias="horse_id_list")
+#############race_html = select_process(alias="race_html")
+#############horse_html = select_process(alias="horse_html")
+#############ped_html = select_process(alias="ped_html")
 
-# race_results_table = select_process(alias="race_results_table")
-# horse_id_list = select_process(alias="horse_id_list")
-# horse_html = select_process(alias="horse_html")
+#############race_results_table = select_process(alias="race_results_table")
+#############race_info_table = select_process(alias="race_info_table")
+#############horse_results_table = select_process(alias="horse_results_table")
+#############horse_info_table = select_process(alias="horse_info_table")
+#############race_return_table = select_process(alias="race_return_table")
+#############peds_list = select_process(alias="peds_list")
+#############
+#############
+#############
+#############
 
-#####horse_results_table = select_process(alias="horse_results_table")
-# ?????horse_info_table = select_process(alias="horse_info_table")
-# ped_html = select_process(alias="ped_html")
-# peds_list = select_process(alias="peds_list")
-####race_info_table = select_process(alias="race_info_table")
-# ????race_return_table = select_process(alias="race_return_table")
+# scheduled_race = select_process(alias="scheduled_race_html")
+
 # schedule = select_process(alias="schedule")
 # scheduled_horse = select_process(alias="schedule")
-# scheduled_race = select_process(alias="scheduled_race_html")
 
 # tentative_info = select_process(alias="tentative_info")
 # actual_info = select_process(alias="actual_info")

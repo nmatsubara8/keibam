@@ -1,20 +1,23 @@
 import pandas as pd
 
+from src.preprocessing._horse_info_processor import HorseInfoProcessor
+from src.preprocessing._horse_results_processor import HorseResultsProcessor
+from src.preprocessing._peds_processor import PedsProcessor
+from src.preprocessing._shutuba_table_processor import ShutubaTableProcessor
+
 from ._data_merger import DataMerger
-from modules.preprocessing import ShutubaTableProcessor
-from modules.preprocessing import HorseResultsProcessor
-from modules.preprocessing import HorseInfoProcessor
-from modules.preprocessing import PedsProcessor
+
 
 class ShutubaDataMerger(DataMerger):
-    def __init__(self,
-                 shutuba_table_processor: ShutubaTableProcessor, 
-                 horse_results_processor: HorseResultsProcessor,
-                 horse_info_processor: HorseInfoProcessor,
-                 peds_processor: PedsProcessor, 
-                 target_cols: list, 
-                 group_cols: list
-                 ):
+    def __init__(
+        self,
+        shutuba_table_processor: ShutubaTableProcessor,
+        horse_results_processor: HorseResultsProcessor,
+        horse_info_processor: HorseInfoProcessor,
+        peds_processor: PedsProcessor,
+        target_cols: list,
+        group_cols: list,
+    ):
         """
         初期処理
         """
@@ -36,7 +39,7 @@ class ShutubaDataMerger(DataMerger):
         self._separated_results_dict = {}
         # レース結果データのdateごとに分かれた馬の過去成績
         self._separated_horse_results_dict = {}
-        
+
     def merge(self):
         """
         マージ処理
