@@ -81,7 +81,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_results/",  # 2
         "temp_race_results_table.csv",  # 3
         DB_DOMAIN[4] + "race_results/",  # 4
-        "race_results_table.pkl",  # 5
+        "results.pkl",  # "race_results_table.pkl",  # 5
         1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_results_table"においては、使わないこととする
@@ -98,7 +98,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_info/",  # 2
         "temp_race_info_table.csv",  # 3
         DB_DOMAIN[4] + "race_info/",  # 4
-        "race_info_table.pkl",  # 5
+        "race_info.pkl",  # 5
         1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_info_table"においては、使わないこととする
@@ -115,7 +115,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_return/",  # 2
         "temp_race_return_table.csv",  # 3
         DB_DOMAIN[4] + "race_return/",  # 4
-        "race_return_table.pkl",  # 5
+        "return_table.pkl",  # 5
         1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_info_table"においては、使わないこととする
@@ -166,7 +166,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "horse_results/",  # 2
         "temp_horse_results_table.csv",  # 3
         DB_DOMAIN[4] + "horse_results/",  # 4
-        "horse_results_table",  # 5
+        "horse_results.pkl",  # 5
         100,  # 6
         DB_DOMAIN[4] + "horse/",  # 7
         "",  # 8
@@ -199,7 +199,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "peds_list/",  # 2
         "temp_peds_table.csv",  # 3
         DB_DOMAIN[4] + "peds_list/",  # 4
-        "peds_table",  # 5
+        "peds.pkl",  # 5
         1000,  # 6
         PED_HTML[4],  # 7
         "",  # 7
@@ -216,7 +216,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "horse_info/",  # 2
         "temp_horse_info_table.csv",  # 3
         DB_DOMAIN[4] + "horse_info/",  # 4
-        "horse_info_table.pkl",  # 5
+        "horse_info.pkl",  # 5
         1000,  # 6
         DB_DOMAIN[4] + "horse/",  # 7
         "",  # 8

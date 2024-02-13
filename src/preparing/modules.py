@@ -195,6 +195,7 @@ def process_bin_file(self, process_function):
         for target_bin_file in batch_target_bin_files:  # race_html binファイル
             target_bin_file_path = os.path.join(self.from_local_location, target_bin_file)
 
+            self.target_data = pd.DataFrame()
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
 
@@ -211,22 +212,24 @@ def process_bin_file(self, process_function):
 
             self.save_temp_file(self.alias)
             # target_data_name = {}  # バッチ処理が完了したので辞書をクリア
-            self.target_data = []
+
         self.obtained_last_key = target_bin_files[-1]
         self.transfer_temp_file()
+    self.copy_files()
+
     print(f"# of processed files: {processed_files}")
 
 
 ################################# Done ####################################
-def trim_function(temp_df):
+def trim_function(df):
     """
     process_bin_file()のヘルパー関数
 
     process_functionとして呼び出したエイリアスによって異なる後処理を定義している
     """
     # 列名に半角スペースがあれば除去する
-    results_df = temp_df.str.replace(" ", "")
-    return results_df
+    trimmed_df = df.columns = df.columns.str.replace(r"\s+", "")
+    return trimmed_df
 
 
 ################################# Done ####################################
@@ -287,6 +290,13 @@ def create_raw_race_results(target_bin_file_path):
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [race_id] * len(df)
         df[race_id] = df.index
+        df.columns = df.columns.str.replace(" ", "")
+
+        # last_column_name = df.columns[-1]
+        # df = df.rename(columns={last_column_name: "race_id"})
+        # race_id_column = df.pop("race_id")
+        # df.insert(0, "race_id", race_id_column)
+        ###### df.drop(df.columns[0], axis=1, inplace=True)
 
     return df
 
@@ -302,23 +312,32 @@ def create_raw_race_info(target_bin_file_path):
         soup = BeautifulSoup(html, "lxml")
 
         # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
         texts = (
             soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
             + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
         )
+
         info = re.findall(r"\w+", texts)
+        # print(f"info:{info}")
         df = pd.DataFrame()
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+
         # 障害レースフラグを初期化
         hurdle_race_flg = False
         for text in info:
-            if text in ["芝", "ダート"]:
-                df["race_type"] = [text]
             if "障" in text:
                 df["race_type"] = ["障害"]
                 hurdle_race_flg = True
-            if "m" in text:
-                # 20211212：[0]→[-1]に修正
-                df["course_len"] = [int(re.findall(r"\d+", text)[-1])]
+            if text in ["芝", "ダート"]:
+                df["race_type"] = [text]
+
+            # 文字列からパターンにマッチする部分をすべて抽出し、リストに格納
+            course_len_list = [int(match[:-1]) for match in re.findall(r"\d{3,4}m", text)]
+
+            # リストが空でないことを確認してから最後の要素を取得し、DataFrameに設定
+            if course_len_list:
+                df["course_len"] = course_len_list[-1]
             if text in Master.GROUND_STATE_LIST:
                 df["ground_state"] = [text]
             if text in Master.WEATHER_LIST:
@@ -357,12 +376,8 @@ def create_raw_race_info(target_bin_file_path):
         if hurdle_race_flg:
             df["around"] = [Master.AROUND_LIST[3]]
             df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-
-        # インデックスをrace_idにする
-
-        race_id = re.findall(r"race\W(\d+).bin", target_bin_file_path)[0]
-        df.index = [race_id] * len(df)
-        df[race_id] = df.index
+            hurdle_race_flg = False
+        df["race_id"] = race_id
 
     return df
 

@@ -36,8 +36,8 @@ class KaisaiDateLoader(DataLoader):
         obtained_last_key="",
         target_data=None,
         skip=False,
-        from_date="2020-01-01",
-        to_date="2021-01-01",
+        from_date="2008-01-01",
+        to_date="2024-02-13",
     ):
         super().__init__(
             alias,

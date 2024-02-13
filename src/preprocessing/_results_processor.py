@@ -17,7 +17,9 @@ class ResultsProcessor(AbstractDataProcessor):
         前処理
         """
         df = self.raw_data.copy()
-        print("df:", df)
+        # print(f"type df:{type(df)}")
+
+        # print(f"df.head:{df.head()}")
         # 着順の前処理
         df = self._preprocess_rank(df)
 
@@ -25,7 +27,12 @@ class ResultsProcessor(AbstractDataProcessor):
         # サイト上のテーブルに存在する列名は、ResultsColsクラスで定数化している。
         df["性"] = df[Cols.SEX_AGE].map(lambda x: str(x)[0])
         df["年齢"] = df[Cols.SEX_AGE].map(lambda x: str(x)[1:]).astype(int)
+        # print(f"type df:{type(df)}")
 
+        # print(f"df.head:{df.head()}")
+
+        # print(f"Cols.WEIGHT_AND_DIFF:{Cols.WEIGHT_AND_DIFF}")
+        # print(f"Cols.WEIGHT_AND_DIFF.head():{df[Cols.WEIGHT_AND_DIFF].head()}")
         # 馬体重を体重と体重変化に分ける
         df["体重"] = df[Cols.WEIGHT_AND_DIFF].str.split("(", expand=True)[0]
         df["体重変化"] = df[Cols.WEIGHT_AND_DIFF].str.split("(", expand=True)[1].str[:-1]
@@ -53,8 +60,9 @@ class ResultsProcessor(AbstractDataProcessor):
         着順の前処理
         """
         df = raw.copy()
+
         # 着順に数字以外の文字列が含まれているものを取り除く
-        print(f"type(df){type(df)}")
+
         df[Cols.RANK] = pd.to_numeric(df[Cols.RANK], errors="coerce")
         df.dropna(subset=[Cols.RANK], inplace=True)
         df[Cols.RANK] = df[Cols.RANK].astype(int)

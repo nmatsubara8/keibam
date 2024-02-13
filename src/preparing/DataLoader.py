@@ -4,6 +4,8 @@ import os
 import pickle
 import shutil
 
+import pandas as pd
+
 from src.constants._url_paths import UrlPaths
 
 
@@ -208,17 +210,19 @@ class DataLoader:
         with open(local_temp_file_path, "w") as new_file:
             for line in temp_target_data:
                 new_file.write(line + "\n")
+        # CSVファイルからデータを読み込む
+        df = pd.read_csv(local_temp_file_path)
 
         to_target_file = self.get_local_comp_file_path(self.alias)
 
-        with open(to_target_file, "ab") as pkl_file:
-            pickle.dump(temp_target_data, pkl_file)
+        # Pickleファイルにデータを保存する
+        df.to_pickle(to_target_file)
 
     def copy_files(self):
-        files = os.listdir(self.to_temp_location)
+        files = os.listdir(self.to_location)
         for file in files:
-            source_path = os.path.join(self.to_temp_location, file)
-            destination_path = os.path.join(self.to_location, file)
+            source_path = os.path.join(self.to_location, file)
+            destination_path = os.path.join("./data/raw", file)
             # Copy the file from source to destination
             try:
                 shutil.copy2(source_path, destination_path)
