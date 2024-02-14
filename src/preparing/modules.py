@@ -24,6 +24,121 @@ def scrape_scheduled_race_html(self, ref_id):
     return get_soup(url)[0].read()
 
 
+def create_raw_race_info(target_bin_file_path):
+    # print(f"target_bin_file_path:{target_bin_file_path}")
+    with open(target_bin_file_path, "rb") as f:
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
+
+        # htmlをsoupオブジェクトに変換
+        soup = BeautifulSoup(html, "lxml")
+
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        texts = (
+            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        )
+
+        info = re.findall(r"\w+", texts)
+        print(f"info:{info}")
+        df = pd.DataFrame()
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+
+        # 障害レースフラグを初期化
+        hurdle_race_flg = False
+        for text in info:
+            if text in ["芝", "ダート", "障害"]:
+                df["race_type"] = [text]
+            # もし、textが任意の文字列＋3桁か4桁の数字+ "m"　（例えば、1200m ）の様に表現されている場合に、
+            # その数字部分の文字を抽出し、整数化の上、df["course_len"]に格納する処理をここに入れたい
+            # 正規表現パターン
+            pattern = r"([0-9]{3})m|([0-9]{4})m"
+            # 正規表現に一致する部分を抽出
+            matches = re.findall(pattern, text)
+            if matches:
+                for match in matches:
+                    # キャプチャグループから数字部分を取得
+                    extracted_number = match[0] if match[0] else match[1]
+                df["course_len"] = [int(extracted_number)]
+
+            if "右" in text:
+                df["around"] = [Master.AROUND_LIST[0]]
+            if "左" in text:
+                df["around"] = [Master.AROUND_LIST[1]]
+            if "直線" in text:
+                df["around"] = [Master.AROUND_LIST[2]]
+            if "障害" in text:
+                df["around"] = [Master.AROUND_LIST[3]]
+                hurdle_race_flg = True
+
+            if text in Master.GROUND_STATE_LIST:
+                df["ground_state"] = [text]
+            if text in Master.WEATHER_LIST:
+                df["weather"] = [text]
+            if "年" in text:
+                df["date"] = [text]
+
+            if "新馬" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
+            if "未勝利" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
+            if ("1勝クラス" in text) or ("500万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
+            if ("2勝クラス" in text) or ("1000万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
+            if ("3勝クラス" in text) or ("1600万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
+            if "オープン" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
+            if hurdle_race_flg:
+                # df["around"] = [Master.AROUND_LIST[3]]
+                # df["race_type"] = ["障害"]
+                df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+                hurdle_race_flg = False
+                # 障害レースの場合
+        # if hurdle_race_flg:
+        # df["around"] = [Master.AROUND_LIST[3]]
+        # df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+        # hurdle_race_flg = False
+
+        # グレードレース情報の取得
+        grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
+        if "G3" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+        elif "G2" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+        elif "G1" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+
+        df["race_id"] = race_id
+
+    return df
+
+
+def create_tmp_race_info(target_bin_file_path):
+    with open(target_bin_file_path, "rb") as f:
+        html = f.read()
+        soup = BeautifulSoup(html, "lxml")
+        df = pd.DataFrame()
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        texts = (
+            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        )
+        info = re.findall(r"\w+", texts)
+        length = len(info)
+
+        # インデックスをrace_idにする
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        df.index = [race_id] * length
+        df["id"] = range(1, length + 1)
+        df["info"] = info
+        df["race_id"] = race_id
+        df["id"] = df["id"].astype(int)
+
+    return df
+
+
 ################################# Done ####################################
 def process_pkl_file(self, process_function):
     """
@@ -32,46 +147,93 @@ def process_pkl_file(self, process_function):
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
     """
 
-    target_pkl_files = sorted(self.load_file_pkl())
+    df = self.load_file_pkl()
+    target_pkl_files = df.iloc[:, 0]
+    # print("target_pkl_fileはここから+''")
+    print(target_pkl_files.head())
     total_batches = (len(target_pkl_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_pkl_files)  # 処理対象の全データ数
     print(f"# of input files: {total_files}")
+    print(f"# of total_batches: {total_batches}")
     processed_files = 0  # 処理済みのファイル数
-    print(f"start {self.alias} processing")
+    # print(f"start {self.alias} processing")
     # target_data_name = {}
 
     # tqdmインスタンスの作成
-    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=True)
+    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
+
+    # ドライバーのインスタンス化
+    driver = prepare_chrome_driver()
+    # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+    waiting_time = 30
+    driver.implicitly_wait(waiting_time)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
         end_index = min((batch_index + 1) * self.batch_size, len(target_pkl_files))
         batch_target_pkl_files = target_pkl_files[start_index:end_index]
-
+        # print("ref_idの確認:", batch_target_pkl_files[0:2])
+        batch_data = []
         for ref_id in batch_target_pkl_files:  #
             try:
                 # print(f"ref_id:{ref_id}")
-                self.processing_id = ref_id
-                self.target_data = process_function(self, ref_id)  # , target_data_name)
+                # self.processing_id = ref_id
+                return_data = process_function(self, ref_id, driver, waiting_time)
+
+                time.sleep(1)
+                batch_data.append(return_data)
             # print(f"temp_df:{temp_df}")
             except Exception as e:
                 print("Error at {}: {}".format(ref_id, e))
+                self.obtained_last_key = ref_id[-1]
                 break
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
             # temp_df = pd.concat([temp_df[key] for key in temp_df])
+        df = pd.concat(batch_data)
 
-            # if self.alias == "race_results_table":
-            #    self.target_data = trim_function(temp_df)
-            # self.target_data = [item for sublist in temp_df for item in sublist]
-            self.save_temp_file(self.alias)
-            # target_data_name = {}  # バッチ処理が完了したので辞書をクリア
-            self.target_data = []
-        self.obtained_last_key = ref_id[-1]
-        if self.get_filetype() != "html":
-            self.transfer_temp_file()
+        self.obtained_last_key = ref_id
+        # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
+
+        self.save_temp_file(self.alias)
+    self.target_data = df.drop_duplicates().sort_values(by=[-1]).reset_index(drop=True)
+    if self.get_filetype() != "html":
+        self.transfer_temp_file()
+
     print(f"# of processed files: {processed_files}")
+    # ドライバーのクローズ
+    driver.close()
+    driver.quit()
+
+
+def get_kaisai_date_list(self):
+    # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
+    # to_の月は含まないので注意。
+    print("getting race date from {} to {}".format(self.from_date, self.to_date))
+    # 間の年月一覧を作成
+    date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="MS")
+    # 開催日一覧を入れるリスト
+    kaisai_date_list = []
+    df = pd.DataFrame(columns=["kaisai_date"])
+
+    for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range), dynamic_ncols=True):
+        # 取得したdate_rangeから、スクレイピング対象urlを作成する。
+        # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
+        ref_id = str(year) + str(month)
+
+        url = self.from_location + "?" + ref_id
+        print(f"url:{url}")
+        soup = get_soup(url)
+        a_list = soup.find("table", class_="Calendar_Table").find_all("a")
+        for a in a_list:
+            kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
+        # DataFrameを作成し、インデックスをリセットして整形する
+        df = pd.DataFrame({"kaisai_data": kaisai_date_list}, index=[ref_id] * len(kaisai_date_list))
+        self.save_temp_file(self.alias)
+    self.target_data = df.drop_duplicates().sort_values(by=["kaisai_date"]).reset_index(drop=True)
+    if self.get_filetype() != "html":
+        self.transfer_temp_file()
 
 
 ################################# Done ####################################
@@ -82,19 +244,18 @@ def get_soup(url):
     wait = WebDriverWait(driver, waiting_time)
     wait.until(EC.presence_of_all_elements_located)
     html = urlopen(url)
-    time.sleep(1)
     soup = BeautifulSoup(html, "lxml")
     return soup
 
 
 ################################# Done ####################################
-def get_raw_horse_id_list(self, ref_id):
+def get_raw_horse_id_list(self, ref_id, driver, waiting_time):
     # この例ではtarget=horse
     target_id_list = []
     target_ids = []
     target_ids = []
 
-    url = self.from_location + ref_id
+    url = str(self.from_location) + str(ref_id)
     soup = get_soup(url)
 
     target_td_list = soup.find_all("td", attrs={"class": "txt_l"})
@@ -103,24 +264,19 @@ def get_raw_horse_id_list(self, ref_id):
     target_id = [re.search(r"/horse/(\d+)/", href).group(1) for href in target_ids]
     for id in range(len(target_id)):
         target_id_list.append(target_id[id])
+    df = pd.DataFrame({"horse_id": target_id_list}, index=[ref_id] * len(target_id_list))
     # print("target_id_list: ", target_id_list)
-    return target_id_list
+    return df
 
 
 ################################# Done ####################################
-def scrape_race_id_list(self, ref_id):
+def scrape_race_id_list(self, ref_id, driver, waiting_time):
     # query = ["kaisai_date=" + str(ref_id)]
-    url = self.from_location + "?kaisai_date=" + ref_id
+    url = f"{self.from_location}?kaisai_date={ref_id}"
     # print(f"url:{url}")
+    df = pd.DataFrame()
     race_id_list = []
-
-    waiting_time = 10
-    driver = prepare_chrome_driver()
-
-    # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
-    driver.implicitly_wait(waiting_time)
-    max_attempt = 6
-
+    max_attempt = 5
     try:
         driver.get(url)
         for i in range(1, max_attempt):
@@ -130,21 +286,21 @@ def scrape_race_id_list(self, ref_id):
             except Exception as e:
                 # 取得できない場合は、リトライを実施
                 print(f"error:{e} retry:{i}/{max_attempt} waiting more {waiting_time} seconds")
-
         for a in a_list:
             race_id = re.findall(
                 r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
             )
             if len(race_id) > 0:
                 race_id_list.append(race_id[0])
+
+                # インデックスをhorse_idにする
+        # DataFrameを作成し、インデックスをref_idに設定する
+        df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
     except Exception as e:
         print("Error at {}: {}".format(ref_id, e))
         print("error / obtained_last_key: ", self.obtained_last_key)
 
-    driver.close()
-    driver.quit()
-
-    return race_id_list
+    return df
 
 
 ################################# Done ####################################
@@ -185,7 +341,7 @@ def process_bin_file(self, process_function):
     print(f"start {self.alias} processing")
 
     # tqdmインスタンスの作成
-    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=True)
+    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
@@ -198,7 +354,7 @@ def process_bin_file(self, process_function):
             self.target_data = pd.DataFrame()
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
-
+                time.sleep(1)
             except Exception as e:
                 print("Error at {}: {}".format(target_bin_file_path, e))
                 break
@@ -297,87 +453,6 @@ def create_raw_race_results(target_bin_file_path):
         # race_id_column = df.pop("race_id")
         # df.insert(0, "race_id", race_id_column)
         ###### df.drop(df.columns[0], axis=1, inplace=True)
-
-    return df
-
-
-################################# Done ####################################
-def create_raw_race_info(target_bin_file_path):
-    # print(f"target_bin_file_path:{target_bin_file_path}")
-    with open(target_bin_file_path, "rb") as f:
-        # 保存してあるbinファイルを読み込む
-        html = f.read()
-
-        # htmlをsoupオブジェクトに変換
-        soup = BeautifulSoup(html, "lxml")
-
-        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        texts = (
-            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-        )
-
-        info = re.findall(r"\w+", texts)
-        # print(f"info:{info}")
-        df = pd.DataFrame()
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
-
-        # 障害レースフラグを初期化
-        hurdle_race_flg = False
-        for text in info:
-            if "障" in text:
-                df["race_type"] = ["障害"]
-                hurdle_race_flg = True
-            if text in ["芝", "ダート"]:
-                df["race_type"] = [text]
-
-            # 文字列からパターンにマッチする部分をすべて抽出し、リストに格納
-            course_len_list = [int(match[:-1]) for match in re.findall(r"\d{3,4}m", text)]
-
-            # リストが空でないことを確認してから最後の要素を取得し、DataFrameに設定
-            if course_len_list:
-                df["course_len"] = course_len_list[-1]
-            if text in Master.GROUND_STATE_LIST:
-                df["ground_state"] = [text]
-            if text in Master.WEATHER_LIST:
-                df["weather"] = [text]
-            if "年" in text:
-                df["date"] = [text]
-            if "右" in text:
-                df["around"] = [Master.AROUND_LIST[0]]
-            if "左" in text:
-                df["around"] = [Master.AROUND_LIST[1]]
-            if "直線" in text:
-                df["around"] = [Master.AROUND_LIST[2]]
-            if "新馬" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
-            if "未勝利" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
-            if ("1勝クラス" in text) or ("500万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
-            if ("2勝クラス" in text) or ("1000万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
-            if ("3勝クラス" in text) or ("1600万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
-            if "オープン" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
-
-        # グレードレース情報の取得
-        grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
-        if "G3" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
-        elif "G2" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
-        elif "G1" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
-
-        # 障害レースの場合
-        if hurdle_race_flg:
-            df["around"] = [Master.AROUND_LIST[3]]
-            df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-            hurdle_race_flg = False
-        df["race_id"] = race_id
 
     return df
 

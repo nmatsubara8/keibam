@@ -150,6 +150,7 @@ class DataLoader:
                 mode = "a"
             # TXTファイルにデータを書き込む処理
             with open(local_path, mode=mode, newline="\n") as txt_file:
+                # txt_file.write(self.alias + "\n")
                 for item in self.target_data:
                     txt_file.write(str(item) + "\n")
 
@@ -183,7 +184,7 @@ class DataLoader:
                 mode = "a"
 
             self.target_data.to_csv(
-                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode=mode
+                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=False, mode=mode
             )
 
         elif filetype == "h5":
@@ -200,11 +201,6 @@ class DataLoader:
         local_temp_file_path = self.get_local_temp_file_path(self.alias)
         with open(local_temp_file_path, "r") as base_file:
             temp_target_data = [line.strip() for line in base_file]
-
-            # ソート処理を追加
-            temp_target_data.sort()
-            # ユニークにする処理を追加
-            temp_target_data = sorted(set(temp_target_data))
 
         # ソートしたデータを元のファイルに保存
         with open(local_temp_file_path, "w") as new_file:
@@ -236,6 +232,9 @@ class DataLoader:
         if (self.from_local_location and self.from_local_file_name) is not None:
             target_file_path = os.path.join(self.from_local_location, self.from_local_file_name)
             with open(target_file_path, "rb") as f:
+                # 最初のデータを無視して読み込む
+
+                # 残りのデータを読み込む
                 data = pickle.load(f)
                 if not self.skip:
                     loaded_list = data
@@ -243,7 +242,7 @@ class DataLoader:
                     try:
                         # ファイルfから1行ずつ読み込んで、文字列としてリストに追加する
                         lines = [line.strip() for line in data]
-                        target_number = "202008010710"
+                        target_number = "20090104"
                         # self.obtained_last_keyで始まる文字列を検索し、そのインデックスを取得する
                         index = next((i for i, line in enumerate(lines) if line == target_number), None)
 

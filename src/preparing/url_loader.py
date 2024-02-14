@@ -1,16 +1,9 @@
-import re
-import time
-from urllib.request import urlopen
-
-import pandas as pd
-from bs4 import BeautifulSoup
-from tqdm import tqdm
-
 from src.preparing.DataLoader import DataLoader
 from src.preparing.modules import create_raw_horse_info
 from src.preparing.modules import create_raw_horse_ped
 from src.preparing.modules import create_raw_horse_results
 from src.preparing.modules import create_raw_race_return
+from src.preparing.modules import get_kaisai_date_list
 from src.preparing.modules import get_raw_horse_id_list
 from src.preparing.modules import process_bin_file
 from src.preparing.modules import process_pkl_file
@@ -58,35 +51,8 @@ class KaisaiDateLoader(DataLoader):
         )
         self.target_data = []
 
-    ################################# Done ####################################
     def scrape_kaisai_date(self):
-        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
-        # to_の月は含まないので注意。
-        print("getting race date from {} to {}".format(self.from_date, self.to_date))
-        # 間の年月一覧を作成
-        date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="ME")
-        # 開催日一覧を入れるリスト
-        kaisai_date_list = []
-
-        for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range), dynamic_ncols=True):
-            # 取得したdate_rangeから、スクレイピング対象urlを作成する。
-            # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
-            query = [
-                "year=" + str(year),
-                "month=" + str(month),
-            ]
-            url = self.from_location + "?" + "&".join(query)
-            html = urlopen(url).read()
-            time.sleep(1)
-            soup = BeautifulSoup(html, "lxml")
-            a_list = soup.find("table", class_="Calendar_Table").find_all("a")
-            for a in a_list:
-                kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
-
-        self.target_data = kaisai_date_list
-        self.save_temp_file(self.alias)
-        self.obtained_last_key = query
-        self.transfer_temp_file()
+        get_kaisai_date_list(self)
 
     ################################# Done ####################################
     def scrape_race_id_list(self):
@@ -451,4 +417,44 @@ self.target_data = sorted(set(flat_list))
 self.save_temp_file("horse_id_list")
 self.obtained_last_key = target_id
 self.transfer_temp_file()
+
+
+
+
+
+
+
+   ################################# Done ####################################
+    def scrape_kaisai_date(self):
+        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
+        # to_の月は含まないので注意。
+        print("getting race date from {} to {}".format(self.from_date, self.to_date))
+        # 間の年月一覧を作成
+        date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="MS")
+        # 開催日一覧を入れるリスト
+        kaisai_date_list = []
+
+        for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range), dynamic_ncols=True):
+            # 取得したdate_rangeから、スクレイピング対象urlを作成する。
+            # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
+            query = [
+                "year=" + str(year),
+                "month=" + str(month),
+            ]
+            url = self.from_location + "?" + "&".join(query)
+            html = urlopen(url).read()
+            time.sleep(1)
+            soup = BeautifulSoup(html, "lxml")
+            a_list = soup.find("table", class_="Calendar_Table").find_all("a")
+            for a in a_list:
+                kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\\d+", a["href"])[0])
+        # DataFrameを作成し、インデックスをリセットして整形する
+        df = pd.DataFrame({"kaisai_date": kaisai_date_list})
+        df_sorted_unique = df.drop_duplicates().sort_values(by="kaisai_date").reset_index(drop=True)
+
+        self.target_data = df_sorted_unique
+        self.save_temp_file(self.alias)
+        self.obtained_last_key = query
+        self.transfer_temp_file()
+
 """

@@ -28,16 +28,16 @@ class UrlPaths:
         "kaisai_date_list",  # 0
         TOP_URL[1] + "calendar.html",  # 1
         TOP_URL[2] + "kaisai_date/",  # 2
-        "temp_kaisai_date_list.txt",  # 3
+        "temp_kaisai_date_table.csv",  # 3
         TOP_URL[4] + "kaisai_date/",  # 4
         "kaisai_date_list.pkl",  # 5
-        100,  # 6
+        all,  # 6
         "",  # 7
         "",  # 8
         "",  # 9
         False,  # 10
-        "2020-01-01",  # 11
-        "2020-02-01",  # 12
+        "2023-01-01",  # 11
+        "2023-06-14",  # 12
     )
     ################################# Done ####################################
     # レース一覧ページ Done
@@ -45,10 +45,10 @@ class UrlPaths:
         "race_id_list",  # 0
         TOP_URL[1] + "race_list.html",  # 1
         TOP_URL[2] + "race_id_list/",  # 2
-        "temp_race_id_list.txt",  # 3
+        "temp_race_id_table.csv",  # 3
         TOP_URL[4] + "race_id_list/",  # 4
         "race_id_list.pkl",  # 5
-        10,  # 6
+        5,  # 6
         CALENDAR_URL[4],  # 7
         "kaisai_date_list.pkl",  # 8
         "",  # 9
@@ -85,6 +85,23 @@ class UrlPaths:
         1000,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_results_table"においては、使わないこととする
+        "",  # 9
+        False,  # 10
+        "",  # 11
+        "",  # 12
+    )
+
+    # レース結果（詳細レース情報）の取得ページ Done
+    TMP_FOR_RACE_INFO: tuple = (
+        "tmp_for_race_info",  # 0
+        DB_DOMAIN[1] + "race/",  # 1
+        DB_DOMAIN[2] + "tmp_for_race_info/",  # 2
+        "tmp_race_info_table.csv",  # 3
+        DB_DOMAIN[4] + "tmp_for_race_info/",  # 4
+        "race_info.csv",
+        10,  # 6
+        DB_DOMAIN[4] + "race/",  # 7
+        "*.bin",  # 8 "race_info_table"においては、使わないこととする
         "",  # 9
         False,  # 10
         "",  # 11
