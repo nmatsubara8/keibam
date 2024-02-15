@@ -95,11 +95,11 @@ def select_process(alias):
     data_request.post_process_display()
 
 
-kaisai_date_list = select_process(alias="kaisai_date_list")
+# kaisai_date_list = select_process(alias="kaisai_date_list")
 
 
 # race_id_list = select_process(alias="race_id_list")
-# horse_id_list = select_process(alias="horse_id_list")  #
+horse_id_list = select_process(alias="horse_id_list")  #
 #############race_html = select_process(alias="race_html")
 # horse_html = select_process(alias="horse_html")
 #############ped_html = select_process(alias="ped_html")

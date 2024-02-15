@@ -87,7 +87,7 @@ class DataLoader:
 
         # skip対象ではないゴミファイルの掃除
         if not self.skip:
-            self.delete_files()
+            self.delete_files_both()
 
         self.pre_process_display()
 
@@ -242,7 +242,7 @@ class DataLoader:
                     try:
                         # ファイルfから1行ずつ読み込んで、文字列としてリストに追加する
                         lines = [line.strip() for line in data]
-                        target_number = "20090104"
+                        target_number = str(202306010801)
                         # self.obtained_last_keyで始まる文字列を検索し、そのインデックスを取得する
                         index = next((i for i, line in enumerate(lines) if line == target_number), None)
 
@@ -328,7 +328,7 @@ class DataLoader:
                 file_list.append(item)
         return file_list
 
-    def delete_files(self):
+    def delete_files_both(self):
         files_to_temp = os.listdir(self.to_temp_location)
         files_to = os.listdir(self.to_location)
         # ファイルを削除
@@ -346,6 +346,18 @@ class DataLoader:
                     os.remove(file_path_to)
             except Exception as e:
                 print(f"Error deleting {file_path_to}: {e}")
+
+    def delete_files_tmp(self):
+        files_to_temp = os.listdir(self.to_temp_location)
+
+        # ファイルを削除
+        for file in files_to_temp:
+            file_path_to_temp = os.path.join(self.to_temp_location, file)
+            try:
+                if os.path.isfile(file_path_to_temp):
+                    os.remove(file_path_to_temp)
+            except Exception as e:
+                print(f"Error deleting {file_path_to_temp}: {e}")
 
     def pre_process_display(self):  # 処理開始時のメッセージ出力
         print(f"処理対象:{self.alias}")

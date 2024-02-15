@@ -139,6 +139,24 @@ def create_tmp_race_info(target_bin_file_path):
     return df
 
 
+def storing_process(self):
+    df = []
+    df_sorted = []
+    df_supressed = []
+    self_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    df = pd.read_csv(self_path)
+    df_copy = df.copy()
+    df_copy.iloc[:, -1] = df_copy.iloc[:, -1].astype(int)
+    df_sorted = df_copy.iloc[:, -1].sort_values()
+    df_supressed = df_sorted.drop_duplicates()
+    self.target_data = df_supressed.reset_index(drop=True)
+    self.delete_files_tmp()
+    self.save_temp_file(self.alias)
+    self.target_data = df
+    if self.get_filetype() != "html":
+        self.transfer_temp_file()
+
+
 ################################# Done ####################################
 def process_pkl_file(self, process_function):
     """
@@ -146,13 +164,19 @@ def process_pkl_file(self, process_function):
     process_functionを入れ替えながら汎用的に使う共通モジュール
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
     """
+    if self.alias == "kaisai_date_list":
+        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数.to_の月は含まないので注意。
+        df = pd.DataFrame({"kaisai_data": []})
+        target_all_files = pd.date_range(start=self.from_date, end=self.to_date, freq="ME").astype(str)
+    else:
+        df = self.load_file_pkl()
+        target_all_files = df.iloc[:, 0]
 
-    df = self.load_file_pkl()
-    target_pkl_files = df.iloc[:, 0]
-    # print("target_pkl_fileはここから+''")
-    print(target_pkl_files.head())
-    total_batches = (len(target_pkl_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
-    total_files = len(target_pkl_files)  # 処理対象の全データ数
+        # print("target_pkl_fileはここから+''")
+        print(target_all_files.head())
+
+    total_batches = (len(target_all_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
+    total_files = len(target_all_files)  # 処理対象の全データ数
     print(f"# of input files: {total_files}")
     print(f"# of total_batches: {total_batches}")
     processed_files = 0  # 処理済みのファイル数
@@ -170,11 +194,11 @@ def process_pkl_file(self, process_function):
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
-        end_index = min((batch_index + 1) * self.batch_size, len(target_pkl_files))
-        batch_target_pkl_files = target_pkl_files[start_index:end_index]
-        # print("ref_idの確認:", batch_target_pkl_files[0:2])
+        end_index = min((batch_index + 1) * self.batch_size, len(target_all_files))
+        batch_target_all_files = target_all_files[start_index:end_index]
+        # print("ref_idの確認:", batch_target_all_files[0:2])
         batch_data = []
-        for ref_id in batch_target_pkl_files:  #
+        for ref_id in batch_target_all_files:  #
             try:
                 # print(f"ref_id:{ref_id}")
                 # self.processing_id = ref_id
@@ -184,8 +208,8 @@ def process_pkl_file(self, process_function):
                 batch_data.append(return_data)
             # print(f"temp_df:{temp_df}")
             except Exception as e:
-                print("Error at {}: {}".format(ref_id, e))
-                self.obtained_last_key = ref_id[-1]
+                print("Error at {}: {}:{}".format(processed_files, ref_id, e))
+                self.obtained_last_key = ref_id
                 break
 
             processed_files += 1
@@ -195,11 +219,9 @@ def process_pkl_file(self, process_function):
 
         self.obtained_last_key = ref_id
         # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
-
+        self.target_data = df
         self.save_temp_file(self.alias)
-    self.target_data = df.drop_duplicates().sort_values(by=[-1]).reset_index(drop=True)
-    if self.get_filetype() != "html":
-        self.transfer_temp_file()
+    storing_process(self)
 
     print(f"# of processed files: {processed_files}")
     # ドライバーのクローズ
@@ -207,39 +229,41 @@ def process_pkl_file(self, process_function):
     driver.quit()
 
 
-def get_kaisai_date_list(self):
-    # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
-    # to_の月は含まないので注意。
-    print("getting race date from {} to {}".format(self.from_date, self.to_date))
-    # 間の年月一覧を作成
-    date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="MS")
+def get_kaisai_date_list(self, ref_id, driver, waiting_time):
+    match = re.match(r"^(\d{4})-(\d{2})-\d{2}$", ref_id)
+    if match:
+        year = match.group(1)
+        month = match.group(2)
+        print("Year:", year)
+        print("Month:", month)
+    else:
+        print("Invalid date format")
+
     # 開催日一覧を入れるリスト
     kaisai_date_list = []
-    df = pd.DataFrame(columns=["kaisai_date"])
+    # df = pd.DataFrame(columns=["kaisai_date"])
 
-    for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range), dynamic_ncols=True):
-        # 取得したdate_rangeから、スクレイピング対象urlを作成する。
-        # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
-        ref_id = str(year) + str(month)
+    # 取得したdate_rangeから、スクレイピング対象urlを作成する。
+    # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
+    ref_id = "year=" + str(year) + "&month=" + str(month)
+    ref_ym = str(year) + str(month)
 
-        url = self.from_location + "?" + ref_id
-        print(f"url:{url}")
-        soup = get_soup(url)
-        a_list = soup.find("table", class_="Calendar_Table").find_all("a")
-        for a in a_list:
-            kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
-        # DataFrameを作成し、インデックスをリセットして整形する
-        df = pd.DataFrame({"kaisai_data": kaisai_date_list}, index=[ref_id] * len(kaisai_date_list))
-        self.save_temp_file(self.alias)
-    self.target_data = df.drop_duplicates().sort_values(by=["kaisai_date"]).reset_index(drop=True)
-    if self.get_filetype() != "html":
-        self.transfer_temp_file()
+    url = str(self.from_location) + "?" + ref_id
+    # print(f"url:{url}")
+    soup = get_soup(url, driver, waiting_time)
+    a_list = soup.find("table", class_="Calendar_Table").find_all("a")
+    for a in a_list:
+        kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
+    # print(f"kaisai_date_list:{kaisai_date_list}")
+    # DataFrameを作成し、インデックスをリセットして整形する
+    df = pd.DataFrame({"kaisai_data": kaisai_date_list}, index=[ref_ym] * len(kaisai_date_list))
+    # print(f"df:{df}")
+
+    return df
 
 
 ################################# Done ####################################
-def get_soup(url):
-    waiting_time = 30
-    driver = prepare_chrome_driver()
+def get_soup(url, driver, waiting_time):
     driver.get(url)
     wait = WebDriverWait(driver, waiting_time)
     wait.until(EC.presence_of_all_elements_located)
@@ -250,13 +274,13 @@ def get_soup(url):
 
 ################################# Done ####################################
 def get_raw_horse_id_list(self, ref_id, driver, waiting_time):
-    # この例ではtarget=horse
+    # この例ではtarget=horse ref_id=race_id
     target_id_list = []
     target_ids = []
     target_ids = []
 
     url = str(self.from_location) + str(ref_id)
-    soup = get_soup(url)
+    soup = get_soup(url, driver, waiting_time)
 
     target_td_list = soup.find_all("td", attrs={"class": "txt_l"})
 
@@ -264,8 +288,9 @@ def get_raw_horse_id_list(self, ref_id, driver, waiting_time):
     target_id = [re.search(r"/horse/(\d+)/", href).group(1) for href in target_ids]
     for id in range(len(target_id)):
         target_id_list.append(target_id[id])
+    # print(f"target_id_list:{target_id_list}")
     df = pd.DataFrame({"horse_id": target_id_list}, index=[ref_id] * len(target_id_list))
-    # print("target_id_list: ", target_id_list)
+    # print(f"df:{df}")
     return df
 
 
@@ -274,7 +299,7 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time):
     # query = ["kaisai_date=" + str(ref_id)]
     url = f"{self.from_location}?kaisai_date={ref_id}"
     # print(f"url:{url}")
-    df = pd.DataFrame()
+    # df = pd.DataFrame()
     race_id_list = []
     max_attempt = 5
     try:

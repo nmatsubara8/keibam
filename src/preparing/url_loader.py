@@ -52,7 +52,7 @@ class KaisaiDateLoader(DataLoader):
         self.target_data = []
 
     def scrape_kaisai_date(self):
-        get_kaisai_date_list(self)
+        process_pkl_file(self, get_kaisai_date_list)
 
     ################################# Done ####################################
     def scrape_race_id_list(self):
