@@ -4,6 +4,7 @@ import os
 import pickle
 import shutil
 
+import numpy as np
 import pandas as pd
 
 from src.constants._url_paths import UrlPaths
@@ -110,12 +111,12 @@ class DataLoader:
 
         return filetype
 
-    def get_local_temp_file_path(self, alias):
-        if self.get_filetype() != "html":
+    def get_local_temp_file_path(self):
+        if self.get_filetype() != "bin":
             local_temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
         else:
             # print("self.processing_id:", self.processing_id)
-            local_temp_path = os.path.join(self.to_temp_location, self.processing_id + ".bin")
+            local_temp_path = os.path.join(self.to_temp_location, str(self.processing_id) + ".bin")
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
@@ -127,7 +128,7 @@ class DataLoader:
 
     def save_temp_file(self, alias):
         # ローカル一時保存用ファイルのパス
-        local_path = self.get_local_temp_file_path(self.alias)
+        local_path = self.get_local_temp_file_path()
         filetype = self.get_filetype()
         if not os.listdir(self.to_temp_location):
             mode = "w"
@@ -139,7 +140,7 @@ class DataLoader:
             else:
                 mode = "a"
                 # CSVファイルにデータを書き込む処理
-            with open(local_path, mode=mode, newline="\n") as csv_file:
+            with open(local_path, mode=mode, index=False, newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
                 # self.obtained_last_key = self.target_data[-1]
 
@@ -149,7 +150,7 @@ class DataLoader:
             else:
                 mode = "a"
             # TXTファイルにデータを書き込む処理
-            with open(local_path, mode=mode, newline="\n") as txt_file:
+            with open(local_path, mode=mode, index=False, newline="\n") as txt_file:
                 # txt_file.write(self.alias + "\n")
                 for item in self.target_data:
                     txt_file.write(str(item) + "\n")
@@ -162,7 +163,17 @@ class DataLoader:
             # pickleファイルにデータを書き込む処理
             with open(local_path, mode=mode) as pkl_file:
                 pickle.dump(self.target_data, pkl_file)
-                # self.obtained_last_key = self.target_data[-1]
+
+        elif filetype == "bin":
+            if not os.listdir(self.to_temp_location):
+                mode = "wb"
+            else:
+                mode = "ab"
+            # HTMLデータから実際のHTML部分を抽出する正規表現パターン
+            # html_pattern = re.compile(r"b'(.+)'", re.DOTALL)
+            file_path = self.get_local_temp_file_path()  # ファイルパスを取得
+            with open(file_path, mode=mode) as bin_file:  # バイナリモードでファイルを開く
+                bin_file.write(self.target_data)  # アイテムをファイルに書き込む
 
         elif filetype == "html":
             if not os.listdir(self.to_temp_location):
@@ -235,34 +246,63 @@ class DataLoader:
                 # 最初のデータを無視して読み込む
 
                 # 残りのデータを読み込む
+                data = pd.DataFrame()
                 data = pickle.load(f)
+                data.iloc[:, -1] = data.iloc[:, -1].astype(int)
+                print(f"load_file_pkl:row type int:{data.dtypes}")
+                print(f"type of data_Loaded: {type(data)}")
+                print(f"load_file_pkl:data.head: {data.head()}")
+                print(f"1st data: {data.iloc[0].values[0]}")
+                # print(f"type of data.iloc[1,1]: {type(data.iloc[0,1])}")
                 if not self.skip:
                     loaded_list = data
+                    print("start from scratch")
                 else:  # skip=True時のリスト範囲限定処理
                     try:
                         # ファイルfから1行ずつ読み込んで、文字列としてリストに追加する
-                        lines = [line.strip() for line in data]
-                        target_number = str(202306010801)
-                        # self.obtained_last_keyで始まる文字列を検索し、そのインデックスを取得する
-                        index = next((i for i, line in enumerate(lines) if line == target_number), None)
+                        # lines = [line.strip() for line in data]
+                        # print(f"lines:{lines}")
+                        ###########################################
+                        ###########################################
+                        ###########################################
+                        ###########################################
+                        target_number = np.int64(202308011208)  # 文字列型に変換する
 
-                        if index is not None:
+                        ###########################################
+                        ###########################################
+                        ###########################################
+                        ###########################################
+
+                        print(f"length of data:{len(data)}")
+                        print(f"shape of data:{data.shape}")
+                        # for j in range(0, 3):
+                        #    print(f"print test :data.iloc[{j}]: {data.iloc[j].values[0]}")
+                        index = 0
+                        for idx in range(0, len(data) - 1):
+                            preprocessed_data = np.int64(data.iloc[idx].values[0])
+                            # print(f"target_number:{target_number}")
+                            # print(f"type of target_number:{type(target_number)}")
+                            # print(f"type of loaded data:{type(preprocessed_data)}")
+                            if target_number == preprocessed_data:
+                                print(f"{target_number}:{data.iloc[idx].values[0]}")
+                                index = idx
+                                print(f"matchde index:{index}")
+                        if index != 0:
                             # 範囲外の場合や最後の要素の場合に注意
-                            length = len(lines)
+                            length = len(data)
                             if index < length:
-                                loaded_list = lines[index:length]
-                                print(f"re-entered from {loaded_list[0]} to  {loaded_list[-1]} ")
-
+                                loaded_list = data[index:length]
+                                print(f"re-entered from {data.iloc[index:]} to  {data.iloc[:length]} ")
+                                print(f"length of reloaded files is {len(loaded_list)}. / originally {len(data)}")
                                 self.skip = False
                                 return loaded_list
                             else:
                                 print("指定したIDがリストの最後にあります。")
+
                         else:
                             print("指定したIDがリスト内に見つかりません。")
-
                     except ValueError:
                         print("ファイルからの読み込み中にエラーが発生しました。")
-
                 return loaded_list
 
     def load_file_txt(self):

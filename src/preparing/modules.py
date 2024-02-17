@@ -17,7 +17,7 @@ from src.preparing.prepare_chrome_driver import prepare_chrome_driver
 
 def scrape_scheduled_race_html(self, ref_id):
     # 時刻とレースidの組みあわせからレースidだけを抽出
-    race_id_list = [element.split(",")[1] for element in time_race_id_list]
+    # race_id_list = [element.split(",")[1] for element in time_race_id_list]
 
     query = ["?race_id=" + str(ref_id)]
     url = self.from_location + query[0]
@@ -147,14 +147,17 @@ def storing_process(self):
     df = pd.read_csv(self_path)
     df_copy = df.copy()
     df_copy.iloc[:, -1] = df_copy.iloc[:, -1].astype(int)
+    # 最後の列にstrip()メソッドを適用する
+    df_copy.iloc[:, -1] = df_copy.iloc[:, -1].apply(lambda x: x.strip() if isinstance(x, str) else x)
     df_sorted = df_copy.iloc[:, -1].sort_values()
     df_supressed = df_sorted.drop_duplicates()
     self.target_data = df_supressed.reset_index(drop=True)
+
     self.delete_files_tmp()
     self.save_temp_file(self.alias)
     self.target_data = df
-    if self.get_filetype() != "html":
-        self.transfer_temp_file()
+
+    self.transfer_temp_file()
 
 
 ################################# Done ####################################
@@ -177,6 +180,8 @@ def process_pkl_file(self, process_function):
 
     total_batches = (len(target_all_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_all_files)  # 処理対象の全データ数
+    filetype = self.get_filetype()
+    print(f"filetype:{filetype}")
     print(f"# of input files: {total_files}")
     print(f"# of total_batches: {total_batches}")
     processed_files = 0  # 処理済みのファイル数
@@ -201,27 +206,40 @@ def process_pkl_file(self, process_function):
         for ref_id in batch_target_all_files:  #
             try:
                 # print(f"ref_id:{ref_id}")
-                # self.processing_id = ref_id
+                self.processing_id = ref_id
                 return_data = process_function(self, ref_id, driver, waiting_time)
 
                 time.sleep(1)
+                if filetype == "bin":
+                    batch_data.append(return_data)
                 batch_data.append(return_data)
             # print(f"temp_df:{temp_df}")
             except Exception as e:
-                print("Error at {}: {}:{}".format(processed_files, ref_id, e))
+                print("Error at {}: {}:{}".format(processed_files + 1, ref_id, e))
                 self.obtained_last_key = ref_id
                 break
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
             # temp_df = pd.concat([temp_df[key] for key in temp_df])
-        df = pd.concat(batch_data)
+            self.obtained_last_key = ref_id
 
-        self.obtained_last_key = ref_id
-        # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
-        self.target_data = df
+        # print(f"直前 filetype:{filetype}")
+        if filetype != "bin":
+            df = pd.concat(batch_data)
+            # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
+            self.target_data = df
+            # print(f"df:{df}")
+
+        else:
+            self.processing_id = ref_id
+            self.target_data = return_data
+            # print(batch_data[0])
+            # rint(f"# of processed files: {processed_files}")
         self.save_temp_file(self.alias)
-    storing_process(self)
+
+    if filetype != "bin":
+        storing_process(self)
 
     print(f"# of processed files: {processed_files}")
     # ドライバーのクローズ
@@ -234,8 +252,8 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
     if match:
         year = match.group(1)
         month = match.group(2)
-        print("Year:", year)
-        print("Month:", month)
+        # print("Year:", year)
+        # print("Month:", month)
     else:
         print("Invalid date format")
 
@@ -329,22 +347,22 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time):
 
 
 ################################# Done ####################################
-def scrape_html_race(self, ref_id):
-    url = self.from_location + ref_id
+def scrape_html_race(self, ref_id, driver, waiting_time):
+    url = str(self.from_location) + str(ref_id)
     html = urlopen(url).read()
     return html
 
 
 ################################# Done ####################################
-def scrape_html_horse(self, ref_id):
-    url = self.from_location + ref_id
+def scrape_html_horse(self, ref_id, driver, waiting_time):
+    url = str(self.from_location) + str(ref_id)
     html = urlopen(url).read()
     return html
 
 
 ################################# Done ####################################
-def scrape_html_ped(self, ref_id):
-    url = self.from_location + ref_id
+def scrape_html_ped(self, ref_id, driver, waiting_time):
+    url = str(self.from_location) + str(ref_id)
     html = urlopen(url).read()
     return html
 

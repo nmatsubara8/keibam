@@ -65,7 +65,7 @@ class UrlPaths:
         "temp_race_html",  # 3
         DB_DOMAIN[4] + "race/",  # 4
         "race_html",  # 5  #
-        10,  # 6
+        1,  # 6
         DB_DOMAIN[4] + "race_id_list/",  # 7
         "race_id_list.pkl",  # 8
         "",  # 9
@@ -164,14 +164,14 @@ class UrlPaths:
         "horse_html",  # 0
         DB_DOMAIN[1] + "horse/",  # 1
         DB_DOMAIN[4] + "horse/",  # 2
-        "temp_horse_html",  # 3
+        "temp_horse_html.bin",  # 3
         DB_DOMAIN[4] + "horse/",  # 4
-        "horse_html",  # 5  #
-        5,  # 6
+        "horse_html.bin",  # 5  #
+        1,  # 6
         DB_DOMAIN[4] + "horse_id_list/",  # 7
         "horse_id_list.pkl",  # 8
         "",  # 9
-        True,  # 10
+        False,  # 10
         "",  # 11
         "",  # 12
     )
@@ -198,10 +198,10 @@ class UrlPaths:
         "ped_html",  # 0
         HORSE_URL[1] + "ped/",  # 1
         DB_DOMAIN[4] + "ped/",  # 2
-        "temp_ped_html",  # 3
+        "temp_ped.bin",  # 3
         DB_DOMAIN[4] + "ped/",  # 4
-        "ped_html",  # 5
-        5,  # 6
+        "ped_html.bin",  # 5
+        1,  # 6
         DB_DOMAIN[4] + "horse_id_list",  # 7
         "horse_id_list.pkl",  # 8
         "",  # 9
@@ -265,7 +265,7 @@ class UrlPaths:
         "temp_scheduled_race.html",  # 3
         DB_DOMAIN[4] + "scheduled_race/",  # 4
         "scheduled_race.html",  # 5
-        5,  # 6
+        1,  # 6
         TOP_URL[4] + "schedule/",  # 7
         "schedule.pkl",  # 8 "race_results_table"においては、使わないこととする
         "",  # 9

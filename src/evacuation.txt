@@ -1,0 +1,360 @@
+"""
+    def scrape_schedule(self):
+
+        開催日をyyyymmddの文字列形式で指定すると、レースidとレース時刻の一覧が返ってくる関数。
+        ChromeDriverは要素を取得し終わらないうちに先に進んでしまうことがあるので、
+        要素が見つかるまで(ロードされるまで)の待機時間をwaiting_timeで指定。
+
+
+        date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="D")
+        waiting_time = 10
+        # ループの外で一度だけドライバーを生成
+        driver = prepare_chrome_driver()
+        tentative_store = []
+        for kaisai_date in tqdm(date_range):
+            race_id_list = []
+            race_time_list = []
+            tentative_list = []
+            # ループごとに初期化
+            try:
+                kaisai_date_str = str(kaisai_date.strftime("%Y%m%d"))
+                # print("kaisai_date_str", kaisai_date_str)
+                query = ["kaisai_date=" + kaisai_date_str]
+
+                url = self.from_location + "?" + "&".join(query)
+                print("scraping: {}".format(url))
+                driver.get(url)
+                driver.implicitly_wait(waiting_time)
+
+                a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
+                span_list = driver.find_element(By.CLASS_NAME, "RaceList_Box")
+                for a in a_list:
+                    race_id = re.findall(
+                        r"(?<=shutuba.html\\?race_id=)\\d+|(?<=result.html\\?race_id=)\\d+", a.get_attribute("href")
+                    )
+                    if len(race_id) > 0:
+                        race_id_list.append(race_id[0])
+
+                for item in span_list.text.split("\n"):
+                    if ":" in item:
+                        race_time_list.append(item.split(" ")[0])
+
+                tentative_list = [
+                    (kaisai_date_str, race_time, race_id) for race_time, race_id in zip(race_time_list, race_id_list)
+                ]
+                tentative_store.extend(tentative_list)
+                self.obtained_last_key = kaisai_date
+
+            except Exception as e:
+                print(f"Error at {kaisai_date}: {e}")
+                break
+        tentative_store = sorted(tentative_store, key=lambda x: (x[0], x[1]))
+        self.target_data = [f"{race_time},{race_id}" for kaisai_date_str, race_time, race_id in tentative_store]
+        self.obtained_last_key = kaisai_date
+        self.save_temp_file("scheduled_race")
+        # ループの外でドライバーをクローズ
+        driver.close()
+        driver.quit()
+        self.transfer_temp_file()
+
+    def scrape_scheduled_race_html(self):
+        process_pkl_file(self, scrape_scheduled_race_html)
+
+    ############################################################################################################
+    def scrape_latest_info(self):
+
+        #当日の出馬表をスクレイピング。
+        #dateはyyyy/mm/ddの形式。
+
+        time_race_id_list = self.load_file_pkl()
+        # 時刻とレースidの組みあわせからレースidだけを抽出
+        race_id_list = [element.split(",")[1] for element in time_race_id_list]
+        # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+
+        date = self.from_date
+        waiting_time = 10
+        driver = prepare_chrome_driver()
+        df = pd.DataFrame()
+        for race_id in tqdm(race_id_list):
+            # print("race_id_list", race_id_list)
+
+            # print("race_id", race_id)
+            try:
+                query = "?race_id=" + race_id
+                url = self.from_location + query
+                # print("url", url)
+                driver.get(url)
+                wait = WebDriverWait(driver, waiting_time)
+                wait.until(EC.presence_of_all_elements_located)
+                # メインのテーブルの取得
+                for tr in driver.find_elements(By.CLASS_NAME, "HorseList"):
+                    row = []
+                    for td in tr.find_elements(By.TAG_NAME, "td"):
+                        if td.get_attribute("class") in ["HorseInfo"]:
+                            href = td.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            row.append(re.findall(r"horse/(\\d*)", href)[0])
+                        elif td.get_attribute("class") in ["Jockey"]:
+                            href = td.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            row.append(re.findall(r"jockey/result/recent/(\\w*)", href)[0])
+                        elif td.get_attribute("class") in ["Trainer"]:
+                            href = td.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            row.append(re.findall(r"trainer/result/recent/(\\w*)", href)[0])
+                        row.append(td.text)
+                    df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+
+                # レース結果テーブルと列を揃える
+                df = df[[0, 1, 5, 6, 12, 13, 11, 3, 7, 9]]
+                df.columns = [
+                    Cols.WAKUBAN,
+                    Cols.UMABAN,
+                    Cols.SEX_AGE,
+                    Cols.KINRYO,
+                    Cols.TANSHO_ODDS,
+                    Cols.POPULARITY,
+                    Cols.WEIGHT_AND_DIFF,
+                    "horse_id",
+                    "jockey_id",
+                    "trainer_id",
+                ]
+                df.index = [race_id] * len(df)
+
+                # レース情報の取得
+                texts = driver.find_element(By.CLASS_NAME, "RaceList_Item02").text
+                texts = re.findall(r"\\w+", texts)
+                print("texts", texts)
+                # 障害レースフラグを初期化
+                hurdle_race_flg = False
+                for text in texts:
+                    if "m" in text:
+                        # 20211212：[0]→[-1]に修正
+                        df["course_len"] = [int(re.findall(r"\\d+", text)[-1])] * len(df)
+                    if text in Master.WEATHER_LIST:
+                        df["weather"] = [text] * len(df)
+                    if text in Master.GROUND_STATE_LIST:
+                        df["ground_state"] = [text] * len(df)
+                    if "稍" in text:
+                        df["ground_state"] = [Master.GROUND_STATE_LIST[1]] * len(df)
+                    if "不" in text:
+                        df["ground_state"] = [Master.GROUND_STATE_LIST[3]] * len(df)
+                    if "芝" in text:
+                        df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[0]] * len(df)
+                    if "ダ" in text:
+                        df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[1]] * len(df)
+                    if "障" in text:
+                        df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[2]] * len(df)
+                        hurdle_race_flg = True
+                    if "右" in text:
+                        df["around"] = [Master.AROUND_LIST[0]] * len(df)
+                    if "左" in text:
+                        df["around"] = [Master.AROUND_LIST[1]] * len(df)
+                    if "直線" in text:
+                        df["around"] = [Master.AROUND_LIST[2]] * len(df)
+                    if "新馬" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[0]] * len(df)
+                    if "未勝利" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[1]] * len(df)
+                    if "１勝クラス" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[2]] * len(df)
+                    if "２勝クラス" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[3]] * len(df)
+                    if "３勝クラス" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[4]] * len(df)
+                    if "オープン" in text:
+                        df["race_class"] = [Master.RACE_CLASS_LIST[5]] * len(df)
+
+                # グレードレース情報の取得
+                if len(driver.find_elements(By.CLASS_NAME, "Icon_GradeType3")) > 0:
+                    df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+                elif len(driver.find_elements(By.CLASS_NAME, "Icon_GradeType2")) > 0:
+                    df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+                elif len(driver.find_elements(By.CLASS_NAME, "Icon_GradeType1")) > 0:
+                    df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+
+                # 障害レースの場合
+                if hurdle_race_flg:
+                    df["around"] = [Master.AROUND_LIST[3]] * len(df)
+                    df["race_class"] = [Master.RACE_CLASS_LIST[9]] * len(df)
+
+                df["date"] = [date] * len(df)
+                print("df", df)
+                # 取消された出走馬を削除
+                df = df[df[Cols.WEIGHT_AND_DIFF] != "--"]
+                self.target_data = df
+                self.save_temp_file("tentative_info")
+                self.obtained_last_key = race_id
+            except Exception as e:
+                print("Error at {}: {}".format(race_id, e))
+                break
+        driver.close()
+        driver.quit()
+
+    # この関数はまだ（不要かも）
+    def scrape_scheduled_horse(self):
+
+        #当日出走するhorse_id一覧を取得
+
+
+        waiting_time = 10
+        driver = prepare_chrome_driver()
+        scheduled_race_id_list = self.load_file_pkl()
+        print("scheduled_race_id_list ", scheduled_race_id_list)
+        scheduled_horse_id_list = []
+        # Convert the string list to a list of lists
+        # Convert the string list to a list of lists using json
+        # Safely evaluate the string as a Python literal
+        # parsed_scheduled_race_id_list = ast.literal_eval(scheduled_race_id_list[0][0])
+
+        # Flatten the nested list
+        # flat_scheduled_race_id_list = [item[0] for item in parsed_scheduled_race_id_list]
+
+        # print("flat_race_id_list ", flat_scheduled_race_id_list)
+        for race_id in tqdm(scheduled_race_id_list):
+            scheduled_race_id = race_id[:12]
+            # print("scheduled_race_id ", scheduled_race_id)
+            query = "?race_id=" + scheduled_race_id
+
+            url = self.from_location + query
+            wait = WebDriverWait(driver, waiting_time)
+            wait.until(EC.presence_of_all_elements_located)
+            time.sleep(1)
+            print("url", url)
+            html = urlopen(url)
+            soup = BeautifulSoup(html, "lxml", from_encoding="utf-8")
+            horse_td_list = soup.find_all("td", attrs={"class": "HorseInfo"})
+            # print("horse_td_list", horse_td_list)
+            for td in horse_td_list:
+                scheduled_horse_id = re.findall(r"\\d+", td.find("a")["href"])[0]
+                scheduled_horse_id_list.append(scheduled_horse_id)
+        self.target_data = scheduled_horse_id_list
+        self.save_temp_file("scheduled_horse")
+        self.obtained_last_key = scheduled_race_id
+        self.transfer_temp_file()
+
+    # この関数はまだ
+
+    def create_active_race_id_list(minus_time=-50):
+
+        馬体重の発表されたレースidとレース時刻の一覧が返ってくる関数。
+        馬体重の発表時刻は、引数で指定されたminus_timeをレース時刻から引いた時刻で算出します。
+
+        # 現在時刻を取得
+        now_date = datetime.datetime.now().date().strftime("%Y%m%d")
+        hhmm = datetime.datetime.now().strftime("%H:%M")
+        print(now_date, hhmm)
+
+        # レースidとレース時刻の一覧を取得
+        race_id_list, race_time_list = scrape_race_id_race_time_list(now_date)
+
+        # 現在時刻マイナス馬体重時刻を取得
+        t_delta30 = datetime.timedelta(hours=9, minutes=minus_time)
+        JST30 = datetime.timezone(t_delta30, "JST")
+        now30 = datetime.datetime.now(JST30)
+        hhmm_minus_time = now30.strftime("%H:%M")
+
+        target_race_id_list = []
+        target_race_time_list = []
+        from_time = "09:15"
+
+        for race_id, race_time in zip(race_id_list, race_time_list):
+            # レース時刻より馬体重発表時刻を算出
+            dt1 = datetime.datetime(
+                int(now_date[:4]), int(now_date[4:6]), int(now_date[6:8]), int(race_time[0:2]), int(race_time[3:5])
+            )
+            dt2 = dt1 + datetime.timedelta(minutes=minus_time)
+            announce_weight_time = dt2.strftime("%H:%M")
+
+            # 1Rの場合は、前回のレース時刻を馬体重発表時刻に設定
+            if "01" == race_id_list[10:12]:
+                from_time = announce_weight_time
+
+            # 前回のレース時刻 ＜ 現在時刻 ＜ レース時刻
+            if from_time < hhmm < race_time:
+                target_race_id_list.append(race_id)
+                target_race_time_list.append(race_time)
+            # 現在時刻マイナス馬体重時刻 ＜ 馬体重発表時刻 ＜＝ 現在時刻
+            elif hhmm_minus_time < announce_weight_time <= hhmm:
+                target_race_id_list.append(race_id)
+                target_race_time_list.append(race_time)
+            # 前回のレース時刻を退避
+            from_time = race_time
+
+        return target_race_id_list, target_race_time_list
+
+
+
+
+#当日出走するhorse_id一覧を取得
+ref_id_list = self.load_file_pkl()
+waiting_time = 10
+driver = prepare_chrome_driver()
+target_id_list = []
+# driver = prepare_chrome_driver()
+data_index = 1
+
+print("scraping horse_id_list")
+
+for ref_id in tqdm(ref_id_list):
+    url = self.from_location + ref_id
+    driver.get(url)
+    wait = WebDriverWait(driver, waiting_time)
+    wait.until(EC.presence_of_all_elements_located)
+    html = urlopen(url)
+    time.sleep(1)
+    soup = BeautifulSoup(html, "lxml")
+    # この例ではtarget=horse
+    target_td_list = soup.find_all("td", attrs={"class": "txt_l"})
+    target_ids = [a["href"] for td in target_td_list if (a := td.find("a")) and "/horse/" in a["href"]]
+    target_id = [re.search(r"/horse/(\\d+)/", href).group(1) for href in target_ids]
+    print(f"target_id{target_id}")
+    for id in range(len(target_id)):
+        target_id_list.append(target_id[id])
+    self.target_data = target_id_list
+    self.save_temp_file("horse_id_list")
+
+    # if data_index % self.batch_size == 0:
+    # self.target_data = [item for sublist in target_id_list for item in sublist]
+    #    self.save_temp_file("horse_id_list")
+    #    self.obtained_last_key = target_id
+    target_id = []
+    target_id_list = []
+data_index += 1
+# リストの要素を昇順にソート
+flat_list = [item for sublist in target_id_list for item in sublist]
+self.target_data = sorted(set(flat_list))
+self.save_temp_file("horse_id_list")
+self.obtained_last_key = target_id
+self.transfer_temp_file()
+
+
+   ################################# Done ####################################
+    def scrape_kaisai_date(self):
+        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧が返ってくる関数。
+        # to_の月は含まないので注意。
+        print("getting race date from {} to {}".format(self.from_date, self.to_date))
+        # 間の年月一覧を作成
+        date_range = pd.date_range(start=self.from_date, end=self.to_date, freq="MS")
+        # 開催日一覧を入れるリスト
+        kaisai_date_list = []
+
+        for year, month in tqdm(zip(date_range.year, date_range.month), total=len(date_range), dynamic_ncols=True):
+            # 取得したdate_rangeから、スクレイピング対象urlを作成する。
+            # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
+            query = [
+                "year=" + str(year),
+                "month=" + str(month),
+            ]
+            url = self.from_location + "?" + "&".join(query)
+            html = urlopen(url).read()
+            time.sleep(1)
+            soup = BeautifulSoup(html, "lxml")
+            a_list = soup.find("table", class_="Calendar_Table").find_all("a")
+            for a in a_list:
+                kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\\d+", a["href"])[0])
+        # DataFrameを作成し、インデックスをリセットして整形する
+        df = pd.DataFrame({"kaisai_date": kaisai_date_list})
+        df_sorted_unique = df.drop_duplicates().sort_values(by="kaisai_date").reset_index(drop=True)
+
+        self.target_data = df_sorted_unique
+        self.save_temp_file(self.alias)
+        self.obtained_last_key = query
+        self.transfer_temp_file()
