@@ -104,7 +104,7 @@ def select_process(alias):
 # horse_html = select_process(alias="horse_html")
 # ped_html = select_process(alias="ped_html")
 # race_results_table = select_process(alias="race_results_table")
-# horse_results_table = select_process(alias="horse_results_table")
+horse_results_table = select_process(alias="horse_results_table")
 # race_return_table = select_process(alias="race_return_table")
 # peds_list = select_process(alias="peds_list")
 # horse_info_table = select_process(alias="horse_info_table")

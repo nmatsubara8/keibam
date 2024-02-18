@@ -60,8 +60,11 @@ class FeatureEngineering:
         """
         ground_stateカラムをダミー変数化する
         """
-        self.__data["ground_state"] = pd.Categorical(self.__data["ground_state"], Master.GROUND_STATE_LIST)
-        self.__data = pd.get_dummies(self.__data, columns=["ground_state"])
+        self.__data["ground_state1"] = pd.Categorical(self.__data["ground_state1"], Master.GROUND_STATE_LIST)
+        self.__data = pd.get_dummies(self.__data, columns=["ground_state1"])
+        self.__data["ground_state2"] = pd.Categorical(self.__data["ground_state2"], Master.GROUND_STATE_LIST)
+        self.__data = pd.get_dummies(self.__data, columns=["ground_state2"])
+
         return self
 
     def dumminize_sex(self):

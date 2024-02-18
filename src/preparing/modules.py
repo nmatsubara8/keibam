@@ -375,6 +375,7 @@ def create_raw_race_results(target_bin_file_path):
         df.index = [race_id] * len(df)
         df[race_id] = df.index
         df.columns = df.columns.str.replace(" ", "")
+        df.insert(0, race_id, df.index)
 
         # last_column_name = df.columns[-1]
         # df = df.rename(columns={last_column_name: "race_id"})
@@ -406,6 +407,7 @@ def create_raw_horse_results(target_bin_file_path):
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df[horse_id] = df.index
+        df.columns = df.columns.str.replace(" ", "")
 
     return df
 
@@ -522,11 +524,16 @@ def create_raw_race_return(target_bin_file_path):
 
         # dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
         df = pd.concat([dfs[1], dfs[2]])
+        # 列名を整数に変更
 
         # インデックスをrace_idにする
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [race_id] * len(df)
-        df[race_id] = df.index
+        df["race_id"] = df.index
+        # race_id列を除外して、他の列名のみを整数に変換する辞書を作成
+        new_columns = {col: int(col) for col in df.columns if col != "race_id"}
+        # 列名を変換
+        df.rename(columns=new_columns, inplace=True)
 
     return df
 
@@ -673,23 +680,23 @@ def create_raw_race_info(target_bin_file_path):
         # DataFrame作成歳
         df = pd.DataFrame(
             {
-                "レースid": [race_id],
-                "レース場id": [place_id],
-                "レース場名": [place_name],
-                "開催日数": [race_day_count],  # 開催日数を追加
-                "開催回数": [race_round_count],  # 開催回数を追加
-                "レース開催日": [race_date],
-                "発走時刻": [start_time],
-                "レース種類": [race_type],
-                "向き": [around_info],
-                "レース距離": [race_distance],
-                "天候": [weather],
-                "馬場状態1": [ground_state1],
-                "馬場状態2": [ground_state2],
-                "馬齢": [age],
-                "性別": [sex_info],
-                "レースクラス": [race_class_info],
-                "レース条件": [race_condition],
+                "race_id": [race_id],
+                "place_id": [place_id],
+                "place": [place_name],
+                "days": [race_day_count],  # 開催日数を追加
+                "times": [race_round_count],  # 開催回数を追加
+                "date": [race_date],
+                "time": [start_time],
+                "race_type": [race_type],
+                "around": [around_info],
+                "course_len": [race_distance],
+                "weather": [weather],
+                "ground_state1": [ground_state1],
+                "ground_state2": [ground_state2],
+                "age": [age],
+                "sex": [sex_info],
+                "race_class": [race_class_info],
+                "race_condition": [race_condition],
                 **race_flags,
             }
         )

@@ -132,7 +132,7 @@ class UrlPaths:
         DB_DOMAIN[2] + "race_return/",  # 2
         "temp_race_return_table.csv",  # 3
         DB_DOMAIN[4] + "race_return/",  # 4
-        "return_table.pkl",  # 5
+        "return_tables.pkl",  # 5
         100,  # 6
         DB_DOMAIN[4] + "race/",  # 7
         "*.bin",  # 8 "race_info_table"においては、使わないこととする

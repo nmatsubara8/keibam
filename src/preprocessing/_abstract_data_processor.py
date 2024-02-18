@@ -15,6 +15,9 @@ class AbstractDataProcessor(metaclass=ABCMeta):
 
     @property
     def raw_data(self):
+        new_columns = {col: int(col) if str(col).isdigit() else col for col in self.__raw_data.columns}
+        # 列名を変換
+        self.__raw_data.rename(columns=new_columns, inplace=True)
         return self.__raw_data.copy()
 
     @property

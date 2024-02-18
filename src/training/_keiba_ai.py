@@ -1,13 +1,17 @@
 import pandas as pd
-from modules.policies import AbstractBetPolicy
-from ._model_wrapper import ModelWrapper
+
+from src.policies._bet_policy import AbstractBetPolicy
+from src.policies._score_policy import AbstractScorePolicy
+
 from ._data_splitter import DataSplitter
-from modules.policies import AbstractScorePolicy
+from ._model_wrapper import ModelWrapper
+
 
 class KeibaAI:
     """
     モデルの訓練や読み込み、実際に賭けるなどの処理を実行するクラス。
     """
+
     def __init__(self, datasets: DataSplitter):
         self.__datasets = datasets
         self.__model_wrapper = ModelWrapper()
@@ -50,8 +54,7 @@ class KeibaAI:
         """
         return score_policy.calc(self.__model_wrapper.lgb_model, X)
 
-    def decide_action(self, score_table: pd.DataFrame,
-        bet_policy: AbstractBetPolicy, **params) -> dict:
+    def decide_action(self, score_table: pd.DataFrame, bet_policy: AbstractBetPolicy, **params) -> dict:
         """
         bet_policyを元に、賭ける馬券を決定する。paramsにthresholdを入れる。
         """
