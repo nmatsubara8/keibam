@@ -76,9 +76,9 @@ class Master:
 
     GROUND_STATE_LIST: tuple = ("良", "稍重", "重", "不良")
 
-    SEX_LIST: tuple = ("牡", "牝", "セ")
+    SEX_LIST: tuple = ("牡", "牝", "セ", "混")
 
-    AROUND_LIST: tuple = ("右", "左", "直線", "障害")
+    AROUND_LIST: tuple = ("右", "左", "直線")
 
     RACE_CLASS_LIST: tuple = (
         "新馬",
@@ -87,8 +87,21 @@ class Master:
         "2勝クラス",
         "3勝クラス",
         "オープン",
+        "オープン特別",
         "G3",
         "G2",
         "G1",
-        "障害",
     )
+
+    RACE_CONDITION_DICT: ClassVar[dict] = {
+        "定量": "teiryo",
+        "馬齢": "barei",
+        "別定": "bettei",
+        "国際": "kokusai",
+        "指": "shimei",
+        "特指": "tokushi",
+        "特": "toku",
+        "ハンデ": "handi",
+        "見習騎手": "minarai",
+        "障害": "shogai",
+    }

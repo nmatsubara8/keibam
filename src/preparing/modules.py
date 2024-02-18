@@ -24,121 +24,6 @@ def scrape_scheduled_race_html(self, ref_id):
     return get_soup(url)[0].read()
 
 
-def create_raw_race_info(target_bin_file_path):
-    # print(f"target_bin_file_path:{target_bin_file_path}")
-    with open(target_bin_file_path, "rb") as f:
-        # 保存してあるbinファイルを読み込む
-        html = f.read()
-
-        # htmlをsoupオブジェクトに変換
-        soup = BeautifulSoup(html, "lxml")
-
-        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        texts = (
-            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-        )
-
-        info = re.findall(r"\w+", texts)
-        print(f"info:{info}")
-        df = pd.DataFrame()
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
-
-        # 障害レースフラグを初期化
-        hurdle_race_flg = False
-        for text in info:
-            if text in ["芝", "ダート", "障害"]:
-                df["race_type"] = [text]
-            # もし、textが任意の文字列＋3桁か4桁の数字+ "m"　（例えば、1200m ）の様に表現されている場合に、
-            # その数字部分の文字を抽出し、整数化の上、df["course_len"]に格納する処理をここに入れたい
-            # 正規表現パターン
-            pattern = r"([0-9]{3})m|([0-9]{4})m"
-            # 正規表現に一致する部分を抽出
-            matches = re.findall(pattern, text)
-            if matches:
-                for match in matches:
-                    # キャプチャグループから数字部分を取得
-                    extracted_number = match[0] if match[0] else match[1]
-                df["course_len"] = [int(extracted_number)]
-
-            if "右" in text:
-                df["around"] = [Master.AROUND_LIST[0]]
-            if "左" in text:
-                df["around"] = [Master.AROUND_LIST[1]]
-            if "直線" in text:
-                df["around"] = [Master.AROUND_LIST[2]]
-            if "障害" in text:
-                df["around"] = [Master.AROUND_LIST[3]]
-                hurdle_race_flg = True
-
-            if text in Master.GROUND_STATE_LIST:
-                df["ground_state"] = [text]
-            if text in Master.WEATHER_LIST:
-                df["weather"] = [text]
-            if "年" in text:
-                df["date"] = [text]
-
-            if "新馬" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
-            if "未勝利" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
-            if ("1勝クラス" in text) or ("500万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
-            if ("2勝クラス" in text) or ("1000万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
-            if ("3勝クラス" in text) or ("1600万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
-            if "オープン" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
-            if hurdle_race_flg:
-                # df["around"] = [Master.AROUND_LIST[3]]
-                # df["race_type"] = ["障害"]
-                df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-                hurdle_race_flg = False
-                # 障害レースの場合
-        # if hurdle_race_flg:
-        # df["around"] = [Master.AROUND_LIST[3]]
-        # df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-        # hurdle_race_flg = False
-
-        # グレードレース情報の取得
-        grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
-        if "G3" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
-        elif "G2" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
-        elif "G1" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
-
-        df["race_id"] = race_id
-
-    return df
-
-
-def create_tmp_race_info(target_bin_file_path):
-    with open(target_bin_file_path, "rb") as f:
-        html = f.read()
-        soup = BeautifulSoup(html, "lxml")
-        df = pd.DataFrame()
-        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        texts = (
-            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-        )
-        info = re.findall(r"\w+", texts)
-        length = len(info)
-
-        # インデックスをrace_idにする
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
-        df.index = [race_id] * length
-        df["id"] = range(1, length + 1)
-        df["info"] = info
-        df["race_id"] = race_id
-        df["id"] = df["id"].astype(int)
-
-    return df
-
-
 def storing_process(self):
     df = []
     df_sorted = []
@@ -397,7 +282,7 @@ def process_bin_file(self, process_function):
             self.target_data = pd.DataFrame()
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
-                time.sleep(1)
+                # time.sleep(1)
             except Exception as e:
                 print("Error at {}: {}".format(target_bin_file_path, e))
                 break
@@ -536,6 +421,21 @@ def create_raw_horse_info(target_bin_file_path):
 
         # htmlをsoupオブジェクトに変換
         soup = BeautifulSoup(html, "lxml")
+        # 列に "募集情報" が含まれているかを調べる
+        funding_info = df.apply(lambda x: x.str.contains("募集情報")).any()
+
+        # 列に "募集情報" がある場合、その列の値を "募集情報" 列に代入する
+
+        if funding_info.any():
+            df["募集情報"] = df.loc[:, funding_info].values.flatten()
+        else:
+            # 列に "募集情報" が含まれていない場合、"募集情報" 列に NaN を入れる
+            df["募集情報"] = NaN
+
+        # print(f"soup:{soup}")
+        # user_input = input()
+        # if user_input == " ":
+        #    pass
 
         # 調教師IDをスクレイピング
         try:
@@ -629,3 +529,367 @@ def create_raw_race_return(target_bin_file_path):
         df[race_id] = df.index
 
     return df
+
+
+def dart_checker(text1):
+    if text1.split("/")[0].strip()[:2] == "障芝":
+        dart = True
+    else:
+        dart = False
+    return dart
+
+
+def count_ground_state(text1):
+    return text1.split("/")[2].count(":")
+
+
+def create_raw_race_info(target_bin_file_path):
+    # print(f"target_bin_file_path:{target_bin_file_path}")
+    with open(target_bin_file_path, "rb") as f:
+        # 保存してあるbinファイルを読み込む
+        html = f.read()
+
+        # htmlをsoupオブジェクトに変換
+        soup = BeautifulSoup(html, "lxml")
+
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+        text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        # print(f"text1:{text1}")
+        # print(f"text2:{text2}")
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        # テキスト情報を解析してDataFrameに変換
+        race_distance = re.search(r"\d+", text1.split("/")[0]).group()
+        weather = text1.split("/")[1].split(":")[1].strip()
+
+        if weather in Master.WEATHER_LIST:
+            pass
+        else:
+            print(f"unknown weather definition appeared:{race_id}")
+
+        race_type = text1.split("/")[2].split(":")[0].strip()
+        # 発走時刻
+        start_time = text1.split("/")[-1].split(":")[1:3]
+        start_time = ":".join(start_time).strip().split("\n\n")[0]
+
+        race_date = text2.split(" ")[0]
+        race_name = text2.split(" ")[1]
+        dart = dart_checker(text1)
+        # print(f"dart:{dart}")
+        # print(f"count:{count_ground_state(text1)}")
+        # test = text1.split("/")[2].split(":")[2]
+        # print(f"gs2:{test}")
+
+        for around in Master.AROUND_LIST:
+            if around in text1.split("/")[0]:
+                around_info = around
+            else:
+                around_info = None
+
+        # 開催日数と開催回数を取得
+        race_day_count = re.search(r"\d+", race_name.split("日目")[0]).group()  # 開催日数
+        race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
+
+        # 開催場所を取得
+        place_id = None
+        for key, value in Master.PLACE_DICT.items():
+            if key in race_name:
+                place_id = value
+                place_name = key
+        if count_ground_state(text1) == 1:
+            temp_ground_state0 = text1.split("/")[2].split(":")[1].strip()
+            if temp_ground_state0 in Master.GROUND_STATE_LIST:
+                ground_state1 = temp_ground_state0
+                ground_state2 = temp_ground_state0
+            else:
+                print(f"unknown GROUND_STATE definition appeared1:{race_id}{ground_state1}{ground_state2}")
+        elif dart_checker(text1) and count_ground_state(text1) == 2:
+            temp_ground_state1 = text1.split("/")[2].split(":")[1].split()[0].strip()
+            if temp_ground_state1 in Master.GROUND_STATE_LIST:
+                ground_state1 = temp_ground_state1
+            else:
+                print(f"unknown GROUND_STATE definition appeared2:{race_id}{ground_state1}")
+            temp_ground_state2 = text1.split("/")[2].split(":")[2].strip()
+            if temp_ground_state2 in Master.GROUND_STATE_LIST:
+                ground_state2 = temp_ground_state2
+            else:
+                print(f"unknown GROUND_STATE definition appeared3:{race_id}{temp_ground_state2}")
+        # 不要な部分を削除
+        # レース条件から年齢、性別、レースクラスを削除
+        # 馬齢を取得
+        race_condition = text2.split(" ")[2]
+
+        # レース条件に基づいてフラグを設定
+        race_flags = {}
+        if race_condition is not None:
+            # 性別を取得
+            sex_info = None
+            for sex in Master.SEX_LIST:
+                if sex in race_condition:
+                    sex_info = sex
+
+            # レースクラスを取得
+            race_class_info = None
+            for race_class in Master.RACE_CLASS_LIST:
+                if race_class in race_condition:
+                    race_class_info = race_class
+            if race_class_info is None:
+                print(f"unknown race_class definition appeared:{race_id}")
+            # 向きを取得
+
+            if (around_info is None) and (("障害" in race_class_info or race_condition) or dart):
+                around_info = "直線"
+
+            for key, value in Master.RACE_CONDITION_DICT.items():
+                if key in race_condition:
+                    race_flags[value] = 1
+                    race_condition = race_condition.replace(key, "").strip()
+                else:
+                    race_flags[value] = 0
+
+        if "歳以上" in race_condition:
+            age = re.search(r"\d+", race_condition.split("歳以上")[0]).group() + "+"
+
+        else:
+            age = re.search(r"\d+", race_condition.split("歳")[0]).group()
+        if race_condition is not None:
+            # ageの処理を修正
+            if age is not None and age != "":
+                if "+" in age:
+                    race_condition = race_condition.replace(age[:-1], "").replace("歳以上", "").strip()
+                else:
+                    race_condition = race_condition.replace(age, "").replace("歳", "").strip()
+
+            if sex_info is not None and sex_info != "":
+                race_condition = race_condition.replace(sex_info, "").strip()
+            if race_class_info is not None and race_class_info != "":
+                race_condition = race_condition.replace(race_class_info, "").strip()
+            if race_condition is not None and race_condition != "":
+                race_condition = race_condition.replace("()", "").strip()
+                race_condition = race_condition.replace("[]", "").strip()
+            if race_condition is not None and race_condition != "":
+                race_condition = race_condition.strip()
+
+        # DataFrame作成歳
+        df = pd.DataFrame(
+            {
+                "レースid": [race_id],
+                "レース場id": [place_id],
+                "レース場名": [place_name],
+                "開催日数": [race_day_count],  # 開催日数を追加
+                "開催回数": [race_round_count],  # 開催回数を追加
+                "レース開催日": [race_date],
+                "発走時刻": [start_time],
+                "レース種類": [race_type],
+                "向き": [around_info],
+                "レース距離": [race_distance],
+                "天候": [weather],
+                "馬場状態1": [ground_state1],
+                "馬場状態2": [ground_state2],
+                "馬齢": [age],
+                "性別": [sex_info],
+                "レースクラス": [race_class_info],
+                "レース条件": [race_condition],
+                **race_flags,
+            }
+        )
+    return df
+
+
+def create_tmp_race_info(target_bin_file_path):
+    with open(target_bin_file_path, "rb") as f:
+        html = f.read()
+        soup = BeautifulSoup(html, "lxml")
+
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+        text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        print(f"text1:{text1}")
+        print(f"text2:{text2}")
+
+        # テキスト情報を解析してDataFrameに変換
+        race_distance = re.search(r"\d+", text1.split("/")[0]).group()
+        weather = text1.split("/")[1].split(":")[1].strip()
+
+        if weather in Master.WEATHER_LIST:
+            pass
+        else:
+            print("unknown weather definition appeared")
+
+        race_type = text1.split("/")[2].split(":")[0].strip()
+        # 向きを取得
+
+        around_info = None
+        for around in Master.AROUND_LIST:
+            if around in text1.split(" ")[0]:
+                around_info = around
+        if around_info is None:
+            print("unknown around definition appeared")
+
+        ground_state1 = text1.split("/")[2].split(":")[1].strip()
+        if ground_state1 in Master.GROUND_STATE_LIST:
+            pass
+        else:
+            print("unknown GROUND_STATE definition appeared")
+
+        start_time = text1.split("/")[-1].split(":")[1:3]
+        start_time = ":".join(start_time).strip()
+        race_date = text2.split(" ")[0]
+        race_name = text2.split(" ")[1]
+
+        # 開催日数と開催回数を取得
+        race_day_count = re.search(r"\d+", race_name.split("日目")[0]).group()  # 開催日数
+        race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
+
+        # 開催場所を取得
+        place_id = None
+        for key, value in Master.PLACE_DICT.items():
+            if key in race_name:
+                place_id = value
+                place_name = key
+        # 馬齢を取得
+        race_condition = text2.split(" ")[2]
+        age = re.search(r"\d+", race_condition.split("歳")[0]).group()
+        # 性別を取得
+        sex_info = None
+        for sex in Master.SEX_LIST:
+            if sex in race_condition:
+                sex_info = sex
+        if sex_info is None:
+            print("unknown sex definition appeared")
+        # レースクラスを取得
+        race_class_info = None
+        for race_class in Master.RACE_CLASS_LIST:
+            if race_class in race_condition:
+                race_class_info = race_class
+        if race_class_info is None:
+            print("unknown race_class definition appeared")
+        # 不要な部分を削除
+        # レース条件から年齢、性別、レースクラスを削除
+        race_condition = (
+            race_condition.replace(age, "").replace("歳", "").replace(sex_info, "").replace(race_class_info, "").strip()
+        )
+
+        # DataFrame作成歳
+        df = pd.DataFrame(
+            {
+                "レース名": [race_name],
+                "レース場id": [place_id],
+                "レース場名": [place_name],
+                "開催日数": [race_day_count],  # 開催日数を追加
+                "開催回数": [race_round_count],  # 開催回数を追加
+                "レース開催日": [race_date],
+                "発走時刻": [start_time],
+                "レース種類": [race_type],
+                "向き": [around_info],
+                "レース距離": [race_distance],
+                "天候": [weather],
+                "馬場状態1": [ground_state1],
+                "馬場状態2": [ground_state2],
+                "馬齢": [age],
+                "性別": [sex_info],
+                "レースクラス": [race_class_info],
+                "レース条件": [race_condition],
+            }
+        )
+
+    return df
+
+
+r"""
+        info = re.findall(r"\w+", texts)
+        length = len(info)
+
+        # インデックスをrace_idにする
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        df.index = [race_id] * length
+        df["id"] = range(1, length + 1)
+        df["info"] = info
+        df["race_id"] = race_id
+        df["id"] = df["id"].astype(int)
+
+    return df
+
+
+        # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
+        texts = (
+            soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
+            + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        )
+
+        info = re.findall(r"\w+", texts)
+        print(f"info:{info}")
+        df = pd.DataFrame()
+        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+
+        # 障害レースフラグを初期化
+        hurdle_race_flg = False
+        for text in info:
+            if text in ["芝", "ダート", "障害"]:
+                df["race_type"] = [text]
+            # もし、textが任意の文字列＋3桁か4桁の数字+ "m"　（例えば、1200m ）の様に表現されている場合に、
+            # その数字部分の文字を抽出し、整数化の上、df["course_len"]に格納する処理をここに入れたい
+            # 正規表現パターン
+            pattern = r"([0-9]{3})m|([0-9]{4})m"
+            # 正規表現に一致する部分を抽出
+            matches = re.findall(pattern, text)
+            if matches:
+                for match in matches:
+                    # キャプチャグループから数字部分を取得
+                    extracted_number = match[0] if match[0] else match[1]
+                df["course_len"] = [int(extracted_number)]
+
+            if "右" in text:
+                df["around"] = [Master.AROUND_LIST[0]]
+            if "左" in text:
+                df["around"] = [Master.AROUND_LIST[1]]
+            if "直線" in text:
+                df["around"] = [Master.AROUND_LIST[2]]
+            if "障害" in text:
+                df["around"] = [Master.AROUND_LIST[3]]
+                hurdle_race_flg = True
+
+            if text in Master.GROUND_STATE_LIST:
+                df["ground_state"] = [text]
+            if text in Master.WEATHER_LIST:
+                df["weather"] = [text]
+            if "年" in text:
+                df["date"] = [text]
+
+            if "新馬" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
+            if "未勝利" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
+            if ("1勝クラス" in text) or ("500万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
+            if ("2勝クラス" in text) or ("1000万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
+            if ("3勝クラス" in text) or ("1600万下" in text):
+                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
+            if "オープン" in text:
+                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
+            if hurdle_race_flg:
+                # df["around"] = [Master.AROUND_LIST[3]]
+                # df["race_type"] = ["障害"]
+                df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+                hurdle_race_flg = False
+                # 障害レースの場合
+        # if hurdle_race_flg:
+        # df["around"] = [Master.AROUND_LIST[3]]
+        # df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+        # hurdle_race_flg = False
+
+        # グレードレース情報の取得
+        grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
+        if "G3" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+        elif "G2" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+        elif "G1" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+
+        df["race_id"] = race_id
+
+    return df
+
+"""

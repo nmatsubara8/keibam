@@ -209,15 +209,16 @@ class DataLoader:
             print("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
 
     def transfer_temp_file(self):
-        local_temp_file_path = self.get_local_temp_file_path(self.alias)
-        with open(local_temp_file_path, "r") as base_file:
-            temp_target_data = [line.strip() for line in base_file]
+        local_temp_file_path = self.get_local_temp_file_path()
+        # with open(local_temp_file_path, "r") as base_file:
+        # temp_target_data = [line.strip() for line in base_file]
 
         # ソートしたデータを元のファイルに保存
-        with open(local_temp_file_path, "w") as new_file:
-            for line in temp_target_data:
-                new_file.write(line + "\n")
+        # with open(local_temp_file_path, "w") as new_file:
+        #    for line in temp_target_data:
+        #        new_file.write(line + "\n")
         # CSVファイルからデータを読み込む
+
         df = pd.read_csv(local_temp_file_path)
 
         to_target_file = self.get_local_comp_file_path(self.alias)
@@ -417,7 +418,7 @@ class DataLoader:
         print(f"{self.alias} type: ", type(self.target_data))
         print("len:", len(os.path.join(self.to_location, self.save_file_name)))
         print("Done / obtained_last_key: ", self.obtained_last_key)
-        print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name}")
+        print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name}+'\n'")
 
 
 """
