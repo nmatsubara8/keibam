@@ -77,7 +77,8 @@ class HorseResultsProcessor(AbstractDataProcessor):
         df["time_seconds"] = (datetime_s - basetime).dt.total_seconds()
 
         # インデックス名を与える
-        df.index.name = "horse_id"
+        # df.index.name = "horse_id"
+        df.set_index("horse_id", inplace=True)
 
         # カラム抽出
         df = self._select_columns(df)

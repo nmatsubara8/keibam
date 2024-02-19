@@ -21,7 +21,8 @@ class HorseInfoProcessor(AbstractDataProcessor):
         df["birthday"] = pd.to_datetime(df[Cols.BIRTHDAY], format="%Y年%m月%d日")
 
         # インデックス名を与える
-        df.index.name = "horse_id"
+        # df.index.name = "horse_id"
+        df.set_index("horse_id", inplace=True)
 
         # カラム抽出
         df = self._select_columns(df)
