@@ -3,8 +3,8 @@ import os
 
 import dill
 
-from ._data_splitter import DataSplitter
-from ._keiba_ai import KeibaAI
+from src.training._data_splitter import DataSplitter
+from src.training._keiba_ai import KeibaAI
 
 
 class KeibaAIFactory:

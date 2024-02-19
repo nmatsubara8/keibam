@@ -373,9 +373,8 @@ def create_raw_race_results(target_bin_file_path):
         # インデックスをrace_idにする
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [race_id] * len(df)
-        df[race_id] = df.index
+        df["race_id"] = df.index
         df.columns = df.columns.str.replace(" ", "")
-        df.insert(0, race_id, df.index)
 
         # last_column_name = df.columns[-1]
         # df = df.rename(columns={last_column_name: "race_id"})
@@ -384,6 +383,17 @@ def create_raw_race_results(target_bin_file_path):
         ###### df.drop(df.columns[0], axis=1, inplace=True)
 
     return df
+
+
+# パターンにマッチする部分を抽出する関数を定義
+def convert_string(value):
+    # 正規表現パターンを定義
+    pattern = r"\d{0,2}([^\d]+)\d{0,2}"
+    match = re.search(pattern, value)
+    if match:
+        return match.group(1)  # マッチした部分の文字列を返す
+    else:
+        return value  # マッチしなかった場合は元の値を返す
 
 
 ################################# Done ####################################
@@ -396,6 +406,7 @@ def create_raw_horse_results(target_bin_file_path):
         # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
         if df.columns[0] == "受賞歴":
             df = pd.read_html(html)[4]
+            # print(f"test df:{df.iloc[:,1]}")
 
         # 新馬の競走馬レビューが付いた場合、
         # 列名に0が付与されるため、次のhtmlへ飛ばす
@@ -406,8 +417,10 @@ def create_raw_horse_results(target_bin_file_path):
         # インデックスをhorse_idにする
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
-        df[horse_id] = df.index
+        df["horse_id"] = df.index
+
         df.columns = df.columns.str.replace(" ", "")
+        df.iloc[:, 1] = df.iloc[:, 1].apply(convert_string)
 
     return df
 
@@ -478,7 +491,7 @@ def create_raw_horse_info(target_bin_file_path):
         # インデックスをhorse_idにする
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
-        df[horse_id] = df.index
+        df["horse_id"] = df.index
     return df
 
 
@@ -488,7 +501,7 @@ def create_raw_horse_ped(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
         # horse_idを取得
-        horse_id = re.findall(r"(\d+)", target_bin_file_path)[0]
+
         # htmlをsoupオブジェクトに変換
 
         soup = BeautifulSoup(html, "lxml")
@@ -504,7 +517,7 @@ def create_raw_horse_ped(target_bin_file_path):
             work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
             peds_id_list.append(work_peds_id)
 
-        df[horse_id] = peds_id_list
+        df["horse_id"] = peds_id_list
 
         # pd.DataFrame型にして一つのデータにまとめて、列と行の入れ替えして、列名をpeds_0, ..., peds_61にする
         df = df.transpose()

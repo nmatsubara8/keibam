@@ -4,8 +4,7 @@ import pandas as pd
 
 from src.constants._horse_results_cols import HorseResultsCols as Cols
 from src.constants._master import Master
-
-from ._abstract_data_processor import AbstractDataProcessor
+from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
 class HorseResultsProcessor(AbstractDataProcessor):
@@ -40,7 +39,7 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # レース展開データ
         # n=1: 最初のコーナー位置, n=4: 最終コーナー位置
         def corner(x, n):
-            if type(x) != str:
+            if not isinstance(x, str):
                 return x
             elif n == 4:
                 return int(re.findall(r"\d+", x)[-1])

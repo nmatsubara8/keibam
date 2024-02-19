@@ -1,6 +1,6 @@
 from sklearn.preprocessing import LabelEncoder
 
-from ._abstract_data_processor import AbstractDataProcessor
+from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
 class PedsProcessor(AbstractDataProcessor):

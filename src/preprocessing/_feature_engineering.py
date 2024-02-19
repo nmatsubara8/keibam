@@ -5,8 +5,7 @@ import pandas as pd
 from src.constants._horse_results_cols import HorseResultsCols
 from src.constants._local_paths import LocalPaths
 from src.constants._master import Master
-
-from ._data_merger import DataMerger
+from src.preprocessing._data_merger import DataMerger
 
 
 class FeatureEngineering:

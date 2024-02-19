@@ -1,8 +1,7 @@
 import pandas as pd
 
 from src.constants._horse_info_cols import HorseInfoCols as Cols
-
-from ._abstract_data_processor import AbstractDataProcessor
+from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
 class HorseInfoProcessor(AbstractDataProcessor):

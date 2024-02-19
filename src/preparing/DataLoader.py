@@ -401,7 +401,7 @@ class DataLoader:
                 print(f"Error deleting {file_path_to_temp}: {e}")
 
     def pre_process_display(self):  # 処理開始時のメッセージ出力
-        print(f"処理対象:{self.alias}")
+        print(f"処理対象:{self.alias} 開始")
         print("self.from_location: ", self.from_location)
         print("to_temp_location: ", self.to_temp_location)
         print("to_location: ", self.to_location)
@@ -418,7 +418,7 @@ class DataLoader:
         print(f"{self.alias} type: ", type(self.target_data))
         print("len:", len(os.path.join(self.to_location, self.save_file_name)))
         print("Done / obtained_last_key: ", self.obtained_last_key)
-        print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name}+'\n'")
+        print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name} 終了+'\n'")
 
 
 """

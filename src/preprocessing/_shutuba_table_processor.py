@@ -1,8 +1,7 @@
 import pandas as pd
 
 from src.constants._results_cols import ResultsCols as Cols
-
-from ._results_processor import ResultsProcessor
+from src.preprocessing._results_processor import ResultsProcessor
 
 
 class ShutubaTableProcessor(ResultsProcessor):

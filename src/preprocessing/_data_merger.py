@@ -1,11 +1,11 @@
 import pandas as pd
 from tqdm.auto import tqdm
 
-from ._horse_info_processor import HorseInfoProcessor
-from ._horse_results_processor import HorseResultsProcessor
-from ._peds_processor import PedsProcessor
-from ._race_info_processor import RaceInfoProcessor
-from ._results_processor import ResultsProcessor
+from src.preprocessing._horse_info_processor import HorseInfoProcessor
+from src.preprocessing._horse_results_processor import HorseResultsProcessor
+from src.preprocessing._peds_processor import PedsProcessor
+from src.preprocessing._race_info_processor import RaceInfoProcessor
+from src.preprocessing._results_processor import ResultsProcessor
 
 
 class DataMerger:

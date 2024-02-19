@@ -1,8 +1,7 @@
 import pandas as pd
 
 from src.constants._results_cols import ResultsCols as Cols
-
-from ._abstract_data_processor import AbstractDataProcessor
+from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
 class ResultsProcessor(AbstractDataProcessor):
