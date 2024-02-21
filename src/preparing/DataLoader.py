@@ -208,22 +208,32 @@ class DataLoader:
         else:
             print("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
 
+    def csv_reader(self, local_temp_file_path):
+        if self.alias == "race_results_table":
+            df = pd.read_csv(local_temp_file_path, dtype={"jockey_id": str, "trainer_id": str, "owner_id": str})
+
+        # if self.alias == "horse_results_table":
+        #    df = pd.read_csv(local_temp_file_path)
+        # NaNを0に置き換える
+
+        if self.alias == "race_info_table":
+            df = pd.read_csv(local_temp_file_path)
+
+        if self.alias == "horse_info_table":
+            df = pd.read_csv(local_temp_file_path, dtype={"owner_id": str, "breeder_id": str})
+
+        else:
+            df = pd.read_csv(local_temp_file_path)
+
+        return df
+
     def transfer_temp_file(self):
         local_temp_file_path = self.get_local_temp_file_path()
-        # with open(local_temp_file_path, "r") as base_file:
-        # temp_target_data = [line.strip() for line in base_file]
-
-        # ソートしたデータを元のファイルに保存
-        # with open(local_temp_file_path, "w") as new_file:
-        #    for line in temp_target_data:
-        #        new_file.write(line + "\n")
-        # CSVファイルからデータを読み込む
-
-        df = pd.read_csv(local_temp_file_path)
+        df = self.csv_reader(local_temp_file_path)
 
         to_target_file = self.get_local_comp_file_path(self.alias)
-
         # Pickleファイルにデータを保存する
+
         df.to_pickle(to_target_file)
 
     def copy_files(self):
@@ -414,7 +424,9 @@ class DataLoader:
             print(f"reloaded_{self.from_local_file_name} type: ", self.from_local_file_name)
 
     def post_process_display(self):  # 処理終了時のメッセージ出力
-        print(f"{self.alias}[:5]:", self.target_data[-5:])
+        # df = pd.read_pickle(os.path.join(self.to_location, self.save_file_name))
+        print(f"{self.alias}target_df[-5:]:", self.target_data[-5:])
+        # print(f"{self.alias}savede_pkl[-5:]:", df.tail())
         print(f"{self.alias} type: ", type(self.target_data))
         print("len:", len(os.path.join(self.to_location, self.save_file_name)))
         print("Done / obtained_last_key: ", self.obtained_last_key)

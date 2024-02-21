@@ -298,7 +298,7 @@ def process_bin_file(self, process_function):
             # target_data_name = {}  # バッチ処理が完了したので辞書をクリア
 
         self.obtained_last_key = target_bin_files[-1]
-        self.transfer_temp_file()
+    self.transfer_temp_file()
     self.copy_files()
 
     print(f"# of processed files: {processed_files}")
@@ -318,6 +318,7 @@ def trim_function(df):
 
 ################################# Done ####################################
 def create_raw_race_results(target_bin_file_path):
+    race_results = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
@@ -346,7 +347,9 @@ def create_raw_race_results(target_bin_file_path):
             #'jockey/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
             jockey_id = re.findall(r"jockey/result/recent/(\w*)", a["href"])
             jockey_id_list.append(jockey_id[0])
+
         df["jockey_id"] = jockey_id_list
+        df["jockey_id"].astype(str)
 
         # 調教師IDをスクレイピング
         trainer_id_list = []
@@ -357,7 +360,9 @@ def create_raw_race_results(target_bin_file_path):
             #'trainer/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
             trainer_id = re.findall(r"trainer/result/recent/(\w*)", a["href"])
             trainer_id_list.append(trainer_id[0])
+
         df["trainer_id"] = trainer_id_list
+        df["trainer_id"].astype(str)
 
         # 馬主IDをスクレイピング
         owner_id_list = []
@@ -368,21 +373,28 @@ def create_raw_race_results(target_bin_file_path):
             #'owner/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
             owner_id = re.findall(r"owner/result/recent/(\w*)", a["href"])
             owner_id_list.append(owner_id[0])
+
         df["owner_id"] = owner_id_list
+        df["owner_id"].astype(str)
 
         # インデックスをrace_idにする
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [race_id] * len(df)
-        df["race_id"] = df.index
-        df.columns = df.columns.str.replace(" ", "")
+        race_results[race_id] = df
+        df["race_id"] = race_id
+    race_results_df = pd.concat([race_results[key] for key in race_results])
+    race_results_df = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
+    return race_results_df
+    # df["race_id"] = df.index
+    # df.columns = df.columns.str.replace(" ", "")
 
-        # last_column_name = df.columns[-1]
-        # df = df.rename(columns={last_column_name: "race_id"})
-        # race_id_column = df.pop("race_id")
-        # df.insert(0, "race_id", race_id_column)
-        ###### df.drop(df.columns[0], axis=1, inplace=True)
+    # last_column_name = df.columns[-1]
+    # df = df.rename(columns={last_column_name: "race_id"})
+    # race_id_column = df.pop("race_id")
+    # df.insert(0, "race_id", race_id_column)
+    ###### df.drop(df.columns[0], axis=1, inplace=True)
 
-    return df
+    # return df
 
 
 # パターンにマッチする部分を抽出する関数を定義
@@ -418,6 +430,14 @@ def create_raw_horse_results(target_bin_file_path):
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
+
+        # "R"列の値が数値を表す文字列であるかを判定し、数値を表す文字列の場合にintに変換する
+        for index, value in df["R"].items():
+            if isinstance(value, str) and value.isdigit():
+                df.at[index, "R"] = int(value)
+
+        # "R"列のデータ型をintに変換する
+        df["R"] = pd.to_numeric(df["R"], errors="coerce").astype(float).astype("Int64")
 
         df.columns = df.columns.str.replace(" ", "")
         df.iloc[:, 1] = df.iloc[:, 1].apply(convert_string)
@@ -475,6 +495,7 @@ def create_raw_horse_info(target_bin_file_path):
             # print('owner_id empty {}'.format(race_html))
             owner_id = NaN
         df["owner_id"] = owner_id
+        # df["owner_id"] = df["owner_id"].astype(str)
 
         # 生産者IDをスクレイピング
         try:
@@ -503,7 +524,7 @@ def create_raw_horse_ped(target_bin_file_path):
         # horse_idを取得
 
         # htmlをsoupオブジェクトに変換
-
+        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         soup = BeautifulSoup(html, "lxml")
         df = pd.DataFrame()
         peds_id_list = []
@@ -517,12 +538,15 @@ def create_raw_horse_ped(target_bin_file_path):
             work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
             peds_id_list.append(work_peds_id)
 
-        df["horse_id"] = peds_id_list
+        df[horse_id] = peds_id_list
 
         # pd.DataFrame型にして一つのデータにまとめて、列と行の入れ替えして、列名をpeds_0, ..., peds_61にする
         df = df.transpose()
         df.columns = ["peds_" + str(i) for i in range(len(df.columns))]
+        df["horse_id"] = horse_id
+        df["horse_id"].astype(int)
         # print("df", df)
+        df["horse_id"] = df.index
 
     return df
 
@@ -578,6 +602,7 @@ def create_raw_race_info(target_bin_file_path):
         # print(f"text1:{text1}")
         # print(f"text2:{text2}")
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        # print(f"race_id :{race_id}")
         # テキスト情報を解析してDataFrameに変換
         race_distance = re.search(r"\d+", text1.split("/")[0]).group()
         weather = text1.split("/")[1].split(":")[1].strip()
@@ -611,7 +636,7 @@ def create_raw_race_info(target_bin_file_path):
         race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
 
         # 開催場所を取得
-        place_id = None
+        # place_id = None
         for key, value in Master.PLACE_DICT.items():
             if key in race_name:
                 place_id = value
@@ -713,9 +738,11 @@ def create_raw_race_info(target_bin_file_path):
                 **race_flags,
             }
         )
+
     return df
 
 
+r"""
 def create_tmp_race_info(target_bin_file_path):
     with open(target_bin_file_path, "rb") as f:
         html = f.read()
@@ -816,7 +843,7 @@ def create_tmp_race_info(target_bin_file_path):
     return df
 
 
-r"""
+
         info = re.findall(r"\w+", texts)
         length = len(info)
 

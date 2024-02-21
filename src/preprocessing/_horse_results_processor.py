@@ -31,7 +31,8 @@ class HorseResultsProcessor(AbstractDataProcessor):
         df["date"] = pd.to_datetime(df[Cols.DATE])
 
         # 賞金のNaNを0で埋める
-        df[Cols.PRIZE].fillna(0, inplace=True)
+        # df[Cols.PRIZE].fillna(0, inplace=True)
+        df[Cols.PRIZE] = df[Cols.PRIZE].fillna(0)
 
         # 1着の着差を0にする（xが0より小さい場合は、0、xが0以上の場合、xを返す）
         df[Cols.RANK_DIFF] = df[Cols.RANK_DIFF].map(lambda x: 0 if x < 0 else x)
@@ -91,7 +92,7 @@ class HorseResultsProcessor(AbstractDataProcessor):
         """
         df = raw.copy()[
             [
-                # Cols.DATE, # 日付
+                Cols.DATE,  # 日付
                 Cols.PLACE,  # 開催
                 Cols.WEATHER,  # 天気
                 Cols.R,  # R

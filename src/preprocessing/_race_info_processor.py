@@ -20,6 +20,8 @@ class RaceInfoProcessor(AbstractDataProcessor):
         # 日付型に変更
         df["date"] = pd.to_datetime(df["date"], format="%Y年%m月%d日")
         # 開催場所
-        df["開催"] = df.index.map(lambda x: str(x)[4:6])
+        # df["開催"] = df.index.map(lambda x: str(x)[4:6])
+        df["開催"] = df["place_id"].astype(int)
+        df.drop(columns=["place_id"], inplace=True)
 
         return df

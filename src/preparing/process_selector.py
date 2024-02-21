@@ -95,18 +95,18 @@ def select_process(alias):
     data_request.post_process_display()
 
 
-kaisai_date_list = select_process(alias="kaisai_date_list")
-race_id_list = select_process(alias="race_id_list")
-horse_id_list = select_process(alias="horse_id_list")  #
-race_html = select_process(alias="race_html")
-horse_html = select_process(alias="horse_html")
-ped_html = select_process(alias="ped_html")
+# kaisai_date_list = select_process(alias="kaisai_date_list")
+# race_id_list = select_process(alias="race_id_list")
+# horse_id_list = select_process(alias="horse_id_list")  #
+# race_html = select_process(alias="race_html")
+# horse_html = select_process(alias="horse_html")
+# ped_html = select_process(alias="ped_html")
 race_results_table = select_process(alias="race_results_table")
-horse_results_table = select_process(alias="horse_results_table")
-race_return_table = select_process(alias="race_return_table")
-peds_list = select_process(alias="peds_list")
-horse_info_table = select_process(alias="horse_info_table")
-race_info_table = select_process(alias="race_info_table")
+# horse_results_table = select_process(alias="horse_results_table")
+# race_return_table = select_process(alias="race_return_table")
+# peds_list = select_process(alias="peds_list")
+# horse_info_table = select_process(alias="horse_info_table")
+# race_info_table = select_process(alias="race_info_table")
 
 
 # tmp_for_race_info = select_process(alias="tmp_for_race_info")

@@ -19,6 +19,6 @@ class PedsProcessor(AbstractDataProcessor):
         df = self.raw_data
 
         # カテゴリ変数に型変換を行う
-        for column in df.columns:
+        for column in df.columns[:-1]:
             df[column] = LabelEncoder().fit_transform(df[column].fillna("Na"))
         return df.astype("category")

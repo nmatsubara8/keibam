@@ -7,6 +7,7 @@ class ResultsCols:
     サイト上のテーブル列名を、定数として持っておく。
     """
 
+    place_id: str = "開催"
     RANK: str = "着順"
     WAKUBAN: str = "枠番"
     UMABAN: str = "馬番"

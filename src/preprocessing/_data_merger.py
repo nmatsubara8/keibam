@@ -49,7 +49,9 @@ class DataMerger:
         マージ処理
         """
         self._merge_race_info()
+        print("merge_race_info() Done")
         self._merge_horse_results()
+        print("merge_horse_results() Done")
         self._merge_horse_info()
         self._merge_peds()
 
@@ -72,13 +74,14 @@ class DataMerger:
             horse_id_list = df_by_date["horse_id"].unique()
             # dateより過去に絞る
             self._separated_horse_results_dict[date] = self._horse_results.query("date < @date").query(
-                "index in @horse_id_list"
+                "horse_id in @horse_id_list"
             )
 
-    def _merge_horse_results(self, n_races_list=[5, 9]):
+    def _merge_horse_results(self):
         """
         馬の過去成績テーブルのマージ
         """
+        n_races_list = [435, 445]
         self._separate_by_date()
         print("merging horse_results")
         output_results_dict = {}

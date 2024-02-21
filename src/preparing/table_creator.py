@@ -16,7 +16,6 @@ from src.preparing.modules import create_raw_horse_results
 from src.preparing.modules import create_raw_race_info
 from src.preparing.modules import create_raw_race_results
 from src.preparing.modules import create_raw_race_return
-from src.preparing.modules import create_tmp_race_info
 from src.preparing.modules import process_bin_file
 
 
@@ -66,7 +65,7 @@ class TableCreator(DataLoader):
         """
         raceページのhtmlを受け取って、レース情報テーブルに変換する関数。
         """
-        process_bin_file(self, create_tmp_race_info)
+        process_bin_file(self, create_raw_race_info)
 
     def create_race_info_table(self):
         """
