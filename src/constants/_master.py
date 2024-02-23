@@ -76,7 +76,7 @@ class Master:
 
     GROUND_STATE_LIST: tuple = ("良", "稍重", "重", "不良")
 
-    SEX_LIST: tuple = ("牡", "牝", "セ", "混")
+    SEX_LIST: tuple = ("牡", "牝", "セ")
 
     AROUND_LIST: tuple = ("右", "左", "直線")
 

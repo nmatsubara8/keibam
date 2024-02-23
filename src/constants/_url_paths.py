@@ -36,8 +36,8 @@ class UrlPaths:
         "",  # 8
         "",  # 9
         False,  # 10
-        "2023-05-01",  # 11
-        "2023-06-15",  # 12
+        "2023-01-01",  # 11
+        "2024-02-21",  # 12
     )
     ################################# Done ####################################
     # レース一覧ページ Done
@@ -150,11 +150,11 @@ class UrlPaths:
         "temp_horse_id_table.csv",  # 3
         DB_DOMAIN[4] + "horse_id_list/",  # 4
         "horse_id_list.pkl",  # 5
-        100,  # 6
+        500,  # 6
         TOP_URL[4] + "race_id_list/",  # 7
         "race_id_list.pkl",
         "",  # 9
-        False,  # 10
+        True,  # 10
         "",  # 11
         "",  # 12
     )

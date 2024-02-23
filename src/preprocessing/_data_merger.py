@@ -1,11 +1,18 @@
+import sys
+
 import pandas as pd
 from tqdm.auto import tqdm
 
+from src.preprocessing._data_cleaner import convert_column_types
+from src.preprocessing._data_cleaner import dict_selector
 from src.preprocessing._horse_info_processor import HorseInfoProcessor
 from src.preprocessing._horse_results_processor import HorseResultsProcessor
 from src.preprocessing._peds_processor import PedsProcessor
 from src.preprocessing._race_info_processor import RaceInfoProcessor
 from src.preprocessing._results_processor import ResultsProcessor
+
+# 表示を省略しないように設定
+sys.maxsize = sys.maxsize
 
 
 class DataMerger:
@@ -49,17 +56,30 @@ class DataMerger:
         マージ処理
         """
         self._merge_race_info()
-        print("merge_race_info() Done")
+        # print("merge_race_info() done")
         self._merge_horse_results()
-        print("merge_horse_results() Done")
+        # print("merge_horse_results() done")
         self._merge_horse_info()
+        # print("merge_horse_info() done")
+
         self._merge_peds()
+        # print("merge_peds() done")
+        # print("mergerd_data type:")
+        # print(self.merged_data.dtypes.T)
+        self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+        # print("sex:")
+        # print(self.merged_data["sex"].value_counts())
 
     def _merge_race_info(self):
         """
         レース情報テーブルを、レース結果テーブルにマージ
         """
         self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
+        dict = dict_selector("_results")
+        df = convert_column_types(self._results, dict)
+
+        self._results = df
+        # print(self._results.dtypes.T)
 
     def _separate_by_date(self):
         """
@@ -67,6 +87,10 @@ class DataMerger:
         - (レース結果のdate, その日に走る馬の過去成績データ)のペアを作る
         """
         print("separating horse results by date")
+        dict = dict_selector("_horse_results")
+        df = convert_column_types(self._horse_results, dict)
+        self._horse_results = df
+
         # dateでデータを分割
         for date, df_by_date in tqdm(self._results.groupby("date")):
             self._separated_results_dict[date] = df_by_date
@@ -81,7 +105,7 @@ class DataMerger:
         """
         馬の過去成績テーブルのマージ
         """
-        n_races_list = [435, 445]
+        n_races_list = [5, 9]
         self._separate_by_date()
         print("merging horse_results")
         output_results_dict = {}
@@ -132,12 +156,16 @@ class DataMerger:
         """
         馬の基本情報テーブルのマージ
         """
+
         self._merged_data = self._merged_data.merge(self._horse_info, left_on="horse_id", right_index=True, how="left")
+        # print(f"self.s:{self._merged_data.tail()}")
+        # print(self._merged_data["birthday"])
 
     def _merge_peds(self):
         """
         血統テーブルのマージ
         """
+
         self._merged_data = self._merged_data.merge(self._peds, left_on="horse_id", right_index=True, how="left")
 
     @property

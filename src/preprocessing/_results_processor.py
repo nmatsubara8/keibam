@@ -26,6 +26,7 @@ class ResultsProcessor(AbstractDataProcessor):
         # サイト上のテーブルに存在する列名は、ResultsColsクラスで定数化している。
         df["性"] = df[Cols.SEX_AGE].map(lambda x: str(x)[0])
         df["年齢"] = df[Cols.SEX_AGE].map(lambda x: str(x)[1:]).astype(int)
+
         # print(f"type df:{type(df)}")
 
         # print(f"df.head:{df.head()}")

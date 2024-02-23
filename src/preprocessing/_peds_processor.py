@@ -16,9 +16,14 @@ class PedsProcessor(AbstractDataProcessor):
     """
 
     def _preprocess(self):
-        df = self.raw_data
+        df = self.raw_data.copy()
+        df["horse_id"] = df["horse_id"].astype(int)  # horse_id 列を整数型に変換
 
-        # カテゴリ変数に型変換を行う
+        # horse_id 列を除く列をカテゴリ型に変換する
         for column in df.columns[:-1]:
-            df[column] = LabelEncoder().fit_transform(df[column].fillna("Na"))
-        return df.astype("category")
+            if column != "horse_id":
+                df[column] = LabelEncoder().fit_transform(df[column].fillna("Na"))
+                df[column] = df[column].astype("category")
+        # horse_id 列をインデックスに設定する
+        df.set_index("horse_id", inplace=True)
+        return df

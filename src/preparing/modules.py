@@ -112,6 +112,8 @@ def process_pkl_file(self, process_function):
         # print(f"直前 filetype:{filetype}")
         if filetype != "bin":
             df = pd.concat(batch_data)
+            # if self.alias == "horse_id_list" and processed_files // 400 == 0:
+            #    time.sleep(60)
             # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
             self.target_data = df
             # print(f"df:{df}")

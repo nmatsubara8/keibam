@@ -23,5 +23,7 @@ class RaceInfoProcessor(AbstractDataProcessor):
         # df["開催"] = df.index.map(lambda x: str(x)[4:6])
         df["開催"] = df["place_id"].astype(int)
         df.drop(columns=["place_id"], inplace=True)
+        df.drop(columns=["age"], inplace=True)
+        df.drop(columns=["sex"], inplace=True)
 
         return df
