@@ -110,4 +110,6 @@ class Master:
         "外": "gai",
         "混": "kongo",
         "牝": "hinba",
+        "勝クラス": "kachi",
+        "九州産馬": "kyushu",
     }

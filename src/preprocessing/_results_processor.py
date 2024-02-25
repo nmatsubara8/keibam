@@ -75,6 +75,7 @@ class ResultsProcessor(AbstractDataProcessor):
         """
         df = raw.copy()[
             [
+                "race_id",
                 # Cols.RANK, # 着順
                 Cols.WAKUBAN,  # 枠番
                 Cols.UMABAN,  # 馬番

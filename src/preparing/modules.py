@@ -339,6 +339,7 @@ def create_raw_race_results(target_bin_file_path):
             horse_id = re.findall(r"\d+", a["href"])
             horse_id_list.append(horse_id[0])
         df["horse_id"] = horse_id_list
+        df["horse_id"].astype(str)
 
         # 騎手IDをスクレイピング
         jockey_id_list = []
@@ -384,19 +385,11 @@ def create_raw_race_results(target_bin_file_path):
         df.index = [race_id] * len(df)
         race_results[race_id] = df
         df["race_id"] = race_id
+        df["race_id"].astype(str)
+        # df.set_index("race_id", inplace=True)
     race_results_df = pd.concat([race_results[key] for key in race_results])
     race_results_df = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
     return race_results_df
-    # df["race_id"] = df.index
-    # df.columns = df.columns.str.replace(" ", "")
-
-    # last_column_name = df.columns[-1]
-    # df = df.rename(columns={last_column_name: "race_id"})
-    # race_id_column = df.pop("race_id")
-    # df.insert(0, "race_id", race_id_column)
-    ###### df.drop(df.columns[0], axis=1, inplace=True)
-
-    # return df
 
 
 # パターンにマッチする部分を抽出する関数を定義
@@ -432,6 +425,7 @@ def create_raw_horse_results(target_bin_file_path):
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
+        df["horse_id"].astype(str)
 
         # "R"列の値が数値を表す文字列であるかを判定し、数値を表す文字列の場合にintに変換する
         for index, value in df["R"].items():
@@ -515,6 +509,7 @@ def create_raw_horse_info(target_bin_file_path):
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
+        df["horse_id"].astype(str)
     return df
 
 
@@ -546,7 +541,7 @@ def create_raw_horse_ped(target_bin_file_path):
         df = df.transpose()
         df.columns = ["peds_" + str(i) for i in range(len(df.columns))]
         df["horse_id"] = horse_id
-        df["horse_id"].astype(int)
+        df["horse_id"].astype(str)
         # print("df", df)
         df["horse_id"] = df.index
 
@@ -603,7 +598,7 @@ def create_raw_race_info(target_bin_file_path):
         text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
         # print(f"text1:{text1}")
         # print(f"text2:{text2}")
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        race_id = str(re.findall(r"\d+", target_bin_file_path)[0])
         # print(f"race_id :{race_id}")
         # テキスト情報を解析してDataFrameに変換
         race_distance = re.search(r"\d+", text1.split("/")[0]).group()
@@ -740,7 +735,7 @@ def create_raw_race_info(target_bin_file_path):
                 **race_flags,
             }
         )
-
+    # df.set_index("race_id", inplace=True)
     return df
 
 
