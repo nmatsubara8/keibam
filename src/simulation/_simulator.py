@@ -28,7 +28,7 @@ class Simulator:
         returns_per_race_dict = {}
 
         for race_id, action_list in actions.items():
-            print(f"race_id:{race_id}")
+            # print(f"race_id:{race_id}")
 
             n_bets_race = 0
             bet_amount_race = 0
@@ -36,31 +36,19 @@ class Simulator:
             for action, value in action_list.items():
                 if action == "tansho":
                     n_bets, bet_amount, return_amount = self.betting_tickets.bet_tansho(race_id, value, 1)
-                    print(f"n_bets, bet_amount, return_amount:{n_bets, bet_amount, return_amount}")
+                    # print(f"n_bets, bet_amount, return_amount:{n_bets, bet_amount, return_amount}")
                 elif action == "fukusho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(
-                        race_id, actions[race_id][action], 1
-                    )
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(race_id, value, 1)
                 elif action == "umaren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(race_id, value, 1)
                 elif action == "umatan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umatan_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umatan_box(race_id, value, 1)
                 elif action == "wide":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wide_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wide_box(race_id, value, 1)
                 elif action == "sanrenpuku":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrenpuku_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrenpuku_box(race_id, value, 1)
                 elif action == "sanrentan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(race_id, value, 1)
                 n_bets_race += n_bets
                 bet_amount_race += bet_amount
                 return_amount_race += return_amount
@@ -70,7 +58,7 @@ class Simulator:
                     "return_amount": return_amount_race,
                     "hit_or_not": int(return_amount_race > 0),
                 }
-                print(f"returns_per_race_dict:{returns_per_race_dict}")
+                # print(f"returns_per_race_dict:{returns_per_race_dict}")
         return pd.DataFrame.from_dict(returns_per_race_dict, orient="index")
 
     def calc_returns(self, actions: dict) -> dict:

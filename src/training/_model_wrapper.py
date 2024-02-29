@@ -22,7 +22,7 @@ class ModelWrapper:
         optunaによるチューニングを実行。
         """
 
-        params = {"objective": "binary"}
+        params = {"objective": "binary", "verbose": -1}
 
         # チューニング実行
         lgb_clf_o = lgb_o.train(

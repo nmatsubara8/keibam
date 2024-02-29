@@ -12,10 +12,10 @@ _SCORE = "score"
 
 # common funcs
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
-    score_table = X[["race_id", ResultsCols.UMABAN, ResultsCols.TANSHO_ODDS]].copy()
-    score_table.set_index("race_id", inplace=True)
-    print(f"score_tabel_copy: {score_table}")
-    score = model.predict_proba(X.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1]
+    score_table = X[ResultsCols.UMABAN].copy()
+    # score_table.set_index("race_id", inplace=True)
+    # print(f"score_tabel_copy: {score_table}")
+    score = model.predict_proba(X)[:, 1]
     score_table[_SCORE] = score
     return score_table
 

@@ -36,7 +36,7 @@ class BetPolicyTansho:
         filtered_table = score_table[score_table["score"] >= threshold]
         bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
         bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "tansho"}).T.to_dict()
-        print(f"bet_dict:{bet_dict}")
+        # print(f"bet_dict:{bet_dict}")
         return bet_dict
 
 

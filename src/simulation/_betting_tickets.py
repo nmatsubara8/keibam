@@ -37,13 +37,18 @@ class BettingTickets:
             bet_amount = n_bets * amount
             # print(f"bet_amount:{bet_amount}")
             # 賭けるレースidに絞った単勝の払い戻し表
-            print("self.__returnTables", self.__returnTables)
-            table_1R = self.__returnTablesTansho.loc[race_id]
-            print(f"table_1R :{table_1R }")
+            # print("self.__returnTables", self.__returnTables)
             # 的中判定
-            hit = table_1R["win"] in umaban
-            # 払い戻し合計額
-            return_amount = hit * table_1R["return"] * amount / 100
+            return_amount = 0
+            table_1R = self.__returnTablesTansho[self.__returnTablesTansho.index == race_id]
+            length = len(table_1R.columns)
+            print(f"i:{length}")
+            for uma in umaban:
+                for i in range(length / 2):
+                    win_column = f"win_{i}"
+                    if table_1R.loc[race_id, win_column] != 0 and table_1R.loc[race_id, win_column] == uma:
+                        return_column = f"return_{i}"
+                        return_amount += table_1R[return_column] * amount / 100
             return n_bets, bet_amount, return_amount
 
     def bet_fukusho(self, race_id: str, umaban: list, amount: float):
@@ -70,15 +75,18 @@ class BettingTickets:
         馬連BOX馬券。1枚のみ買いたい場合もこの関数を使う。
         """
         # 賭ける枚数
-        # 例）4C2（4コンビネーション2）
+        # 例）4C2（4コンビネーション2
+
         n_bets = comb(len(umaban), 2)
+        print(f"n_bets:{n_bets}")
         if n_bets == 1:
-            # print('例外')
+            print("例外")
             return 0, 0, 0
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
             # 賭けるレースidに絞った馬連払い戻し表
+            print("self.__returnTables", self.__returnTables)
             table_1R = self.__returnTablesUmaren.loc[race_id]
             # 的中判定
             hit = set(table_1R[["win_0", "win_1"]]).issubset(set(umaban))
