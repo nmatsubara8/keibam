@@ -58,6 +58,7 @@ class FeatureEngineering:
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         # self.__data.drop(f"{HorseResultsCols.PLACE}", axis=1, inplace=True)
         self.__data.drop("place", axis=1, inplace=True)
+        self.__data.drop("time", axis=1, inplace=True)
         return self
 
     def dumminize_race_type(self):
@@ -100,6 +101,7 @@ class FeatureEngineering:
         temp_data = pd.get_dummies(self.__data["ground_state2"], prefix="ground_state2_")
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("ground_state2", axis=1, inplace=True)
+        self.__data.drop("race_condition", axis=1, inplace=True)
 
         return self
 
@@ -136,7 +138,7 @@ class FeatureEngineering:
         self.__data.drop("race_class", axis=1, inplace=True)
         return self
 
-    def __label_encode(self, target_col: str):
+    def __label_encode(self, target_col):
         """
         引数で指定されたID（horse_id/jockey_id/trainer_id/owner_id/breeder_id）を
         ラベルエンコーディングして、Categorical型に変換する。
@@ -145,11 +147,11 @@ class FeatureEngineering:
         # ファイルが存在しない場合、空のDataFrameを作成
         if not os.path.isfile(csv_path):
             target_master = pd.DataFrame(columns=[target_col, "encoded_id"])
+        elif target_col == "horse_id":
+            target_master = pd.read_csv(csv_path)
         else:
             target_master = pd.read_csv(csv_path, dtype=object)
 
-        if target_col == "horse_id":
-            target_master[target_col] = target_master[target_col].astype(str)
         # 後のmaxでエラーになるので、整数に変換
         target_master["encoded_id"] = target_master["encoded_id"].astype(int)
 

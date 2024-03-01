@@ -60,10 +60,10 @@ class DataMerger:
         # print("merge_infos", self._results.sort_values(by="race_id").head().T)
 
         self._merge_horse_results()
-        print("merge_horse", self._merged_data.sort_values(by="horse_id").head().T)
+        # print("merge_horse", self._merged_data.sort_values(by="horse_id").head().T)
         # print("merge_horse_results() done")
         self._merge_horse_info()
-        print("merge_horse_info", self._merged_data.sort_values(by="horse_id").head().T)
+        # print("merge_horse_info", self._merged_data.sort_values(by="horse_id").head().T)
         # print("merge_horse_info() done")
 
         self._merge_peds()
@@ -78,8 +78,8 @@ class DataMerger:
         """
         レース情報テーブルを、レース結果テーブルにマージ
         """
-        print("self._results", self._results.dtypes.T)
-        print("self._race_info", self._race_info.dtypes.T)
+        # print("self._results", self._results.dtypes.T)
+        # print("self._race_info", self._race_info.dtypes.T)
         self._results = self._results.merge(self._race_info, left_on="race_id", right_on="race_id", how="left")
         dict = dict_selector("_results")
         df = convert_column_types(self._results, dict)

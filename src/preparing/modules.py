@@ -339,7 +339,7 @@ def create_raw_race_results(target_bin_file_path):
             horse_id = re.findall(r"\d+", a["href"])
             horse_id_list.append(horse_id[0])
         df["horse_id"] = horse_id_list
-        df["horse_id"].astype(str)
+        df["horse_id"].astype(int)
 
         # 騎手IDをスクレイピング
         jockey_id_list = []
@@ -425,7 +425,7 @@ def create_raw_horse_results(target_bin_file_path):
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
-        df["horse_id"].astype(str)
+        df["horse_id"].astype(int)
 
         # "R"列の値が数値を表す文字列であるかを判定し、数値を表す文字列の場合にintに変換する
         for index, value in df["R"].items():
@@ -509,7 +509,7 @@ def create_raw_horse_info(target_bin_file_path):
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
-        df["horse_id"].astype(str)
+        df["horse_id"].astype(int)
     return df
 
 
@@ -541,7 +541,7 @@ def create_raw_horse_ped(target_bin_file_path):
         df = df.transpose()
         df.columns = ["peds_" + str(i) for i in range(len(df.columns))]
         df["horse_id"] = horse_id
-        df["horse_id"].astype(str)
+        df["horse_id"].astype(int)
         # print("df", df)
         df["horse_id"] = df.index
 

@@ -3,8 +3,6 @@ import optuna.integration.lightgbm as lgb_o
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-from src.constants._results_cols import ResultsCols
-
 from ._data_splitter import DataSplitter
 
 
@@ -28,7 +26,7 @@ class ModelWrapper:
         lgb_clf_o = lgb_o.train(
             params,
             datasets.lgb_train_optuna,
-            valid_sets=(datasets.lgb_train_optuna, datasets.lgb_valid_optuna),
+            valid_sets=datasets.lgb_valid_optuna,
             # verbose_eval=100,
             # early_stopping_rounds=10,
             optuna_seed=100,  # optunaのseed固定
@@ -51,16 +49,18 @@ class ModelWrapper:
 
     def train(self, datasets: DataSplitter):
         # 学習
-        self.__lgb_model.fit(datasets.X_train.values, datasets.y_train.values)
+        self.__lgb_model.fit(datasets.X_train, datasets.y_train)
         # AUCを計算して出力
         auc_train = roc_auc_score(datasets.y_train, self.__lgb_model.predict_proba(datasets.X_train)[:, 1])
         auc_test = roc_auc_score(
             datasets.y_test,
-            self.__lgb_model.predict_proba(datasets.X_test.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1],
+            self.__lgb_model.predict_proba(datasets.X_test)[:, 1],
         )
         # 特徴量の重要度を記憶しておく
+        # NumPy配列からDataFrameに変換する
+        X_train_df = pd.DataFrame(datasets.X_train)
         self.__feature_importance = pd.DataFrame(
-            {"features": datasets.X_train.columns, "importance": self.__lgb_model.feature_importances_}
+            {"features": X_train_df.columns, "importance": self.__lgb_model.feature_importances_}
         ).sort_values("importance", ascending=False)
         print("AUC: {:.3f}(train), {:.3f}(test)".format(auc_train, auc_test))
 

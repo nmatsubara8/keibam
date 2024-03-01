@@ -154,7 +154,7 @@ class UrlPaths:
         TOP_URL[4] + "race_id_list/",  # 7
         "race_id_list.pkl",
         "",  # 9
-        True,  # 10
+        False,  # 10
         "",  # 11
         "",  # 12
     )

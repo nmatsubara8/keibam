@@ -12,75 +12,71 @@ class DataSplitter:
         """
         訓練データとテストデータに分ける。さらに訓練データをoptuna用の訓練データと検証データに分ける。
         """
-        self.__train_data, self.__test_data = self.__split_by_date(self.__featured_data, test_size=test_size)
-        self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(
-            self.__train_data, test_size=valid_size
-        )
-        self.__lgb_train_optuna = lgb_o.Dataset(
-            self.__train_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values,
-            self.__train_data_optuna["rank"],
-        )
-        self.__lgb_valid_optuna = lgb_o.Dataset(
-            self.__valid_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values,
-            self.__valid_data_optuna["rank"],
-        )
-        # 説明変数と目的変数に分ける。開催はエラーなるので一度drop。
-        self.__X_train = self.__train_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1)
-        self.__y_train = self.__train_data["rank"]
-        self.__X_test = self.__test_data.drop(["rank", "date"], axis=1)
-        self.__y_test = self.__test_data["rank"]
+        self.__train_data, self.__test_data = self.__split_by_date(self.__featured_data, test_size)
+        self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(self.__train_data, valid_size)
 
     def __split_by_date(self, df, test_size):
         """
         時系列に沿って訓練データとテストデータに分ける関数。test_sizeは0~1。
         """
         sorted_id_list = df.sort_values("date").index.unique()
-        train_id_list = sorted_id_list[: round(len(sorted_id_list) * (1 - test_size))]
-        test_id_list = sorted_id_list[round(len(sorted_id_list) * (1 - test_size)) :]
-        train = df.loc[train_id_list]
-        test = df.loc[test_id_list]
+        train_size = round(len(sorted_id_list) * (1 - test_size))
+        train_index = sorted_id_list[:train_size]
+        test_index = sorted_id_list[train_size:]
+        train = df.iloc[df.index.isin(train_index)]
+        test = df.iloc[df.index.isin(test_index)]
         return train, test
 
     @property
-    def featured_data(self):
-        return self.__featured_data
+    def train_data_optuna(self):
+        # 目的変数を取得
+        y_train_optuna = self.__train_data_optuna["rank"]
+        y_valid_optuna = self.__valid_data_optuna["rank"]
 
-    @property
-    def train_data(self):
-        return self.__train_data
+        # 不要な列を削除
+        # ResultsColsが定義されていると仮定して削除
+        train_data_optuna = self.__train_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values
+        valid_data_optuna = self.__valid_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values
+
+        print("self.__train_data_optuna", train_data_optuna.shape[1])
+        print("self.__valid_data_optuna", valid_data_optuna.shape[1])
+
+        return train_data_optuna, valid_data_optuna, y_train_optuna, y_valid_optuna
 
     @property
     def test_data(self):
-        return self.__test_data
+        # 特徴量と目的変数を取得
+        X_test = self.__test_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1)
+        y_test = self.__test_data["rank"]
 
-    @property
-    def train_data_optuna(self):
-        return self.__train_data_optuna
+        print("self.__X_test_data", X_test.shape[1])
 
-    @property
-    def valid_data_optuna(self):
-        return self.__valid_data_optuna
+        return X_test, y_test
 
     @property
     def lgb_train_optuna(self):
-        return self.__lgb_train_optuna
+        train_data_optuna, _, y_train_optuna, _ = self.train_data_optuna
+        return lgb_o.Dataset(train_data_optuna, y_train_optuna)
 
     @property
     def lgb_valid_optuna(self):
-        return self.__lgb_valid_optuna
-
-    @property
-    def X_train(self):
-        return self.__X_train
-
-    @property
-    def y_train(self):
-        return self.__y_train
+        _, valid_data_optuna, _, y_valid_optuna = self.train_data_optuna
+        return lgb_o.Dataset(valid_data_optuna, y_valid_optuna)
 
     @property
     def X_test(self):
-        return self.__X_test
+        return self.test_data[0]
 
     @property
     def y_test(self):
-        return self.__y_test
+        return self.test_data[1]
+
+    @property
+    def X_train(self):
+        train_data_optuna, _, _, _ = self.train_data_optuna
+        return train_data_optuna
+
+    @property
+    def y_train(self):
+        _, _, y_train_optuna, _ = self.train_data_optuna
+        return y_train_optuna
