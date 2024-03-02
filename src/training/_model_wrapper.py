@@ -50,19 +50,22 @@ class ModelWrapper:
     def train(self, datasets: DataSplitter):
         # 学習
         self.__lgb_model.fit(datasets.X_train, datasets.y_train)
-        # AUCを計算して出力
-        auc_train = roc_auc_score(datasets.y_train, self.__lgb_model.predict_proba(datasets.X_train)[:, 1])
-        auc_test = roc_auc_score(
-            datasets.y_test,
-            self.__lgb_model.predict_proba(datasets.X_test)[:, 1],
+
+        # テストデータの予測を取得
+        y_train_pred = self.__lgb_model.predict_proba(datasets.X_train)[:, 1]
+        y_test_pred = self.__lgb_model.predict_proba(datasets.X_test)[:, 1]
+
+        # AUCを計算
+        auc_train = roc_auc_score(datasets.y_train, y_train_pred)
+        auc_test = roc_auc_score(datasets.y_test, y_test_pred)
+
+        # 特徴量の重要度を取得
+        feature_importance = pd.DataFrame(
+            {"features": datasets.feature_columns, "importance": self.__lgb_model.feature_importances_}
         )
-        # 特徴量の重要度を記憶しておく
-        # NumPy配列からDataFrameに変換する
-        X_train_df = pd.DataFrame(datasets.X_train)
-        self.__feature_importance = pd.DataFrame(
-            {"features": X_train_df.columns, "importance": self.__lgb_model.feature_importances_}
-        ).sort_values("importance", ascending=False)
-        print("AUC: {:.3f}(train), {:.3f}(test)".format(auc_train, auc_test))
+        feature_importance = feature_importance.sort_values("importance", ascending=False)
+
+        print("AUC: {:.3f} (train), {:.3f} (test)".format(auc_train, auc_test))
 
     @property
     def feature_importance(self):

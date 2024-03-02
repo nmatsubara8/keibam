@@ -1,31 +1,55 @@
 import optuna.integration.lightgbm as lgb_o
+import pandas as pd
 
 from src.constants._results_cols import ResultsCols
+
+
+def calculate_start_index(horse_number_table, required_samples: int, start_race_index: int, start_df_index: int):
+    """
+    Calculate the start index for splitting the data based on the required number of samples.
+    """
+
+    df_index = start_df_index
+    total_race_index = start_race_index + required_samples
+    for race_index in range(start_race_index, total_race_index):
+        df_index += horse_number_table["count"].iloc[race_index]
+    return df_index
 
 
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size) -> None:
         self.__featured_data = featured_data
+        self.__feature_columns = featured_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).columns
         self.train_valid_test_split(test_size, valid_size)
 
     def train_valid_test_split(self, test_size, valid_size):
         """
-        訓練データとテストデータに分ける。さらに訓練データをoptuna用の訓練データと検証データに分ける。
+        Split the data into train, validation, and test sets.
+        Further split the training data into optuna's train and validation sets.
         """
-        self.__train_data, self.__test_data = self.__split_by_date(self.__featured_data, test_size)
-        self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(self.__train_data, valid_size)
+        df_sorted = self.__featured_data.sort_values(by=["date", "race_id"])
+        grouped = df_sorted.groupby(["date", "race_id"])
+        horse_number_table = grouped.size().reset_index(name="count")
+        print("horse:", horse_number_table)
+        total_groups = len(horse_number_table)
 
-    def __split_by_date(self, df, test_size):
-        """
-        時系列に沿って訓練データとテストデータに分ける関数。test_sizeは0~1。
-        """
-        sorted_id_list = df.sort_values("date").index.unique()
-        train_size = round(len(sorted_id_list) * (1 - test_size))
-        train_index = sorted_id_list[:train_size]
-        test_index = sorted_id_list[train_size:]
-        train = df.iloc[df.index.isin(train_index)]
-        test = df.iloc[df.index.isin(test_index)]
-        return train, test
+        # 検証セットのサンプル数を計算
+        valid_samples = int(total_groups * valid_size)
+        # テストセットのサンプル数を計算
+        test_samples = int(total_groups * test_size)
+        train_samples = total_groups - valid_samples - test_samples
+        # テストセットの最初のインデックスを計算
+        valid_index_from = calculate_start_index(horse_number_table, train_samples, 0, 0)
+        # 検証セットの最初のインデックスを計算
+        test_index_from = calculate_start_index(horse_number_table, valid_samples, train_samples, valid_index_from)
+
+        # データを分割
+        self.__train_data_optuna = df_sorted.iloc[:valid_index_from]
+        self.__valid_data_optuna = df_sorted.iloc[valid_index_from:test_index_from]
+        self.__test_data = df_sorted.iloc[test_index_from:]
+        print("#################################train_data_optuna", self.__train_data_optuna)
+        print("#################################valid_data_optuna", self.__valid_data_optuna)
+        print("#################################test_data", self.__test_data)
 
     @property
     def train_data_optuna(self):
@@ -38,19 +62,15 @@ class DataSplitter:
         train_data_optuna = self.__train_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values
         valid_data_optuna = self.__valid_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values
 
-        print("self.__train_data_optuna", train_data_optuna.shape[1])
-        print("self.__valid_data_optuna", valid_data_optuna.shape[1])
-
         return train_data_optuna, valid_data_optuna, y_train_optuna, y_valid_optuna
 
     @property
     def test_data(self):
-        # 特徴量と目的変数を取得
-        X_test = self.__test_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1)
+        # 目的変数を取得
         y_test = self.__test_data["rank"]
-
-        print("self.__X_test_data", X_test.shape[1])
-
+        # 不要な列を削除
+        # ResultsColsが定義されていると仮定して削除
+        X_test = self.__test_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values
         return X_test, y_test
 
     @property
@@ -60,23 +80,29 @@ class DataSplitter:
 
     @property
     def lgb_valid_optuna(self):
-        _, valid_data_optuna, _, y_valid_optuna = self.train_data_optuna
+        _, valid_data_optuna, _, y_valid_optuna = self.valid_data_optuna
         return lgb_o.Dataset(valid_data_optuna, y_valid_optuna)
 
     @property
-    def X_test(self):
-        return self.test_data[0]
-
-    @property
-    def y_test(self):
-        return self.test_data[1]
+    def featured_data(self):
+        return self.__featured_data
 
     @property
     def X_train(self):
         train_data_optuna, _, _, _ = self.train_data_optuna
-        return train_data_optuna
+        return pd.DataFrame(train_data_optuna)
 
     @property
     def y_train(self):
         _, _, y_train_optuna, _ = self.train_data_optuna
-        return y_train_optuna
+        return pd.Series(y_train_optuna)
+
+    @property
+    def X_test(self):
+        X_test, _ = self.test_data
+        return pd.DataFrame(X_test)
+
+    @property
+    def y_test(self):
+        _, y_test = self.test_data
+        return pd.Series(y_test)
