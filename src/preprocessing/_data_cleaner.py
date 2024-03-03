@@ -8,7 +8,7 @@ def dict_selector(dict_name):
     if dict_name == "_results":
         column_types_dict = {
             "開催": ("float", "str", 2, True),
-            "race_id": ("float", "int", 2, False),
+            # "race_id": ("float", "int", 2, False),
             # "time": ("str", "datetime", 0, False),
             "days": ("float", "int", 2, False),
             "times": ("float", "int", 2, False),

@@ -83,7 +83,6 @@ class DataMerger:
         self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
         dict = dict_selector("_results")
         df = convert_column_types(self._results, dict)
-
         self._results = df
         # print(self._results.dtypes.T)
 
@@ -107,7 +106,7 @@ class DataMerger:
                 "horse_id in @horse_id_list"
             )
 
-    def _merge_horse_results(self):
+    def _merge_horse_results(self, n_races_list=[5, 9]):
         """
         馬の過去成績テーブルのマージ
         """

@@ -1,8 +1,18 @@
+from itertools import combinations
 from itertools import permutations
-
-from scipy.special import comb
+from math import factorial
 
 from src.preprocessing._return_processor import ReturnProcessor
+
+
+def count_comb(n, r):
+    # 組み合わせの数を計算する
+    return factorial(n) / (factorial(r) * factorial(n - r))
+
+
+def count_perm(n, r):
+    # 組み合わせの数を計算する
+    return factorial(n) // factorial(n - r)
 
 
 class BettingTickets:
@@ -20,7 +30,7 @@ class BettingTickets:
         self.__returnTablesSanrenpuku = self.__returnTables["sanrenpuku"]
         self.__returnTablesSanrentan = self.__returnTables["sanrentan"]
 
-    def bet_tansho(self, race_id: str, umaban: list, amount: float):
+    def bet_tansho(self, race_id: int, umaban: list, amount: float):
         """
         race_id: レースid。
         umaban: 賭けたい馬番をリストで入れる。一頭のみ賭けたい場合もリストで入れる。
@@ -35,24 +45,21 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
-            # print(f"bet_amount:{bet_amount}")
-            # 賭けるレースidに絞った単勝の払い戻し表
-            # print("self.__returnTables", self.__returnTables)
+
             # 的中判定
             return_amount = 0
-            table_1R = self.__returnTablesTansho[self.__returnTablesTansho.index == race_id]
-            length = int(len(table_1R.columns) / 2)
-            print(f"len:{length}")
+            table_1R = self.__returnTablesTansho.loc[race_id]
+            length = int(len(table_1R) / 2)
             for uma in umaban:
                 for i in range(length):
                     win_column = f"win_{i}"
-                    print(f"win_{i}")
-                    if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and int(table_1R[win_column]) == uma:
                         return_column = f"return_{i}"
                         return_amount += table_1R[return_column] * amount / 100
             return n_bets, bet_amount, return_amount
 
-    def bet_fukusho(self, race_id: str, umaban: list, amount: float):
+    def bet_fukusho(self, race_id: int, umaban: list, amount: float):
         """
         引数の考え方は単勝と同様。
         """
@@ -63,56 +70,57 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
+
+            # 的中判定
             return_amount = 0
-            # 賭けるレースidに絞った複勝の払い戻し表
-            table_1R = self.__returnTablesFukusho[self.__returnTablesFukusho.index == race_id]
-            length = int(len(table_1R.columns) / 2)
-            print(f"len:{length}")
+            table_1R = self.__returnTablesFukusho.loc[race_id]
+            length = int(len(table_1R) / 2)
             for uma in umaban:
                 for i in range(length):
                     win_column = f"win_{i}"
-                    print(f"win_{i}")
-                    if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and int(table_1R[win_column]) == uma:
                         return_column = f"return_{i}"
                         return_amount += table_1R[return_column] * amount / 100
             return n_bets, bet_amount, return_amount
 
-    def bet_umaren_box(self, race_id: str, umaban: list, amount: float):
+    def bet_umaren_box(self, race_id: int, umaban: list, amount: float):
         """
         馬連BOX馬券。1枚のみ買いたい場合もこの関数を使う。
         """
         # 賭ける枚数
         # 例）4C2（4コンビネーション2
-
-        n_bets = comb(len(umaban), 2)
-        print(f"n_bets:{n_bets}")
+        print("umaban", umaban)
+        n_bets = count_comb(len(umaban), 2)
+        # print(f"n_bets:{n_bets}")
         if n_bets == 1:
             print("例外")
             return 0, 0, 0
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
+
+            # 的中判定
             return_amount = 0
-            # 賭けるレースidに絞った馬連払い戻し表
-            print("self.__returnTables", self.__returnTables)
-            table_1R = self.__returnTablesUmaren[self.__returnTablesUmaren.index == race_id]
-            length = int(len(table_1R.columns) / 2)
-            print(f"len:{length}")
-            for uma in umaban:
+            table_1R = self.__returnTablesUmaren.loc[race_id]
+            length = len(table_1R) // 2
+            combinations_list = list(combinations(umaban, 2))
+            for combination in combinations_list:
                 for i in range(length):
                     win_column = f"win_{i}"
-                    print(f"win_{i}")
-                    if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and tuple(table_1R[win_column]) == combination:
                         return_column = f"return_{i}"
                         return_amount += table_1R[return_column] * amount / 100
             return n_bets, bet_amount, return_amount
 
-    def _bet_umatan(self, race_id: str, umaban: list, amount: float):
+    def _bet_umatan_box(self, race_id: int, umaban: list, amount: float):
         """
         馬単を一枚のみ賭ける場合の関数。umabanは[1着予想, 2着予想]の形で馬番を入れる。
         """
-        # len(umaban) != 2の時の例外処理
-        n_bets = len(umaban)
+        # 賭ける枚数
+        # 例）4P2（4順列2)
+        n_bets = count_perm(len(umaban), 2)
         print(f"n_bets:{n_bets}")
         if n_bets == 0:
             print("例外")
@@ -120,21 +128,22 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
-            return_amount = 0
-        # 賭けるレースidに絞った馬単払い戻し表
-        table_1R = self.__returnTablesUmatan[self.__returnTablesUmatan.index == race_id]
-        length = int(len(table_1R.columns) / 2)
-        print(f"len:{length}")
-        for uma in umaban:
-            for i in range(length):
-                win_column = f"win_{i}"
-                print(f"win_{i}")
-                if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
-                    return_column = f"return_{i}"
-                    return_amount += table_1R[return_column] * amount / 100
-        return n_bets, bet_amount, return_amount
 
-    def bet_umatan_box(self, race_id: str, umaban: list, amount: float):
+            # 的中判定
+            return_amount = 0
+            table_1R = self.__returnTablesUmatan.loc[race_id]
+            length = len(table_1R) // 2
+            permutations_list = list(permutations(umaban, 2))
+            for permutation in permutations_list:
+                for i in range(length):
+                    win_column = f"win_{i}"
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and tuple(table_1R[win_column]) == permutation:
+                        return_column = f"return_{i}"
+                        return_amount += table_1R[return_column] * amount / 100
+            return n_bets, bet_amount, return_amount
+
+    def bet_umatan(self, race_id: int, umaban: list, amount: float):
         """
         馬単をBOX馬券で賭ける場合の関数。
         """
@@ -146,21 +155,21 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
-            return_amount = 0
-        # 賭けるレースidに絞った馬単払い戻し表
-        table_1R = self.__returnTablesUmatan[self.__returnTablesUmatan.index == race_id]
-        length = int(len(table_1R.columns) / 2)
-        print(f"len:{length}")
-        for uma in umaban:
-            for i in range(length):
-                win_column = f"win_{i}"
-                print(f"win_{i}")
-                if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
-                    return_column = f"return_{i}"
-                    return_amount += table_1R[return_column] * amount / 100
-        return n_bets, bet_amount, return_amount
 
-    def bet_wide_box(self, race_id: str, umaban: list, amount: float):
+            # 的中判定
+            return_amount = 0
+            table_1R = self.__returnTablesUmatan.loc[race_id]
+            length = int(len(table_1R) / 2)
+            for uma in umaban:
+                for i in range(length):
+                    win_column = f"win_{i}"
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and int(table_1R[win_column]) == uma:
+                        return_column = f"return_{i}"
+                        return_amount += table_1R[return_column] * amount / 100
+            return n_bets, bet_amount, return_amount
+
+    def bet_wide_box(self, race_id: int, umaban: list, amount: float):
         """
         ワイドをBOX馬券で賭ける関数。1枚のみ賭ける場合もこの関数を使う。
         """
@@ -172,19 +181,19 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
+
+            # 的中判定
             return_amount = 0
-        # 賭けるレースidに絞った馬単払い戻し表
-        table_1R = self.__returnTablesWide[self.__returnTablesWide.index == race_id]
-        length = int(len(table_1R.columns) / 2)
-        print(f"len:{length}")
-        for uma in umaban:
-            for i in range(length):
-                win_column = f"win_{i}"
-                print(f"win_{i}")
-                if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
-                    return_column = f"return_{i}"
-                    return_amount += table_1R[return_column] * amount / 100
-        return n_bets, bet_amount, return_amount
+            table_1R = self.__returnTablesWide.loc[race_id]
+            length = int(len(table_1R) / 2)
+            for uma in umaban:
+                for i in range(length):
+                    win_column = f"win_{i}"
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and int(table_1R[win_column]) == uma:
+                        return_column = f"return_{i}"
+                        return_amount += table_1R[return_column] * amount / 100
+            return n_bets, bet_amount, return_amount
 
     def bet_sanrenpuku_box(self, race_id: str, umaban: list, amount: float):
         """
@@ -198,21 +207,21 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
-            return_amount = 0
-        # 賭けるレースidに絞った馬単払い戻し表
-        table_1R = self.__returnTablesSanrenpuku[self.__returnTablesSanrenpuku.index == race_id]
-        length = int(len(table_1R.columns) / 2)
-        print(f"len:{length}")
-        for uma in umaban:
-            for i in range(length):
-                win_column = f"win_{i}"
-                print(f"win_{i}")
-                if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
-                    return_column = f"return_{i}"
-                    return_amount += table_1R[return_column] * amount / 100
-        return n_bets, bet_amount, return_amount
 
-    def _bet_sanrentan(self, race_id: str, umaban: list, amount: float):
+            # 的中判定
+            return_amount = 0
+            table_1R = self.__returnTablesSanrenpuku.loc[race_id]
+            length = int(len(table_1R) / 2)
+            for uma in umaban:
+                for i in range(length):
+                    win_column = f"win_{i}"
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and int(table_1R[win_column]) == uma:
+                        return_column = f"return_{i}"
+                        return_amount += table_1R[return_column] * amount / 100
+            return n_bets, bet_amount, return_amount
+
+    def _bet_sanrentan(self, race_id: int, umaban: list, amount: float):
         """
         三連単を一枚のみ賭ける場合の関数。umabanは[1着予想, 2着予想, 3着予想]の形で馬番を入れる。
         """
@@ -224,19 +233,19 @@ class BettingTickets:
         else:
             # 賭けた合計額
             bet_amount = n_bets * amount
+
+            # 的中判定
             return_amount = 0
-        # 賭けるレースidに絞った馬単払い戻し表
-        table_1R = self.__returnTablesSanrentan[self.__returnTablesSanrentan.index == race_id]
-        length = int(len(table_1R.columns) / 2)
-        print(f"len:{length}")
-        for uma in umaban:
-            for i in range(length):
-                win_column = f"win_{i}"
-                print(f"win_{i}")
-                if table_1R.loc[race_id, win_column] != 0 and int(table_1R.loc[race_id, win_column]) == uma:
-                    return_column = f"return_{i}"
-                    return_amount += table_1R[return_column] * amount / 100
-        return n_bets, bet_amount, return_amount
+            table_1R = self.__returnTablesSanrenpuku.loc[race_id]
+            length = int(len(table_1R) / 2)
+            for uma in umaban:
+                for i in range(length):
+                    win_column = f"win_{i}"
+                    # print(f"win_{i}")
+                    if table_1R[win_column] != 0 and int(table_1R[win_column]) == uma:
+                        return_column = f"return_{i}"
+                        return_amount += table_1R[return_column] * amount / 100
+            return n_bets, bet_amount, return_amount
 
     def bet_sanrentan_box(self, race_id: str, umaban: list, amount: float):
         """

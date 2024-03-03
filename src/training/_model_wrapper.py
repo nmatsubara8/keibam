@@ -3,6 +3,8 @@ import optuna.integration.lightgbm as lgb_o
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
+from src.constants._results_cols import ResultsCols
+
 from ._data_splitter import DataSplitter
 
 
@@ -26,16 +28,16 @@ class ModelWrapper:
         lgb_clf_o = lgb_o.train(
             params,
             datasets.lgb_train_optuna,
-            valid_sets=datasets.lgb_valid_optuna,
+            valid_sets=[datasets.lgb_valid_optuna],
             # verbose_eval=100,
             # early_stopping_rounds=10,
             optuna_seed=100,  # optunaのseed固定
         )
 
         # num_iterationsとearly_stopping_roundは今は使わないので削除
-        # tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
+        tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
 
-        # self.__lgb_model.set_params(**tunedParams)
+        self.__lgb_model.set_params(**tunedParams)
 
     @property
     def params(self):
@@ -49,23 +51,18 @@ class ModelWrapper:
 
     def train(self, datasets: DataSplitter):
         # 学習
-        self.__lgb_model.fit(datasets.X_train, datasets.y_train)
-
-        # テストデータの予測を取得
-        y_train_pred = self.__lgb_model.predict_proba(datasets.X_train)[:, 1]
-        y_test_pred = self.__lgb_model.predict_proba(datasets.X_test)[:, 1]
-
-        # AUCを計算
-        auc_train = roc_auc_score(datasets.y_train, y_train_pred)
-        auc_test = roc_auc_score(datasets.y_test, y_test_pred)
-
-        # 特徴量の重要度を取得
-        feature_importance = pd.DataFrame(
-            {"features": datasets.feature_columns, "importance": self.__lgb_model.feature_importances_}
+        self.__lgb_model.fit(datasets.X_train.values, datasets.y_train.values)
+        # AUCを計算して出力
+        auc_train = roc_auc_score(datasets.y_train, self.__lgb_model.predict_proba(datasets.X_train)[:, 1])
+        auc_test = roc_auc_score(
+            datasets.y_test,
+            self.__lgb_model.predict_proba(datasets.X_test.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1],
         )
-        feature_importance = feature_importance.sort_values("importance", ascending=False)
-
-        print("AUC: {:.3f} (train), {:.3f} (test)".format(auc_train, auc_test))
+        # 特徴量の重要度を記憶しておく
+        self.__feature_importance = pd.DataFrame(
+            {"features": datasets.X_train.columns, "importance": self.__lgb_model.feature_importances_}
+        ).sort_values("importance", ascending=False)
+        print("AUC: {:.3f}(train), {:.3f}(test)".format(auc_train, auc_test))
 
     @property
     def feature_importance(self):

@@ -101,4 +101,5 @@ class ResultsProcessor(AbstractDataProcessor):
                 "rank",
             ]
         ]
+        df.set_index("race_id", inplace=True)
         return df

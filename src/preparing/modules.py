@@ -586,6 +586,7 @@ def create_raw_race_return(target_bin_file_path):
         # インデックスをrace_idにする
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
         df.index = [race_id] * len(df)
+        # df["race_id"].astype(int)
         df["race_id"] = df.index
         # race_id列を除外して、他の列名のみを整数に変換する辞書を作成
         new_columns = {col: int(col) for col in df.columns if col != "race_id"}
@@ -762,6 +763,7 @@ def create_raw_race_info(target_bin_file_path):
                 **race_flags,
             }
         )
+    df["race_id"].astype(int)
     df.set_index("race_id", inplace=True)
     return df
 

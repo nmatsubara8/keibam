@@ -25,5 +25,6 @@ class RaceInfoProcessor(AbstractDataProcessor):
         df.drop(columns=["place_id"], inplace=True)
         df.drop(columns=["age"], inplace=True)
         df.drop(columns=["sex"], inplace=True)
+        df.set_index("race_id", inplace=True)
 
         return df

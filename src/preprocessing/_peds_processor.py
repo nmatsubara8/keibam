@@ -20,7 +20,7 @@ class PedsProcessor(AbstractDataProcessor):
         df["horse_id"] = df["horse_id"].astype(int)  # horse_id 列を整数型に変換
 
         # horse_id 列を除く列をカテゴリ型に変換する
-        for column in df.columns[:-1]:
+        for column in df.columns:
             if column != "horse_id":
                 df[column] = LabelEncoder().fit_transform(df[column].fillna("Na"))
                 df[column] = df[column].astype("category")
