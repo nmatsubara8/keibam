@@ -80,7 +80,7 @@ class DataMerger:
         """
         # print("self._results", self._results.dtypes.T)
         # print("self._race_info", self._race_info.dtypes.T)
-        self._results = self._results.merge(self._race_info, left_on="race_id", right_on="race_id", how="left")
+        self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
         dict = dict_selector("_results")
         df = convert_column_types(self._results, dict)
 

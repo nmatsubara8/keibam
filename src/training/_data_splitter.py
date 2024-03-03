@@ -1,5 +1,4 @@
 import optuna.integration.lightgbm as lgb_o
-import pandas as pd
 
 from src.constants._results_cols import ResultsCols
 
@@ -19,7 +18,7 @@ def calculate_start_index(horse_number_table, required_samples: int, start_race_
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size) -> None:
         self.__featured_data = featured_data
-        self.__feature_columns = featured_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).columns
+        # self.__feature_columns = featured_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).columns
         self.train_valid_test_split(test_size, valid_size)
 
     def train_valid_test_split(self, test_size, valid_size):
@@ -70,17 +69,19 @@ class DataSplitter:
         y_test = self.__test_data["rank"]
         # 不要な列を削除
         # ResultsColsが定義されていると仮定して削除
-        X_test = self.__test_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values
+        X_test = self.__test_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1)
         return X_test, y_test
 
     @property
     def lgb_train_optuna(self):
         train_data_optuna, _, y_train_optuna, _ = self.train_data_optuna
+
         return lgb_o.Dataset(train_data_optuna, y_train_optuna)
 
     @property
     def lgb_valid_optuna(self):
-        _, valid_data_optuna, _, y_valid_optuna = self.valid_data_optuna
+        _, valid_data_optuna, _, y_valid_optuna = self.train_data_optuna
+
         return lgb_o.Dataset(valid_data_optuna, y_valid_optuna)
 
     @property
@@ -90,19 +91,19 @@ class DataSplitter:
     @property
     def X_train(self):
         train_data_optuna, _, _, _ = self.train_data_optuna
-        return pd.DataFrame(train_data_optuna)
+        return train_data_optuna.values
 
     @property
     def y_train(self):
         _, _, y_train_optuna, _ = self.train_data_optuna
-        return pd.Series(y_train_optuna)
+        return y_train_optuna
 
     @property
     def X_test(self):
         X_test, _ = self.test_data
-        return pd.DataFrame(X_test)
+        return X_test.values
 
     @property
     def y_test(self):
         _, y_test = self.test_data
-        return pd.Series(y_test)
+        return y_test

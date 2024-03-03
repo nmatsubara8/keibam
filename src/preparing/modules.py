@@ -380,15 +380,20 @@ def create_raw_race_results(target_bin_file_path):
         df["owner_id"] = owner_id_list
         df["owner_id"].astype(str)
 
-        # インデックスをrace_idにする
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
-        df.index = [race_id] * len(df)
-        race_results[race_id] = df
         df["race_id"] = race_id
-        df["race_id"].astype(str)
-        # df.set_index("race_id", inplace=True)
-    race_results_df = pd.concat([race_results[key] for key in race_results])
-    race_results_df = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
+        df["race_id"].astype(int)
+
+        # インデックスをrace_idにする
+        df.index = [race_id] * len(df)
+        # df.set_index("race_id", inplace=True)  # この行を削除
+
+        race_results[race_id] = df
+        # 各レースの結果データフレームを結合して race_results_df を生成
+        race_results_df = pd.concat([race_results[key] for key in race_results])
+        race_results_df.set_index("race_id", inplace=True)
+        race_results_df = race_results_df.rename(columns=lambda x: x.replace(" ", ""))
+
     return race_results_df
 
 
@@ -405,6 +410,7 @@ def convert_string(value):
 
 ################################# Done ####################################
 def create_raw_horse_results(target_bin_file_path):
+    horse_result = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
@@ -426,7 +432,6 @@ def create_raw_horse_results(target_bin_file_path):
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
         df["horse_id"].astype(int)
-
         # "R"列の値が数値を表す文字列であるかを判定し、数値を表す文字列の場合にintに変換する
         for index, value in df["R"].items():
             if isinstance(value, str) and value.isdigit():
@@ -437,12 +442,17 @@ def create_raw_horse_results(target_bin_file_path):
 
         df.columns = df.columns.str.replace(" ", "")
         df.iloc[:, 1] = df.iloc[:, 1].apply(convert_string)
+        horse_result[horse_id] = df
+        # 各レースの結果データフレームを結合して race_results_df を生成
+        horse_result_df = pd.concat([horse_result[key] for key in horse_result])
+        horse_result_df.set_index("horse_id", inplace=True)
 
-    return df
+    return horse_result_df
 
 
 ################################# Done ####################################
 def create_raw_horse_info(target_bin_file_path):
+    horse_info = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
@@ -510,11 +520,18 @@ def create_raw_horse_info(target_bin_file_path):
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
         df["horse_id"].astype(int)
-    return df
+
+        horse_info[horse_id] = df
+        # 各レースの結果データフレームを結合して race_results_df を生成
+        horse_info_df = pd.concat([horse_info[key] for key in horse_info])
+        horse_info_df.set_index("horse_id", inplace=True)
+
+    return horse_info_df
 
 
 ################################# Done ####################################
 def create_raw_horse_ped(target_bin_file_path):
+    horse_ped = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
@@ -545,11 +562,17 @@ def create_raw_horse_ped(target_bin_file_path):
         # print("df", df)
         df["horse_id"] = df.index
 
-    return df
+        horse_ped[horse_id] = df
+        # 各レースの結果データフレームを結合して race_results_df を生成
+        horse_ped_df = pd.concat([horse_ped[key] for key in horse_ped])
+        horse_ped_df.set_index("horse_id", inplace=True)
+
+    return horse_ped_df
 
 
 ################################# Done ####################################
 def create_raw_race_return(target_bin_file_path):
+    race_return = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
@@ -568,8 +591,12 @@ def create_raw_race_return(target_bin_file_path):
         new_columns = {col: int(col) for col in df.columns if col != "race_id"}
         # 列名を変換
         df.rename(columns=new_columns, inplace=True)
+        race_return[race_id] = df
+        # 各レースの結果データフレームを結合して race_results_df を生成
+        race_return_df = pd.concat([race_return[key] for key in race_return])
+        race_return_df.set_index("race_id", inplace=True)
 
-    return df
+    return race_return_df
 
 
 def dart_checker(text1):
@@ -735,7 +762,7 @@ def create_raw_race_info(target_bin_file_path):
                 **race_flags,
             }
         )
-    # df.set_index("race_id", inplace=True)
+    df.set_index("race_id", inplace=True)
     return df
 
 

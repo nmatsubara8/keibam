@@ -33,9 +33,9 @@ class ModelWrapper:
         )
 
         # num_iterationsとearly_stopping_roundは今は使わないので削除
-        tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
+        # tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
 
-        self.__lgb_model.set_params(**tunedParams)
+        # self.__lgb_model.set_params(**tunedParams)
 
     @property
     def params(self):

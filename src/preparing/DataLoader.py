@@ -140,7 +140,7 @@ class DataLoader:
             else:
                 mode = "a"
                 # CSVファイルにデータを書き込む処理
-            with open(local_path, mode=mode, index=False, newline="\n") as csv_file:
+            with open(local_path, mode=mode, index=True, newline="\n") as csv_file:
                 json.dump(self.target_data, csv_file)
                 # self.obtained_last_key = self.target_data[-1]
 
@@ -195,7 +195,7 @@ class DataLoader:
                 mode = "a"
 
             self.target_data.to_csv(
-                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=False, mode=mode
+                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode=mode
             )
 
         elif filetype == "h5":
