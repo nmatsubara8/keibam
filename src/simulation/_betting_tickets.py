@@ -1,4 +1,5 @@
 from itertools import combinations
+from itertools import combinations_with_replacement
 from itertools import permutations
 from math import factorial
 
@@ -85,7 +86,7 @@ class BettingTickets:
                         return_amount += table_1R[return_column] * amount / 100
             return n_bets, bet_amount, return_amount
 
-    def bet_wakuren_box(self, race_id: int, umaban: list, amount: int):
+    def bet_wakuren_box(self, race_id: int, wakuban: list, amount: int):
         """
         枠連BOX馬券。1枚のみ買いたい場合もこの関数を使う。
         """
@@ -93,30 +94,46 @@ class BettingTickets:
         # 例）4C2（4コンビネーション2
         #
         # print("Value", umaban)
-        if len(umaban) < 2:
-            print("例外", umaban)
+        if len(wakuban) < 2:
+            print("例外", wakuban)
             return 0, 0, 0
         else:
+            # 2つの要素を選ぶ組み合わせを生成
+            possible_combinations = combinations_with_replacement(wakuban, 2)
+
+            # 生成された組み合わせから重複を排除して、順番を揃える
+            unique_combinations = set(tuple(sorted(comb)) for comb in possible_combinations)
+
+            # セットをリストに変換する（任意の順序で表示するため）
+            n_bets = len(unique_combinations)
+            print("unique_combinations1", unique_combinations)
             # print("umaban", umaban)
-            n_bets = count_comb(len(umaban), 2)
-            print(f"n_bets:{n_bets}")
+
+            # print(f"n_bets:{n_bets}")
             # 賭けた合計額
             bet_amount = n_bets * amount
 
             # 的中判定
             return_amount = 0
             table_1R = self.__returnTablesWakuren.loc[race_id]
+
+            # print("table_1R ", table_1R.types)
+
             length = len(table_1R) // 2
-            # 2つの要素を選ぶ組み合わせを生成してセットに変換
-            unique_combinations_set = set(combinations(umaban, 2))
-            # セットをリストに変換する（任意の順序で表示するため）
-            unique_combinations = list(unique_combinations_set)
+            # print("length", length)
+            print("unique_combinations2", unique_combinations)
             for combination in unique_combinations:
-                for i in range(length):
+                for i in range(0, length - 1):
                     win_column = f"win_{i}"
-                    if table_1R[win_column] != 0 and tuple(sorted(table_1R[win_column])) == combination:
-                        return_column = f"return_{i}"
-                        return_amount += table_1R[return_column] * amount / 100
+                    return_column = f"return_{i}"
+                    print("combination", combination)
+                    compare_target = tuple(table_1R[win_column])
+
+                    print("compare_target", compare_target)
+                    if compare_target and compare_target == tuple(combination):
+                        return_amount += (int(table_1R[return_column]) * amount) / 100
+                        print("match", return_amount)
+            print("results:", n_bets, bet_amount, return_amount)
             return n_bets, bet_amount, return_amount
 
     def bet_umaren_box(self, race_id: int, umaban: list, amount: int):
@@ -195,7 +212,7 @@ class BettingTickets:
             # 的中判定
             return_amount = 0
             table_1R = self.__returnTablesUmatan.loc[race_id]
-            length = int(len(table_1R) / 2)
+            length = len(table_1R) // 2
             for uma in umaban:
                 for i in range(length):
                     win_column = f"win_{i}"

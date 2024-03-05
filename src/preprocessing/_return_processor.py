@@ -52,7 +52,6 @@ class ReturnProcessor(AbstractDataProcessor):
         return_dict["tansho"] = self.__tansho()
         return_dict["wakuren"] = self.__wakuren()
         return_dict["fukusho"] = self.__fukusho()
-
         return_dict["umaren"] = self.__umaren()
         return_dict["umatan"] = self.__umatan()
         return_dict["wide"] = self.__wide()
@@ -64,7 +63,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         単勝
         """
-        print(f"self.raw_data1:{self.raw_data}")
+        # print(f"self.raw_data1:{self.raw_data}")
 
         tansho = self.raw_data[self.raw_data[0] == "単勝"][[1, 2, "race_id"]]
         tansho_row_num = count_br(tansho, 1) + 1

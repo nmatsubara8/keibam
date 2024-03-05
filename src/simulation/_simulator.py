@@ -2,8 +2,7 @@ import numpy as np
 import pandas as pd
 
 from src.preprocessing._return_processor import ReturnProcessor
-
-from ._betting_tickets import BettingTickets
+from src.simulation._betting_tickets import BettingTickets
 
 
 class Simulator:
@@ -43,6 +42,10 @@ class Simulator:
                     n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(
                         race_id, actions[race_id][action], 1
                     )
+                elif action == "wakuren":
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wakuren_box(
+                        race_id, actions[race_id][action], 1
+                    )
                 elif action == "umaren":
                     n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(
                         race_id, actions[race_id][action], 1
@@ -61,10 +64,6 @@ class Simulator:
                     )
                 elif action == "sanrentan":
                     n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "wakuren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wakuren_box(
                         race_id, actions[race_id][action], 1
                     )
 
