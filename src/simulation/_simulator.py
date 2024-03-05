@@ -27,28 +27,47 @@ class Simulator:
         """
         returns_per_race_dict = {}
 
-        for race_id, action_list in actions.items():
+        for race_id in actions:
             # print(f"race_id:{race_id}")
 
             n_bets_race = 0
             bet_amount_race = 0
             return_amount_race = 0
-            for action, umaban in action_list.items():
+            for action in actions[race_id]:
                 if action == "tansho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_tansho(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_tansho(
+                        race_id, actions[race_id][action], 1
+                    )
                     # print(f"n_bets, bet_amount, return_amount:{n_bets, bet_amount, return_amount}")
                 elif action == "fukusho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(
+                        race_id, actions[race_id][action], 1
+                    )
                 elif action == "umaren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(
+                        race_id, actions[race_id][action], 1
+                    )
                 elif action == "umatan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umatan_box(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umatan_box(
+                        race_id, actions[race_id][action], 1
+                    )
                 elif action == "wide":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wide_box(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wide_box(
+                        race_id, actions[race_id][action], 1
+                    )
                 elif action == "sanrenpuku":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrenpuku_box(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrenpuku_box(
+                        race_id, actions[race_id][action], 1
+                    )
                 elif action == "sanrentan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(race_id, umaban, 1)
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(
+                        race_id, actions[race_id][action], 1
+                    )
+                elif action == "wakuren":
+                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wakuren_box(
+                        race_id, actions[race_id][action], 1
+                    )
+
                 n_bets_race += n_bets
                 bet_amount_race += bet_amount
                 return_amount_race += return_amount

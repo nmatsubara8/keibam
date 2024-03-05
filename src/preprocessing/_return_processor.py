@@ -64,7 +64,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         単勝
         """
-        # print(f"self.raw_data1:{self.raw_data}")
+        print(f"self.raw_data1:{self.raw_data}")
 
         tansho = self.raw_data[self.raw_data[0] == "単勝"][[1, 2, "race_id"]]
         tansho_row_num = count_br(tansho, 1) + 1
@@ -146,9 +146,9 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         馬連
         """
-        umaren = self.raw_data[self.raw_data[0] == "馬連"][[1, 2, "race_id"]]
+        umaren = self.raw_data[self.raw_data[0] == "馬単"][[1, 2, "race_id"]]
         umaren_row_num = count_br(umaren, 1) + 1
-        print(f"馬連列数:{umaren_row_num}")
+        print(f"馬単列数:{umaren_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = umaren[1].str.split("br", n=umaren_row_num, expand=True)
         # 不足する部分を0に置き換える
@@ -157,8 +157,7 @@ class ReturnProcessor(AbstractDataProcessor):
         wins.columns = [f"win_{i}" for i in range(len(wins.columns))]
         for i in range(len(wins.columns)):
             col_name = f"win_{i}"
-            wins[col_name] = wins[col_name].apply(split_bar_to_int)
-
+            wins[col_name] = wins[col_name].apply(split_arrow_to_int)
         return_ = umaren[2].str.split("br", n=umaren_row_num, expand=True)
         # 不足する部分を0に置き換える
         return_ = return_.fillna(0)

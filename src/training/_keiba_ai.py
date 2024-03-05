@@ -48,12 +48,6 @@ class KeibaAI:
     def feature_importance(self, num_features=20):
         return self.__model_wrapper.feature_importance[:num_features]
 
-    def calc_score(self, X: pd.DataFrame, score_policy: AbstractScorePolicy):
-        """
-        score_policyを元に、馬の「勝ちやすさスコア」を計算する。
-        """
-        return score_policy.calc(self.__model_wrapper.lgb_model, X)
-
     def decide_action(self, score_table: pd.DataFrame, bet_policy: AbstractBetPolicy, **params) -> dict:
         """
         bet_policyを元に、賭ける馬券を決定する。paramsにthresholdを入れる。
@@ -61,3 +55,9 @@ class KeibaAI:
         actions = bet_policy.judge(score_table, **params)
 
         return actions
+
+    def calc_score(self, X: pd.DataFrame, score_policy: AbstractScorePolicy):
+        """
+        score_policyを元に、馬の「勝ちやすさスコア」を計算する。
+        """
+        return score_policy.calc(self.__model_wrapper.lgb_model, X)

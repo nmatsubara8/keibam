@@ -133,3 +133,17 @@ class BetPolicyUmatanNagashi:
             bet_dict_1R["fukusho"] = list(table.query('flg == "fukusho"')[ResultsCols.UMABAN])
             bet_dict[race_id] = bet_dict_1R
         return bet_dict
+
+
+class BetPolicyWakuren:
+    """
+    thresholdを超えた馬の枠に複勝で賭ける戦略。
+    """
+
+    @staticmethod
+    def judge(score_table: pd.DataFrame, threshold: float) -> dict:
+        filtered_table = score_table[score_table["score"] >= threshold]
+        bet_df = filtered_table.groupby(level=0)[ResultsCols.WAKUBAN].apply(list).to_frame()
+        bet_df = bet_df[bet_df[ResultsCols.WAKUBAN].apply(len) >= 1]
+        bet_dict = bet_df.rename(columns={ResultsCols.WAKUBAN: "wakuren"}).T.to_dict()
+        return bet_dict
