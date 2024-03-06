@@ -60,8 +60,10 @@ class BetPolicyWakurenBox:
 
     @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
+        filtered_table = score_table[(score_table["score"] >= threshold) & (score_table["wakuban_flag"] == 1)]
+        # filtered_table = score_table[score_table["score"] >= threshold]
         bet_df = filtered_table.groupby(level=0)[ResultsCols.WAKUBAN].apply(list).to_frame()
+        bet_df = bet_df[bet_df[ResultsCols.WAKUBAN].apply(len) >= 2]
         bet_dict = bet_df.rename(columns={ResultsCols.WAKUBAN: "wakuren"}).T.to_dict()
         return bet_dict
 

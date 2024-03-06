@@ -94,7 +94,7 @@ class BettingTickets:
         # 例）4C2（4コンビネーション2
         #
         # print("Value", umaban)
-        if len(wakuban) < 2:
+        if wakuban is None or len(wakuban) < 2:
             print("例外", wakuban)
             return 0, 0, 0
         else:
@@ -106,8 +106,9 @@ class BettingTickets:
 
             # セットをリストに変換する（任意の順序で表示するため）
             n_bets = len(unique_combinations)
-            print("unique_combinations1", unique_combinations)
-            # print("umaban", umaban)
+
+            # print("race_id", race_id)
+            # print("unique_combinations1", unique_combinations)
 
             # print(f"n_bets:{n_bets}")
             # 賭けた合計額
@@ -121,19 +122,19 @@ class BettingTickets:
 
             length = len(table_1R) // 2
             # print("length", length)
-            print("unique_combinations2", unique_combinations)
+            # print("unique_combinations2", unique_combinations)
             for combination in unique_combinations:
                 for i in range(0, length - 1):
                     win_column = f"win_{i}"
                     return_column = f"return_{i}"
-                    print("combination", combination)
+                    # print("combination", combination)
                     compare_target = tuple(table_1R[win_column])
 
-                    print("compare_target", compare_target)
+                    # print("compare_target", compare_target)
                     if compare_target and compare_target == tuple(combination):
                         return_amount += (int(table_1R[return_column]) * amount) / 100
-                        print("match", return_amount)
-            print("results:", n_bets, bet_amount, return_amount)
+                        # print("match", return_amount)
+            # print("results:", n_bets, bet_amount, return_amount)
             return n_bets, bet_amount, return_amount
 
     def bet_umaren_box(self, race_id: int, umaban: list, amount: int):
@@ -149,7 +150,7 @@ class BettingTickets:
         else:
             # print("umaban", umaban)
             n_bets = count_comb(len(umaban), 2)
-            print(f"n_bets:{n_bets}")
+            # print(f"n_bets:{n_bets}")
             # 賭けた合計額
             bet_amount = n_bets * amount
 
@@ -178,7 +179,7 @@ class BettingTickets:
             # 賭ける枚数
             # 例）4P2（4順列2)
             n_bets = count_perm(len(umaban), 2)
-            print(f"n_bets:{n_bets}")
+            # print(f"n_bets:{n_bets}")
             # 賭けた合計額
             bet_amount = n_bets * amount
 
@@ -201,7 +202,7 @@ class BettingTickets:
         馬単をBOX馬券で賭ける場合の関数。
         """
         n_bets = len(umaban)
-        print(f"n_bets:{n_bets}")
+        # print(f"n_bets:{n_bets}")
         if n_bets == 0:
             print("例外")
             return 0, 0, 0
@@ -232,7 +233,7 @@ class BettingTickets:
         else:
             # 賭けた合計額
             n_bets = count_comb(len(umaban), 2)
-            print(f"n_bets:{n_bets}")
+            # print(f"n_bets:{n_bets}")
             bet_amount = n_bets * amount
 
             # 的中判定
@@ -262,7 +263,7 @@ class BettingTickets:
         else:
             # print("umaban", umaban)
             n_bets = count_comb(len(umaban), 3)
-            print(f"n_bets:{n_bets}")
+            # print(f"n_bets:{n_bets}")
             # 賭けた合計額
             bet_amount = n_bets * amount
 
@@ -285,7 +286,7 @@ class BettingTickets:
         三連単を一枚のみ賭ける場合の関数。umabanは[1着予想, 2着予想, 3着予想]の形で馬番を入れる。
         """
         n_bets = len(umaban)
-        print(f"n_bets:{n_bets}")
+        # print(f"n_bets:{n_bets}")
         if n_bets == 0:
             print("例外")
             return 0, 0, 0
@@ -317,7 +318,7 @@ class BettingTickets:
             # 賭ける枚数
             # 例）4P2（4順列2)
             n_bets = count_perm(len(umaban), 3)
-            print(f"n_bets:{n_bets}")
+            # print(f"n_bets:{n_bets}")
             # 賭けた合計額
             bet_amount = n_bets * amount
 

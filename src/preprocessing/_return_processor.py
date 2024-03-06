@@ -36,6 +36,13 @@ def split_arrow_to_int(s):
     return s
 
 
+def sort_tuple(tup):
+    """
+    タプルの中身をソートする関数
+    """
+    return tuple(sorted(tup))
+
+
 class ReturnProcessor(AbstractDataProcessor):
     def __init__(self, filepath):
         """
@@ -104,7 +111,6 @@ class ReturnProcessor(AbstractDataProcessor):
         for i in range(len(wins.columns)):
             col_name = f"win_{i}"
             wins[col_name] = wins[col_name].apply(split_bar_to_int)
-
         return_ = wakuren[2].str.split("br", n=wakuren_row_num, expand=True)
         # 不足する部分を0に置き換える
         return_ = return_.fillna(0)
@@ -118,7 +124,7 @@ class ReturnProcessor(AbstractDataProcessor):
 
     def __fukusho(self):
         """
-        複勝
+        #複勝
         """
         fukusho = self.raw_data[self.raw_data[0] == "複勝"][[1, 2, "race_id"]]
         fukusho_row_num = count_br(fukusho, 1) + 1
@@ -143,9 +149,9 @@ class ReturnProcessor(AbstractDataProcessor):
 
     def __umaren(self):
         """
-        馬連
+        #馬連
         """
-        umaren = self.raw_data[self.raw_data[0] == "馬単"][[1, 2, "race_id"]]
+        umaren = self.raw_data[self.raw_data[0] == "馬連"][[1, 2, "race_id"]]
         umaren_row_num = count_br(umaren, 1) + 1
         print(f"馬単列数:{umaren_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
@@ -156,7 +162,7 @@ class ReturnProcessor(AbstractDataProcessor):
         wins.columns = [f"win_{i}" for i in range(len(wins.columns))]
         for i in range(len(wins.columns)):
             col_name = f"win_{i}"
-            wins[col_name] = wins[col_name].apply(split_arrow_to_int)
+            wins[col_name] = wins[col_name].apply(split_bar_to_int)
         return_ = umaren[2].str.split("br", n=umaren_row_num, expand=True)
         # 不足する部分を0に置き換える
         return_ = return_.fillna(0)
@@ -170,7 +176,7 @@ class ReturnProcessor(AbstractDataProcessor):
 
     def __umatan(self):
         """
-        馬単
+        #馬単
         """
         umatan = self.raw_data[self.raw_data[0] == "馬単"][[1, 2, "race_id"]]
         umatan_row_num = count_br(umatan, 1) + 1
@@ -197,7 +203,7 @@ class ReturnProcessor(AbstractDataProcessor):
 
     def __wide(self):
         """
-        ワイド
+        #ワイド
         """
         wide = self.raw_data[self.raw_data[0] == "ワイド"][[1, 2, "race_id"]]
         wide_row_num = count_br(wide, 1) + 1
@@ -232,7 +238,7 @@ class ReturnProcessor(AbstractDataProcessor):
 
     def __sanrentan(self):
         """
-        三連単
+        #三連単
         """
         rentan = self.raw_data[self.raw_data[0] == "三連単"][[1, 2, "race_id"]]
         rentan_row_num = count_br(rentan, 1) + 1
@@ -259,7 +265,7 @@ class ReturnProcessor(AbstractDataProcessor):
 
     def __sanrenpuku(self):
         """
-        三連複
+        #三連複
         """
         renpuku = self.raw_data[self.raw_data[0] == "三連複"][[1, 2, "race_id"]]
         renpuku_row_num = count_br(renpuku, 1) + 1

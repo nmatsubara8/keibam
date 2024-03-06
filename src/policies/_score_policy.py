@@ -14,8 +14,19 @@ _SCORE = "score"
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     score_table = X[ResultsCols.UMABAN].to_frame().copy()
     score_table[ResultsCols.WAKUBAN] = X[ResultsCols.WAKUBAN]
+    # race_idごとにWAKUBANの組み合わせをカウント
+    # race_idごとにUMABANとWAKUBANの個数を取得
+    umaban_count_per_race = X.groupby("race_id")[ResultsCols.UMABAN].nunique()
+    wakuban_count_per_race = X.groupby("race_id")[ResultsCols.WAKUBAN].nunique()
+
+    # UMABANの個数がWAKUBANの個数よりも多い場合にwakuban_flagを設定
+    wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
+    wakuban_flag.name = "wakuban_flag"
     score = model.predict_proba(X.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1]
     score_table[_SCORE] = score
+    # race_idに対応するwakuban_flagを結合
+    score_table = pd.merge(score_table, wakuban_flag, left_on="race_id", right_index=True)
+
     return score_table
 
 
