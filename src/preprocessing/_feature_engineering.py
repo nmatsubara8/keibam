@@ -19,7 +19,7 @@ class FeatureEngineering:
         self.__data = data_merger.merged_data.copy()
         # dict = dict_selector("horse_id")
         # convert_column_types(self.__data, dict)
-        # print(type(self.__data))
+        print(type(self.__data))
 
     @property
     def featured_data(self):
@@ -216,3 +216,12 @@ class FeatureEngineering:
         """
         self.__label_encode("breeder_id")
         return self
+
+        # def transform_time(self):
+        """
+        timeを文字列から時間に変換する。
+        """
+
+    #    datetime_obj = datetime.strptime(self.__data["time"], "%H:%M")
+    #    self.__data["time"] = datetime_obj.time()
+    #    return self

@@ -57,13 +57,13 @@ class DataMerger:
         """
         self._merge_race_info()
 
-        # print("merge_infos", self._results.sort_values(by="race_id").head().T)
+        print("merge_infos", self._results.sort_values(by="race_id").head().T)
 
         self._merge_horse_results()
-        # print("merge_horse", self._merged_data.sort_values(by="horse_id").head().T)
+        print("merge_horse", self._merged_data.sort_values(by="horse_id").head().T)
         # print("merge_horse_results() done")
         self._merge_horse_info()
-        # print("merge_horse_info", self._merged_data.sort_values(by="horse_id").head().T)
+        print("merge_horse_info", self._merged_data.sort_values(by="horse_id").head().T)
         # print("merge_horse_info() done")
 
         self._merge_peds()

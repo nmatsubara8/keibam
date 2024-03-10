@@ -74,7 +74,7 @@ class ReturnProcessor(AbstractDataProcessor):
 
         tansho = self.raw_data[self.raw_data[0] == "単勝"][[1, 2, "race_id"]]
         tansho_row_num = count_br(tansho, 1) + 1
-        print(f"単勝列数:{tansho_row_num}")
+        # print(f"単勝列数:{tansho_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = tansho[1].str.split("br", n=tansho_row_num, expand=True)
         # 不足する部分を0に置き換える
@@ -101,7 +101,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         wakuren = self.raw_data[self.raw_data[0] == "枠連"][[1, 2, "race_id"]]
         wakuren_row_num = count_br(wakuren, 1) + 1
-        print(f"枠連列数:{wakuren_row_num}")
+        # print(f"枠連列数:{wakuren_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = wakuren[1].str.split("br", n=wakuren_row_num, expand=True)
         # 不足する部分を0に置き換える
@@ -153,7 +153,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         umaren = self.raw_data[self.raw_data[0] == "馬連"][[1, 2, "race_id"]]
         umaren_row_num = count_br(umaren, 1) + 1
-        print(f"馬単列数:{umaren_row_num}")
+        # print(f"馬単列数:{umaren_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = umaren[1].str.split("br", n=umaren_row_num, expand=True)
         # 不足する部分を0に置き換える
@@ -180,7 +180,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         umatan = self.raw_data[self.raw_data[0] == "馬単"][[1, 2, "race_id"]]
         umatan_row_num = count_br(umatan, 1) + 1
-        print(f"馬単列数:{umatan_row_num}")
+        # print(f"馬単列数:{umatan_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = umatan[1].str.split("br", n=umatan_row_num, expand=True)
         # 不足する部分を0に置き換える
@@ -207,7 +207,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         wide = self.raw_data[self.raw_data[0] == "ワイド"][[1, 2, "race_id"]]
         wide_row_num = count_br(wide, 1) + 1
-        print(f"ワイド列数:{wide_row_num}")
+        # print(f"ワイド列数:{wide_row_num}")
 
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = wide[1].str.split("br", n=wide_row_num, expand=True)
@@ -242,7 +242,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         rentan = self.raw_data[self.raw_data[0] == "三連単"][[1, 2, "race_id"]]
         rentan_row_num = count_br(rentan, 1) + 1
-        print(f"三連単列数:{rentan_row_num}")
+        # print(f"三連単列数:{rentan_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = rentan[1].str.split("br", n=rentan_row_num, expand=True)
         # 不足する部分を0に置き換える
@@ -269,7 +269,7 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         renpuku = self.raw_data[self.raw_data[0] == "三連複"][[1, 2, "race_id"]]
         renpuku_row_num = count_br(renpuku, 1) + 1
-        print(f"三連複列数:{renpuku_row_num}")
+        # print(f"三連複列数:{renpuku_row_num}")
         # "br"で分割し、expand=Trueを指定してDataFrameに展開する
         wins = renpuku[1].str.split("br", n=renpuku_row_num, expand=True)
         # 不足する部分を0に置き換える
