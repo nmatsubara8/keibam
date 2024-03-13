@@ -4,7 +4,6 @@ import pandas as pd
 
 from src.constants._horse_results_cols import HorseResultsCols
 from src.constants._local_paths import LocalPaths
-from src.constants._master import Master
 from src.preprocessing._data_merger import DataMerger
 
 
@@ -51,12 +50,14 @@ class FeatureEngineering:
         """
         開催カラムをダミー変数化する
         """
-        self.__data[HorseResultsCols.PLACE] = pd.Categorical(
-            self.__data[HorseResultsCols.PLACE], list(Master.PLACE_DICT.values())
+        # self.__data[HorseResultsCols.PLACE] = pd.Categorical(
+        #    self.__data[HorseResultsCols.PLACE], list(Master.PLACE_DICT.values())
+        # )
+        temp_data = pd.get_dummies(
+            self.__data[HorseResultsCols.PLACE], prefix=f"{HorseResultsCols.PLACE}_", drop_first=True
         )
-        temp_data = pd.get_dummies(self.__data[HorseResultsCols.PLACE], prefix=f"{HorseResultsCols.PLACE}_")
         self.__data = pd.concat([self.__data, temp_data], axis=1)
-        # self.__data.drop(f"{HorseResultsCols.PLACE}", axis=1, inplace=True)
+        self.__data.drop(f"{HorseResultsCols.PLACE}", axis=1, inplace=True)
         self.__data.drop("place", axis=1, inplace=True)
         self.__data.drop("time", axis=1, inplace=True)
         return self
@@ -65,8 +66,10 @@ class FeatureEngineering:
         """
         race_typeカラムをダミー変数化する
         """
-        self.__data["race_type"] = pd.Categorical(self.__data["race_type"], list(Master.RACE_TYPE_DICT.values()))
-        temp_data = pd.get_dummies(self.__data["race_type"], prefix="race_type_")
+        # self.__data["race_type"] = pd.Categorical(
+        #    self.__data["race_type"], list(Master.RACE_TYPE_DICT.values())
+        # )
+        temp_data = pd.get_dummies(self.__data["race_type"], prefix="race_type_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("race_type", axis=1, inplace=True)
         return self
@@ -75,8 +78,8 @@ class FeatureEngineering:
         """
         weatherカラムをダミー変数化する
         """
-        self.__data["weather"] = pd.Categorical(self.__data["weather"], Master.WEATHER_LIST)
-        temp_data = pd.get_dummies(self.__data["weather"], prefix="weather_")
+        # self.__data["weather"] = pd.Categorical(self.__data["weather"], Master.WEATHER_LIST)
+        temp_data = pd.get_dummies(self.__data["weather"], prefix="weather_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("weather", axis=1, inplace=True)
         return self
@@ -85,8 +88,10 @@ class FeatureEngineering:
         """
         ground_stateカラムをダミー変数化する
         """
-        self.__data["ground_state1"] = pd.Categorical(self.__data["ground_state1"], Master.GROUND_STATE_LIST)
-        temp_data = pd.get_dummies(self.__data["ground_state1"], prefix="ground_state1_")
+        # self.__data["ground_state1"] = pd.Categorical(
+        #    self.__data["ground_state1"], Master.GROUND_STATE_LIST, drop_first=True
+        # )
+        temp_data = pd.get_dummies(self.__data["ground_state1"], prefix="ground_state1_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("ground_state1", axis=1, inplace=True)
 
@@ -97,8 +102,10 @@ class FeatureEngineering:
         ground_stateカラムをダミー変数化する
         """
 
-        self.__data["ground_state2"] = pd.Categorical(self.__data["ground_state2"], Master.GROUND_STATE_LIST)
-        temp_data = pd.get_dummies(self.__data["ground_state2"], prefix="ground_state2_")
+        # self.__data["ground_state2"] = pd.Categorical(
+        #    self.__data["ground_state2"], Master.GROUND_STATE_LIST
+        # )
+        temp_data = pd.get_dummies(self.__data["ground_state2"], prefix="ground_state2_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("ground_state2", axis=1, inplace=True)
         self.__data.drop("race_condition", axis=1, inplace=True)
@@ -109,8 +116,8 @@ class FeatureEngineering:
         """
         sexカラムをダミー変数化する
         """
-        self.__data["性"] = pd.Categorical(self.__data["性"], Master.SEX_LIST)
-        temp_data = pd.get_dummies(self.__data["性"], prefix="性_")
+        # self.__data["性"] = pd.Categorical(self.__data["性"], Master.SEX_LIST)
+        temp_data = pd.get_dummies(self.__data["性"], prefix="性_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("性", axis=1, inplace=True)
 
@@ -121,8 +128,8 @@ class FeatureEngineering:
         aroundカラムをダミー変数化する
         """
 
-        self.__data["around"] = pd.Categorical(self.__data["around"], Master.AROUND_LIST)
-        temp_data = pd.get_dummies(self.__data["around"], prefix="around_")
+        # self.__data["around"] = pd.Categorical(self.__data["around"], Master.AROUND_LIST)
+        temp_data = pd.get_dummies(self.__data["around"], prefix="around_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("around", axis=1, inplace=True)
 
@@ -132,8 +139,8 @@ class FeatureEngineering:
         """
         race_classカラムをダミー変数化する
         """
-        self.__data["race_class"] = pd.Categorical(self.__data["race_class"], Master.RACE_CLASS_LIST)
-        temp_data = pd.get_dummies(self.__data["race_class"], prefix="race_class_")
+        # self.__data["race_class"] = pd.Categorical(self.__data["race_class"], Master.RACE_CLASS_LIST)
+        temp_data = pd.get_dummies(self.__data["race_class"], prefix="race_class_", drop_first=True)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
         self.__data.drop("race_class", axis=1, inplace=True)
         return self

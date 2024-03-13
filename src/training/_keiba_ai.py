@@ -24,6 +24,7 @@ class KeibaAI:
         """
         optunaでのチューニング後、訓練させる。
         """
+
         self.__model_wrapper.tune_hyper_params(self.__datasets)
         self.__model_wrapper.train(self.__datasets)
 

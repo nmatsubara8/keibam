@@ -66,6 +66,17 @@ class ResultsProcessor(AbstractDataProcessor):
         df[Cols.RANK] = pd.to_numeric(df[Cols.RANK], errors="coerce")
         df.dropna(subset=[Cols.RANK], inplace=True)
         df[Cols.RANK] = df[Cols.RANK].astype(int)
+        """
+        if df[Cols.RANK]==1:
+            df["rank"]=3/math.sqrt(df[Cols.TANSHO_ODDS])
+        elif df[Cols.RANK]==2:
+            df["rank"]=2/math.sqrt(df[Cols.TANSHO_ODDS])
+        elif df[Cols.RANK]==3:
+            df["rank"]=1/math.sqrt(df[Cols.TANSHO_ODDS])
+        else:
+            df[Cols.RANK] =0
+        df['rank']=df[Cols.RANK]
+        """
         df["rank"] = df[Cols.RANK].map(lambda x: 1 if x < 4 else 0)
         return df
 

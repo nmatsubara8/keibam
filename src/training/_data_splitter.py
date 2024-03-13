@@ -1,8 +1,6 @@
 import optuna.integration.lightgbm as lgb_o
 import pandas as pd
 
-from src.constants._results_cols import ResultsCols
-
 
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size) -> None:
@@ -23,15 +21,15 @@ class DataSplitter:
         print("len(self.__test_data):", len(self.__test_data))
 
         self.__lgb_train_optuna = lgb_o.Dataset(
-            self.__train_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values,
+            self.__train_data_optuna.drop(["rank", "date"], axis=1).values,
             self.__train_data_optuna["rank"],
         )
         self.__lgb_valid_optuna = lgb_o.Dataset(
-            self.__valid_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values,
+            self.__valid_data_optuna.drop(["rank", "date"], axis=1).values,
             self.__valid_data_optuna["rank"],
         )
         # 説明変数と目的変数に分ける。開催はエラーなるので一度drop。
-        self.__X_train = self.__train_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1)
+        self.__X_train = self.__train_data.drop(["rank", "date"], axis=1)
         self.__y_train = self.__train_data["rank"]
         self.__X_test = self.__test_data.drop(["rank", "date"], axis=1)
         self.__y_test = self.__test_data["rank"]
