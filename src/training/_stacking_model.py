@@ -28,9 +28,21 @@ class StackingModel:
         self._base_models = base_models
         self._meta_model = meta_model
 
-    def fit(self, x_base, y_base, x_meta, y_meta) -> "StackingModel":
-        for model in self._base_models:
-            model.fit(x_base, y_base)
+    def fit(self, x_base, y_base, x_meta, y_meta, base_sample_weights=None) -> "StackingModel":
+        """base 学習器を base_train で学習し、meta_train の OOF 予測で meta 学習器を学習。
+
+        base_sample_weights: base_models と同じ長さのリスト。各要素は当該 base 学習器に
+        渡す sample_weight（None なら等重み）。§2 EV境界重みを LightGBM base にのみ
+        適用する用途を想定。None の場合は全 base 学習器を等重みで学習（後方互換）。
+        """
+        if base_sample_weights is not None and len(base_sample_weights) != len(self._base_models):
+            raise ValueError("base_sample_weights の長さが base_models と一致しません。")
+        for i, model in enumerate(self._base_models):
+            sw = base_sample_weights[i] if base_sample_weights is not None else None
+            if sw is not None:
+                model.fit(x_base, y_base, sample_weight=sw)
+            else:
+                model.fit(x_base, y_base)
         meta_features = self._meta_features(x_meta)
         self._meta_model.fit(meta_features, np.asarray(y_meta))
         return self

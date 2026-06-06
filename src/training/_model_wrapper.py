@@ -3,6 +3,7 @@ import optuna.integration.lightgbm as lgb_o
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
+from src.constants._bet_thresholds import TrainingWeights
 from src.constants._results_cols import ResultsCols
 
 from ._data_splitter import DataSplitter
@@ -11,10 +12,17 @@ from ._data_splitter import DataSplitter
 class ModelWrapper:
     """
     モデルのハイパーパラメータチューニング・学習の処理が記述されたクラス。
+
+    KB 不均衡データ対応（§2）: `scale_pos_weight`（クラスレベルのマクロ補正）を
+    LGBMClassifier に注入する。EV sigmoid 重み（§2 / §2h）は `train()` の
+    `sample_weight` 引数（サンプルレベルのミクロ補正）として直交合成する。
+    `is_unbalance` は使わない（EV sigmoid との二重重み付けを避けるため）。
     """
 
-    def __init__(self):
-        self.__lgb_model = lgb.LGBMClassifier(objective="binary")
+    def __init__(self, scale_pos_weight: float = TrainingWeights.SCALE_POS_WEIGHT):
+        self.__lgb_model = lgb.LGBMClassifier(
+            objective="binary", scale_pos_weight=scale_pos_weight
+        )
         self.__feature_importance = None
 
     def tune_hyper_params(self, datasets: DataSplitter):
@@ -49,9 +57,17 @@ class ModelWrapper:
         """
         self.__lgb_model.set_params(**ex_params)
 
-    def train(self, datasets: DataSplitter):
+    def train(self, datasets: DataSplitter, sample_weight=None):
+        """LightGBM を学習する。
+
+        sample_weight: §2 EV境界 sigmoid 重み（レース内正規化済み）を渡すと、
+        EV>1 領域へ学習をフォーカスさせる。None なら従来どおり等重み。
+        `scale_pos_weight`（コンストラクタ注入）と sample_weight は独立に合成される。
+        """
         # 学習
-        self.__lgb_model.fit(datasets.X_train.values, datasets.y_train.values)
+        self.__lgb_model.fit(
+            datasets.X_train.values, datasets.y_train.values, sample_weight=sample_weight
+        )
         # AUCを計算して出力
         auc_train = roc_auc_score(datasets.y_train, self.__lgb_model.predict_proba(datasets.X_train)[:, 1])
         auc_test = roc_auc_score(

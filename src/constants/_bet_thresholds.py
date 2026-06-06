@@ -30,3 +30,20 @@ class RiskLimits:
     MIN_WIN_PROB: float = 0.01
     # 複勝の的中圏（n着以内）
     FUKUSHO_PLACES: int = 3
+
+
+@dataclasses.dataclass(frozen=True)
+class TrainingWeights:
+    """Layer1 学習時のサンプル重み・不均衡補正パラメータ（§2 / §2h）。
+
+    - SIGMOID_K: EV 境界 sigmoid 重み `1/(1+exp(-k*(EV-EV_CENTER)))` の鋭さ。
+      大きいほど EV=1.0 付近で急峻に重みが立ち上がる（KB shard-43）。
+    - EV_CENTER: sigmoid の中心。EV=1.0（回収率の損益分岐点）を境界に置く。
+    - SCALE_POS_WEIGHT: 正例不足の補正係数（n_negative / n_positive ≈ 15）。
+      LightGBM の `scale_pos_weight` / NN の `BCEWithLogitsLoss(pos_weight)` に渡す
+      クラスレベルのマクロ補正。EV sigmoid（サンプルレベルのミクロ補正）と直交合成する。
+    """
+
+    SIGMOID_K: float = 5.0
+    EV_CENTER: float = 1.0
+    SCALE_POS_WEIGHT: float = 15.0
