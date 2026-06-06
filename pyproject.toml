@@ -90,4 +90,6 @@ files = [
     "src/constants/_odds_phases.py",
     "src/preparing/_odds_snapshot.py",
     "src/preparing/odds_scheduler.py",
+    "src/pipeline/_ingestion.py",
+    "src/pipeline/_retrain.py",
 ]

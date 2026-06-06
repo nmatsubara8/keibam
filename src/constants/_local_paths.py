@@ -27,6 +27,8 @@ class LocalPaths:
     RAW_PEDS_PATH: str = os.path.join(RAW_DIR, "peds.pkl")
     ### 段階オッズ スナップショットの集約 pickle（Layer2 学習データの蓄積先）
     RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
+    ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）
+    FEATURED_DATA_PATH: str = os.path.join(RAW_DIR, "featured_data.pkl")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

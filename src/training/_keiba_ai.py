@@ -74,6 +74,11 @@ class KeibaAI:
             self.__datasets.y_calib.values,
         )
 
+    @property
+    def effective_model(self):
+        """較正済みモデルがあればそれを、なければ LightGBM 単体モデルを返す。"""
+        return self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
+
     def get_params(self):
         """
         ハイパーパラメータを取得
