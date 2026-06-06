@@ -1,18 +1,23 @@
-import optuna.integration.lightgbm as lgb_o
 import pandas as pd
 
 from src.constants._results_cols import ResultsCols
+
+_DROP_FOR_TRAIN = ["rank", "date", ResultsCols.TANSHO_ODDS]
 
 
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size) -> None:
         self.__featured_data = featured_data
+        self.__base_train: pd.DataFrame | None = None
+        self.__meta_train: pd.DataFrame | None = None
         self.train_valid_test_split(test_size, valid_size)
 
     def train_valid_test_split(self, test_size, valid_size):
         """
         訓練データとテストデータに分ける。さらに訓練データをoptuna用の訓練データと検証データに分ける。
         """
+        import optuna.integration.lightgbm as lgb_o
+
         self.__train_data, self.__test_data = self.__split_by_date(self.__featured_data, test_size=test_size)
         self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(
             self.__train_data, test_size=valid_size
@@ -92,3 +97,69 @@ class DataSplitter:
     @property
     def y_test(self):
         return pd.Series(self.__y_test)
+
+    # ------------------------------------------------------------------
+    # スタッキング用 3-way 分割
+    # ------------------------------------------------------------------
+
+    def make_stacking_splits(self, meta_ratio: float = 0.3) -> None:
+        """train_data_optuna を base_train / meta_train に分割し lgb Optuna データを再生成する。
+
+        calib_holdout は valid_data_optuna をそのまま使用。
+        base_train 内の 80/20 split で Optuna ハイパラ探索用データを再構築する。
+        """
+        import optuna.integration.lightgbm as lgb_o
+
+        self.__base_train, self.__meta_train = self.__split_by_date(
+            self.__train_data_optuna, test_size=meta_ratio
+        )
+        base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
+        self.__lgb_train_optuna = lgb_o.Dataset(
+            base_opt_train.drop(_DROP_FOR_TRAIN, axis=1).values,
+            base_opt_train["rank"],
+        )
+        self.__lgb_valid_optuna = lgb_o.Dataset(
+            base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1).values,
+            base_opt_valid["rank"],
+        )
+        print(f"base_train: {len(self.__base_train)}, meta_train: {len(self.__meta_train)}, calib_holdout: {len(self.__valid_data_optuna)}")
+
+    @property
+    def base_train_data(self) -> pd.DataFrame:
+        if self.__base_train is None:
+            raise RuntimeError("make_stacking_splits() を先に呼んでください。")
+        return self.__base_train
+
+    @property
+    def meta_train_data(self) -> pd.DataFrame:
+        if self.__meta_train is None:
+            raise RuntimeError("make_stacking_splits() を先に呼んでください。")
+        return self.__meta_train
+
+    @property
+    def calib_holdout_data(self) -> pd.DataFrame:
+        return self.__valid_data_optuna
+
+    @property
+    def X_base_train(self) -> pd.DataFrame:
+        return self.base_train_data.drop(_DROP_FOR_TRAIN, axis=1)
+
+    @property
+    def y_base_train(self) -> pd.Series:
+        return self.base_train_data["rank"]
+
+    @property
+    def X_meta_train(self) -> pd.DataFrame:
+        return self.meta_train_data.drop(_DROP_FOR_TRAIN, axis=1)
+
+    @property
+    def y_meta_train(self) -> pd.Series:
+        return self.meta_train_data["rank"]
+
+    @property
+    def X_calib(self) -> pd.DataFrame:
+        return self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1)
+
+    @property
+    def y_calib(self) -> pd.Series:
+        return self.__valid_data_optuna["rank"]

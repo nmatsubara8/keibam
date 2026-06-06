@@ -15,6 +15,7 @@ class KeibaAI:
     def __init__(self, datasets: DataSplitter):
         self.__datasets = datasets
         self.__model_wrapper = ModelWrapper()
+        self._calibrated_model = None  # train_with_stacking 後に設定される
 
     @property
     def datasets(self):
@@ -32,6 +33,46 @@ class KeibaAI:
         ハイパーパラメータチューニングをスキップして訓練させる。
         """
         self.__model_wrapper.train(self.__datasets)
+
+    def train_with_stacking(self, meta_ratio: float = 0.3, with_tuning: bool = True) -> None:
+        """スタッキング+Isotonic 較正の Layer1 パイプラインを実行する。
+
+        1. make_stacking_splits で base_train / meta_train / calib_holdout に分割
+        2. with_tuning=True なら base_train 上で Optuna ハイパラ探索
+        3. StackingModel (LightGBM + NN) を base_train で学習
+        4. meta_train で meta 特徴量を生成し LogisticRegression meta 学習器を学習
+        5. calib_holdout で Isotonic 較正し self._calibrated_model に保存
+        """
+        import lightgbm as lgb
+        from sklearn.linear_model import LogisticRegression
+
+        from ._calibrated_model import CalibratedModel
+        from ._stacking_model import StackingModel
+
+        self.__datasets.make_stacking_splits(meta_ratio=meta_ratio)
+        if with_tuning:
+            self.__model_wrapper.tune_hyper_params(self.__datasets)
+
+        lgb_base = lgb.LGBMClassifier(**self.__model_wrapper.params)
+        base_models = [lgb_base]
+        try:
+            from ._nn_win_model import NnWinModel
+            base_models.append(NnWinModel(n_numeric=self.__datasets.X_base_train.shape[1]))
+        except Exception:
+            pass  # torch 未インストールの場合は LightGBM のみで動作
+
+        stacking = StackingModel(base_models, LogisticRegression(max_iter=1000, random_state=100))
+        stacking.fit(
+            self.__datasets.X_base_train.values,
+            self.__datasets.y_base_train.values,
+            self.__datasets.X_meta_train.values,
+            self.__datasets.y_meta_train.values,
+        )
+        self._calibrated_model = CalibratedModel.fit(
+            stacking,
+            self.__datasets.X_calib.values,
+            self.__datasets.y_calib.values,
+        )
 
     def get_params(self):
         """
@@ -59,5 +100,7 @@ class KeibaAI:
     def calc_score(self, X: pd.DataFrame, score_policy: AbstractScorePolicy):
         """
         score_policyを元に、馬の「勝ちやすさスコア」を計算する。
+        train_with_stacking 済みの場合は較正済みスタッキングモデルを使用する。
         """
-        return score_policy.calc(self.__model_wrapper.lgb_model, X)
+        model = self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
+        return score_policy.calc(model, X)
