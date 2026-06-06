@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import json
+import logging
 import os
 from typing import Any, Protocol
 
@@ -25,6 +26,8 @@ import pandas as pd
 from sklearn.metrics import roc_auc_score
 
 from src.constants._local_paths import LocalPaths
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -164,5 +167,5 @@ class RetrainJob:
 
         self._factory.save(ai, vname)
         save_metadata(meta, metadata_path(self._cfg.models_dir))
-        print(f"[retrain] version={vname} auc_test={metrics['auc_test']}")
+        logger.info("[retrain] version=%s auc_test=%s", vname, metrics["auc_test"])
         return meta

@@ -118,6 +118,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    from src.constants._logging_config import setup_logging
+
+    setup_logging()
     args = _parse_args(argv)
     if args.job == "ingest":
         _ingest(args)

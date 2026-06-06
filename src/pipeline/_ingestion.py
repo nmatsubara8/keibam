@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import logging
 import os
 from typing import Protocol
 
 import pandas as pd
 
 from src.constants._local_paths import LocalPaths
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +163,7 @@ class IngestJob:
             updated = append_idempotent(existing_results, new_results)
             save_raw(updated, self._cfg.raw_results_path)
         except Exception as e:
-            print(f"[ingest] fetch_results failed: {e}")
+            logger.error("[ingest] fetch_results failed: %s", e)
             return {"status": "error", "message": str(e), "n_new": 0}
 
         # race_info（失敗しても results は保存済み）
@@ -170,7 +173,7 @@ class IngestJob:
                 updated_info = append_idempotent(load_raw(self._cfg.raw_race_info_path), new_info)
                 save_raw(updated_info, self._cfg.raw_race_info_path)
         except Exception as e:
-            print(f"[ingest] fetch_race_info failed (non-fatal): {e}")
+            logger.warning("[ingest] fetch_race_info failed (non-fatal): %s", e)
 
         # return_tables（失敗しても継続）
         try:
@@ -179,14 +182,14 @@ class IngestJob:
                 updated_ret = append_idempotent(load_raw(self._cfg.raw_return_tables_path), new_ret)
                 save_raw(updated_ret, self._cfg.raw_return_tables_path)
         except Exception as e:
-            print(f"[ingest] fetch_return_tables failed (non-fatal): {e}")
+            logger.warning("[ingest] fetch_return_tables failed (non-fatal): %s", e)
 
         # 特徴量再生成
         try:
             featured = self._builder.build(self._cfg)
             save_raw(featured, self._cfg.featured_data_path)
         except Exception as e:
-            print(f"[ingest] featured_data build failed (non-fatal): {e}")
+            logger.warning("[ingest] featured_data build failed (non-fatal): %s", e)
 
         n_total = len(existing_race_ids(load_raw(self._cfg.raw_results_path)))
         return {

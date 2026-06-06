@@ -17,16 +17,20 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import logging
 import os
 import pickle
 from typing import Sequence
 
 from src.constants._bet_types import BetType
 from src.constants._local_paths import LocalPaths
+from src.constants._logging_config import setup_logging
 from src.constants._odds_phases import OddsPhase
 from src.preparing._odds_snapshot import OddsSnapshot
 from src.preparing._odds_snapshot import OddsSnapshotScraper
 from src.preparing._odds_snapshot import merge_snapshots
+
+logger = logging.getLogger(__name__)
 
 _VALID_PHASES = (
     OddsPhase.PREV_DAY,
@@ -75,7 +79,7 @@ def run(
             try:
                 collected.extend(scraper.capture(race_id, bet_type, post_time, captured_at))
             except Exception as e:  # 1 レースの失敗で全体を止めない（リジューム前提）
-                print(f"capture failed race_id={race_id} bet_type={bet_type}: {e}")
+                logger.warning("capture failed race_id=%s bet_type=%s: %s", race_id, bet_type, e)
     return persist(collected, path)
 
 
@@ -95,12 +99,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    setup_logging()
     args = _parse_args(argv)
     post_time = dt.datetime.fromisoformat(args.post_time)
     bet_types = args.bet_types or [BetType.TANSHO]
     scraper = OddsSnapshotScraper()
     merged = run(args.race_ids, post_time, bet_types, scraper, path=args.path)
-    print(f"phase={args.phase} captured races={len(args.race_ids)} total_snapshots={len(merged)}")
+    logger.info(
+        "phase=%s captured races=%d total_snapshots=%d", args.phase, len(args.race_ids), len(merged)
+    )
 
 
 if __name__ == "__main__":
