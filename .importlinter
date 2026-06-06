@@ -2,10 +2,18 @@
 root_package = src
 include_external_packages = True
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Contract 1: レイヤ単方向依存
+#
+# 上位レイヤは下位レイヤのみ import 可。逆方向（下位→上位）は禁止。
+# 順序: pipeline > operation > simulation > portfolio > training
+#       > policies > preparing > preprocessing > constants
+# ─────────────────────────────────────────────────────────────────────────────
 [importlinter:contract:layers]
 name = レイヤ単方向依存（上位は下位のみ import 可）
 type = layers
 layers =
+    src.pipeline
     src.operation
     src.simulation
     src.portfolio
@@ -15,3 +23,56 @@ layers =
     src.preprocessing
     src.constants
 exhaustive = false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contract 2: constants 純粋性
+#
+# constants は他のどの src レイヤにも依存しない基盤モジュール。
+# ここに依存が入ると全レイヤに影響が波及する。
+# ─────────────────────────────────────────────────────────────────────────────
+[importlinter:contract:constants_purity]
+name = constants は src 内の他レイヤに依存しない（基盤純粋性）
+type = forbidden
+source_modules =
+    src.constants
+forbidden_modules =
+    src.preprocessing
+    src.preparing
+    src.policies
+    src.training
+    src.portfolio
+    src.simulation
+    src.operation
+    src.pipeline
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contract 3: policies 独立性
+#
+# policies（馬券・スコア戦略プリミティブ）は training 以上のレイヤに
+# 依存しない。これにより training を差し替えても policies に変更が波及しない。
+# ─────────────────────────────────────────────────────────────────────────────
+[importlinter:contract:policies_independence]
+name = policies は training / simulation 以上のレイヤに依存しない
+type = forbidden
+source_modules =
+    src.policies
+forbidden_modules =
+    src.training
+    src.simulation
+    src.portfolio
+    src.operation
+    src.pipeline
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contract 4: simulation は training に依存しない
+#
+# simulation（バックテスト・評価）は特定の training 実装を知らない。
+# training の結果（確率・馬券候補）だけを受け取り、実装には依存しない。
+# ─────────────────────────────────────────────────────────────────────────────
+[importlinter:contract:simulation_no_training]
+name = simulation は training 実装に依存しない
+type = forbidden
+source_modules =
+    src.simulation
+forbidden_modules =
+    src.training
