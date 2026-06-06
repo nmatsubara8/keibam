@@ -174,6 +174,8 @@ class ExpectedValueBetPolicy:
     thresholds : {馬券種: 期待値閾値}。
     bet_types : 対象とする馬券種（省略時は thresholds のキー全て）。
     risk_limits : リスク管理パラメータ。
+    ev_max : 期待値の上限。EV がこれを超える超高倍率・極小確率の馬券を除外する
+        （リスク集中を防ぐ。§7）。既定は inf（上限なし・後方互換）。
     """
 
     def __init__(
@@ -182,11 +184,13 @@ class ExpectedValueBetPolicy:
         thresholds: dict,
         bet_types=None,
         risk_limits: RiskLimits = RiskLimits(),
+        ev_max: float = float("inf"),
     ) -> None:
         self._odds_provider = odds_provider
         self._thresholds = thresholds
         self._bet_types = list(bet_types) if bet_types is not None else list(thresholds.keys())
         self._risk = risk_limits
+        self._ev_max = ev_max
 
     def select(self, prob_table: pd.DataFrame) -> list:
         """較正勝率テーブルから BetCandidate のリストを返す。
@@ -197,6 +201,23 @@ class ExpectedValueBetPolicy:
         for race_id, race_df in prob_table.groupby(level=0):
             candidates.extend(self._select_for_race(race_id, race_df))
         return candidates
+
+    def judge(self, score_table: pd.DataFrame, **params) -> dict:
+        """既存 BetPolicy* と同じ {race_id: {馬券種: [馬番...]}} 形式で返す。
+
+        Simulator.calc_returns_per_race と互換。馬連等の複数頭組合せは馬番を
+        フラットに展開して BOX 互換のリストにする（Simulator の bet_*_box が
+        組合せを再生成するため）。EV 上位を採用する select() の結果を流用する。
+        """
+        candidates = self.select(score_table)
+        bet_dict: dict = {}
+        for cand in candidates:
+            race_bets = bet_dict.setdefault(cand.race_id, {})
+            umaban_list = race_bets.setdefault(cand.bet_type, [])
+            for umaban in cand.combo:
+                if umaban not in umaban_list:
+                    umaban_list.append(umaban)
+        return bet_dict
 
     def _select_for_race(self, race_id, race_df: pd.DataFrame) -> list:
         win_probs = dict(zip(race_df[ResultsCols.UMABAN], race_df[PROB]))
@@ -214,7 +235,8 @@ class ExpectedValueBetPolicy:
                 prob = harville.combo_probability(bet_type, win_probs, combo)
                 odds = self._odds_provider.get_odds(race_id, bet_type, combo)
                 ev = prob * odds
-                if ev > threshold:
+                # 期待値が閾値超〜上限以内のもののみ採用（上限で超高倍率を除外。§7）
+                if threshold < ev <= self._ev_max:
                     race_candidates.append(
                         BetCandidate(
                             race_id=race_id,

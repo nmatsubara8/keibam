@@ -19,10 +19,51 @@ from src.simulation._plot import (
     best_ev_threshold,
     plot_calibration,
     plot_ev_threshold_sweep,
+    plot_ev_weight_curve,
     plot_odds_prediction_accuracy,
     plot_stacking_contribution,
     run_ev_threshold_sweep,
 )
+
+
+# ---------------------------------------------------------------------------
+# plot_ev_weight_curve（§8）
+# ---------------------------------------------------------------------------
+
+def test_plot_ev_weight_curve_returns_figure():
+    import matplotlib.figure
+
+    fig = plot_ev_weight_curve()
+    assert isinstance(fig, matplotlib.figure.Figure)
+
+
+def test_plot_ev_weight_curve_uses_default_k():
+    """k 未指定で TrainingWeights.SIGMOID_K が使われる（凡例に反映）。"""
+    from src.constants._bet_thresholds import TrainingWeights
+
+    fig = plot_ev_weight_curve()
+    ax = fig.axes[0]
+    legend_texts = [t.get_text() for t in ax.get_legend().get_texts()]
+    assert any(str(TrainingWeights.SIGMOID_K) in t for t in legend_texts)
+
+
+def test_plot_ev_weight_curve_weight_in_range():
+    """描画データの重みが [0,1] に収まる。"""
+    fig = plot_ev_weight_curve(k=5.0, center=1.0)
+    ax = fig.axes[0]
+    line = ax.lines[0]
+    ydata = line.get_ydata()
+    assert ydata.min() >= 0.0 and ydata.max() <= 1.0
+
+
+def test_plot_ev_weight_curve_half_at_center():
+    """EV=center で重みが 0.5。"""
+    fig = plot_ev_weight_curve(k=5.0, center=1.0)
+    ax = fig.axes[0]
+    line = ax.lines[0]
+    xdata, ydata = line.get_xdata(), line.get_ydata()
+    idx = int(np.argmin(np.abs(xdata - 1.0)))
+    assert ydata[idx] == pytest.approx(0.5, abs=0.05)
 
 
 # ---------------------------------------------------------------------------

@@ -73,3 +73,54 @@ def test_multiple_races():
     selected = policy.select(table)
     race_ids = {c.race_id for c in selected}
     assert race_ids == {"r1", "r2"}
+
+
+def test_ev_max_excludes_super_high_ev():
+    # odds=100, prob=0.5 -> EV=50 をオーバーする ev_max=10 で除外
+    table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
+    policy = ExpectedValueBetPolicy(
+        _FixedOddsProvider(100.0), thresholds={BetType.TANSHO: 1.0}, ev_max=10.0
+    )
+    assert policy.select(table) == []
+
+
+def test_ev_max_keeps_within_bound():
+    # EV=2.0 は閾値1.0超・上限10.0以内なので採用
+    table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
+    policy = ExpectedValueBetPolicy(
+        _FixedOddsProvider(4.0), thresholds={BetType.TANSHO: 1.0}, ev_max=10.0
+    )
+    selected = policy.select(table)
+    assert len(selected) == 2
+
+
+def test_ev_max_default_is_infinite():
+    # 既定 ev_max=inf → 超高EVも除外しない（後方互換）
+    table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
+    policy = ExpectedValueBetPolicy(_FixedOddsProvider(1000.0), thresholds={BetType.TANSHO: 1.0})
+    selected = policy.select(table)
+    assert len(selected) == 2
+
+
+def test_judge_returns_dict_format():
+    table = _prob_table("r1", [(1, 0.6), (2, 0.4)])
+    policy = ExpectedValueBetPolicy(_FixedOddsProvider(4.0), thresholds={BetType.TANSHO: 1.0})
+    bet_dict = policy.judge(table)
+    assert "r1" in bet_dict
+    assert BetType.TANSHO in bet_dict["r1"]
+    assert set(bet_dict["r1"][BetType.TANSHO]) == {1, 2}
+
+
+def test_judge_flattens_combo_umaban():
+    # 馬連: 組合せ (1,2) を馬番リスト [1,2] に展開
+    table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
+    policy = ExpectedValueBetPolicy(_FixedOddsProvider(100.0), thresholds={BetType.UMAREN: 1.0})
+    bet_dict = policy.judge(table)
+    assert BetType.UMAREN in bet_dict["r1"]
+    assert set(bet_dict["r1"][BetType.UMAREN]) == {1, 2}
+
+
+def test_judge_empty_when_no_candidates():
+    table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
+    policy = ExpectedValueBetPolicy(_FixedOddsProvider(1.0), thresholds={BetType.TANSHO: 1.0})
+    assert policy.judge(table) == {}

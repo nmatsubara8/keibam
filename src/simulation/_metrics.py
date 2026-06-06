@@ -61,3 +61,67 @@ def summarize_returns(returns_per_race: pd.DataFrame) -> dict:
     profit_per_race = returns_per_race[RETURN_AMOUNT] - returns_per_race[BET_AMOUNT]
     summary["max_drawdown"] = max_drawdown(profit_per_race)
     return summary
+
+
+def classification_metrics(
+    y_true: np.ndarray,
+    prob: np.ndarray,
+    top_n: int = 3,
+) -> dict:
+    """確率予測の分類性能を多面評価する（§8）。
+
+    回収率と LogLoss は乖離しうる（KB shard-01）ため、AUC・LogLoss・Brier・F1 を
+    並列追跡してモデル比較の判断材料にする。不均衡データ（正例率 ~1/16）では
+    F1 が特に重要（KB context）。
+
+    Returns
+    -------
+    dict: log_loss / brier_score / auc / f1_score_top1 / f1_score_topN を含む。
+        計算不能な指標（単一クラスしかない等）は NaN を返す。
+    """
+    from sklearn.metrics import (
+        brier_score_loss,
+        log_loss,
+        roc_auc_score,
+    )
+
+    y = np.asarray(y_true).astype(int)
+    p = np.clip(np.asarray(prob, dtype=float), 1e-15, 1.0 - 1e-15)
+
+    summary: dict = {}
+    n_pos = int(y.sum())
+
+    # LogLoss / Brier は y に両クラス無くても計算可能（labels 明示）
+    try:
+        summary["log_loss"] = float(log_loss(y, p, labels=[0, 1]))
+    except (ValueError, IndexError):
+        summary["log_loss"] = float("nan")
+    summary["brier_score"] = float(brier_score_loss(y, p)) if len(y) else float("nan")
+
+    # AUC は両クラス必要
+    if 0 < n_pos < len(y):
+        summary["auc"] = float(roc_auc_score(y, p))
+    else:
+        summary["auc"] = float("nan")
+
+    # F1: 確率を「上位 N 位以内」で二値化して評価
+    summary["f1_score_top1"] = _f1_at_topk(y, p, 1)
+    summary[f"f1_score_top{top_n}"] = _f1_at_topk(y, p, top_n)
+    return summary
+
+
+def _f1_at_topk(y_true: np.ndarray, prob: np.ndarray, k: int) -> float:
+    """確率上位 k 件を正例予測として F1 を計算する。"""
+    from sklearn.metrics import f1_score
+
+    n = len(prob)
+    if n == 0 or k <= 0:
+        return float("nan")
+    k = min(k, n)
+    # 上位 k 件を 1、それ以外を 0
+    threshold_idx = np.argsort(prob)[::-1][:k]
+    y_pred = np.zeros(n, dtype=int)
+    y_pred[threshold_idx] = 1
+    if y_true.sum() == 0 and y_pred.sum() == 0:
+        return float("nan")
+    return float(f1_score(y_true, y_pred, zero_division=0))

@@ -307,3 +307,46 @@ def plot_stacking_contribution(
     ax.grid(True, axis="y", alpha=0.4)
     fig.tight_layout()
     return fig
+
+
+def plot_ev_weight_curve(
+    k: float | None = None,
+    center: float = 1.0,
+    ev_range: tuple[float, float] = (0.0, 3.0),
+) -> "matplotlib.figure.Figure":
+    """EV境界 sigmoid 重み曲線を描画する（§8 / KB shard-43）。
+
+    x軸 = EV値、y軸 = 重み 1/(1+exp(-k*(EV-center)))。EV=center（=1.0）前後で
+    どの程度の急峻さで重みが立ち上がるかを視覚化し、SIGMOID_K の調整根拠とする。
+
+    Parameters
+    ----------
+    k : sigmoid の鋭さ。None で TrainingWeights.SIGMOID_K を使用。
+    center : sigmoid の中心（EV の損益分岐点）。
+    ev_range : 描画する EV の範囲。
+    """
+    import matplotlib.pyplot as plt
+
+    from src.constants._bet_thresholds import TrainingWeights
+
+    if k is None:
+        k = TrainingWeights.SIGMOID_K
+
+    ev = np.linspace(ev_range[0], ev_range[1], 200)
+    # EV境界 sigmoid 重み 1/(1+exp(-k*(EV-center)))。training に依存しないよう
+    # （simulation→training を禁じる契約のため）formula をここで直接計算する。
+    z = np.clip(k * (ev - center), -500.0, 500.0)
+    weights = 1.0 / (1.0 + np.exp(-z))
+
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
+    ax.plot(ev, weights, color="darkorange", lw=2, label=f"k={k}")
+    ax.axvline(center, color="gray", lw=0.8, ls=":", label=f"EV={center}（損益分岐点）")
+    ax.axhline(0.5, color="gray", lw=0.6, ls=":")
+    ax.set_xlabel("期待値 EV")
+    ax.set_ylabel("サンプル重み")
+    ax.set_title("EV境界 sigmoid 重み曲線")
+    ax.set_ylim(0.0, 1.0)
+    ax.legend()
+    ax.grid(True, alpha=0.4)
+    fig.tight_layout()
+    return fig

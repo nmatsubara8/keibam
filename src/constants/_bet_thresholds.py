@@ -30,6 +30,17 @@ class RiskLimits:
     MIN_WIN_PROB: float = 0.01
     # 複勝の的中圏（n着以内）
     FUKUSHO_PLACES: int = 3
+    # 期待値の上限（これを超える超高倍率馬券は的中確率が極小のため除外。KB 7.1）
+    # 既定は無効（inf）。リスク集中を防ぎたい場合は DEFAULT_EV_MAX を指定する。
+    EV_MAX: float = float("inf")
+
+
+# 超高倍率馬券（三連単オッズ1000倍超など）を除外する EV 上限の推奨値（§7）。
+# ExpectedValueBetPolicy の ev_max 引数の既定候補として参照する。
+DEFAULT_EV_MAX: float = 50.0
+
+# 統計的に信頼できる最小ベット数（これ未満の閾値点は分散が大きく信頼性が低い。§8）。
+MIN_BETS_FOR_RELIABLE_STAT: int = 30
 
 
 @dataclasses.dataclass(frozen=True)
