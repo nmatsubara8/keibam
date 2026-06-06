@@ -44,6 +44,14 @@ class HistoricalOddsProvider(AbstractOddsProvider):
         self._tansho_odds_by_race = tansho_odds_by_race
         self._takeout = takeout
 
+    @classmethod
+    def from_score_table(cls, table, umaban_col: str, odds_col: str, takeout: float = 0.2) -> "HistoricalOddsProvider":
+        """race_id を index に持つテーブルから {race_id: {馬番: 単勝オッズ}} を構築する。"""
+        odds_by_race: dict = {}
+        for race_id, race_df in table.groupby(level=0):
+            odds_by_race[race_id] = dict(zip(race_df[umaban_col], race_df[odds_col].astype(float)))
+        return cls(odds_by_race, takeout=takeout)
+
     def _market_win_probs(self, race_id) -> dict[int, float]:
         """単勝オッズの逆数を控除率で正規化した市場勝率。"""
         odds_map = self._tansho_odds_by_race[race_id]

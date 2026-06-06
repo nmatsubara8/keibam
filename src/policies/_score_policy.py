@@ -8,6 +8,9 @@ from src.constants._results_cols import ResultsCols
 
 # const
 _SCORE = "score"
+# 期待値計算で用いる列名（ExpectedValueBetPolicy / OddsProvider と整合）
+PROB = "prob"
+CURRENT_ODDS = "current_odds"
 
 
 # common funcs
@@ -97,3 +100,20 @@ class RelativeProbaScorePolicy(AbstractScorePolicy):
         # レース内でスコアを相対確率化
         score_table[_SCORE] = _apply_scaler(score_table[_SCORE], _scaler_relative_proba)
         return score_table
+
+
+class ExpectedValueScorePolicy(AbstractScorePolicy):
+    """期待値ベース馬券選定（ExpectedValueBetPolicy）向けのテーブルを作る。
+
+    較正済みモデルの勝率と単勝オッズを保持した DataFrame を返す。
+    列: [馬番, prob(較正勝率), current_odds(単勝オッズ)]、index は race_id。
+    既存のスコア系ポリシーと異なり「スコア」ではなく確率とオッズを供給する。
+    """
+
+    @staticmethod
+    def calc(model, X: pd.DataFrame) -> pd.DataFrame:
+        prob = model.predict_proba(X.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1]
+        table = X[[ResultsCols.UMABAN]].copy()
+        table[PROB] = prob
+        table[CURRENT_ODDS] = X[ResultsCols.TANSHO_ODDS].astype(float)
+        return table
