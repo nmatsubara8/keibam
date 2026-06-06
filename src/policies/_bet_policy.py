@@ -37,111 +37,85 @@ class AbstractBetPolicy(metaclass=ABCMeta):
         pass
 
 
+def _threshold_umaban_judge(score_table: pd.DataFrame, threshold: float, key: str, min_horses: int = 1) -> dict:
+    """score >= threshold の馬を馬番リスト化し {race_id: {key: [馬番...]}} を返す共通処理。
+
+    min_horses >= 2 のとき、頭数が min_horses 未満のレースを除外する（BOX 馬券で
+    組合せが成立しないレースを落とす）。min_horses <= 1 のときはフィルタしない
+    （単勝・複勝。各グループは必ず 1 頭以上のため挙動は従来と同一）。
+    """
+    filtered_table = score_table[score_table["score"] >= threshold]
+    bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
+    if min_horses > 1:
+        bet_df = bet_df[bet_df[ResultsCols.UMABAN].apply(len) >= min_horses]
+    return bet_df.rename(columns={ResultsCols.UMABAN: key}).T.to_dict()
+
+
 class BetPolicyTansho:
-    """
-    thresholdを超えた馬に単勝で賭ける戦略。
-    """
+    """thresholdを超えた馬に単勝で賭ける戦略。"""
 
     @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "tansho"}).T.to_dict()
-        # print(f"bet_dict:{bet_dict}")
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "tansho")
 
 
 class BetPolicyFukusho:
-    """
-    thresholdを超えた馬に複勝で賭ける戦略。
-    """
+    """thresholdを超えた馬に複勝で賭ける戦略。"""
 
     @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "fukusho"}).T.to_dict()
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "fukusho")
 
 
 class BetPolicyWakurenBox:
-    """
-    thresholdを超えた馬の枠に複勝で賭ける戦略。
-    """
+    """thresholdを超えた馬の枠に枠連BOXで賭ける戦略（wakuban_flag を併用）。"""
 
     @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
         filtered_table = score_table[(score_table["score"] >= threshold) & (score_table["wakuban_flag"] == 1)]
-        # filtered_table = score_table[score_table["score"] >= threshold]
         bet_df = filtered_table.groupby(level=0)[ResultsCols.WAKUBAN].apply(list).to_frame()
         bet_df = bet_df[bet_df[ResultsCols.WAKUBAN].apply(len) >= 2]
-        bet_dict = bet_df.rename(columns={ResultsCols.WAKUBAN: "wakuren"}).T.to_dict()
-        return bet_dict
+        return bet_df.rename(columns={ResultsCols.WAKUBAN: "wakuren"}).T.to_dict()
 
 
 class BetPolicyUmarenBox:
-    """
-    thresholdを超えた馬に馬連BOXで賭ける戦略。
-    """
+    """thresholdを超えた馬に馬連BOXで賭ける戦略。"""
 
+    @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_df = bet_df[bet_df[ResultsCols.UMABAN].apply(len) >= 2]
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "umaren"}).T.to_dict()
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "umaren", min_horses=2)
 
 
 class BetPolicyUmatanBox:
-    """
-    thresholdを超えた馬に馬単BOXで賭ける戦略。
-    """
+    """thresholdを超えた馬に馬単BOXで賭ける戦略。"""
 
+    @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_df = bet_df[bet_df[ResultsCols.UMABAN].apply(len) >= 2]
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "umatan"}).T.to_dict()
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "umatan", min_horses=2)
 
 
 class BetPolicyWideBox:
-    """
-    thresholdを超えた馬にワイドBOXで賭ける戦略。
-    """
+    """thresholdを超えた馬にワイドBOXで賭ける戦略。"""
 
+    @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_df = bet_df[bet_df[ResultsCols.UMABAN].apply(len) >= 2]
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "wide"}).T.to_dict()
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "wide", min_horses=2)
 
 
 class BetPolicySanrenpukuBox:
-    """
-    thresholdを超えた馬に三連複BOXで賭ける戦略。
-    """
+    """thresholdを超えた馬に三連複BOXで賭ける戦略。"""
 
+    @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_df = bet_df[bet_df[ResultsCols.UMABAN].apply(len) >= 3]
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "sanrenpuku"}).T.to_dict()
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "sanrenpuku", min_horses=3)
 
 
 class BetPolicySanrentanBox:
-    """
-    thresholdを超えた馬に三連単BOXで賭ける戦略。
-    """
+    """thresholdを超えた馬に三連単BOXで賭ける戦略。"""
 
+    @staticmethod
     def judge(score_table: pd.DataFrame, threshold: float) -> dict:
-        filtered_table = score_table[score_table["score"] >= threshold]
-        bet_df = filtered_table.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
-        bet_df = bet_df[bet_df[ResultsCols.UMABAN].apply(len) >= 3]
-        bet_dict = bet_df.rename(columns={ResultsCols.UMABAN: "sanrentan"}).T.to_dict()
-        return bet_dict
+        return _threshold_umaban_judge(score_table, threshold, "sanrentan", min_horses=3)
 
 
 class BetPolicyUmatanNagashi:

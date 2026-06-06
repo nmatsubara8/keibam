@@ -234,24 +234,22 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
 
 
 ################################# Done ####################################
-def scrape_html_race(self, ref_id, driver, waiting_time):
+def scrape_html(self, ref_id, driver, waiting_time):
+    """from_location + ref_id の静的 HTML を取得する（race/horse/ped 共通）。
+
+    レース結果・馬成績・血統ページは JS 描画不要のため urlopen で直接取得する。
+    process_pkl_file に process_function として渡される。
+    """
     url = str(self.from_location) + str(ref_id)
     html = urlopen(url).read()
     return html
 
 
-################################# Done ####################################
-def scrape_html_horse(self, ref_id, driver, waiting_time):
-    url = str(self.from_location) + str(ref_id)
-    html = urlopen(url).read()
-    return html
-
-
-################################# Done ####################################
-def scrape_html_ped(self, ref_id, driver, waiting_time):
-    url = str(self.from_location) + str(ref_id)
-    html = urlopen(url).read()
-    return html
+# race/horse/ped は同一実装。後方互換のため import 可能な別名として公開する
+# （url_loader.py が名前で import し process_function として渡すため）。
+scrape_html_race = scrape_html
+scrape_html_horse = scrape_html
+scrape_html_ped = scrape_html
 
 
 ################################# Done ####################################

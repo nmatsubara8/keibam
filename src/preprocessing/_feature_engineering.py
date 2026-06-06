@@ -66,82 +66,55 @@ class FeatureEngineering:
         self.__data.drop("time", axis=1, inplace=True)
         return self
 
-    def dumminize_race_type(self):
+    def _dummify(self, col, categories, prefix=None, extra_drops=()):
+        """カテゴリ列を One-Hot 化する共通処理。
+
+        col を categories で Categorical 化 → get_dummies → 連結 → col と
+        extra_drops を drop する。dumminize_* 各メソッドはこのヘルパーに委譲する。
+
+        Parameters
+        ----------
+        col : ダミー化する列名。
+        categories : pd.Categorical に渡すカテゴリ（順序固定で列を安定化）。
+        prefix : get_dummies の prefix（None なら f"{col}_"）。
+        extra_drops : col 以外に追加で drop する列名。
         """
-        race_typeカラムをダミー変数化する
-        """
-        self.__data["race_type"] = pd.Categorical(self.__data["race_type"], list(Master.RACE_TYPE_DICT.values()))
-        temp_data = pd.get_dummies(self.__data["race_type"], prefix="race_type_")
+        prefix = prefix if prefix is not None else f"{col}_"
+        self.__data[col] = pd.Categorical(self.__data[col], list(categories))
+        temp_data = pd.get_dummies(self.__data[col], prefix=prefix)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("race_type", axis=1, inplace=True)
+        self.__data.drop([col, *extra_drops], axis=1, inplace=True)
         return self
+
+    def dumminize_race_type(self):
+        """race_typeカラムをダミー変数化する"""
+        return self._dummify("race_type", Master.RACE_TYPE_DICT.values(), prefix="race_type_")
 
     def dumminize_weather(self):
-        """
-        weatherカラムをダミー変数化する
-        """
-        self.__data["weather"] = pd.Categorical(self.__data["weather"], Master.WEATHER_LIST)
-        temp_data = pd.get_dummies(self.__data["weather"], prefix="weather_")
-        self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("weather", axis=1, inplace=True)
-        return self
+        """weatherカラムをダミー変数化する"""
+        return self._dummify("weather", Master.WEATHER_LIST, prefix="weather_")
 
     def dumminize_ground_state1(self):
-        """
-        ground_stateカラムをダミー変数化する
-        """
-        self.__data["ground_state1"] = pd.Categorical(self.__data["ground_state1"], Master.GROUND_STATE_LIST)
-        temp_data = pd.get_dummies(self.__data["ground_state1"], prefix="ground_state1_")
-        self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("ground_state1", axis=1, inplace=True)
-
-        return self
+        """ground_state1カラムをダミー変数化する"""
+        return self._dummify("ground_state1", Master.GROUND_STATE_LIST, prefix="ground_state1_")
 
     def dumminize_ground_state2(self):
-        """
-        ground_stateカラムをダミー変数化する
-        """
-
-        self.__data["ground_state2"] = pd.Categorical(self.__data["ground_state2"], Master.GROUND_STATE_LIST)
-        temp_data = pd.get_dummies(self.__data["ground_state2"], prefix="ground_state2_")
-        self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("ground_state2", axis=1, inplace=True)
-        self.__data.drop("race_condition", axis=1, inplace=True)
-
-        return self
+        """ground_state2カラムをダミー変数化する（race_condition も drop）"""
+        return self._dummify(
+            "ground_state2", Master.GROUND_STATE_LIST, prefix="ground_state2_", extra_drops=["race_condition"]
+        )
 
     def dumminize_sex(self):
-        """
-        sexカラムをダミー変数化する
-        """
-        self.__data["性"] = pd.Categorical(self.__data["性"], Master.SEX_LIST)
-        temp_data = pd.get_dummies(self.__data["性"], prefix="性_")
-        self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("性", axis=1, inplace=True)
-
-        return self
+        """sex(性)カラムをダミー変数化する"""
+        return self._dummify("性", Master.SEX_LIST, prefix="性_")
 
     def dumminize_around(self):
-        """
-        aroundカラムをダミー変数化する
-        """
-
-        self.__data["around"] = pd.Categorical(self.__data["around"], Master.AROUND_LIST)
-        temp_data = pd.get_dummies(self.__data["around"], prefix="around_")
-        self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("around", axis=1, inplace=True)
-
-        return self
+        """aroundカラムをダミー変数化する"""
+        return self._dummify("around", Master.AROUND_LIST, prefix="around_")
 
     def dumminize_race_class(self):
-        """
-        race_classカラムをダミー変数化する
-        """
-        self.__data["race_class"] = pd.Categorical(self.__data["race_class"], Master.RACE_CLASS_LIST)
-        temp_data = pd.get_dummies(self.__data["race_class"], prefix="race_class_")
-        self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("race_class", axis=1, inplace=True)
-        return self
+        """race_classカラムをダミー変数化する"""
+        return self._dummify("race_class", Master.RACE_CLASS_LIST, prefix="race_class_")
 
     def __label_encode(self, target_col):
         """
@@ -172,55 +145,39 @@ class FeatureEngineering:
         else:  # まだ1行も登録されていない場合の処理
             new_target["encoded_id"] = [i for i in range(len(new_target))]
 
-        # インデックスをリセット
+        # インデックスをリセットし、元のマスタと繋げる
         new_target.reset_index(drop=True, inplace=True)
         new_target_master = pd.concat([target_master, new_target]).set_index(target_col)["encoded_id"]
-        # new_target_master = pd.concat([target_master, new_target], axis=0, ignore_index=True)
-        ########################################
-
-        #########################################
-        #### 元のマスタと繋げる
-        new_target_master = pd.concat([target_master, new_target]).set_index(target_col)["encoded_id"]
-        ##### マスタファイルを更新
+        # マスタファイルを更新
         new_target_master.to_csv(csv_path)
-        ##### ラベルエンコーディング実行
+        # ラベルエンコーディング実行
         self.__data[target_col] = pd.Categorical(self.__data[target_col].map(new_target_master))
         return self
 
+    def encode(self, id_type):
+        """指定 ID 列（horse_id/jockey_id/trainer_id/owner_id/breeder_id）を
+        ラベルエンコードして Categorical 型に変換する共通メソッド。"""
+        return self.__label_encode(id_type)
+
     def encode_horse_id(self):
-        """
-        horse_idをラベルエンコーディングして、Categorical型に変換する。
-        """
-        self.__label_encode("horse_id")
-        return self
+        """horse_idをラベルエンコーディングして、Categorical型に変換する。"""
+        return self.encode("horse_id")
 
     def encode_jockey_id(self):
-        """
-        jockey_idをラベルエンコーディングして、Categorical型に変換する。
-        """
-        self.__label_encode("jockey_id")
-        return self
+        """jockey_idをラベルエンコーディングして、Categorical型に変換する。"""
+        return self.encode("jockey_id")
 
     def encode_trainer_id(self):
-        """
-        trainer_idをラベルエンコーディングして、Categorical型に変換する。
-        """
-        self.__label_encode("trainer_id")
-        return self
+        """trainer_idをラベルエンコーディングして、Categorical型に変換する。"""
+        return self.encode("trainer_id")
 
     def encode_owner_id(self):
-        """
-        owner_idをラベルエンコーディングして、Categorical型に変換する。
-        """
-        self.__label_encode("owner_id")
-        return self
+        """owner_idをラベルエンコーディングして、Categorical型に変換する。"""
+        return self.encode("owner_id")
 
     def encode_breeder_id(self):
-        """
-        breeder_idをラベルエンコーディングして、Categorical型に変換する。
-        """
-        self.__label_encode("breeder_id")
-        return self
+        """breeder_idをラベルエンコーディングして、Categorical型に変換する。"""
+        return self.encode("breeder_id")
 
     def add_interaction_features(self):
         """§2b: 交互作用特徴量（frame_x_course / sex_x_month_sin/cos / distance_x_around）を追加。
