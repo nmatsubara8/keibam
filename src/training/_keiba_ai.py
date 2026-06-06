@@ -73,19 +73,27 @@ class KeibaAI:
         base_models = [lgb_base]
         base_sample_weights = [ev_weights]
 
-        # base②: NN（pos_weight でクラス不均衡補正）
-        try:
-            from ._nn_win_model import NnWinModel
+        # base②: NN（Entity Embedding）。専用 NN ストリーム（PreparedFeatures 経由で
+        # 標準化済み）が利用可能な場合**のみ**追加する。
+        # gbdt ストリーム（One-Hot/カテゴリ混在・§2g/§2i の NaN を含む生特徴量）を
+        # NN にそのまま渡すと、Entity Embedding が効かず数値スケールも未調整で学習が
+        # 破綻するため、2系統が揃うまで NN base は無効化する（LightGBM 単独で動作）。
+        # NOTE: NN へ X_nn_base_train を実際に供給するには StackingModel が base ごとに
+        #       異なる入力を受け取れるよう拡張する必要がある（2系統スタッキング完成は後続）。
+        if self.__datasets.X_nn_base_train is not None:
+            try:
+                from ._nn_win_model import NnWinModel
 
-            base_models.append(
-                NnWinModel(
-                    n_numeric=self.__datasets.X_base_train.shape[1],
-                    pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                nn_stream = self.__datasets.X_nn_base_train
+                base_models.append(
+                    NnWinModel(
+                        n_numeric=nn_stream.shape[1],
+                        pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                    )
                 )
-            )
-            base_sample_weights.append(None)  # NN は pos_weight で補正、EV 重みは未適用
-        except Exception:
-            pass  # torch 未インストールの場合は LightGBM のみで動作
+                base_sample_weights.append(None)  # NN は pos_weight で補正、EV 重みは未適用
+            except Exception:
+                pass  # torch 未インストールの場合は LightGBM のみで動作
 
         stacking = StackingModel(base_models, LogisticRegression(max_iter=1000, random_state=100))
         stacking.fit(
