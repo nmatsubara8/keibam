@@ -1,11 +1,12 @@
 """成績・設定ページ。
 
-回収率推移 / AUC 推移 / 特徴量重要度 / スタッキング寄与 /
-投票履歴 / モデルバージョン管理 / config.yaml 編集 を提供する。
+回収率推移 / AUC 推移 / 特徴量重要度 / スタッキング寄与 / 較正プロット /
+EV 閾値スイープ / 投票履歴 / モデルバージョン管理 / config.yaml 編集 を提供する。
 """
 
 import datetime as dt
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -17,11 +18,36 @@ from app._data_loader import find_model_paths
 from app._data_loader import list_model_versions
 from app._data_loader import load_model_by_version
 from app._data_loader import load_operation_config
+from app._model_eval import compute_calib_curves
+from app._model_eval import compute_ev_sweep
+from app._model_eval import compute_stacking_auc
+from app._model_eval import load_featured_data
+from src.simulation._plot import best_ev_threshold
+from src.simulation._plot import plot_calibration
+from src.simulation._plot import plot_ev_threshold_sweep
+from src.simulation._plot import plot_stacking_contribution
 
 st.set_page_config(page_title="成績・設定 — KeibaAM", page_icon="🏆", layout="wide")
 st.title("🏆 成績・モデル管理・設定")
 
 tabs = st.tabs(["📊 成績サマリ", "🔬 モデル管理", "📋 投票履歴", "⚙️ 設定"])
+
+# ──────────────────────────────────────────────────────────────────
+# 共通: featured_data & モデル（遅延読込）
+# ──────────────────────────────────────────────────────────────────
+
+@st.cache_data(show_spinner=False)
+def _load_featured():
+    return load_featured_data()
+
+
+@st.cache_resource(show_spinner=False)
+def _load_model(version: str):
+    try:
+        return load_model_by_version(version)
+    except Exception:
+        return None
+
 
 # ──────────────────────────────────────────────────────────────────
 # Tab 1: 成績サマリ
@@ -48,9 +74,50 @@ with tabs[0]:
         if "trained_at" in version_df.columns and "auc_test" in version_df.columns:
             chart_data = version_df[["trained_at", "auc_test", "version"]].set_index("trained_at")
             st.line_chart(chart_data["auc_test"], use_container_width=True)
-            st.dataframe(version_df[["version", "trained_at", "auc_test", "n_races", "use_stacking"]], hide_index=True)
+            st.dataframe(
+                version_df[["version", "trained_at", "auc_test", "n_races", "use_stacking"]],
+                hide_index=True,
+            )
     else:
         st.info("バージョン履歴がありません。")
+
+    # ── EV 閾値スイープ ────────────────────────────────────────────
+    st.subheader("EV 閾値スイープ（単勝バックテスト）")
+    st.caption("テストセットで閾値ごとの回収率・シャープ・賭け回数を計算します。")
+
+    versions = list_model_versions()
+    version_options = [v["version"] for v in versions] if versions else []
+
+    if not version_options:
+        st.info("バージョンが存在しません。")
+    else:
+        sel_ver_sweep = st.selectbox("バージョン（スイープ用）", version_options, key="sweep_version")
+        featured = _load_featured()
+
+        if featured is None:
+            st.info(f"`{__import__('src.constants._local_paths', fromlist=['LocalPaths']).LocalPaths.FEATURED_DATA_PATH}` が見つかりません。")
+        else:
+            if st.button("スイープ実行", key="run_sweep"):
+                with st.spinner("計算中…"):
+                    mdl = _load_model(sel_ver_sweep)
+                    if mdl is None:
+                        st.error("モデルを読み込めませんでした。")
+                    else:
+                        eff = getattr(mdl, "effective_model", mdl)
+                        sweep_df = compute_ev_sweep(eff, featured)
+                        st.session_state["sweep_df"] = sweep_df
+
+            if "sweep_df" in st.session_state:
+                sdf = st.session_state["sweep_df"]
+                valid = sdf.dropna(subset=["return_rate"])
+                if valid.empty:
+                    st.warning("有効な賭けが見つかりませんでした。EV 閾値を下げてください。")
+                else:
+                    opt_th = best_ev_threshold(valid, min_bets=5)
+                    st.caption(f"推奨閾値（回収率最大 / n_bets≥5）: **{opt_th:.2f}**")
+                    fig = plot_ev_threshold_sweep(sdf, optimal_threshold=opt_th)
+                    st.pyplot(fig, use_container_width=True)
+                    st.dataframe(sdf.round(4), hide_index=True, use_container_width=True)
 
 # ──────────────────────────────────────────────────────────────────
 # Tab 2: モデル管理
@@ -82,6 +149,59 @@ with tabs[1]:
     else:
         st.info("バージョンが存在しません。")
 
+    # ── 較正プロット ──────────────────────────────────────────────
+    st.subheader("較正プロット（Reliability Diagram）")
+    st.caption("較正ホールドアウトでの確率較正前後を比較します。スタッキング+較正済みモデルが必要です。")
+
+    if version_options:
+        sel_ver_calib = st.selectbox("バージョン（較正用）", version_options, key="calib_version")
+        featured = _load_featured()
+
+        if featured is None:
+            st.info("featured_data が見つかりません。")
+        elif st.button("較正プロット表示", key="show_calib"):
+            with st.spinner("計算中…"):
+                mdl = _load_model(sel_ver_calib)
+                if mdl is None:
+                    st.error("モデルを読み込めませんでした。")
+                else:
+                    data = compute_calib_curves(mdl, featured)
+                    if data is None:
+                        st.info("較正済みモデルが見つかりません（スタッキング+Isotonic 較正が必要です）。")
+                    else:
+                        fig = plot_calibration(data["y_true"], data["prob_pre"], data["prob_post"])
+                        st.pyplot(fig, use_container_width=True)
+
+    # ── スタッキング寄与 ──────────────────────────────────────────
+    st.subheader("スタッキング寄与（AUC 比較）")
+    st.caption("テストセットで各 base モデルと meta スタッキングの AUC を比較します。")
+
+    if version_options:
+        sel_ver_stack = st.selectbox("バージョン（スタッキング用）", version_options, key="stack_version")
+        featured = _load_featured()
+
+        if featured is None:
+            st.info("featured_data が見つかりません。")
+        elif st.button("スタッキング寄与表示", key="show_stack"):
+            with st.spinner("計算中…"):
+                mdl = _load_model(sel_ver_stack)
+                if mdl is None:
+                    st.error("モデルを読み込めませんでした。")
+                else:
+                    data = compute_stacking_auc(mdl, featured)
+                    if data is None:
+                        st.info("スタッキングモデルが見つかりません。")
+                    else:
+                        fig = plot_stacking_contribution(
+                            data["y_true"],
+                            data["base_probs"],
+                            data["meta_probs"],
+                            base_names=data["base_names"],
+                        )
+                        st.pyplot(fig, use_container_width=True)
+    else:
+        st.info("バージョンが存在しません。")
+
 # ──────────────────────────────────────────────────────────────────
 # Tab 3: 投票履歴
 # ──────────────────────────────────────────────────────────────────
@@ -93,7 +213,6 @@ with tabs[2]:
     if hist_df.empty:
         st.info("投票履歴がありません。")
     else:
-        # フィルタ
         bet_types_in_hist = hist_df["bet_type"].unique().tolist() if "bet_type" in hist_df.columns else []
         if bet_types_in_hist:
             selected_types = st.multiselect("馬券種フィルタ", bet_types_in_hist, default=bet_types_in_hist)
