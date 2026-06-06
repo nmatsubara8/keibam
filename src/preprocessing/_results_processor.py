@@ -76,7 +76,7 @@ class ResultsProcessor(AbstractDataProcessor):
         df = raw.copy()[
             [
                 "race_id",
-                # Cols.RANK, # 着順
+                Cols.RANK,  # 着順 (actual finishing position; used for jockey/trainer/sire stats)
                 Cols.WAKUBAN,  # 枠番
                 Cols.UMABAN,  # 馬番
                 # Cols.HORSE_NAME, # 馬名

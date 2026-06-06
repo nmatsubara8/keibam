@@ -218,6 +218,63 @@ class FeatureEngineering:
         self.__label_encode("breeder_id")
         return self
 
+    def add_interaction_features(self):
+        """§2b: 交互作用特徴量（frame_x_course / sex_x_month_sin/cos / distance_x_around）を追加。
+
+        dummify 前に呼ぶこと（race_type / around / 性 を使用）。
+        """
+        from src.preprocessing._interaction_features import add_interaction_features as _add
+
+        self.__data = _add(self.__data)
+        return self
+
+    def add_race_level_zscore(self):
+        """§2g: レース内 Z-score 標準化。
+
+        RACE_LEVEL_ZSCORE_COLS_G1（現レース特徴量）に加え、
+        多窓集計列（_{stat}_{n}R, _{stat}_allR 形式）と §2c/2d/2e/2j の集計列を動的に追加。
+        各列に `_z` サフィックスを付けた新列を追加し、元列は保持する。
+        """
+        from src.constants._feature_cols import (
+            AGG_STATS,
+            COURSE_CONDITION_FEATURE_COLS,
+            JOCKEY_TRAINER_FEATURE_COLS,
+            N_RACES_LIST,
+            PACE_FEATURE_COLS,
+            RACE_LEVEL_ZSCORE_COLS,
+            SIRE_FEATURE_COLS,
+        )
+
+        # Start with G1 static list
+        zscore_cols = [c for c in RACE_LEVEL_ZSCORE_COLS if c in self.__data.columns]
+
+        # Dynamically detect multi-window agg columns (e.g. 着順_mean_5R, 着順_std_allR)
+        for n in N_RACES_LIST:
+            for stat in AGG_STATS:
+                for col in self.__data.columns:
+                    if col.endswith(f"_{stat}_{n}R") or col.endswith(f"_{stat}_allR"):
+                        if col not in zscore_cols:
+                            zscore_cols.append(col)
+
+        # §2c/2d/2e/2j named feature columns
+        named_feature_cols = (
+            JOCKEY_TRAINER_FEATURE_COLS
+            + PACE_FEATURE_COLS
+            + COURSE_CONDITION_FEATURE_COLS
+            + SIRE_FEATURE_COLS
+        )
+        for col in named_feature_cols:
+            if col in self.__data.columns and col not in zscore_cols:
+                zscore_cols.append(col)
+
+        # Apply within-race (race_id index level 0) Z-score normalisation
+        for col in zscore_cols:
+            self.__data[f"{col}_z"] = self.__data.groupby(level=0)[col].transform(
+                lambda x: (x - x.mean()) / (x.std() + 1e-8)
+            )
+
+        return self
+
     def build(self) -> "PreparedFeatures":
         """全特徴量エンジニアリング後、2系統 DataFrame を生成して PreparedFeatures DTO で返す。
 

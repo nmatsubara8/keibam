@@ -70,6 +70,8 @@ def _ingest(args: argparse.Namespace) -> None:
                 FeatureEngineering(merger)
                 .add_interval()
                 .add_agedays()
+                .add_interaction_features()  # §2b: before dummification
+                .add_race_level_zscore()     # §2g: after all aggregate features
                 .dumminize_kaisai()
             )
             return fe.featured_data
