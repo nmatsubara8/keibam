@@ -88,7 +88,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--bet-type", dest="bet_types", action="append", default=None, help="馬券種（既定: tansho。複数可）"
     )
     parser.add_argument("--path", default=LocalPaths.RAW_ODDS_SNAPSHOT_PATH, help="集約 pickle の保存先")
-    parser.add_argument("--waiting-time", type=int, default=10, help="描画待ち秒数")
+    # --waiting-time は Playwright 移行で不要（wait_for_selector で描画完了を判定）。
+    # 既存 cron コマンド互換のため引数は受け付けるが内部では使用しない。
+    parser.add_argument("--waiting-time", type=int, default=10, help="（廃止予定・無視される）描画待ち秒数")
     return parser.parse_args(argv)
 
 
@@ -96,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     post_time = dt.datetime.fromisoformat(args.post_time)
     bet_types = args.bet_types or [BetType.TANSHO]
-    scraper = OddsSnapshotScraper(waiting_time=args.waiting_time)
+    scraper = OddsSnapshotScraper()
     merged = run(args.race_ids, post_time, bet_types, scraper, path=args.path)
     print(f"phase={args.phase} captured races={len(args.race_ids)} total_snapshots={len(merged)}")
 

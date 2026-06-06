@@ -2,9 +2,9 @@
 
 設計方針（副作用の隔離）:
 - 純粋ロジック（DTO・`minutes_to_post` 算出・フェーズ分類・重複排除・URL 構築・
-  パース結果からの DTO 生成）は selenium / bs4 に依存せず単体テスト可能。
+  パース結果からの DTO 生成）は Playwright / bs4 に依存せず単体テスト可能。
 - I/O（ブラウザ操作・HTML 取得・bs4 パース・ファイル永続化）は本モジュール内の
-  アダプタに閉じ込め、selenium / bs4 / pandas は遅延 import する。
+  アダプタに閉じ込め、HTML 取得は AbstractScraper（Playwright）を DI、bs4 は遅延 import。
 
 `OddsSnapshot` は frozen DTO。過去の連オッズは遡及取得不可のため、ここで収集・蓄積した
 スナップショット系列が Layer2（締切確定オッズ予測）の学習データになる。
@@ -162,33 +162,42 @@ def parse_win_odds_html(html: str) -> list[tuple[tuple[int, ...], float]]:
 
 
 class OddsSnapshotScraper:
-    """段階オッズ取得アダプタ（selenium を遅延 import）。
+    """段階オッズ取得アダプタ（Playwright `AbstractScraper` を DI）。
 
-    driver は DI（テスト時はスタブ driver を注入）。HTML 取得とフェーズ別 DTO 化を担い、
+    scraper は DI（テスト時はスタブ scraper を注入）。HTML 取得とフェーズ別 DTO 化を担い、
     永続化は呼び出し側（odds_scheduler）に委譲する（単一責務）。
+
+    Parameters
+    ----------
+    scraper : AbstractScraper 実装。None の場合は PlaywrightScraper を遅延生成する。
+    odds_table_selector : JS 描画完了を待つ CSS セレクタ（既定はオッズテーブル）。
     """
 
-    def __init__(self, driver=None, waiting_time: int = 10) -> None:
-        self._driver = driver
-        self._waiting_time = waiting_time
+    def __init__(self, scraper=None, odds_table_selector: str = ".RaceOdds_HorseList, .Odds") -> None:
+        self._scraper = scraper
+        self._odds_table_selector = odds_table_selector
 
-    def _ensure_driver(self):
-        if self._driver is None:
-            from src.preparing.prepare_chrome_driver import prepare_chrome_driver
+    def _ensure_scraper(self):
+        if self._scraper is None:
+            from src.preparing._scraper import PlaywrightScraper
 
-            self._driver = prepare_chrome_driver()
-        return self._driver
+            self._scraper = PlaywrightScraper()
+        return self._scraper
 
     def fetch_html(self, race_id: str, bet_type: str) -> str:
-        """JS 描画されたオッズページの HTML を取得する。"""
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.webdriver.support.ui import WebDriverWait
-
-        driver = self._ensure_driver()
+        """JS 描画されたオッズページの HTML を取得する（Playwright 同期ブリッジ）。"""
+        scraper = self._ensure_scraper()
         url = build_odds_url(race_id, bet_type)
-        driver.get(url)
-        WebDriverWait(driver, self._waiting_time).until(EC.presence_of_all_elements_located)
-        return driver.page_source
+        return scraper.fetch_sync(url, wait_selector=self._odds_table_selector)
+
+    async def fetch_html_async(self, race_id: str, bet_type: str) -> str:
+        """JS 描画されたオッズページの HTML を取得する（async 直接版）。
+
+        odds_scheduler 等の async エントリから asyncio.gather で並列取得する用途。
+        """
+        scraper = self._ensure_scraper()
+        url = build_odds_url(race_id, bet_type)
+        return await scraper.fetch(url, wait_selector=self._odds_table_selector)
 
     def capture(
         self, race_id: str, bet_type: str, post_time: dt.datetime, captured_at: dt.datetime | None = None

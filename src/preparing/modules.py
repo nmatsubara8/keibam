@@ -71,12 +71,14 @@ def process_pkl_file(self, process_function):
     from tqdm import tqdm
     pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
 
-    # ドライバーのインスタンス化
-    from src.preparing.prepare_chrome_driver import prepare_chrome_driver
-    driver = prepare_chrome_driver()
-    # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+    # スクレイパーのインスタンス化（Playwright 全面移行）。
+    # process_function には従来の driver 引数位置で AbstractScraper を渡す
+    # （同期パイプライン互換のため fetch_sync 境界を内部で使う）。
+    from src.preparing._scraper import PlaywrightScraper
+    driver = PlaywrightScraper()
+    # Playwright は wait_for_selector / domcontentloaded で描画完了を判定するため
+    # implicitly_wait 相当は不要。waiting_time は後方互換のためのプレースホルダ。
     waiting_time = 30
-    driver.implicitly_wait(waiting_time)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
@@ -125,9 +127,8 @@ def process_pkl_file(self, process_function):
         storing_process(self)
 
     print(f"# of processed files: {processed_files}")
-    # ドライバーのクローズ
-    driver.close()
-    driver.quit()
+    # Playwright スクレイパーは fetch ごとにライフサイクルを完結するため明示的な
+    # close/quit は不要（selenium の driver.close()/quit() は廃止）。
 
 
 def get_kaisai_date_list(self, ref_id, driver, waiting_time):
@@ -164,13 +165,15 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
 
 
 ################################# Done ####################################
-def get_soup(url, driver, waiting_time):
-    from selenium.webdriver.support import expected_conditions as EC
-    from selenium.webdriver.support.ui import WebDriverWait
-    driver.get(url)
-    wait = WebDriverWait(driver, waiting_time)
-    wait.until(EC.presence_of_all_elements_located)
-    html = urlopen(url)
+def get_soup(url, driver, waiting_time=None):
+    """URL の HTML を取得して BeautifulSoup を返す（Playwright 同期ブリッジ）。
+
+    driver は AbstractScraper（PlaywrightScraper）。JS 描画ページでも
+    domcontentloaded まで待って HTML を取得する。waiting_time は後方互換の未使用引数。
+    """
+    from bs4 import BeautifulSoup
+
+    html = driver.fetch_sync(url)
     soup = BeautifulSoup(html, "lxml")
     return soup
 
@@ -198,32 +201,30 @@ def get_raw_horse_id_list(self, ref_id, driver, waiting_time):
 
 
 ################################# Done ####################################
-def scrape_race_id_list(self, ref_id, driver, waiting_time):
-    from selenium.webdriver.common.by import By
-    # query = ["kaisai_date=" + str(ref_id)]
+def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
+    """開催日のレース一覧ページから race_id を抽出する（Playwright + bs4）。
+
+    driver は AbstractScraper。RaceList_Box が JS 描画されるまで待って HTML を取得し、
+    アンカーの href から race_id を正規表現で抜き出す（selenium の find_element を廃止）。
+    """
+    from bs4 import BeautifulSoup
+
     url = f"{self.from_location}?kaisai_date={ref_id}"
-    # print(f"url:{url}")
-    # df = pd.DataFrame()
     race_id_list = []
-    max_attempt = 5
+    df = pd.DataFrame({"race_id": []}, index=[])
     try:
-        driver.get(url)
-        for i in range(1, max_attempt):
-            try:
-                a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
-                break
-            except Exception as e:
-                # 取得できない場合は、リトライを実施
-                print(f"error:{e} retry:{i}/{max_attempt} waiting more {waiting_time} seconds")
+        # RaceList_Box の描画完了を待ってから HTML を取得
+        html = driver.fetch_sync(url, wait_selector=".RaceList_Box")
+        soup = BeautifulSoup(html, "lxml")
+        box = soup.find(class_="RaceList_Box")
+        a_list = box.find_all("a") if box is not None else []
         for a in a_list:
+            href = a.get("href", "")
             race_id = re.findall(
-                r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
+                r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", href
             )
             if len(race_id) > 0:
                 race_id_list.append(race_id[0])
-
-                # インデックスをhorse_idにする
-        # DataFrameを作成し、インデックスをref_idに設定する
         df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
     except Exception as e:
         print("Error at {}: {}".format(ref_id, e))

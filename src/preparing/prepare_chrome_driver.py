@@ -1,9 +1,26 @@
-def prepare_chrome_driver():
+"""スクレイパー生成ヘルパー。
+
+§4 Playwright 全面移行により、推奨は `prepare_scraper()`（Playwright）。
+`prepare_chrome_driver()` は selenium 依存の旧実装で**非推奨**。selenium は任意依存に
+降格したため、未インストール環境では呼び出し時に ImportError になる（import 時は安全）。
+"""
+
+
+def prepare_scraper(headless: bool = True):
+    """Playwright ベースの AbstractScraper を生成する（推奨）。
+
+    既存の同期パイプラインは `scraper.fetch_sync(url)` 境界経由で利用できる。
     """
-    Chromeのバージョンアップは頻繁に発生し、Webdriverとのバージョン不一致が多発するため、
-    ChromeDriverManagerを使用し、自動的にバージョンを一致させる。
-    selenium / webdriver-manager は呼び出し時に lazy import する（CI 環境等で未インストールの場合に
-    モジュール読込で失敗しないよう）。
+    from src.preparing._scraper import PlaywrightScraper
+
+    return PlaywrightScraper(headless=headless)
+
+
+def prepare_chrome_driver():
+    """[非推奨] selenium WebDriver を生成する旧実装。
+
+    Playwright 移行により新規コードでは `prepare_scraper()` を使うこと。
+    selenium / webdriver-manager は遅延 import（未インストールでもモジュール読込は壊れない）。
     """
     from selenium import webdriver
     from selenium.webdriver.chrome.options import Options

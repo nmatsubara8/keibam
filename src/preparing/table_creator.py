@@ -4,7 +4,6 @@ import re
 
 import pandas as pd
 from bs4 import BeautifulSoup
-from selenium.webdriver.common.by import By
 from tqdm import tqdm
 
 from src.constants._master import Master
@@ -105,6 +104,10 @@ class TableCreator(DataLoader):
         scheduled_raceに保管したhtmlをスクレイピング。
         dateはyyyy/mm/ddの形式。
         """
+        # selenium の By は本メソッド内のみで使用するため遅延 import
+        # （Playwright 全面移行で selenium を任意依存化したため、未インストールでも
+        #  table_creator モジュール自体の import は壊れないようにする）。
+        from selenium.webdriver.common.by import By  # noqa: F401
 
         race_html_list = self.get_file_list(self.from_local_location)
         # print("race_html_list", race_html_list)
