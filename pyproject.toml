@@ -87,4 +87,7 @@ files = [
     "src/portfolio",
     "src/operation",
     "src/simulation/_metrics.py",
+    "src/constants/_odds_phases.py",
+    "src/preparing/_odds_snapshot.py",
+    "src/preparing/odds_scheduler.py",
 ]

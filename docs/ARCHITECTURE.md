@@ -37,8 +37,21 @@ constants  →  preprocessing / preparing  →  policies  →  training  →  po
 
 ## 重い依存の隔離
 
-`torch`（`NnWinModel`）・`optuna`（`ModelWrapper`）等は遅延 import し、未導入環境でも他モジュールの
-import を壊さない。これにより純粋ドメイン層は軽量依存だけでテスト可能。
+`torch`（`NnWinModel`）・`optuna`（`ModelWrapper`/`DataSplitter`）・`selenium`/`bs4`
+（`_odds_snapshot` のアダプタ）等は遅延 import し、未導入環境でも他モジュールの import を
+壊さない。これにより純粋ドメイン層は軽量依存だけでテスト可能。
+
+## 段階オッズ取得（Layer2 学習データの蓄積）
+
+過去の連オッズは遡及取得不可のため、`OddsSnapshot`（frozen DTO）を「今から」収集・蓄積する。
+
+- 純粋層（`src/preparing/_odds_snapshot.py`）: `make_snapshot`/`snapshots_from_rows`/
+  `merge_snapshots`/`build_odds_url`/`compute_minutes_to_post` は selenium/bs4 非依存で単体テスト可能。
+- フェーズ定義（`src/constants/_odds_phases.py`）: 前日/数時間前/30分前/直前を `minutes_to_post`
+  から `classify_phase` で判定（ドメイン知識の一元化）。
+- I/O アダプタ（`OddsSnapshotScraper`）: selenium/bs4 を遅延 import。driver は DI（テストはスタブ注入）。
+- スケジューラ（`src/preparing/odds_scheduler.py`）: `--phase` で cron 起動、`merge_snapshots` で
+  集約 pickle へ冪等追記（再取得・リジューム時の二重計上を防止）。
 
 ## ADR（主要判断）
 
