@@ -8,6 +8,8 @@ data/**/*.pickle.bak
 data/*.pickle.bak
 data/**/*.csv
 data/**/**/*.bin
+data/**/*.pkl
+data/*.pkl
 models/**/*.pickle
 *.pickle
 .DS_Store
