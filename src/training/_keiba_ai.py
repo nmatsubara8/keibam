@@ -16,6 +16,7 @@ class KeibaAI:
         self.__datasets = datasets
         self.__model_wrapper = ModelWrapper()
         self._calibrated_model = None  # train_with_stacking 後に設定される
+        self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
 
     @property
     def datasets(self):

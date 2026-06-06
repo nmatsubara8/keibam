@@ -1,5 +1,6 @@
 import datetime
 import os
+from typing import Optional
 
 import dill
 
@@ -13,9 +14,17 @@ class KeibaAIFactory:
     """
 
     @staticmethod
-    def create(featured_data, test_size=0.3, valid_size=0.3) -> KeibaAI:
+    def create(featured_data, peds_processor=None, test_size=0.3, valid_size=0.3) -> KeibaAI:
+        """
+        peds_processor: 学習済み LabelEncoder を持つ PedsProcessor。
+                        渡すと KeibaAI に紐付けられ、dill.dump 時に自動同梱される。
+                        推論時は KeibaAIFactory.load() 後に ai.peds_processor を参照して
+                        PedsProcessor(filepath, encoders=ai.peds_processor.encoders_) で復元する。
+        """
         datasets = DataSplitter(featured_data, test_size, valid_size)
-        return KeibaAI(datasets)
+        ai = KeibaAI(datasets)
+        ai.peds_processor = peds_processor
+        return ai
 
     @staticmethod
     def save(keibaAI: KeibaAI, version_name: str) -> None:
