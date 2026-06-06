@@ -7,9 +7,28 @@ _DROP_FOR_TRAIN = ["rank", "date", ResultsCols.TANSHO_ODDS]
 
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size) -> None:
-        self.__featured_data = featured_data
+        # PreparedFeatures または plain DataFrame を受け付ける
+        from src.preprocessing._prepared_features import PreparedFeatures
+        if isinstance(featured_data, PreparedFeatures):
+            self.__featured_data = featured_data.gbdt
+            self.__nn_raw: pd.DataFrame | None = featured_data.nn
+        else:
+            self.__featured_data = featured_data
+            self.__nn_raw = None
+
+        # スタッキング用
         self.__base_train: pd.DataFrame | None = None
         self.__meta_train: pd.DataFrame | None = None
+
+        # NN ストリーム（PreparedFeatures が渡された場合のみ有効）
+        self.__nn_scaler = None
+        self.__nn_train: pd.DataFrame | None = None
+        self.__nn_test: pd.DataFrame | None = None
+        self.__nn_optuna_train: pd.DataFrame | None = None
+        self.__nn_valid: pd.DataFrame | None = None
+        self.__nn_base_train: pd.DataFrame | None = None
+        self.__nn_meta_train: pd.DataFrame | None = None
+
         self.train_valid_test_split(test_size, valid_size)
 
     def train_valid_test_split(self, test_size, valid_size):
@@ -41,6 +60,27 @@ class DataSplitter:
         self.__X_test = self.__test_data.drop(["rank", "date"], axis=1)
         self.__y_test = self.__test_data["rank"]
         print("len(self.__X_test):", len(self.__X_test))
+
+        # NN ストリーム: PreparedFeatures が渡された場合のみ実行
+        if self.__nn_raw is not None:
+            self.__nn_scaler = self.__make_nn_scaler()
+            train_ids = self.__train_data.index.unique()
+            test_ids = self.__test_data.index.unique()
+            optuna_ids = self.__train_data_optuna.index.unique()
+            valid_ids = self.__valid_data_optuna.index.unique()
+            # 訓練データのみで fit（リーク防止）
+            self.__nn_train = self.__nn_scaler.fit_transform(self.__nn_raw.loc[train_ids])
+            self.__nn_test = self.__nn_scaler.transform(self.__nn_raw.loc[test_ids])
+            self.__nn_optuna_train = self.__nn_scaler.transform(self.__nn_raw.loc[optuna_ids])
+            self.__nn_valid = self.__nn_scaler.transform(self.__nn_raw.loc[valid_ids])
+
+    def __make_nn_scaler(self):
+        """nn_raw の category/numeric 列を自動検出して NnFeatureScaler を生成する。"""
+        from src.preprocessing._nn_feature_scaler import NnFeatureScaler
+        sample = self.__nn_raw.iloc[:0]  # dtype 確認用に空 DataFrame を使用
+        entity_cols = [c for c in sample.columns if str(sample[c].dtype) == "category"]
+        numeric_cols = [c for c in sample.columns if c not in entity_cols]
+        return NnFeatureScaler(entity_cols=entity_cols, numeric_cols=numeric_cols)
 
     def __split_by_date(self, df, test_size):
         """
@@ -124,6 +164,15 @@ class DataSplitter:
         )
         print(f"base_train: {len(self.__base_train)}, meta_train: {len(self.__meta_train)}, calib_holdout: {len(self.__valid_data_optuna)}")
 
+        # NN ストリーム（PreparedFeatures が渡された場合のみ）
+        if self.__nn_raw is not None and self.__nn_scaler is not None:
+            self.__nn_base_train = self.__nn_scaler.transform(
+                self.__nn_raw.loc[self.__base_train.index.unique()]
+            )
+            self.__nn_meta_train = self.__nn_scaler.transform(
+                self.__nn_raw.loc[self.__meta_train.index.unique()]
+            )
+
     @property
     def base_train_data(self) -> pd.DataFrame:
         if self.__base_train is None:
@@ -163,3 +212,36 @@ class DataSplitter:
     @property
     def y_calib(self) -> pd.Series:
         return self.__valid_data_optuna["rank"]
+
+    # ------------------------------------------------------------------
+    # NN ストリームプロパティ（PreparedFeatures 使用時のみ有効）
+    # ------------------------------------------------------------------
+
+    @property
+    def nn_scaler(self):
+        """学習済み NnFeatureScaler。KeibaAI に渡して dill 保存する。"""
+        return self.__nn_scaler
+
+    @property
+    def X_nn_train(self) -> "pd.DataFrame | None":
+        return self.__nn_train
+
+    @property
+    def X_nn_test(self) -> "pd.DataFrame | None":
+        return self.__nn_test
+
+    @property
+    def X_nn_base_train(self) -> "pd.DataFrame | None":
+        if self.__nn_train is not None and self.__nn_base_train is None:
+            raise RuntimeError("make_stacking_splits() を先に呼んでください。")
+        return self.__nn_base_train
+
+    @property
+    def X_nn_meta_train(self) -> "pd.DataFrame | None":
+        if self.__nn_train is not None and self.__nn_meta_train is None:
+            raise RuntimeError("make_stacking_splits() を先に呼んでください。")
+        return self.__nn_meta_train
+
+    @property
+    def X_nn_calib(self) -> "pd.DataFrame | None":
+        return self.__nn_valid

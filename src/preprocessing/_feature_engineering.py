@@ -5,6 +5,7 @@ import pandas as pd
 from src.constants._horse_results_cols import HorseResultsCols
 from src.constants._local_paths import LocalPaths
 from src.constants._master import Master
+from src.constants._nn_cols import NN_DROP_COLS, NN_ENTITY_COLS
 from src.preprocessing._data_merger import DataMerger
 
 
@@ -216,6 +217,35 @@ class FeatureEngineering:
         """
         self.__label_encode("breeder_id")
         return self
+
+    def build(self) -> "PreparedFeatures":
+        """全特徴量エンジニアリング後、2系統 DataFrame を生成して PreparedFeatures DTO で返す。
+
+        gbdt: self.featured_data のコピー（スケーリングなし・One-Hot 含む）
+        nn:   entity_cols + numeric_cols のみ列選択（スケーリング未適用）
+              DataSplitter が訓練データのみで NnFeatureScaler を fit する。
+
+        numeric_cols の決定ロジック:
+          - float64 / int64 / int32 / float32 の dtype を持つ列
+          - entity_cols (category dtype) は dtype で自動除外
+          - One-Hot ダミー列 (bool / uint8) は dtype で自動除外
+          - NN_DROP_COLS (rank / date / 単勝) を明示除外
+        """
+        from src.preprocessing._prepared_features import PreparedFeatures
+
+        gbdt_df = self.__data.copy()
+
+        entity_cols = [c for c in NN_ENTITY_COLS if c in self.__data.columns]
+        exclude = set(NN_DROP_COLS) | set(entity_cols)
+        numeric_cols = [
+            c for c in self.__data.select_dtypes(
+                include=["float64", "int64", "int32", "float32"]
+            ).columns
+            if c not in exclude
+        ]
+
+        nn_df = self.__data[entity_cols + numeric_cols].copy()
+        return PreparedFeatures(gbdt=gbdt_df, nn=nn_df)
 
         # def transform_time(self):
         """
