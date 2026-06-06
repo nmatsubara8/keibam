@@ -1,6 +1,5 @@
 import datetime
 import os
-from typing import Optional
 
 import dill
 

@@ -2,7 +2,17 @@ import pandas as pd
 
 from src.constants._results_cols import ResultsCols
 
-_DROP_FOR_TRAIN = ["rank", "date", ResultsCols.TANSHO_ODDS]
+# 学習特徴量から除外する列。
+# - "rank": 二値目的変数
+# - "date": 時系列分割キー（特徴量ではない）
+# - TANSHO_ODDS('単勝'): EV 計算で別途使うため特徴量からは除外
+# - RANK('着順'): 当該レースの実着順。rank = (着順 < 4) の元データであり、
+#   特徴量に残すと目的変数リーク。§2c/2j 集計のため ResultsProcessor が選択するが
+#   学習入力からは必ず除外する。
+_DROP_FOR_TRAIN = ["rank", "date", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
+
+# テスト入力用: EV 計算のため TANSHO_ODDS('単勝') は残し、実着順 RANK は除外する。
+_DROP_FOR_TEST = ["rank", "date", ResultsCols.RANK]
 
 
 class DataSplitter:
@@ -47,17 +57,17 @@ class DataSplitter:
         print("len(self.__test_data):", len(self.__test_data))
 
         self.__lgb_train_optuna = lgb_o.Dataset(
-            self.__train_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values,
+            self.__train_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             self.__train_data_optuna["rank"],
         )
         self.__lgb_valid_optuna = lgb_o.Dataset(
-            self.__valid_data_optuna.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1).values,
+            self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             self.__valid_data_optuna["rank"],
         )
         # 説明変数と目的変数に分ける。開催はエラーなるので一度drop。
-        self.__X_train = self.__train_data.drop(["rank", "date", ResultsCols.TANSHO_ODDS], axis=1)
+        self.__X_train = self.__train_data.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
         self.__y_train = self.__train_data["rank"]
-        self.__X_test = self.__test_data.drop(["rank", "date"], axis=1)
+        self.__X_test = self.__test_data.drop(_DROP_FOR_TEST, axis=1, errors="ignore")
         self.__y_test = self.__test_data["rank"]
         print("len(self.__X_test):", len(self.__X_test))
 
@@ -155,11 +165,11 @@ class DataSplitter:
         )
         base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
         self.__lgb_train_optuna = lgb_o.Dataset(
-            base_opt_train.drop(_DROP_FOR_TRAIN, axis=1).values,
+            base_opt_train.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             base_opt_train["rank"],
         )
         self.__lgb_valid_optuna = lgb_o.Dataset(
-            base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1).values,
+            base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             base_opt_valid["rank"],
         )
         print(f"base_train: {len(self.__base_train)}, meta_train: {len(self.__meta_train)}, calib_holdout: {len(self.__valid_data_optuna)}")
@@ -191,7 +201,7 @@ class DataSplitter:
 
     @property
     def X_base_train(self) -> pd.DataFrame:
-        return self.base_train_data.drop(_DROP_FOR_TRAIN, axis=1)
+        return self.base_train_data.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
 
     @property
     def y_base_train(self) -> pd.Series:
@@ -199,7 +209,7 @@ class DataSplitter:
 
     @property
     def X_meta_train(self) -> pd.DataFrame:
-        return self.meta_train_data.drop(_DROP_FOR_TRAIN, axis=1)
+        return self.meta_train_data.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
 
     @property
     def y_meta_train(self) -> pd.Series:
@@ -207,7 +217,7 @@ class DataSplitter:
 
     @property
     def X_calib(self) -> pd.DataFrame:
-        return self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1)
+        return self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
 
     @property
     def y_calib(self) -> pd.Series:

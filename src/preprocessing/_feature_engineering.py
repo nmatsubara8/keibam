@@ -1,4 +1,5 @@
 import os
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -7,6 +8,9 @@ from src.constants._local_paths import LocalPaths
 from src.constants._master import Master
 from src.constants._nn_cols import NN_DROP_COLS, NN_ENTITY_COLS
 from src.preprocessing._data_merger import DataMerger
+
+if TYPE_CHECKING:
+    from src.preprocessing._prepared_features import PreparedFeatures
 
 
 class FeatureEngineering:
