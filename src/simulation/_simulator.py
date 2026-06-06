@@ -1,8 +1,8 @@
-import numpy as np
 import pandas as pd
 
 from src.preprocessing._return_processor import ReturnProcessor
 from src.simulation._betting_tickets import BettingTickets
+from src.simulation._metrics import summarize_returns
 
 
 class Simulator:
@@ -81,29 +81,12 @@ class Simulator:
 
     def calc_returns(self, actions: dict) -> dict:
         """
-        self.calc_returns_per_race(actions)の結果を集計する
+        self.calc_returns_per_race(actions)の結果を集計する。
+
+        回収率・標準偏差に加え、シャープレシオ・的中率・最大ドローダウン・損益を返す
+        （指標計算は src.simulation._metrics.summarize_returns に委譲）。
         """
-        returns_dict = {}
-        if len(actions) != 0:
-            returns_per_race = self.calc_returns_per_race(actions)
-
-            returns_dict["n_bets"] = returns_per_race["n_bets"].sum()
-            returns_dict["n_races"] = returns_per_race.index.nunique()
-            returns_dict["n_hits"] = returns_per_race["hit_or_not"].sum()
-            returns_dict["total_bet_amount"] = returns_per_race["bet_amount"].sum()
-
-            if returns_dict["total_bet_amount"] == 0:
-                returns_dict["return_rate"] = 0
-            else:
-                returns_dict["return_rate"] = returns_per_race["return_amount"].sum() / returns_dict["total_bet_amount"]
-
-            if returns_dict["total_bet_amount"] == 0:
-                returns_dict["std"] = 0
-            else:
-                returns_dict["std"] = (
-                    returns_per_race["return_amount"].std()
-                    * np.sqrt(returns_dict["n_races"])
-                    / returns_dict["total_bet_amount"]
-                )
-            # print("returns_dict in sim", returns_dict)
-        return returns_dict
+        if len(actions) == 0:
+            return {}
+        returns_per_race = self.calc_returns_per_race(actions)
+        return summarize_returns(returns_per_race)
