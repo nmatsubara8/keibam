@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: pytest + lint-imports + ruff
+    name: pytest + lint-imports + ruff + mypy
     runs-on: ubuntu-latest
 
     steps:
@@ -42,3 +42,10 @@ jobs:
         run: |
           python -m ruff check src/ app/ --output-format=github
         continue-on-error: true
+
+      # ── 型チェック ───────────────────────────────────────────────────────
+      # pyproject.toml [tool.mypy] files に列挙した新規モジュールを段階的に検査。
+      # 既存コード全体は対象外（ignore_missing_imports=true で外部スタブ不要）。
+      - name: Type check (mypy)
+        run: |
+          python -m mypy --config-file pyproject.toml

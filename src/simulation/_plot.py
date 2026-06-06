@@ -7,8 +7,13 @@ Streamlit の st.pyplot(fig) および CLI の fig.savefig() 両方から利用�
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    import matplotlib.figure
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +56,7 @@ def plot_calibration(
     prob_pre: np.ndarray,
     prob_post: np.ndarray,
     n_bins: int = 10,
-) -> "plt.Figure":
+) -> "matplotlib.figure.Figure":
     """較正前後の信頼性ダイアグラム（Reliability diagram）。
 
     Parameters
@@ -131,7 +136,7 @@ def plot_ev_threshold_sweep(
     sweep_df: pd.DataFrame,
     *,
     optimal_threshold: float | None = None,
-) -> "plt.Figure":
+) -> "matplotlib.figure.Figure":
     """EV 閾値スイープ結果の可視化。
 
     Parameters
@@ -192,7 +197,7 @@ def plot_odds_prediction_accuracy(
     *,
     max_display_odds: float = 50.0,
     title: str = "オッズ予測精度（予測 vs 確定）",
-) -> "plt.Figure":
+) -> "matplotlib.figure.Figure":
     """予測確定オッズ vs 実確定オッズの散布図。
 
     Parameters
@@ -250,7 +255,7 @@ def plot_stacking_contribution(
     base_probs: list[np.ndarray],
     meta_probs: np.ndarray,
     base_names: list[str] | None = None,
-) -> "plt.Figure":
+) -> "matplotlib.figure.Figure":
     """各 base モデルと meta スタッキングの AUC を棒グラフで比較。
 
     Parameters
