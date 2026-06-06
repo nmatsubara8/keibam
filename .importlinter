@@ -1,0 +1,17 @@
+[importlinter]
+root_package = src
+include_external_packages = True
+
+[importlinter:contract:layers]
+name = レイヤ単方向依存（上位は下位のみ import 可）
+type = layers
+layers =
+    src.operation
+    src.simulation
+    src.portfolio
+    src.training
+    src.policies
+    src.preparing
+    src.preprocessing
+    src.constants
+exhaustive = false
