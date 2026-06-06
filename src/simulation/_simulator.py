@@ -26,46 +26,29 @@ class Simulator:
         """
         returns_per_race_dict = {}
 
-        for race_id in actions:
-            # print(f"race_id:{race_id}")
+        # 馬券種 → BettingTickets の対応メソッド名のディスパッチ表。
+        # 全 bet_* は (race_id, 馬番リスト, 金額) -> (n_bets, bet_amount, return_amount)。
+        dispatch = {
+            "tansho": "bet_tansho",
+            "fukusho": "bet_fukusho",
+            "wakuren": "bet_wakuren_box",
+            "umaren": "bet_umaren_box",
+            "umatan": "bet_umatan_box",
+            "wide": "bet_wide_box",
+            "sanrenpuku": "bet_sanrenpuku_box",
+            "sanrentan": "bet_sanrentan_box",
+        }
 
+        for race_id in actions:
             n_bets_race = 0
             bet_amount_race = 0
             return_amount_race = 0
             for action in actions[race_id]:
-                if action == "tansho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_tansho(
-                        race_id, actions[race_id][action], 1
-                    )
-                    # print(f"n_bets, bet_amount, return_amount:{n_bets, bet_amount, return_amount}")
-                elif action == "fukusho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "wakuren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wakuren_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "umaren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "umatan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umatan_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "wide":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wide_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "sanrenpuku":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrenpuku_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "sanrentan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                method_name = dispatch.get(action)
+                if method_name is None:
+                    continue  # 未知の馬券種はスキップ
+                bet_method = getattr(self.betting_tickets, method_name)
+                n_bets, bet_amount, return_amount = bet_method(race_id, actions[race_id][action], 1)
 
                 n_bets_race += n_bets
                 bet_amount_race += bet_amount
@@ -76,7 +59,6 @@ class Simulator:
                     "return_amount": return_amount_race,
                     "hit_or_not": 1 if return_amount_race > 0 else 0,
                 }
-                # print(f"returns_per_race_dict:{returns_per_race_dict}")
         return pd.DataFrame.from_dict(returns_per_race_dict, orient="index")
 
     def calc_returns(self, actions: dict) -> dict:
