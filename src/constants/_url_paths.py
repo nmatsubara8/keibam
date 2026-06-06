@@ -290,6 +290,23 @@ class UrlPaths:
         SCHEDULE[12],  # 12
     )
 
+    # 出馬表ページ（当日・予定）
+    SHUTUBA_TABLE: tuple = (
+        "shutuba_table",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        TOP_URL[2] + "shutuba_table/",  # 2
+        "temp_shutuba_table.csv",  # 3
+        TOP_URL[4] + "shutuba_table/",  # 4
+        "shutuba_table.pkl",  # 5
+        1,  # 6
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8
+        "",  # 9
+        False,  # 10
+        "",  # 11
+        "",  # 12
+    )
+
     # 当日の出馬表ページ
     ACTUAL_info: tuple = (
         "actual_info",  # 0

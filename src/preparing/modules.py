@@ -4,15 +4,9 @@ import time
 from urllib.request import urlopen
 
 import pandas as pd
-from bs4 import BeautifulSoup
-from numpy import NaN
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from tqdm import tqdm
+NaN = float("nan")
 
 from src.constants._master import Master
-from src.preparing.prepare_chrome_driver import prepare_chrome_driver
 
 
 def scrape_scheduled_race_html(self, ref_id):
@@ -74,9 +68,11 @@ def process_pkl_file(self, process_function):
     # target_data_name = {}
 
     # tqdmインスタンスの作成
+    from tqdm import tqdm
     pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
 
     # ドライバーのインスタンス化
+    from src.preparing.prepare_chrome_driver import prepare_chrome_driver
     driver = prepare_chrome_driver()
     # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
     waiting_time = 30
@@ -169,6 +165,8 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
 
 ################################# Done ####################################
 def get_soup(url, driver, waiting_time):
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import WebDriverWait
     driver.get(url)
     wait = WebDriverWait(driver, waiting_time)
     wait.until(EC.presence_of_all_elements_located)
@@ -201,6 +199,7 @@ def get_raw_horse_id_list(self, ref_id, driver, waiting_time):
 
 ################################# Done ####################################
 def scrape_race_id_list(self, ref_id, driver, waiting_time):
+    from selenium.webdriver.common.by import By
     # query = ["kaisai_date=" + str(ref_id)]
     url = f"{self.from_location}?kaisai_date={ref_id}"
     # print(f"url:{url}")
@@ -271,6 +270,7 @@ def process_bin_file(self, process_function):
     print(f"start {self.alias} processing")
 
     # tqdmインスタンスの作成
+    from tqdm import tqdm
     pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
 
     for batch_index in range(total_batches):
@@ -320,6 +320,7 @@ def trim_function(df):
 
 ################################# Done ####################################
 def create_raw_race_results(target_bin_file_path):
+    from bs4 import BeautifulSoup
     race_results = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
@@ -452,6 +453,7 @@ def create_raw_horse_results(target_bin_file_path):
 
 ################################# Done ####################################
 def create_raw_horse_info(target_bin_file_path):
+    from bs4 import BeautifulSoup
     horse_info = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
@@ -531,6 +533,7 @@ def create_raw_horse_info(target_bin_file_path):
 
 ################################# Done ####################################
 def create_raw_horse_ped(target_bin_file_path):
+    from bs4 import BeautifulSoup
     horse_ped = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
@@ -613,6 +616,7 @@ def count_ground_state(text1):
 
 
 def create_raw_race_info(target_bin_file_path):
+    from bs4 import BeautifulSoup
     # print(f"target_bin_file_path:{target_bin_file_path}")
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む

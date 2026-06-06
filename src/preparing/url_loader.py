@@ -1,3 +1,4 @@
+from src.constants._url_paths import UrlPaths
 from src.preparing.DataLoader import DataLoader
 from src.preparing.modules import create_raw_horse_info
 from src.preparing.modules import create_raw_horse_ped
@@ -89,3 +90,30 @@ class KaisaiDateLoader(DataLoader):
     ################################# Done ####################################
     def scrape_peds_list(self):
         process_bin_file(self, create_raw_horse_ped)
+
+
+class URL_Loader:
+    """Lightweight helper that maps an alias to its UrlPaths entry."""
+
+    def __init__(
+        self,
+        alias: str = "",
+        from_location: str = "",
+        save_location: str = "",
+        save_file_name: str = "",
+        rerun: bool = False,
+    ):
+        self.alias = alias
+        self.from_location = from_location
+        self.save_location = save_location
+        self.save_file_name = save_file_name
+        self.rerun = rerun
+
+    def alias_existence_check(self) -> bool:
+        """Return True if alias matches a known UrlPaths entry, False otherwise."""
+        url_paths = UrlPaths()
+        for field in url_paths.__dataclass_fields__:
+            val = getattr(url_paths, field)
+            if isinstance(val, tuple) and len(val) > 0 and val[0] == self.alias:
+                return True
+        return False

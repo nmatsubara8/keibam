@@ -433,6 +433,38 @@ class DataLoader:
         print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name} 終了+'\n'")
 
 
+class CustomDataLoader:
+    """Lightweight data loader for local file access (no scraping required)."""
+
+    def __init__(
+        self,
+        from_location: str = "./data/",
+        load_file_name: str = "",
+        to_location: str = "./data/",
+        save_file_name: str = "output.pkl",
+    ):
+        self.from_location = from_location
+        self.load_file_name = load_file_name
+        self.to_location = to_location
+        self.save_file_name = save_file_name
+        self.save_file_path = os.path.join(to_location, save_file_name)
+        self._data: pd.DataFrame = pd.DataFrame()
+
+    def load_data_from_local(self) -> pd.DataFrame:
+        """Load data from local file and save to save_file_path."""
+        src_path = os.path.join(self.from_location, self.load_file_name)
+        if os.path.exists(src_path):
+            if src_path.endswith(".pkl"):
+                self._data = pd.read_pickle(src_path)
+            else:
+                self._data = pd.DataFrame()
+        else:
+            self._data = pd.DataFrame()
+        os.makedirs(self.to_location, exist_ok=True)
+        self._data.to_pickle(self.save_file_path)
+        return self._data
+
+
 """
     def update_rawdata(filepath: str, new_df: pd.DataFrame) -> pd.DataFrame:
 

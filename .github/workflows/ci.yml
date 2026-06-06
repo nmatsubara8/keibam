@@ -24,19 +24,15 @@ jobs:
         run: pip install -r requirements-ci.txt
 
       # ── テスト ────────────────────────────────────────────────────────────
-      # 除外ルール:
-      #   tests/preparing/        : selenium / ChromeDriver が CI に無いため除外
-      #   tests/constants/test_url_paths.py : SHUTUBA_TABLE 未実装（既存 issue）
       # アーキテクチャテスト (tests/architecture/) は含む。
       # test_import_linter_contracts_pass が lint-imports を subprocess で実行し
       # .importlinter の 4 契約を検証するため、lint-imports の別途実行は不要。
+      # tests/preparing/ 内の selenium 必須テストは @pytest.mark.skip で個別除外済み。
       - name: Run tests
         env:
           PYTHONPATH: "."
         run: |
           python -m pytest tests/ \
-            --ignore=tests/preparing/ \
-            --ignore=tests/constants/test_url_paths.py \
             -q --tb=short
 
       # ── 静的解析 ─────────────────────────────────────────────────────────
