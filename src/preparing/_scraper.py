@@ -29,6 +29,14 @@ if TYPE_CHECKING:
     from playwright.async_api import Playwright
 
 
+# bot 判定回避用の実ブラウザ相当 User-Agent（netkeiba がヘッドレスに
+# 中身の異なるページを返すのを防ぐ）。
+_DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
 class AbstractScraper(ABC):
     """URL から HTML 文字列を取得する契約（同期ブリッジ込み）。"""
 
@@ -171,7 +179,7 @@ class PlaywrightScraper(AbstractScraper):
         timeout_ms: int = 30000,
         rate_limit_sec: float = 1.0,
         click_delay_ms: int = 100,
-        selector_timeout_ms: int = 15000,
+        selector_timeout_ms: int = 8000,
     ) -> None:
         self._headless = headless
         self._timeout_ms = timeout_ms
@@ -229,7 +237,9 @@ class PlaywrightScraper(AbstractScraper):
             await self._start()
         try:
             assert self._browser is not None  # _start() で必ず設定済み（型ナローイング）
-            page = await self._browser.new_page()
+            # netkeiba は UA で bot 判定し中身の異なるページを返すことがあるため、
+            # 実ブラウザ相当の User-Agent を設定する。
+            page = await self._browser.new_page(user_agent=_DEFAULT_USER_AGENT)
             try:
                 await page.goto(url, wait_until=wait_until, timeout=self._timeout_ms)
                 if wait_selector is not None:

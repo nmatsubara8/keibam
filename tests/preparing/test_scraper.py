@@ -140,7 +140,7 @@ class _StubBrowser:
         self.closed = False
         self.pages: list = []
 
-    async def new_page(self):
+    async def new_page(self, user_agent=None):
         p = _StubPage(self._html)
         self.pages.append(p)
         return p
