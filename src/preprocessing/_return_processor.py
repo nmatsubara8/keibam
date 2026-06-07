@@ -75,11 +75,6 @@ def split_arrow_to_int(s):
     return s
 
 
-def sort_tuple(tup):
-    """タプルの中身をソートする関数。"""
-    return tuple(sorted(tup))
-
-
 class ReturnProcessor(AbstractDataProcessor):
     def __init__(self, filepath):
         super().__init__(filepath)
