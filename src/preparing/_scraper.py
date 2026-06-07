@@ -159,7 +159,7 @@ class PlaywrightScraper(AbstractScraper):
     def __init__(
         self,
         headless: bool = True,
-        timeout_ms: int = 30000,
+        timeout_ms: int = 60000,
         rate_limit_sec: float = 1.0,
         click_delay_ms: int = 100,
     ) -> None:
@@ -208,7 +208,11 @@ class PlaywrightScraper(AbstractScraper):
             try:
                 await page.goto(url, wait_until=wait_until, timeout=self._timeout_ms)
                 if wait_selector is not None:
-                    await page.wait_for_selector(wait_selector, timeout=self._timeout_ms)
+                    try:
+                        await page.wait_for_selector(wait_selector, timeout=self._timeout_ms)
+                    except Exception:
+                        # タイムアウト／要素未出現でも取得済みのページ内容を返す
+                        pass
                 return await page.content()
             finally:
                 await page.close()
