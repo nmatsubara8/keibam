@@ -952,27 +952,20 @@ def create_tmp_race_info(target_bin_file_path):
                 df["race_class"] = [Master.RACE_CLASS_2SHO]
             if ("3勝クラス" in text) or ("1600万下" in text):
                 df["race_class"] = [Master.RACE_CLASS_3SHO]
-            # FIXME: 既存挙動を保持しつつ、"オープン" テキスト→OPEN がセマンティックに
-            # 正しい可能性が高い（同様のミスマッチが table_creator.py にも存在）。
             if "オープン" in text:
-                df["race_class"] = [Master.RACE_CLASS_LISTED]
+                df["race_class"] = [Master.RACE_CLASS_OPEN]
             if hurdle_race_flg:
-                df["race_class"] = [Master.RACE_CLASS_G2]
+                # 障害は race_class を上書きしない（障害判定は race_type 側で表現）。
                 hurdle_race_flg = False
-                # 障害レースの場合
-        # if hurdle_race_flg:
-        # df["around"] = [Master.AROUND_LIST[3]]
-        # df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-        # hurdle_race_flg = False
 
-        # グレードレース情報の取得（FIXME 上記に同じ、本来 G3/G2/G1 が正と思われる）
+        # グレードレース情報の取得（grade アイコン → 対応グレードへ正しくマップ）
         grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
         if "G3" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_OPEN] * len(df)
-        elif "G2" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_OPEN_SPECIAL] * len(df)
-        elif "G1" in grade_text:
             df["race_class"] = [Master.RACE_CLASS_G3] * len(df)
+        elif "G2" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_G2] * len(df)
+        elif "G1" in grade_text:
+            df["race_class"] = [Master.RACE_CLASS_G1] * len(df)
 
         df["race_id"] = race_id
 

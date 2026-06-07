@@ -211,23 +211,21 @@ class TableCreator(DataLoader):
                             df["race_class"] = [Master.RACE_CLASS_2SHO] * len(df)
                         if "３勝クラス" in text:
                             df["race_class"] = [Master.RACE_CLASS_3SHO] * len(df)
-                        # FIXME: 既存挙動を保持しつつ、本来「オープン」テキスト→OPEN がセマンティック
-                        # に正しい可能性が高い。位置参照リファクタの範囲外として残す。
                         if "オープン" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LISTED] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_OPEN] * len(df)
 
-                    # グレードレース情報の取得（FIXME 上記に同じ。本来 G3/G2/G1 が正と思われる）
+                    # グレードレース情報の取得（grade アイコン → 対応グレードへ正しくマップ）
                     if len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType3")) > 0:
-                        df["race_class"] = [Master.RACE_CLASS_OPEN] * len(df)
-                    elif len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType2")) > 0:
-                        df["race_class"] = [Master.RACE_CLASS_OPEN_SPECIAL] * len(df)
-                    elif len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType1")) > 0:
                         df["race_class"] = [Master.RACE_CLASS_G3] * len(df)
+                    elif len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType2")) > 0:
+                        df["race_class"] = [Master.RACE_CLASS_G2] * len(df)
+                    elif len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType1")) > 0:
+                        df["race_class"] = [Master.RACE_CLASS_G1] * len(df)
 
-                    # 障害レースの場合（AROUND_LIST[3] は範囲外: 既存挙動保持のため位置参照を残す）
+                    # 障害レースの場合（race_class は上書きしない。障害判定は race_type 側で表現）
+                    # 注: AROUND_LIST[3] は範囲外参照（既存挙動保持のため温存・別途要修正）
                     if hurdle_race_flg:
                         df["around"] = [Master.AROUND_LIST[3]] * len(df)
-                        df["race_class"] = [Master.RACE_CLASS_G2] * len(df)
 
                     df["date"] = [date] * len(df)
                 except Exception as e:
