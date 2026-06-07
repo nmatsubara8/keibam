@@ -81,6 +81,8 @@ def process_pkl_file(self, process_function):
     # （同期パイプライン互換のため fetch_sync 境界を内部で使う）。
     from src.preparing._scraper import PlaywrightScraper
     driver = PlaywrightScraper()
+    # ブラウザをループ全体で 1 度だけ起動して使い回す（毎回の起動・終了を避け高速化）。
+    driver.open_sync()
     # Playwright は wait_for_selector / domcontentloaded で描画完了を判定するため
     # implicitly_wait 相当は不要。waiting_time は後方互換のためのプレースホルダ。
     waiting_time = 30
@@ -97,7 +99,7 @@ def process_pkl_file(self, process_function):
                 self.processing_id = ref_id
                 return_data = process_function(self, ref_id, driver, waiting_time)
 
-                time.sleep(1)
+                time.sleep(0.2)  # サーバ負荷軽減の最小待機
                 if filetype == "bin":
                     batch_data.append(return_data)
                 batch_data.append(return_data)
@@ -131,9 +133,10 @@ def process_pkl_file(self, process_function):
     if filetype != "bin":
         storing_process(self)
 
+    # ループ全体で使い回したブラウザを終了する。
+    driver.close_sync()
+
     logger.info("# of processed files: %s", processed_files)
-    # Playwright スクレイパーは fetch ごとにライフサイクルを完結するため明示的な
-    # close/quit は不要（selenium の driver.close()/quit() は廃止）。
 
 
 def get_kaisai_date_list(self, ref_id, driver, waiting_time):

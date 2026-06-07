@@ -105,12 +105,17 @@ class AbstractScraper(ABC):
         return _run_sync(self.fetch_many(urls, **kwargs))
 
 
+_PERSISTENT_LOOP = None
+
+
 def _run_sync(coro):
     """コルーチンを同期的に実行する。
 
     Jupyter/IPython のように既にイベントループが動いている環境では
-    nest_asyncio を適用して asyncio.run() を可能にする。
-    通常の同期環境では asyncio.run() をそのまま使う。
+    nest_asyncio を適用してそのループ上で実行する。
+    通常の同期環境では永続イベントループを使い回す（ブラウザ等の
+    リソースを sync 呼び出し間で生存させるため。asyncio.run は毎回ループを
+    閉じてしまい Playwright のブラウザが無効化される）。
     """
     try:
         loop = asyncio.get_running_loop()
@@ -124,7 +129,11 @@ def _run_sync(coro):
         except ImportError:
             pass
         return loop.run_until_complete(coro)
-    return asyncio.run(coro)
+
+    global _PERSISTENT_LOOP
+    if _PERSISTENT_LOOP is None or _PERSISTENT_LOOP.is_closed():
+        _PERSISTENT_LOOP = asyncio.new_event_loop()
+    return _PERSISTENT_LOOP.run_until_complete(coro)
 
 
 def _looks_empty(html: str) -> bool:
@@ -176,6 +185,20 @@ class PlaywrightScraper(AbstractScraper):
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
         await self._stop()
+
+    def open_sync(self) -> None:
+        """ブラウザを同期的に起動して保持する（ループ全体で使い回す用）。
+
+        これを呼んでおくと後続の fetch_sync が毎回ブラウザを起動・終了せず、
+        同一ブラウザを再利用するため大幅に高速化される。
+        """
+        if self._browser is None:
+            _run_sync(self._start())
+
+    def close_sync(self) -> None:
+        """open_sync で起動したブラウザを同期的に終了する。"""
+        if self._browser is not None:
+            _run_sync(self._stop())
 
     async def _start(self) -> None:
         from playwright.async_api import async_playwright  # 遅延 import
