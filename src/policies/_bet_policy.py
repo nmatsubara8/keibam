@@ -120,20 +120,11 @@ class BetPolicySanrentanBox:
 
 
 class BetPolicyUmatanNagashi:
-    """
-    threshold1を超えた馬を軸にし、threshold2を超えた馬を相手にして馬単で賭ける。（未実装）
-    """
+    """threshold1 を超えた馬を軸、threshold2 を超えた馬を相手に馬単流しで賭ける戦略（未実装）。"""
 
+    @staticmethod
     def judge(score_table: pd.DataFrame, threshold1: float, threshold2: float) -> dict:
-        bet_dict = {}
-        filtered_table = score_table.query("score >= @threshold2")
-        filtered_table["flg"] = filtered_table["score"].map(lambda x: "jiku" if x >= threshold1 else "aite")
-        for race_id, table in filtered_table.groupby(level=0):
-            bet_dict_1R = {}
-            bet_dict_1R["tansho"] = list(table.query('flg == "tansho"')[ResultsCols.UMABAN])
-            bet_dict_1R["fukusho"] = list(table.query('flg == "fukusho"')[ResultsCols.UMABAN])
-            bet_dict[race_id] = bet_dict_1R
-        return bet_dict
+        raise NotImplementedError
 
 
 # 既定のリスク管理パラメータ（RiskLimits は frozen で不変のため単一インスタンスを共有）。
