@@ -72,9 +72,9 @@ def process_pkl_file(self, process_function):
     # print(f"start {self.alias} processing")
     # target_data_name = {}
 
-    # tqdmインスタンスの作成
-    from tqdm import tqdm
-    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
+    # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
+    from tqdm.auto import tqdm
+    pbar = tqdm(total=total_files, desc=f"{self.alias} 取得", unit="件", leave=True)
 
     # スクレイパーのインスタンス化（Playwright 全面移行）。
     # process_function には従来の driver 引数位置で AbstractScraper を渡す
@@ -273,9 +273,9 @@ def process_bin_file(self, process_function):
 
     logger.info("start %s processing", self.alias)
 
-    # tqdmインスタンスの作成
-    from tqdm import tqdm
-    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
+    # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
+    from tqdm.auto import tqdm
+    pbar = tqdm(total=total_files, desc=f"{self.alias} 取得", unit="件", leave=True)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
