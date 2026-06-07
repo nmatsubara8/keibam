@@ -126,11 +126,11 @@ VPS の cron から日次取込・週次再学習を回す想定。
 
 ```bash
 # 日次: 終了したレースの結果・払戻を raw pickle へ冪等取込
-python -m src.pipeline.run_pipeline --job ingest \
+python -m src.pipeline.run_pipeline ingest \
     --race-id 202401010101 202401010102
 
 # 週次: 全データで再学習（--with-tuning で Optuna 探索、--no-stacking で LightGBM のみ）
-python -m src.pipeline.run_pipeline --job retrain
+python -m src.pipeline.run_pipeline retrain
 ```
 
 ### 4-3. 段階オッズ取得スケジューラ（CLI）
