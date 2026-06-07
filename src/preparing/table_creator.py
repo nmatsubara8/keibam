@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import re
 
@@ -16,6 +17,8 @@ from src.preparing.modules import create_raw_race_info
 from src.preparing.modules import create_raw_race_results
 from src.preparing.modules import create_raw_race_return
 from src.preparing.modules import process_bin_file
+
+logger = logging.getLogger(__name__)
 
 
 class TableCreator(DataLoader):
@@ -131,12 +134,12 @@ class TableCreator(DataLoader):
                         + soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
                     )
                     info = re.findall(r"\w+", texts)
-                    print("info", info)
+                    logger.debug("info %s", info)
                     df = pd.DataFrame()
 
                     # メインのテーブルの取得
                     for tr in soup.find_elements(By.CLASS_NAME, "HorseList"):
-                        print("tr", tr)
+                        logger.debug("tr %s", tr)
                         row = []
                         for td in tr.find_elements(By.TAG_NAME, "td"):
                             if td.get_attribute("class") in ["HorseInfo"]:
@@ -165,7 +168,7 @@ class TableCreator(DataLoader):
                         "jockey_id",
                         "trainer_id",
                     ]
-                    print("df", df)
+                    logger.debug("df %s", df)
                     df.index = [race_id] * len(df)
 
                     # レース情報の取得
@@ -228,7 +231,7 @@ class TableCreator(DataLoader):
 
                     df["date"] = [date] * len(df)
                 except Exception as e:
-                    print(e)
+                    logger.error("race table creation failed: %s", e)
                     break
                 # finally:
                 #    driver.close()
@@ -249,7 +252,7 @@ class TableCreator(DataLoader):
         horse_html_list = self.get_file_list(self.from_local_location)
 
         data_index = 1
-        print("creating horse_results_table")
+        logger.info("creating horse_results_table")
         horse_results = {}
         for horse_html in tqdm(horse_html_list):
             horse_html_path = os.path.join(self.from_local_location, horse_html)
@@ -263,7 +266,7 @@ class TableCreator(DataLoader):
                     horse_id_df = pd.DataFrame({"horse_id": horse_html_list})
 
                     ### 取得日マスタの更新 ###
-                    print("updating master")
+                    logger.info("updating master")
                     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # 現在日時を取得
 
                     pd.DataFrame(columns=["horse_id", "updated_at"])
@@ -277,7 +280,7 @@ class TableCreator(DataLoader):
                     self.target_data = new_master[["horse_id", "updated_at"]]
                     self.obtained_last_key = horse_html
                 except Exception as e:
-                    print("Error at {}: {}".format(horse_html_path, e))
+                    logger.error("Error at %s: %s", horse_html_path, e)
                     break
 
             data_index += 1
