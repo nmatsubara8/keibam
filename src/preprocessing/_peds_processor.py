@@ -26,7 +26,7 @@ class PedsProcessor(AbstractDataProcessor):
 
     def _preprocess(self) -> pd.DataFrame:
         df = self.raw_data.copy()
-        df["horse_id"] = df["horse_id"].astype(int)
+        df["horse_id"] = pd.to_numeric(df["horse_id"], errors="coerce").astype("Int64")
 
         for column in df.columns:
             if column != "horse_id":
