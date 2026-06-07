@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from typing import Sequence
 
 logger = logging.getLogger(__name__)
@@ -44,7 +45,7 @@ def _ingest(args: argparse.Namespace) -> None:
         def fetch_return_tables(self, race_ids):
             from src.preprocessing._return_processor import ReturnProcessor
 
-            return ReturnProcessor(cfg.raw_return_tables_path).preprocessed_data
+            return ReturnProcessor(cfg.raw_return_tables_path).raw_data
 
     class _FullPipelineBuilder:
         """raw pickles から FeatureEngineering を実行する実 adapter。"""
@@ -106,7 +107,47 @@ def _retrain(args: argparse.Namespace) -> None:
     cfg = RetrainConfig(use_stacking=not args.no_stacking)
 
     featured_path = LocalPaths.FEATURED_DATA_PATH
-    featured_data = pd.read_pickle(featured_path)
+    if not os.path.exists(featured_path):
+        logger.info("[retrain] featured_data.pkl が見つからないため自動生成します")
+        from src.pipeline._ingestion import IngestConfig
+        cfg_ing = IngestConfig()
+
+        class _Builder:
+            def build(self, config):
+                from src.preprocessing._data_merger import DataMerger
+                from src.preprocessing._feature_engineering import FeatureEngineering
+                from src.preprocessing._horse_info_processor import HorseInfoProcessor
+                from src.preprocessing._horse_results_processor import HorseResultsProcessor
+                from src.preprocessing._peds_processor import PedsProcessor
+                from src.preprocessing._race_info_processor import RaceInfoProcessor
+                from src.preprocessing._results_processor import ResultsProcessor
+
+                merger = DataMerger(
+                    ResultsProcessor(config.raw_results_path),
+                    RaceInfoProcessor(config.raw_race_info_path),
+                    HorseResultsProcessor(config.raw_horse_results_path),
+                    HorseInfoProcessor(config.raw_horse_info_path),
+                    PedsProcessor(config.raw_peds_path),
+                    target_cols=["着順"],
+                    group_cols=["騎手"],
+                )
+                merger.merge()
+                return (
+                    FeatureEngineering(merger)
+                    .add_interval().add_agedays()
+                    .add_interaction_features()
+                    .add_race_level_zscore()
+                    .dumminize_kaisai().dumminize_sex().dumminize_weather()
+                    .dumminize_race_type().dumminize_ground_state1().dumminize_ground_state2()
+                    .dumminize_around().dumminize_race_class()
+                    .encode_jockey_id().encode_trainer_id().encode_owner_id().encode_breeder_id()
+                ).featured_data
+
+        featured_data = _Builder().build(cfg_ing)
+        featured_data.to_pickle(featured_path)
+        logger.info("[retrain] featured_data.pkl を生成しました shape=%s", featured_data.shape)
+    else:
+        featured_data = pd.read_pickle(featured_path)
 
     job = RetrainJob(KeibaAIFactory, cfg)
     result = job.run(featured_data, vname=args.version_name, with_tuning=args.with_tuning)

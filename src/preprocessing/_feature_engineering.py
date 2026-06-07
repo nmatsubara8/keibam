@@ -128,7 +128,8 @@ class FeatureEngineering:
         else:
             target_master = pd.read_csv(csv_path, dtype=object)
 
-        # 後のmaxでエラーになるので、整数に変換
+        # 後のmaxでエラーになるので、整数に変換（NaN行は除去してから変換）
+        target_master = target_master.dropna(subset=["encoded_id"])
         target_master["encoded_id"] = target_master["encoded_id"].astype(int)
 
         # masterに存在しない、新しい情報を抽出
