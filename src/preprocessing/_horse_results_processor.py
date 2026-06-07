@@ -4,6 +4,7 @@ import pandas as pd
 
 from src.constants._horse_results_cols import HorseResultsCols as Cols
 from src.constants._master import Master
+from src.constants._units import COURSE_LEN_BUCKET_METERS
 from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
@@ -60,7 +61,9 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # race_type（数字以外の文字列を抽出）
         df["race_type"] = df[Cols.RACE_TYPE_COURSE_LEN].str.extract(r"(\D+)")[0].map(Master.RACE_TYPE_DICT)
         # 距離は10の位を切り捨てる（数字の文字列を抽出）
-        df["course_len"] = df[Cols.RACE_TYPE_COURSE_LEN].str.extract(r"(\d+)").astype(float) // 100
+        df["course_len"] = (
+            df[Cols.RACE_TYPE_COURSE_LEN].str.extract(r"(\d+)").astype(float) // COURSE_LEN_BUCKET_METERS
+        )
 
         # タイムの値を秒単位に変換
         # 準備

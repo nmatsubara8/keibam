@@ -27,6 +27,7 @@ from typing import Sequence
 import pandas as pd
 
 from src.constants._bet_types import BetType
+from src.constants._units import PAYOUT_UNIT_YEN
 from src.preprocessing._return_processor import ReturnProcessor
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ class _BettingStrategy(ABC):
                 continue
             for key in keys:
                 if self._match(win_value, key):
-                    total += table_1R[f"return_{i}"] * amount / 100
+                    total += table_1R[f"return_{i}"] * amount / PAYOUT_UNIT_YEN
         return total
 
     # サブクラスのフック ------------------------------------------------------
