@@ -94,12 +94,37 @@ class AbstractScraper(ABC):
     # ------------------------------------------------------------------
 
     def fetch_sync(self, url: str, **kwargs) -> str:
-        """fetch を同期的に実行する（asyncio.run 境界）。"""
-        return asyncio.run(self.fetch(url, **kwargs))
+        """fetch を同期的に実行する（asyncio.run 境界）。
+
+        Jupyter など既存イベントループがある環境では nest_asyncio を適用して実行する。
+        """
+        return _run_sync(self.fetch(url, **kwargs))
 
     def fetch_many_sync(self, urls: Sequence[str], **kwargs) -> list[str]:
         """fetch_many を同期的に実行する（asyncio.run 境界）。"""
-        return asyncio.run(self.fetch_many(urls, **kwargs))
+        return _run_sync(self.fetch_many(urls, **kwargs))
+
+
+def _run_sync(coro):
+    """コルーチンを同期的に実行する。
+
+    Jupyter/IPython のように既にイベントループが動いている環境では
+    nest_asyncio を適用して asyncio.run() を可能にする。
+    通常の同期環境では asyncio.run() をそのまま使う。
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        try:
+            import nest_asyncio  # 遅延 import（Jupyter 環境のみ必要）
+            nest_asyncio.apply()
+        except ImportError:
+            pass
+        return loop.run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _looks_empty(html: str) -> bool:

@@ -16,6 +16,7 @@ optuna-integration[lightgbm]
 pyyaml
 jupyterlab
 ipywidgets
+nest_asyncio
 lxml
 html5lib
 pyarrow
