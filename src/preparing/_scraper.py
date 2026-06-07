@@ -21,6 +21,7 @@ from abc import ABC
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 from typing import Callable
+from typing import Literal
 from typing import Sequence
 
 if TYPE_CHECKING:
@@ -37,7 +38,7 @@ class AbstractScraper(ABC):
         url: str,
         *,
         wait_selector: str | None = None,
-        wait_until: str = "domcontentloaded",
+        wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> str:
         """単一 URL の HTML を取得する。
 
@@ -51,7 +52,7 @@ class AbstractScraper(ABC):
         urls: Sequence[str],
         *,
         wait_selector: str | None = None,
-        wait_until: str = "domcontentloaded",
+        wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> list[str]:
         """複数 URL を順次取得する（既定実装）。実装側で並列化してもよい。"""
         results: list[str] = []
@@ -171,7 +172,7 @@ class PlaywrightScraper(AbstractScraper):
         url: str,
         *,
         wait_selector: str | None = None,
-        wait_until: str = "domcontentloaded",
+        wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> str:
         own_lifecycle = self._browser is None
         if own_lifecycle:
@@ -195,7 +196,7 @@ class PlaywrightScraper(AbstractScraper):
         urls: Sequence[str],
         *,
         wait_selector: str | None = None,
-        wait_until: str = "domcontentloaded",
+        wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> list[str]:
         """ブラウザを 1 度だけ起動し、各 URL を順次取得する（レート制限付き）。"""
         own_lifecycle = self._browser is None
