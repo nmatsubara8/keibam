@@ -44,6 +44,30 @@ playwright install chromium        # Chromium 本体を取得（必須）
 playwright install-deps chromium   # Linux で不足する共有ライブラリを補う（必要時）
 ```
 
+#### Ubuntu 26.04 の場合（公式未対応 → 24.04 ビルドで代替）
+
+Playwright 1.60.0 時点で Ubuntu 26.04 はまだ公式サポート外のため、上記コマンドはそのまま
+失敗する。以下の手順で回避する:
+
+```bash
+# 1. OS依存ライブラリを apt で入れる
+sudo apt install -y \
+  libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+  libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+  libxrandr2 libgbm1 libasound2t64 libpango-1.0-0 libcairo2 \
+  libatspi2.0-0 libx11-6 libxcb1 libxext6
+
+# 2. Ubuntu 24.04 用ビルドを明示指定してブラウザ本体を取得
+PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64 playwright install chromium
+```
+
+> **注意点:**
+> - `PLAYWRIGHT_HOST_PLATFORM_OVERRIDE` は `install`（ダウンロード）時だけ必要。
+>   `launch()` でブラウザを使う際には不要（コード変更不要）。
+> - インストールは一度成功すれば `~/.cache/ms-playwright/` にキャッシュされるので
+>   再実行は不要。バージョン更新時のみ再度 override 付きで実行する。
+> - `playwright install-deps` は 26.04 で失敗するため、代わりに上記 `apt install` で代替する。
+
 VPS での詳細手順は [`docs/setup_vps.md`](docs/setup_vps.md) を参照。
 
 ### 環境変数
