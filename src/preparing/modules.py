@@ -672,28 +672,27 @@ def create_raw_race_info(target_bin_file_path):
             if key in race_name:
                 place_id = value
                 place_name = key
+        # 未知の馬場状態でも DataFrame 構築（後段 768-769 行）まで到達できるよう、
+        # スクレイプ生値をそのまま使うフォールバックを置く（既存は NameError でクラッシュ）。
+        ground_state1 = NaN
+        ground_state2 = NaN
         if count_ground_state(text1) == 1:
             temp_ground_state0 = text1.split("/")[2].split(":")[1].strip()
-            if temp_ground_state0 in Master.GROUND_STATE_LIST:
-                ground_state1 = temp_ground_state0
-                ground_state2 = temp_ground_state0
-            else:
+            # 既知/未知に関わらず生値を採用。未知時のみ警告を残す。
+            ground_state1 = temp_ground_state0
+            ground_state2 = temp_ground_state0
+            if temp_ground_state0 not in Master.GROUND_STATE_LIST:
                 logger.warning(
-                    "unknown GROUND_STATE definition appeared1:%s%s%s",
-                    race_id,
-                    ground_state1,
-                    ground_state2,
+                    "unknown GROUND_STATE definition appeared1:%s%s", race_id, temp_ground_state0
                 )
         elif dart_checker(text1) and count_ground_state(text1) == 2:
             temp_ground_state1 = text1.split("/")[2].split(":")[1].split()[0].strip()
-            if temp_ground_state1 in Master.GROUND_STATE_LIST:
-                ground_state1 = temp_ground_state1
-            else:
-                logger.warning("unknown GROUND_STATE definition appeared2:%s%s", race_id, ground_state1)
+            ground_state1 = temp_ground_state1
+            if temp_ground_state1 not in Master.GROUND_STATE_LIST:
+                logger.warning("unknown GROUND_STATE definition appeared2:%s%s", race_id, temp_ground_state1)
             temp_ground_state2 = text1.split("/")[2].split(":")[2].strip()
-            if temp_ground_state2 in Master.GROUND_STATE_LIST:
-                ground_state2 = temp_ground_state2
-            else:
+            ground_state2 = temp_ground_state2
+            if temp_ground_state2 not in Master.GROUND_STATE_LIST:
                 logger.warning("unknown GROUND_STATE definition appeared3:%s%s", race_id, temp_ground_state2)
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
