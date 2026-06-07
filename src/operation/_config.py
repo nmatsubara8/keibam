@@ -35,7 +35,7 @@ class OperationConfig:
 
     @classmethod
     def load(cls, path: str) -> "OperationConfig":
-        import yaml
+        import yaml  # type: ignore[import-untyped]
 
         with open(path, encoding="utf-8") as f:
             return cls.from_dict(yaml.safe_load(f) or {})
