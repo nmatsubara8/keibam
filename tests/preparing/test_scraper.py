@@ -124,7 +124,7 @@ class _StubPage:
     async def goto(self, url, wait_until=None, timeout=None):
         self.goto_args = (url, wait_until, timeout)
 
-    async def wait_for_selector(self, selector, timeout=None):
+    async def wait_for_selector(self, selector, state=None, timeout=None):
         self.waited_selector = selector
 
     async def content(self):
