@@ -1,3 +1,5 @@
+import logging
+
 import lightgbm as lgb
 import optuna.integration.lightgbm as lgb_o
 import pandas as pd
@@ -7,6 +9,8 @@ from src.constants._bet_thresholds import TrainingWeights
 from src.constants._results_cols import ResultsCols
 
 from ._data_splitter import DataSplitter
+
+logger = logging.getLogger(__name__)
 
 
 class ModelWrapper:
@@ -78,7 +82,7 @@ class ModelWrapper:
         self.__feature_importance = pd.DataFrame(
             {"features": datasets.X_train.columns, "importance": self.__lgb_model.feature_importances_}
         ).sort_values("importance", ascending=False)
-        print("AUC: {:.3f}(train), {:.3f}(test)".format(auc_train, auc_test))
+        logger.info("AUC: %.3f(train), %.3f(test)", auc_train, auc_test)
 
     @property
     def feature_importance(self):

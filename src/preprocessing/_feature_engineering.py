@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import TYPE_CHECKING
 
@@ -12,6 +13,8 @@ from src.preprocessing._data_merger import DataMerger
 if TYPE_CHECKING:
     from src.preprocessing._prepared_features import PreparedFeatures
 
+logger = logging.getLogger(__name__)
+
 
 class FeatureEngineering:
     """
@@ -22,9 +25,7 @@ class FeatureEngineering:
 
     def __init__(self, data_merger: DataMerger):
         self.__data = data_merger.merged_data.copy()
-        # dict = dict_selector("horse_id")
-        # convert_column_types(self.__data, dict)
-        print(type(self.__data))
+        logger.debug("FeatureEngineering: input type=%s", type(self.__data))
 
     @property
     def featured_data(self):
@@ -38,7 +39,6 @@ class FeatureEngineering:
         self.__data["latest"] = pd.to_datetime(self.__data["latest"])
         self.__data["interval"] = (self.__data["date"] - self.__data["latest"]).dt.days
         self.__data.drop("latest", axis=1, inplace=True)
-        # print(f"self.__data.columns_1:{self.__data.columns}")
         return self
 
     def add_agedays(self):
@@ -49,7 +49,6 @@ class FeatureEngineering:
         self.__data["birthday"] = pd.to_datetime(self.__data["birthday"])
         self.__data["age_days"] = (self.__data["date"] - self.__data["birthday"]).dt.days
         self.__data.drop("birthday", axis=1, inplace=True)
-        # print(f"self.__data.columns_2:{self.__data.columns}")
         return self
 
     def dumminize_kaisai(self):

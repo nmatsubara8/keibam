@@ -1,6 +1,10 @@
+import logging
+
 import pandas as pd
 
 from src.constants._results_cols import ResultsCols
+
+logger = logging.getLogger(__name__)
 
 # 学習特徴量から除外する列。
 # - "rank": 二値目的変数
@@ -51,10 +55,13 @@ class DataSplitter:
         self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(
             self.__train_data, test_size=valid_size
         )
-        print("total:", len(self.__featured_data))
-        print("len(self.__lgb_valid_optuna):", len(self.__train_data_optuna))
-        print("len(self.__valid_data_optuna):", len(self.__valid_data_optuna))
-        print("len(self.__test_data):", len(self.__test_data))
+        logger.info(
+            "split sizes: total=%d train_optuna=%d valid_optuna=%d test=%d",
+            len(self.__featured_data),
+            len(self.__train_data_optuna),
+            len(self.__valid_data_optuna),
+            len(self.__test_data),
+        )
 
         self.__lgb_train_optuna = lgb_o.Dataset(
             self.__train_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
@@ -69,7 +76,7 @@ class DataSplitter:
         self.__y_train = self.__train_data["rank"]
         self.__X_test = self.__test_data.drop(_DROP_FOR_TEST, axis=1, errors="ignore")
         self.__y_test = self.__test_data["rank"]
-        print("len(self.__X_test):", len(self.__X_test))
+        logger.info("X_test size: %d", len(self.__X_test))
 
         # NN ストリーム: PreparedFeatures が渡された場合のみ実行
         if self.__nn_raw is not None:
@@ -172,7 +179,12 @@ class DataSplitter:
             base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             base_opt_valid["rank"],
         )
-        print(f"base_train: {len(self.__base_train)}, meta_train: {len(self.__meta_train)}, calib_holdout: {len(self.__valid_data_optuna)}")
+        logger.info(
+            "stacking sizes: base_train=%d meta_train=%d calib_holdout=%d",
+            len(self.__base_train),
+            len(self.__meta_train),
+            len(self.__valid_data_optuna),
+        )
 
         # NN ストリーム（PreparedFeatures が渡された場合のみ）
         if self.__nn_raw is not None and self.__nn_scaler is not None:

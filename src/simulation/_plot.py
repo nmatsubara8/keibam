@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 def plot_single_threshold(df, N_SAMPLES, label=" "):  # noqa: N803
     import matplotlib.pyplot as plt
 
-    print(f"df:{df.head()}")
     plt.figure(dpi=100)
     plt.fill_between(df.index, y1=df["return_rate"] - df["std"], y2=df["return_rate"] + df["std"], alpha=0.3)
     plt.plot(df.index, df["return_rate"], label=label)

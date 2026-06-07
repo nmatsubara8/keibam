@@ -14,7 +14,10 @@ selenium / optuna 等は実行時にのみ必要。コマンド解析と設定�
 from __future__ import annotations
 
 import argparse
+import logging
 from typing import Sequence
+
+logger = logging.getLogger(__name__)
 
 
 def _ingest(args: argparse.Namespace) -> None:
@@ -78,7 +81,7 @@ def _ingest(args: argparse.Namespace) -> None:
 
     job = IngestJob(_ScrapingFetcher(), _FullPipelineBuilder(), cfg)
     result = job.run(args.race_ids)
-    print(f"[ingest] {result}")
+    logger.info("[ingest] %s", result)
 
 
 def _retrain(args: argparse.Namespace) -> None:
@@ -97,7 +100,7 @@ def _retrain(args: argparse.Namespace) -> None:
 
     job = RetrainJob(KeibaAIFactory, cfg)
     result = job.run(featured_data, vname=args.version_name, with_tuning=args.with_tuning)
-    print(f"[retrain] {result}")
+    logger.info("[retrain] %s", result)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

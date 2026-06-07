@@ -7,6 +7,7 @@
 §2j: 種牡馬集計特徴量（sire_win_rate, sire_avg_rank, sire_recent_win_rate）
 """
 
+import logging
 import sys
 
 import pandas as pd
@@ -30,6 +31,8 @@ from src.preprocessing._race_info_processor import RaceInfoProcessor
 from src.preprocessing._results_processor import ResultsProcessor
 
 sys.maxsize = sys.maxsize
+
+logger = logging.getLogger(__name__)
 
 
 class DataMerger:
@@ -57,14 +60,13 @@ class DataMerger:
 
     def merge(self):
         self._merge_race_info()
-
-        print("merge_infos", self._results.sort_values(by="race_id").head().T)
+        logger.debug("merge_infos\n%s", self._results.sort_values(by="race_id").head().T)
 
         self._merge_horse_results()
-        print("merge_horse", self._merged_data.sort_values(by="horse_id").head().T)
+        logger.debug("merge_horse\n%s", self._merged_data.sort_values(by="horse_id").head().T)
 
         self._merge_horse_info()
-        print("merge_horse_info", self._merged_data.sort_values(by="horse_id").head().T)
+        logger.debug("merge_horse_info\n%s", self._merged_data.sort_values(by="horse_id").head().T)
 
         self._merge_peds()
         self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
@@ -75,7 +77,7 @@ class DataMerger:
         self._results = convert_column_types(self._results, dict_)
 
     def _separate_by_date(self):
-        print("separating horse results by date")
+        logger.info("separating horse results by date")
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
@@ -97,7 +99,7 @@ class DataMerger:
 
     def _merge_horse_results(self):
         self._separate_by_date()
-        print("merging horse_results")
+        logger.info("merging horse_results")
         output_results_dict: dict = {}
 
         for date in tqdm(self._separated_results_dict):

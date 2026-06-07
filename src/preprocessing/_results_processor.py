@@ -16,9 +16,6 @@ class ResultsProcessor(AbstractDataProcessor):
         前処理
         """
         df = self.raw_data.copy()
-        # print(f"type df:{type(df)}")
-
-        # print(f"df.head:{df.head()}")
         # 着順の前処理
         df = self._preprocess_rank(df)
 
@@ -27,12 +24,6 @@ class ResultsProcessor(AbstractDataProcessor):
         df["性"] = df[Cols.SEX_AGE].map(lambda x: str(x)[0])
         df["年齢"] = df[Cols.SEX_AGE].map(lambda x: str(x)[1:]).astype(int)
 
-        # print(f"type df:{type(df)}")
-
-        # print(f"df.head:{df.head()}")
-
-        # print(f"Cols.WEIGHT_AND_DIFF:{Cols.WEIGHT_AND_DIFF}")
-        # print(f"Cols.WEIGHT_AND_DIFF.head():{df[Cols.WEIGHT_AND_DIFF].head()}")
         # 馬体重を体重と体重変化に分ける
         df["体重"] = df[Cols.WEIGHT_AND_DIFF].str.split("(", expand=True)[0]
         df["体重変化"] = df[Cols.WEIGHT_AND_DIFF].str.split("(", expand=True)[1].str[:-1]
