@@ -21,8 +21,11 @@ class ResultsProcessor(AbstractDataProcessor):
 
         # 性齢を性と年齢に分ける
         # サイト上のテーブルに存在する列名は、ResultsColsクラスで定数化している。
-        df["性"] = df[Cols.SEX_AGE].map(lambda x: str(x)[0])
-        df["年齢"] = df[Cols.SEX_AGE].map(lambda x: str(x)[1:]).astype(int)
+        df["性"] = df[Cols.SEX_AGE].map(lambda x: str(x)[0] if pd.notna(x) else None)
+        df["年齢"] = pd.to_numeric(
+            df[Cols.SEX_AGE].map(lambda x: str(x)[1:] if pd.notna(x) else None),
+            errors="coerce",
+        ).astype("Int64")
 
         # 馬体重を体重と体重変化に分ける
         df["体重"] = df[Cols.WEIGHT_AND_DIFF].str.split("(", expand=True)[0]
@@ -35,8 +38,8 @@ class ResultsProcessor(AbstractDataProcessor):
         # 各列を数値型に変換
         df[Cols.TANSHO_ODDS] = df[Cols.TANSHO_ODDS].astype(float)
         df[Cols.KINRYO] = df[Cols.KINRYO].astype(float)
-        df[Cols.WAKUBAN] = df[Cols.WAKUBAN].astype(int)
-        df[Cols.UMABAN] = df[Cols.UMABAN].astype(int)
+        df[Cols.WAKUBAN] = pd.to_numeric(df[Cols.WAKUBAN], errors="coerce").astype("Int64")
+        df[Cols.UMABAN] = pd.to_numeric(df[Cols.UMABAN], errors="coerce").astype("Int64")
 
         # 6/6出走数追加
         df["n_horses"] = df.index.map(df.index.value_counts())
