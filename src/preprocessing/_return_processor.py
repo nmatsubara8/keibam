@@ -48,8 +48,9 @@ _ORDERED_SEP = "→"  # 馬単/三連単: 順序ありの馬番区切り
 
 
 def count_br(df, column):
-    """指定列に含まれる行区切り文字 `br` の出現数（最大値）を返す。"""
-    return max([cell.count(_HTML_ROW_SEP) if isinstance(cell, str) else 0 for cell in df[column]])
+    """指定列に含まれる行区切り文字 `br` の出現数（最大値）を返す。空の場合は 0。"""
+    values = [cell.count(_HTML_ROW_SEP) if isinstance(cell, str) else 0 for cell in df[column]]
+    return max(values) if values else 0
 
 
 def convert_to_int(s):
