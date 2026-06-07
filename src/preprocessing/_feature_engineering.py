@@ -60,7 +60,6 @@ class FeatureEngineering:
         )
         temp_data = pd.get_dummies(self.__data[HorseResultsCols.PLACE], prefix=f"{HorseResultsCols.PLACE}_")
         self.__data = pd.concat([self.__data, temp_data], axis=1)
-        # self.__data.drop(f"{HorseResultsCols.PLACE}", axis=1, inplace=True)
         self.__data.drop("place", axis=1, inplace=True)
         self.__data.drop("time", axis=1, inplace=True)
         return self
@@ -263,12 +262,3 @@ class FeatureEngineering:
 
         nn_df = self.__data[entity_cols + numeric_cols].copy()
         return PreparedFeatures(gbdt=gbdt_df, nn=nn_df)
-
-        # def transform_time(self):
-        """
-        timeを文字列から時間に変換する。
-        """
-
-    #    datetime_obj = datetime.strptime(self.__data["time"], "%H:%M")
-    #    self.__data["time"] = datetime_obj.time()
-    #    return self

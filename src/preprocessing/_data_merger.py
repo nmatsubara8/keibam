@@ -107,33 +107,9 @@ class DataMerger:
             horse_results = self._separated_horse_results_dict[date].copy()
 
             # ── §2i: Multi-window × multi-stat aggregation ────────────
-            for n_races in N_RACES_LIST:
-                n_race_hr = self._filter_horse_results(horse_results, n_races)
-                summarized = self._summarize(n_race_hr, self._target_cols).add_suffix(f"_{n_races}R")
-                results = results.merge(summarized, left_on="horse_id", right_index=True, how="left")
-
-                for group_col in self._group_cols:
-                    if group_col not in results.columns:
-                        continue  # guard: broken mechanism when col absent from results
-                    summarized_with = self._summarize_with(
-                        n_race_hr, self._target_cols, group_col
-                    ).add_suffix(f"_{group_col}_{n_races}R")
-                    results = results.merge(
-                        summarized_with, left_on=["horse_id", group_col], right_index=True, how="left"
-                    )
-
-            # All-races summary (no window limit)
-            summarized_all = self._summarize(horse_results, self._target_cols).add_suffix("_allR")
-            results = results.merge(summarized_all, left_on="horse_id", right_index=True, how="left")
-            for group_col in self._group_cols:
-                if group_col not in results.columns:
-                    continue
-                summarized_with_all = self._summarize_with(
-                    horse_results, self._target_cols, group_col
-                ).add_suffix(f"_{group_col}_allR")
-                results = results.merge(
-                    summarized_with_all, left_on=["horse_id", group_col], right_index=True, how="left"
-                )
+            # None は全レース集計（ウィンドウなし）
+            for n_races in [*N_RACES_LIST, None]:
+                results = self._merge_aggregates(results, horse_results, n_races)
 
             # Latest race date (for interval feature in FeatureEngineering)
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
@@ -376,6 +352,34 @@ class DataMerger:
     @property
     def merged_data(self):
         return self._merged_data
+
+    def _merge_aggregates(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame, n_races: int | None
+    ) -> pd.DataFrame:
+        """horse_id / (horse_id, group_col) の集計結果を results にマージする。
+
+        n_races=None のとき全レース集計（suffix: _allR）、整数のとき直近 n_races 集計（suffix: _NR）。
+        """
+        if n_races is None:
+            hr = horse_results
+            suffix = "_allR"
+        else:
+            hr = self._filter_horse_results(horse_results, n_races)
+            suffix = f"_{n_races}R"
+
+        summarized = self._summarize(hr, self._target_cols).add_suffix(suffix)
+        results = results.merge(summarized, left_on="horse_id", right_index=True, how="left")
+
+        for group_col in self._group_cols:
+            if group_col not in results.columns:
+                continue
+            summarized_with = self._summarize_with(hr, self._target_cols, group_col).add_suffix(
+                f"_{group_col}{suffix}"
+            )
+            results = results.merge(
+                summarized_with, left_on=["horse_id", group_col], right_index=True, how="left"
+            )
+        return results
 
     def _filter_horse_results(self, horse_results: pd.DataFrame, n_races: int) -> pd.DataFrame:
         """直近 n_races レースに絞る（index=horse_id の前提）。"""

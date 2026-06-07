@@ -1,5 +1,5 @@
 from abc import ABCMeta
-from abc import abstractstaticmethod
+from abc import abstractmethod
 from itertools import combinations
 from itertools import permutations
 
@@ -22,7 +22,8 @@ class AbstractBetPolicy(metaclass=ABCMeta):
     クラスの型を決めるための抽象クラス。
     """
 
-    @abstractstaticmethod
+    @staticmethod
+    @abstractmethod
     def judge(score_table, **params):
         """
         bet_dictは{race_id: {馬券の種類: 馬番のリスト}}の形式で返す。
