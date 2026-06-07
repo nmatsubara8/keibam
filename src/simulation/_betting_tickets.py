@@ -26,6 +26,7 @@ from typing import Sequence
 
 import pandas as pd
 
+from src.constants._bet_types import BetType
 from src.preprocessing._return_processor import ReturnProcessor
 
 logger = logging.getLogger(__name__)
@@ -163,14 +164,14 @@ class BettingTickets:
 
     def __init__(self, returnProcessor: ReturnProcessor) -> None:
         tables = returnProcessor.preprocessed_data
-        self._tansho = _SingleStrategy(tables["tansho"])
-        self._fukusho = _SingleStrategy(tables["fukusho"])
-        self._wakuren = _WakurenStrategy(tables["wakuren"])
-        self._umaren = _ComboStrategy(tables["umaren"], size=2)
-        self._umatan_box = _PermStrategy(tables["umatan"], size=2)
-        self._wide = _ComboStrategy(tables["wide"], size=2)
-        self._sanrenpuku = _ComboStrategy(tables["sanrenpuku"], size=3)
-        self._sanrentan_box = _PermStrategy(tables["sanrentan"], size=3)
+        self._tansho = _SingleStrategy(tables[BetType.TANSHO])
+        self._fukusho = _SingleStrategy(tables[BetType.FUKUSHO])
+        self._wakuren = _WakurenStrategy(tables[BetType.WAKUREN])
+        self._umaren = _ComboStrategy(tables[BetType.UMAREN], size=2)
+        self._umatan_box = _PermStrategy(tables[BetType.UMATAN], size=2)
+        self._wide = _ComboStrategy(tables[BetType.WIDE], size=2)
+        self._sanrenpuku = _ComboStrategy(tables[BetType.SANRENPUKU], size=3)
+        self._sanrentan_box = _PermStrategy(tables[BetType.SANRENTAN], size=3)
 
     def bet_tansho(self, race_id: int, umaban: list, amount: int):
         return self._tansho.place(race_id, umaban, amount)

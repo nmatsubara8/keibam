@@ -11,6 +11,7 @@ import dataclasses
 class BetType:
     TANSHO: str = "tansho"
     FUKUSHO: str = "fukusho"
+    WAKUREN: str = "wakuren"
     UMAREN: str = "umaren"
     UMATAN: str = "umatan"
     WIDE: str = "wide"
