@@ -90,6 +90,9 @@ schedule_path = os.path.join(LocalPaths.HTML_DIR, "schedule", "schedule.pkl")
 if os.path.exists(schedule_path):
     try:
         schedule_df = pd.read_pickle(schedule_path)
+        # pickleがリスト/dict の場合はDataFrameに変換する
+        if not isinstance(schedule_df, pd.DataFrame):
+            schedule_df = pd.DataFrame(schedule_df)
         now = dt.datetime.now()
         st.dataframe(schedule_df.head(10), use_container_width=True)
     except Exception as e:
