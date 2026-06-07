@@ -19,8 +19,13 @@ from __future__ import annotations
 import asyncio
 from abc import ABC
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 from typing import Callable
 from typing import Sequence
+
+if TYPE_CHECKING:
+    from playwright.async_api import Browser
+    from playwright.async_api import Playwright
 
 
 class AbstractScraper(ABC):
@@ -136,8 +141,8 @@ class PlaywrightScraper(AbstractScraper):
         self._timeout_ms = timeout_ms
         self._rate_limit_sec = rate_limit_sec
         self._click_delay_ms = click_delay_ms
-        self._playwright = None
-        self._browser = None
+        self._playwright: "Playwright | None" = None
+        self._browser: "Browser | None" = None
 
     async def __aenter__(self) -> "PlaywrightScraper":
         await self._start()
