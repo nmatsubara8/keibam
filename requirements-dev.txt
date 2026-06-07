@@ -13,3 +13,6 @@ mypy
 
 # レイヤ依存契約
 import-linter
+
+# Jupyter ノートブック実行（main.ipynb 等のカーネル）
+ipykernel
