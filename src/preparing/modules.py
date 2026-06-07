@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import time
@@ -7,6 +8,8 @@ import pandas as pd
 NaN = float("nan")
 
 from src.constants._master import Master
+
+logger = logging.getLogger(__name__)
 
 
 def scrape_scheduled_race_html(self, ref_id):
@@ -55,14 +58,14 @@ def process_pkl_file(self, process_function):
         target_all_files = df.iloc[:, 0]
 
         # print("target_pkl_fileはここから+''")
-        print(target_all_files.head())
+        logger.debug("%s", target_all_files.head())
 
     total_batches = (len(target_all_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_all_files)  # 処理対象の全データ数
     filetype = self.get_filetype()
-    print(f"filetype:{filetype}")
-    print(f"# of input files: {total_files}")
-    print(f"# of total_batches: {total_batches}")
+    logger.info("filetype:%s", filetype)
+    logger.info("# of input files: %s", total_files)
+    logger.info("# of total_batches: %s", total_batches)
     processed_files = 0  # 処理済みのファイル数
     # print(f"start {self.alias} processing")
     # target_data_name = {}
@@ -98,7 +101,7 @@ def process_pkl_file(self, process_function):
                 batch_data.append(return_data)
             # print(f"temp_df:{temp_df}")
             except Exception as e:
-                print("Error at {}: {}:{}".format(processed_files + 1, ref_id, e))
+                logger.error("Error at %s: %s:%s", processed_files + 1, ref_id, e)
                 self.obtained_last_key = ref_id
                 break
 
@@ -126,7 +129,7 @@ def process_pkl_file(self, process_function):
     if filetype != "bin":
         storing_process(self)
 
-    print(f"# of processed files: {processed_files}")
+    logger.info("# of processed files: %s", processed_files)
     # Playwright スクレイパーは fetch ごとにライフサイクルを完結するため明示的な
     # close/quit は不要（selenium の driver.close()/quit() は廃止）。
 
@@ -139,7 +142,7 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
         # print("Year:", year)
         # print("Month:", month)
     else:
-        print("Invalid date format")
+        logger.warning("Invalid date format")
 
     # 開催日一覧を入れるリスト
     kaisai_date_list = []
@@ -227,8 +230,8 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
                 race_id_list.append(race_id[0])
         df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
     except Exception as e:
-        print("Error at {}: {}".format(ref_id, e))
-        print("error / obtained_last_key: ", self.obtained_last_key)
+        logger.error("Error at %s: %s", ref_id, e)
+        logger.error("error / obtained_last_key: %s", self.obtained_last_key)
 
     return df
 
@@ -263,10 +266,10 @@ def process_bin_file(self, process_function):
     target_bin_files = sorted(self.get_file_list(self.from_local_location))
     total_batches = (len(target_bin_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_bin_files)  # 処理対象の全データ数
-    print(f"# of input files: {total_files}")
+    logger.info("# of input files: %s", total_files)
     processed_files = 0  # 処理済みのファイル数
 
-    print(f"start {self.alias} processing")
+    logger.info("start %s processing", self.alias)
 
     # tqdmインスタンスの作成
     from tqdm import tqdm
@@ -285,7 +288,7 @@ def process_bin_file(self, process_function):
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
                 # time.sleep(1)
             except Exception as e:
-                print("Error at {}: {}".format(target_bin_file_path, e))
+                logger.error("Error at %s: %s", target_bin_file_path, e)
                 break
 
             processed_files += 1
@@ -302,7 +305,7 @@ def process_bin_file(self, process_function):
     self.transfer_temp_file()
     self.copy_files()
 
-    print(f"# of processed files: {processed_files}")
+    logger.info("# of processed files: %s", processed_files)
 
 
 ################################# Done ####################################
@@ -424,7 +427,7 @@ def create_raw_horse_results(target_bin_file_path):
         # 新馬の競走馬レビューが付いた場合、
         # 列名に0が付与されるため、次のhtmlへ飛ばす
         if df.columns[0] == 0:
-            print("horse_results empty case1 {}".format(target_bin_file_path))
+            logger.warning("horse_results empty case1 %s", target_bin_file_path)
             # continue
 
         # インデックスをhorse_idにする
@@ -638,7 +641,7 @@ def create_raw_race_info(target_bin_file_path):
         if weather in Master.WEATHER_LIST:
             pass
         else:
-            print(f"unknown weather definition appeared:{race_id}")
+            logger.warning("unknown weather definition appeared:%s", race_id)
 
         race_type = text1.split("/")[2].split(":")[0].strip()
         # 発走時刻
@@ -675,18 +678,23 @@ def create_raw_race_info(target_bin_file_path):
                 ground_state1 = temp_ground_state0
                 ground_state2 = temp_ground_state0
             else:
-                print(f"unknown GROUND_STATE definition appeared1:{race_id}{ground_state1}{ground_state2}")
+                logger.warning(
+                    "unknown GROUND_STATE definition appeared1:%s%s%s",
+                    race_id,
+                    ground_state1,
+                    ground_state2,
+                )
         elif dart_checker(text1) and count_ground_state(text1) == 2:
             temp_ground_state1 = text1.split("/")[2].split(":")[1].split()[0].strip()
             if temp_ground_state1 in Master.GROUND_STATE_LIST:
                 ground_state1 = temp_ground_state1
             else:
-                print(f"unknown GROUND_STATE definition appeared2:{race_id}{ground_state1}")
+                logger.warning("unknown GROUND_STATE definition appeared2:%s%s", race_id, ground_state1)
             temp_ground_state2 = text1.split("/")[2].split(":")[2].strip()
             if temp_ground_state2 in Master.GROUND_STATE_LIST:
                 ground_state2 = temp_ground_state2
             else:
-                print(f"unknown GROUND_STATE definition appeared3:{race_id}{temp_ground_state2}")
+                logger.warning("unknown GROUND_STATE definition appeared3:%s%s", race_id, temp_ground_state2)
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         # 馬齢を取得
@@ -707,7 +715,7 @@ def create_raw_race_info(target_bin_file_path):
                 if race_class in race_condition:
                     race_class_info = race_class
             if race_class_info is None:
-                print(f"unknown race_class definition appeared:{race_id}")
+                logger.warning("unknown race_class definition appeared:%s", race_id)
             # 向きを取得
 
             if (around_info is None) and (("障害" in race_class_info or race_condition) or dart):
@@ -780,8 +788,8 @@ def create_tmp_race_info(target_bin_file_path):
         # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
         text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
         text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-        print(f"text1:{text1}")
-        print(f"text2:{text2}")
+        logger.debug("text1:%s", text1)
+        logger.debug("text2:%s", text2)
 
         # テキスト情報を解析してDataFrameに変換
         race_distance = re.search(r"\d+", text1.split("/")[0]).group()
@@ -790,7 +798,7 @@ def create_tmp_race_info(target_bin_file_path):
         if weather in Master.WEATHER_LIST:
             pass
         else:
-            print("unknown weather definition appeared")
+            logger.warning("unknown weather definition appeared")
 
         race_type = text1.split("/")[2].split(":")[0].strip()
         # 向きを取得
@@ -800,13 +808,13 @@ def create_tmp_race_info(target_bin_file_path):
             if around in text1.split(" ")[0]:
                 around_info = around
         if around_info is None:
-            print("unknown around definition appeared")
+            logger.warning("unknown around definition appeared")
 
         ground_state1 = text1.split("/")[2].split(":")[1].strip()
         if ground_state1 in Master.GROUND_STATE_LIST:
             pass
         else:
-            print("unknown GROUND_STATE definition appeared")
+            logger.warning("unknown GROUND_STATE definition appeared")
 
         start_time = text1.split("/")[-1].split(":")[1:3]
         start_time = ":".join(start_time).strip()
@@ -832,14 +840,14 @@ def create_tmp_race_info(target_bin_file_path):
             if sex in race_condition:
                 sex_info = sex
         if sex_info is None:
-            print("unknown sex definition appeared")
+            logger.warning("unknown sex definition appeared")
         # レースクラスを取得
         race_class_info = None
         for race_class in Master.RACE_CLASS_LIST:
             if race_class in race_condition:
                 race_class_info = race_class
         if race_class_info is None:
-            print("unknown race_class definition appeared")
+            logger.warning("unknown race_class definition appeared")
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         race_condition = (
@@ -894,7 +902,7 @@ def create_tmp_race_info(target_bin_file_path):
         )
 
         info = re.findall(r"\w+", texts)
-        print(f"info:{info}")
+        logger.debug("info:%s", info)
         df = pd.DataFrame()
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
 
