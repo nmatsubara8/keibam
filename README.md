@@ -30,8 +30,7 @@ source .venv/bin/activate     # Windows: .venv\Scripts\activate
 
 # 3) 依存インストール
 pip install -r requirements.txt          # アプリ/学習/スクレイピング一式
-# もしくは CI と同じ軽量セット（テスト・静的解析のみ実行する場合）
-# pip install -r requirements-ci.txt
+pip install -r requirements-dev.txt      # テスト・静的解析ツール（pytest / ruff / mypy / import-linter）
 ```
 
 ### スクレイピングを使う場合（任意）

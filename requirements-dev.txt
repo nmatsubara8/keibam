@@ -1,0 +1,15 @@
+# 開発・テスト・静的解析ツール（ランタイム依存は requirements.txt を参照）
+# pip install -r requirements-dev.txt
+
+# テスト
+pytest
+pytest-mock
+
+# Lint
+ruff
+
+# 型チェック
+mypy
+
+# レイヤ依存契約
+import-linter
