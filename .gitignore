@@ -148,3 +148,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# スクレイピング一時ファイル（ディレクトリ構造は .gitkeep で保持）
+data/tmp/**
+!data/tmp/**/.gitkeep
