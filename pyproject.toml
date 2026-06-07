@@ -53,6 +53,12 @@ ignore = []
 
 fixable = ["ALL"]
 
+[tool.ruff.lint.per-file-ignores]
+# Streamlit アプリは sys.path ブートストラップ／set_page_config を import より前に
+# 置く必要があるため、E402（import が先頭にない）を許容する。
+"app/Home.py" = ["E402"]
+"app/pages/*.py" = ["E402"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 5
 

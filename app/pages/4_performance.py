@@ -4,6 +4,13 @@
 EV 閾値スイープ / 投票履歴 / モデルバージョン管理 / config.yaml 編集 を提供する。
 """
 
+import sys
+from pathlib import Path
+
+# リポジトリルートを import パスに追加（ページ直接起動でも `app`/`src` を解決できるように）。
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 import pandas as pd
 import streamlit as st

@@ -7,6 +7,14 @@
 各画面へ遷移する。
 """
 
+import sys
+from pathlib import Path
+
+# リポジトリルートを import パスに追加（PYTHONPATH 未設定でも `app`/`src` を解決できるように）。
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import streamlit as st
 
 st.set_page_config(
