@@ -12,6 +12,9 @@ _SCORE = "score"
 PROB = "prob"
 CURRENT_ODDS = "current_odds"
 
+# predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ）
+_DROP_FOR_PREDICT = [ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK]
+
 
 # common funcs
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
@@ -25,7 +28,7 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     # UMABANの個数がWAKUBANの個数よりも多い場合にwakuban_flagを設定
     wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
     wakuban_flag.name = "wakuban_flag"
-    score = model.predict_proba(X.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1]
+    score = model.predict_proba(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合
     score_table = pd.merge(score_table, wakuban_flag, left_on="race_id", right_index=True)
@@ -116,7 +119,7 @@ class ExpectedValueScorePolicy(AbstractScorePolicy):
 
     @staticmethod
     def calc(model, X: pd.DataFrame) -> pd.DataFrame:
-        prob = model.predict_proba(X.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1]
+        prob = model.predict_proba(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))[:, 1]
         table = X[[ResultsCols.UMABAN]].copy()
         table[PROB] = prob
         table[CURRENT_ODDS] = X[ResultsCols.TANSHO_ODDS].astype(float)

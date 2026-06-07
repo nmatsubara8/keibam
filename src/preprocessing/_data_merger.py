@@ -329,7 +329,8 @@ class DataMerger:
         horse_sire = self._peds[["peds_0"]].reset_index()
         horse_sire["_sire_key"] = horse_sire["peds_0"].astype(str)
 
-        results = results.merge(horse_sire[["horse_id", "_sire_key"]], on="horse_id", how="left")
+        horse_sire_indexed = horse_sire[["horse_id", "_sire_key"]].set_index("horse_id")
+        results = results.merge(horse_sire_indexed, left_on="horse_id", right_index=True, how="left")
         results = results.merge(sire_all, left_on="_sire_key", right_index=True, how="left")
         results = results.drop(columns=["_sire_key"], errors="ignore")
 

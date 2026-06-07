@@ -75,6 +75,17 @@ def _ingest(args: argparse.Namespace) -> None:
                 .add_interaction_features()  # §2b: before dummification
                 .add_race_level_zscore()     # §2g: after all aggregate features
                 .dumminize_kaisai()
+                .dumminize_sex()
+                .dumminize_weather()
+                .dumminize_race_type()
+                .dumminize_ground_state1()
+                .dumminize_ground_state2()
+                .dumminize_around()
+                .dumminize_race_class()
+                .encode_jockey_id()
+                .encode_trainer_id()
+                .encode_owner_id()
+                .encode_breeder_id()
             )
             return fe.featured_data
 
