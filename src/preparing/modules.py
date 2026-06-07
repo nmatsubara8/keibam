@@ -916,12 +916,13 @@ def create_tmp_race_info(target_bin_file_path):
                 df["course_len"] = [int(extracted_number)]
 
             if "右" in text:
-                df["around"] = [Master.AROUND_LIST[0]]
+                df["around"] = [Master.AROUND_RIGHT]
             if "左" in text:
-                df["around"] = [Master.AROUND_LIST[1]]
+                df["around"] = [Master.AROUND_LEFT]
             if "直線" in text:
-                df["around"] = [Master.AROUND_LIST[2]]
+                df["around"] = [Master.AROUND_STRAIGHT]
             if "障害" in text:
+                # AROUND_LIST[3] は範囲外: 既存挙動保持のため位置参照を残す。
                 df["around"] = [Master.AROUND_LIST[3]]
                 hurdle_race_flg = True
 
@@ -933,21 +934,21 @@ def create_tmp_race_info(target_bin_file_path):
                 df["date"] = [text]
 
             if "新馬" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
+                df["race_class"] = [Master.RACE_CLASS_SHINBA]
             if "未勝利" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
+                df["race_class"] = [Master.RACE_CLASS_MISHORI]
             if ("1勝クラス" in text) or ("500万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
+                df["race_class"] = [Master.RACE_CLASS_1SHO]
             if ("2勝クラス" in text) or ("1000万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
+                df["race_class"] = [Master.RACE_CLASS_2SHO]
             if ("3勝クラス" in text) or ("1600万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
+                df["race_class"] = [Master.RACE_CLASS_3SHO]
+            # FIXME: 既存挙動を保持しつつ、"オープン" テキスト→OPEN がセマンティックに
+            # 正しい可能性が高い（同様のミスマッチが table_creator.py にも存在）。
             if "オープン" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
+                df["race_class"] = [Master.RACE_CLASS_LISTED]
             if hurdle_race_flg:
-                # df["around"] = [Master.AROUND_LIST[3]]
-                # df["race_type"] = ["障害"]
-                df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+                df["race_class"] = [Master.RACE_CLASS_G2]
                 hurdle_race_flg = False
                 # 障害レースの場合
         # if hurdle_race_flg:
@@ -955,14 +956,14 @@ def create_tmp_race_info(target_bin_file_path):
         # df["race_class"] = [Master.RACE_CLASS_LIST[9]]
         # hurdle_race_flg = False
 
-        # グレードレース情報の取得
+        # グレードレース情報の取得（FIXME 上記に同じ、本来 G3/G2/G1 が正と思われる）
         grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
         if "G3" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+            df["race_class"] = [Master.RACE_CLASS_OPEN] * len(df)
         elif "G2" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+            df["race_class"] = [Master.RACE_CLASS_OPEN_SPECIAL] * len(df)
         elif "G1" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+            df["race_class"] = [Master.RACE_CLASS_G3] * len(df)
 
         df["race_id"] = race_id
 

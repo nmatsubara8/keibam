@@ -182,47 +182,49 @@ class TableCreator(DataLoader):
                         if text in Master.GROUND_STATE_LIST:
                             df["ground_state"] = [text] * len(df)
                         if "稍" in text:
-                            df["ground_state"] = [Master.GROUND_STATE_LIST[1]] * len(df)
+                            df["ground_state"] = [Master.GROUND_STATE_YAYA_OMO] * len(df)
                         if "不" in text:
-                            df["ground_state"] = [Master.GROUND_STATE_LIST[3]] * len(df)
+                            df["ground_state"] = [Master.GROUND_STATE_BAD] * len(df)
                         if "芝" in text:
-                            df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[0]] * len(df)
+                            df["race_type"] = [Master.RACE_TYPE_TURF] * len(df)
                         if "ダ" in text:
-                            df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[1]] * len(df)
+                            df["race_type"] = [Master.RACE_TYPE_DIRT] * len(df)
                         if "障" in text:
-                            df["race_type"] = [list(Master.RACE_TYPE_DICT.values())[2]] * len(df)
+                            df["race_type"] = [Master.RACE_TYPE_HURDLE] * len(df)
                             hurdle_race_flg = True
                         if "右" in text:
-                            df["around"] = [Master.AROUND_LIST[0]] * len(df)
+                            df["around"] = [Master.AROUND_RIGHT] * len(df)
                         if "左" in text:
-                            df["around"] = [Master.AROUND_LIST[1]] * len(df)
+                            df["around"] = [Master.AROUND_LEFT] * len(df)
                         if "直線" in text:
-                            df["around"] = [Master.AROUND_LIST[2]] * len(df)
+                            df["around"] = [Master.AROUND_STRAIGHT] * len(df)
                         if "新馬" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[0]] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_SHINBA] * len(df)
                         if "未勝利" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[1]] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_MISHORI] * len(df)
                         if "１勝クラス" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[2]] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_1SHO] * len(df)
                         if "２勝クラス" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[3]] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_2SHO] * len(df)
                         if "３勝クラス" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[4]] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_3SHO] * len(df)
+                        # FIXME: 既存挙動を保持しつつ、本来「オープン」テキスト→OPEN がセマンティック
+                        # に正しい可能性が高い。位置参照リファクタの範囲外として残す。
                         if "オープン" in text:
-                            df["race_class"] = [Master.RACE_CLASS_LIST[5]] * len(df)
+                            df["race_class"] = [Master.RACE_CLASS_LISTED] * len(df)
 
-                    # グレードレース情報の取得
+                    # グレードレース情報の取得（FIXME 上記に同じ。本来 G3/G2/G1 が正と思われる）
                     if len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType3")) > 0:
-                        df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+                        df["race_class"] = [Master.RACE_CLASS_OPEN] * len(df)
                     elif len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType2")) > 0:
-                        df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+                        df["race_class"] = [Master.RACE_CLASS_OPEN_SPECIAL] * len(df)
                     elif len(soup.find_elements(By.CLASS_NAME, "Icon_GradeType1")) > 0:
-                        df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+                        df["race_class"] = [Master.RACE_CLASS_G3] * len(df)
 
-                    # 障害レースの場合
+                    # 障害レースの場合（AROUND_LIST[3] は範囲外: 既存挙動保持のため位置参照を残す）
                     if hurdle_race_flg:
                         df["around"] = [Master.AROUND_LIST[3]] * len(df)
-                        df["race_class"] = [Master.RACE_CLASS_LIST[9]] * len(df)
+                        df["race_class"] = [Master.RACE_CLASS_G2] * len(df)
 
                     df["date"] = [date] * len(df)
                 except Exception as e:
