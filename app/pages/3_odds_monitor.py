@@ -79,7 +79,6 @@ st.subheader("オッズ推移（横軸: 締切まで残り分数）")
 
 # 単勝スナップショットのみグラフ化（連系は combo 展開が複雑なため単勝に限定）
 if selected_bet == BetType.TANSHO:
-    import pandas as pd
 
     snaps_for_race = [s for s in snapshots if s.race_id == selected_race and s.bet_type == selected_bet]
     chart_df = snapshots_to_chart_df(snaps_for_race)

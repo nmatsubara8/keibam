@@ -49,7 +49,9 @@ class HistoricalOddsProvider(AbstractOddsProvider):
         """race_id を index に持つテーブルから {race_id: {馬番: 単勝オッズ}} を構築する。"""
         odds_by_race: dict = {}
         for race_id, race_df in table.groupby(level=0):
-            odds_by_race[race_id] = dict(zip(race_df[umaban_col], race_df[odds_col].astype(float)))
+            odds_by_race[race_id] = dict(
+                zip(race_df[umaban_col], race_df[odds_col].astype(float), strict=False)
+            )
         return cls(odds_by_race, takeout=takeout)
 
     def _market_win_probs(self, race_id) -> dict[int, float]:

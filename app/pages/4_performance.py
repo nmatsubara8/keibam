@@ -4,11 +4,11 @@
 EV 閾値スイープ / 投票履歴 / モデルバージョン管理 / config.yaml 編集 を提供する。
 """
 
-import datetime as dt
 
-import numpy as np
 import pandas as pd
 import streamlit as st
+
+from src.constants._local_paths import LocalPaths
 
 from app._betting_history import DEFAULT_HISTORY_PATH
 from app._betting_history import calc_summary_stats
@@ -95,7 +95,7 @@ with tabs[0]:
         featured = _load_featured()
 
         if featured is None:
-            st.info(f"`{__import__('src.constants._local_paths', fromlist=['LocalPaths']).LocalPaths.FEATURED_DATA_PATH}` が見つかりません。")
+            st.info(f"`{LocalPaths.FEATURED_DATA_PATH}` が見つかりません。")
         else:
             if st.button("スイープ実行", key="run_sweep"):
                 with st.spinner("計算中…"):

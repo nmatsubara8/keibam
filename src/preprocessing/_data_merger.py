@@ -89,7 +89,7 @@ class DataMerger:
 
         for date, df_by_date in tqdm(self._results.groupby("date")):
             self._separated_results_dict[date] = df_by_date
-            horse_id_list = df_by_date["horse_id"].unique()
+            horse_id_list = df_by_date["horse_id"].unique()  # noqa: F841  pandas query の @horse_id_list で参照
             # Past horse results (only horses racing on this date)
             self._separated_horse_results_dict[date] = self._horse_results.query(
                 "date < @date"

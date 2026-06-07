@@ -6,7 +6,6 @@ streamlit に依存しないため単体テスト可能。UI ページはこの�
 
 from __future__ import annotations
 
-import dataclasses
 
 import pandas as pd
 

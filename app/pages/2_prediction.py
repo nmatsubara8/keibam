@@ -4,7 +4,6 @@
 advisory モードでは「承認して記録」ボタンで投票履歴に保存する。
 """
 
-import dataclasses
 
 import pandas as pd
 import streamlit as st
@@ -101,7 +100,10 @@ if op_config.operation_mode == ADVISORY:
     st.caption("推奨を確認後、「承認して記録」ボタンを押すと投票履歴に保存されます。実際の馬券購入は人間が行ってください。")
 
     if st.button("✅ 承認して記録", type="primary"):
-        recorder = lambda r: append_history(r, DEFAULT_HISTORY_PATH)
+
+        def recorder(r):
+            return append_history(r, DEFAULT_HISTORY_PATH)
+
         executor = create_bet_executor(ADVISORY, recorder)
         records = executor.execute(candidates)
         st.success(f"{len(records)} 件を投票履歴に記録しました。")

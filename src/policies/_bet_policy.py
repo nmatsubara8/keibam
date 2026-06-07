@@ -135,6 +135,10 @@ class BetPolicyUmatanNagashi:
         return bet_dict
 
 
+# 既定のリスク管理パラメータ（RiskLimits は frozen で不変のため単一インスタンスを共有）。
+_DEFAULT_RISK_LIMITS = RiskLimits()
+
+
 class ExpectedValueBetPolicy:
     """期待値（=的中確率×オッズ）ベースで全馬券種を選定する戦略。
 
@@ -157,7 +161,7 @@ class ExpectedValueBetPolicy:
         odds_provider: AbstractOddsProvider,
         thresholds: dict,
         bet_types=None,
-        risk_limits: RiskLimits = RiskLimits(),
+        risk_limits: RiskLimits = _DEFAULT_RISK_LIMITS,
         ev_max: float = float("inf"),
     ) -> None:
         self._odds_provider = odds_provider
@@ -194,7 +198,7 @@ class ExpectedValueBetPolicy:
         return bet_dict
 
     def _select_for_race(self, race_id, race_df: pd.DataFrame) -> list:
-        win_probs = dict(zip(race_df[ResultsCols.UMABAN], race_df[PROB]))
+        win_probs = dict(zip(race_df[ResultsCols.UMABAN], race_df[PROB], strict=False))
         # 低確率帯のノイズを足切り（KB 7.3）
         eligible = [u for u, p in win_probs.items() if p >= self._risk.MIN_WIN_PROB]
 

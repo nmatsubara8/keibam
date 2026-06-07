@@ -15,7 +15,6 @@ import pickle
 import pandas as pd
 
 from src.constants._local_paths import LocalPaths
-from src.operation._config import ADVISORY
 from src.operation._config import OperationConfig
 
 

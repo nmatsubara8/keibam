@@ -41,7 +41,7 @@ def _reliability_curve(y_true: np.ndarray, prob: np.ndarray, n_bins: int = 10):
     """確率を n_bins 等幅ビンに分割し、各ビンの平均予測確率と実際の的中率を返す。"""
     bins = np.linspace(0.0, 1.0, n_bins + 1)
     bin_centers, actual_rates = [], []
-    for lo, hi in zip(bins[:-1], bins[1:]):
+    for lo, hi in zip(bins[:-1], bins[1:], strict=False):
         mask = (prob >= lo) & (prob < hi)
         if mask.sum() == 0:
             continue
@@ -276,7 +276,7 @@ def plot_stacking_contribution(
         base_names = [f"Base {i + 1}" for i in range(len(base_probs))]
 
     names, aucs = [], []
-    for name, prob in zip(base_names, base_probs):
+    for name, prob in zip(base_names, base_probs, strict=False):
         p = np.asarray(prob, dtype=float)
         try:
             auc = float(roc_auc_score(y_true, p))
@@ -300,7 +300,7 @@ def plot_stacking_contribution(
     ax.set_ylabel("AUC")
     ax.set_title("スタッキング寄与（AUC 比較）")
     ax.axhline(0.5, color="gray", lw=0.8, ls=":")
-    for bar, auc in zip(bars, aucs):
+    for bar, auc in zip(bars, aucs, strict=False):
         if not np.isnan(auc):
             ax.text(bar.get_x() + bar.get_width() / 2, auc + 0.002, f"{auc:.3f}", ha="center", va="bottom", fontsize=9)
     ax.grid(True, axis="y", alpha=0.4)

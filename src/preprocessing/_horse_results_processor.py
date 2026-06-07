@@ -69,7 +69,10 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # 準備
         baseformat = "%M:%S.%f"
         basetime = pd.to_datetime("00:00.0", format=baseformat)
-        to_datetime = lambda x: pd.to_datetime(df[Cols.TIME], format=x, errors="coerce")
+
+        def to_datetime(x):
+            return pd.to_datetime(df[Cols.TIME], format=x, errors="coerce")
+
         # 秒単位へのフォーマット変換処理
         datetime_s = to_datetime(baseformat)
         # 「x:xx.x」フォーマット以外、許容するフォーマットを定義

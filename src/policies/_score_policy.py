@@ -38,8 +38,12 @@ def _apply_scaler(score: pd.Series, scaler: Callable[[pd.Series], pd.Series]) ->
 
 
 # scalers
-_scaler_standard = lambda x: (x - x.mean()) / x.std(ddof=0)
-_scaler_relative_proba = lambda x: x / x.sum()
+def _scaler_standard(x):
+    return (x - x.mean()) / x.std(ddof=0)
+
+
+def _scaler_relative_proba(x):
+    return x / x.sum()
 
 
 # policies

@@ -13,7 +13,6 @@ import dataclasses
 from abc import ABC
 from abc import abstractmethod
 
-from src.policies._bet_candidate import BetCandidate
 
 
 def kelly_fraction(probability: float, odds: float) -> float:
@@ -73,4 +72,4 @@ class KellyPortfolioOptimizer(AbstractPortfolioOptimizer):
             scale = budget / total
             stakes = [s * scale for s in stakes]
 
-        return [dataclasses.replace(c, stake=s) for c, s in zip(candidates, stakes)]
+        return [dataclasses.replace(c, stake=s) for c, s in zip(candidates, stakes, strict=False)]

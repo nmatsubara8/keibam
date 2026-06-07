@@ -32,7 +32,6 @@ def _ingest(args: argparse.Namespace) -> None:
         """netkeiba から実データを取得する実 adapter（bs4/selenium 依存）。"""
 
         def fetch_results(self, race_ids):
-            from src.preprocessing._abstract_data_processor import AbstractDataProcessor
             from src.preprocessing._results_processor import ResultsProcessor
 
             return ResultsProcessor(cfg.raw_results_path).preprocessed_data

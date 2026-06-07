@@ -5,9 +5,10 @@ import time
 from urllib.request import urlopen
 
 import pandas as pd
-NaN = float("nan")
 
 from src.constants._master import Master
+
+NaN = float("nan")
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,8 @@ def process_pkl_file(self, process_function):
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
     """
     if self.alias == "kaisai_date_list":
-        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数.to_の月は含まないので注意。
+        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数。
+        # to_の月は含まないので注意。
         df = pd.DataFrame({"kaisai_data": []})
         target_all_files = pd.date_range(start=self.from_date, end=self.to_date, freq="ME").astype(str)
     else:
