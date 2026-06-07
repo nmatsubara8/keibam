@@ -1,9 +1,10 @@
-def scrape_kaisai_date(from_date: str, to_date: str) -> int:
-    """Scrape kaisai date list for the given date range using Selenium.
+def scrape_kaisai_date(from_date: str, to_date: str):
+    """指定期間の開催日リストを取得して返す。
 
-    Requires selenium and network access; intended for live data collection only.
-    Returns 0 on success.
+    Playwright でスクレイピングし、pkl に保存後、DataFrame を返す。
     """
+    import os
+    import pandas as pd
     from src.constants._url_paths import UrlPaths
     from src.preparing.url_loader import KaisaiDateLoader
 
@@ -21,4 +22,5 @@ def scrape_kaisai_date(from_date: str, to_date: str) -> int:
         to_date=to_date,
     )
     loader.scrape_kaisai_date()
-    return 0
+    save_path = os.path.join(cal[4], cal[5])
+    return pd.read_pickle(save_path)
