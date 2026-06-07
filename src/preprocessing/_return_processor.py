@@ -93,7 +93,7 @@ class ReturnProcessor(AbstractDataProcessor):
             BetType.SANRENTAN:  self._build_bet_df(BetType.SANRENTAN,   split_arrow_to_int),
         }
 
-    def _build_bet_df(self, bet_type: BetType, win_transform: Callable | None) -> pd.DataFrame:
+    def _build_bet_df(self, bet_type: str, win_transform: Callable | None) -> pd.DataFrame:
         """馬券種別 DataFrame を生成する共通ロジック。
 
         win_transform が None の場合、win 列は文字列のまま保持する（複勝など）。
