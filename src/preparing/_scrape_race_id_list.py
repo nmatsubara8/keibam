@@ -13,9 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def _covered_dates(df: pd.DataFrame) -> set:
-    """pkl 内の race_id から取得済み開催日（8桁文字列）セットを返す。"""
+    """pkl 内の race_id から取得済み開催日（8桁・ハイフンなし）セットを返す。"""
     race_id_col = df.columns[-1]
     return set(df[race_id_col].astype(str).str[:8].unique())
+
+
+def _normalize_date(d: str) -> str:
+    """日付文字列をハイフンなし8桁に統一する（"2020-01-01" → "20200101"）。"""
+    return d.replace("-", "")[:8]
 
 
 def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
@@ -54,7 +59,7 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     if kaisai_date_list is not None:
         date_col = kaisai_date_list.columns[-1]
         all_dates = kaisai_date_list[date_col].astype(str).tolist()
-        missing_dates = [d for d in all_dates if d not in existing_dates]
+        missing_dates = [d for d in all_dates if _normalize_date(d) not in existing_dates]
     else:
         missing_dates = []
 
