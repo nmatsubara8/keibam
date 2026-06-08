@@ -336,7 +336,7 @@ def create_raw_race_results(target_bin_file_path):
         html = f.read()
 
         # メインとなるレース結果テーブルデータを取得
-        df = pd.read_html(html)[0]
+        df = pd.read_html(html.decode("utf-8", errors="replace"))[0]
 
         # htmlをsoupオブジェクトに変換
         soup = BeautifulSoup(html, "lxml")
@@ -425,10 +425,11 @@ def create_raw_horse_results(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
-        df = pd.read_html(html)[3]
+        html_str = html.decode("utf-8", errors="replace")
+        df = pd.read_html(html_str)[3]
         # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
         if df.columns[0] == "受賞歴":
-            df = pd.read_html(html)[4]
+            df = pd.read_html(html_str)[4]
             # print(f"test df:{df.iloc[:,1]}")
 
         # 新馬の競走馬レビューが付いた場合、
@@ -469,7 +470,7 @@ def create_raw_horse_info(target_bin_file_path):
         html = f.read()
 
         # 馬の基本情報を取得
-        df = pd.read_html(html)[1].set_index(0).T
+        df = pd.read_html(html.decode("utf-8", errors="replace"))[1].set_index(0).T
 
         # htmlをsoupオブジェクトに変換
         soup = BeautifulSoup(html, "lxml")
@@ -588,8 +589,8 @@ def create_raw_race_return(target_bin_file_path):
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
-        html = html.replace(b"<br />", b"br")
-        dfs = pd.read_html(html)
+        html_str = html.replace(b"<br />", b"br").decode("utf-8", errors="replace")
+        dfs = pd.read_html(html_str)
 
         # dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
         df = pd.concat([dfs[1], dfs[2]])
