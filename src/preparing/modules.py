@@ -662,8 +662,11 @@ def create_raw_race_info(target_bin_file_path):
         soup = BeautifulSoup(html, "lxml")
 
         # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-        text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        data_intro = soup.find("div", attrs={"class": "data_intro"})
+        if data_intro is None:
+            raise ValueError(f"data_intro not found (cancelled race?): {target_bin_file_path}")
+        text1 = data_intro.find_all("p")[0].text
+        text2 = data_intro.find_all("p")[1].text
         # print(f"text1:{text1}")
         # print(f"text2:{text2}")
         race_id = str(re.findall(r"\d+", target_bin_file_path)[0])
@@ -819,8 +822,11 @@ def create_tmp_race_info(target_bin_file_path):
         soup = BeautifulSoup(html, "lxml")
 
         # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-        text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        data_intro = soup.find("div", attrs={"class": "data_intro"})
+        if data_intro is None:
+            raise ValueError(f"data_intro not found (cancelled race?): {target_bin_file_path}")
+        text1 = data_intro.find_all("p")[0].text
+        text2 = data_intro.find_all("p")[1].text
         logger.debug("text1:%s", text1)
         logger.debug("text2:%s", text2)
 
