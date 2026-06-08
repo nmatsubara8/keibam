@@ -65,6 +65,11 @@ def get_rawdata_horse_info(html_files_horse=None, skip: bool = False) -> pd.Data
     return _create_table("horse_info_table", "create_horse_info_table", skip)
 
 
+def get_rawdata_horse_results(html_files_horse=None, skip: bool = False) -> pd.DataFrame:
+    """horse HTML から馬の過去成績テーブルを生成する（horse_results.pkl）。"""
+    return _create_table("horse_results_table", "create_horse_results_table", skip)
+
+
 def update_rawdata(filepath: str, new_df: pd.DataFrame) -> None:
     """既存の pkl テーブルに new_df をマージして上書き保存する。
 

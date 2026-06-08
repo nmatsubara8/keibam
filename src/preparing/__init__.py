@@ -1,4 +1,5 @@
 from src.preparing._get_rawdata import get_rawdata_horse_info
+from src.preparing._get_rawdata import get_rawdata_horse_results
 from src.preparing._get_rawdata import get_rawdata_info
 from src.preparing._get_rawdata import get_rawdata_results
 from src.preparing._get_rawdata import get_rawdata_return
@@ -17,6 +18,7 @@ __all__ = [
     "get_rawdata_info",
     "get_rawdata_return",
     "get_rawdata_horse_info",
+    "get_rawdata_horse_results",
     "update_rawdata",
 ]
 
