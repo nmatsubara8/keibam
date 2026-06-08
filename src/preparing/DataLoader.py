@@ -190,6 +190,7 @@ class DataLoader:
                 # self.obtained_last_key = self.target_data[-1]
         elif filetype == "df":
             # CSVファイルに保存
+            os.makedirs(self.to_temp_location, exist_ok=True)
             if not os.listdir(self.to_temp_location):
                 header = True
                 mode = "w"

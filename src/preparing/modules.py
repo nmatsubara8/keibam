@@ -317,8 +317,8 @@ def process_bin_file(self, process_function):
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
                 # time.sleep(1)
-            except ValueError:
-                # テーブルなし・data_intro なし（中止レース等）はカウントのみ
+            except (ValueError, IndexError):
+                # テーブルなし / テーブル数不足（中止レース等）はカウントのみ
                 skipped_files += 1
                 pbar.update(1)
                 continue
@@ -338,8 +338,13 @@ def process_bin_file(self, process_function):
             # target_data_name = {}  # バッチ処理が完了したので辞書をクリア
 
         self.obtained_last_key = target_bin_files[-1]
-    self.transfer_temp_file()
-    self.copy_files()
+
+    temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    if processed_files > 0 and os.path.exists(temp_path):
+        self.transfer_temp_file()
+        self.copy_files()
+    elif processed_files == 0:
+        logger.warning("%s: 処理成功ファイルが 0 件のため pkl を更新しません", self.alias)
 
     logger.info("# of processed files: %s / %s (skipped: %s)", processed_files, total_files, skipped_files)
     if skipped_files:
