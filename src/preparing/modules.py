@@ -23,20 +23,31 @@ def scrape_scheduled_race_html(self, ref_id):
 
 
 def _flush_batch_to_pkl(self):
-    """バッチ完了後、累積 temp CSV を最終 pkl へ即時書き出す。
+    """バッチ完了後、累積 temp CSV を最終 pkl へ即時書き出す（既存データとマージ）。
 
-    カーネル再起動時に中断前の取得済みデータが保持され、
-    差分ダウンロードで再開できるようにする。
+    既存 pkl がある場合は新データとマージして上書き（新データ優先）。
+    カーネル再起動後も中断前のデータが保持され、差分ダウンロードで再開できる。
     """
     temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
     if not os.path.exists(temp_path):
         return
     try:
-        df = self.csv_reader(temp_path)
+        new_df = self.csv_reader(temp_path)
         final_path = os.path.join(self.to_location, self.save_file_name)
         os.makedirs(self.to_location, exist_ok=True)
-        df.to_pickle(final_path)
-        logger.debug("中間 pkl を書き出し: %s (%d 行)", final_path, len(df))
+        # 既存 pkl とマージ（新データ優先）
+        if os.path.exists(final_path):
+            try:
+                existing = pd.read_pickle(final_path)
+                # 最後の列をキーとして重複除去
+                key_col = new_df.columns[-1]
+                if key_col in existing.columns:
+                    old_only = existing[~existing[key_col].isin(new_df[key_col])]
+                    new_df = pd.concat([old_only, new_df], ignore_index=True)
+            except Exception:
+                pass  # 既存 pkl が壊れていれば新データのみで上書き
+        new_df.to_pickle(final_path)
+        logger.debug("中間 pkl を書き出し（マージ済み）: %s (%d 行)", final_path, len(new_df))
     except Exception as e:
         logger.warning("中間 pkl の書き出し失敗（続行）: %s", e)
 
@@ -128,11 +139,11 @@ def process_pkl_file(self, process_function):
             except Exception as e:
                 logger.error("Error at %s: %s:%s", processed_files + 1, ref_id, e)
                 self.obtained_last_key = ref_id
-                break
+                pbar.update(1)
+                continue
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
-            # temp_df = pd.concat([temp_df[key] for key in temp_df])
             self.obtained_last_key = ref_id
 
         # print(f"直前 filetype:{filetype}")

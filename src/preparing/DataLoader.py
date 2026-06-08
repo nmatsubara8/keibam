@@ -233,12 +233,20 @@ class DataLoader:
 
     def transfer_temp_file(self):
         local_temp_file_path = self.get_local_temp_file_path()
-        df = self.csv_reader(local_temp_file_path)
+        new_df = self.csv_reader(local_temp_file_path)
 
         to_target_file = self.get_local_comp_file_path(self.alias)
-        # Pickleファイルにデータを保存する
-
-        df.to_pickle(to_target_file)
+        # 既存 pkl がある場合はマージ（新データ優先）してから保存
+        if os.path.exists(to_target_file):
+            try:
+                existing = pd.read_pickle(to_target_file)
+                key_col = new_df.columns[-1]
+                if key_col in existing.columns:
+                    old_only = existing[~existing[key_col].isin(new_df[key_col])]
+                    new_df = pd.concat([old_only, new_df], ignore_index=True)
+            except Exception:
+                pass
+        new_df.to_pickle(to_target_file)
 
     def copy_files(self):
         files = os.listdir(self.to_location)
