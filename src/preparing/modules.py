@@ -57,7 +57,10 @@ def process_pkl_file(self, process_function):
         target_all_files = pd.date_range(start=self.from_date, end=self.to_date, freq="ME").astype(str)
     else:
         df = self.load_file_pkl()
-        target_all_files = df.iloc[:, 0]
+        # ID（日付/race_id 等）は最後の列に入る（load_file_pkl も iloc[:, -1] を
+        # int 変換して扱う）。先頭列は "Unnamed: 0" などの連番のことがあるため
+        # iloc[:, -1] を使う。
+        target_all_files = df.iloc[:, -1]
 
         # print("target_pkl_fileはここから+''")
         logger.debug("%s", target_all_files.head())
