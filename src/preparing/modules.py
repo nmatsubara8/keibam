@@ -461,11 +461,11 @@ def create_raw_horse_results(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
-        html_str = html  # BytesIO で渡すため bytes のまま保持
-        df = pd.read_html(io.BytesIO(html_str))[3]
+        html_str = html.decode("utf-8", errors="replace")
+        df = pd.read_html(io.StringIO(html_str))[3]
         # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
         if df.columns[0] == "受賞歴":
-            df = pd.read_html(io.BytesIO(html_str))[4]
+            df = pd.read_html(io.StringIO(html_str))[4]
             # print(f"test df:{df.iloc[:,1]}")
 
         # 新馬の競走馬レビューが付いた場合、
@@ -505,11 +505,23 @@ def create_raw_horse_info(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
-        # 馬の基本情報を取得
-        df = pd.read_html(io.BytesIO(html))[1].set_index(0).T
+        # 馬の基本情報を取得（bin は UTF-8 で保存されているため StringIO で解析）
+        html_str = html.decode("utf-8", errors="replace")
+        tables = pd.read_html(io.StringIO(html_str))
+        # プロフィールテーブルはインデックス1が基本だが、ページ構造によっては0の場合もある
+        profile_table = None
+        for t in tables:
+            if t.shape[1] == 2 and t.iloc[:, 0].dtype == object:
+                profile_table = t
+                break
+        if profile_table is None:
+            if len(tables) < 2:
+                raise IndexError(f"馬プロフィールテーブルが見つかりません: {target_bin_file_path}")
+            profile_table = tables[1]
+        df = profile_table.set_index(0).T
 
         # htmlをsoupオブジェクトに変換
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html_str, "lxml")
         # 列に "募集情報" が含まれているかを調べる
         funding_info = df.apply(lambda x: x.str.contains("募集情報")).any()
 
