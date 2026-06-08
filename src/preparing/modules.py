@@ -612,11 +612,17 @@ def create_raw_horse_ped(target_bin_file_path):
         # htmlをsoupオブジェクトに変換
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
         html_str = html.decode("utf-8", errors="replace")
-        soup = BeautifulSoup(html_str, "lxml")
+        soup = BeautifulSoup(html_str, "html.parser")
         df = pd.DataFrame()
         peds_id_list = []
         # 血統データからhorse_idを取得する
-        horse_a_list = soup.find("table", attrs={"summary": "5代血統表"}).find_all(
+        ped_table = soup.find("table", attrs={"summary": "5代血統表"})
+        if ped_table is None:
+            # Try finding by class or other attributes for newer page formats
+            ped_table = soup.find("table", class_="blood_table")
+        if ped_table is None:
+            raise ValueError(f"血統テーブルが見つかりません: {target_bin_file_path}")
+        horse_a_list = ped_table.find_all(
             "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
         )
 
