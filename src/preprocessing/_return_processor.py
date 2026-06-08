@@ -67,16 +67,14 @@ def convert_to_int(s):
 def split_bar_to_int(s):
     """`-` 区切りの馬番文字列を int リストへ。"""
     if isinstance(s, str):
-        s = s.split(_COMBO_SEP)
-        s = [int(num) for num in s]
+        s = [int(num.strip()) for num in s.split(_COMBO_SEP) if num.strip()]
     return s
 
 
 def split_arrow_to_int(s):
     """`→` 区切りの馬番文字列を int リストへ（順序保持）。"""
     if isinstance(s, str):
-        s = s.split(_ORDERED_SEP)
-        s = [int(num) for num in s]
+        s = [int(num.strip()) for num in s.split(_ORDERED_SEP) if num.strip()]
     return s
 
 
