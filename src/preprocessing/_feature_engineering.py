@@ -120,6 +120,7 @@ class FeatureEngineering:
         ラベルエンコーディングして、Categorical型に変換する。
         """
         csv_path = os.path.join(LocalPaths.MASTER_DIR, target_col + ".csv")
+        os.makedirs(LocalPaths.MASTER_DIR, exist_ok=True)
         # ファイルが存在しない場合、空のDataFrameを作成
         if not os.path.isfile(csv_path):
             target_master = pd.DataFrame(columns=[target_col, "encoded_id"])
