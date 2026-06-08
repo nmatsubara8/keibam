@@ -45,32 +45,32 @@ def _create_table(alias: str, create_method: str, skip: bool) -> pd.DataFrame:
     return pd.read_pickle(save_path)
 
 
-def get_rawdata_results(html_files_race=None, skip: bool = False) -> pd.DataFrame:
+def get_rawdata_results(html_files_race=None, skip: bool = True) -> pd.DataFrame:
     """race HTML からレース結果テーブルを生成する（results.pkl）。"""
     return _create_table("race_results_table", "create_race_results_table", skip)
 
 
-def get_rawdata_info(html_files_race=None, skip: bool = False) -> pd.DataFrame:
+def get_rawdata_info(html_files_race=None, skip: bool = True) -> pd.DataFrame:
     """race HTML からレース情報テーブルを生成する（race_info.pkl）。"""
     return _create_table("race_info_table", "create_race_info_table", skip)
 
 
-def get_rawdata_return(html_files_race=None, skip: bool = False) -> pd.DataFrame:
+def get_rawdata_return(html_files_race=None, skip: bool = True) -> pd.DataFrame:
     """race HTML から払戻テーブルを生成する（return_tables.pkl）。"""
     return _create_table("race_return_table", "create_race_return_table", skip)
 
 
-def get_rawdata_horse_info(html_files_horse=None, skip: bool = False) -> pd.DataFrame:
+def get_rawdata_horse_info(html_files_horse=None, skip: bool = True) -> pd.DataFrame:
     """horse HTML から馬の基本情報テーブルを生成する（horse_info.pkl）。"""
     return _create_table("horse_info_table", "create_horse_info_table", skip)
 
 
-def get_rawdata_horse_results(html_files_horse=None, skip: bool = False) -> pd.DataFrame:
+def get_rawdata_horse_results(html_files_horse=None, skip: bool = True) -> pd.DataFrame:
     """horse HTML から馬の過去成績テーブルを生成する（horse_results.pkl）。"""
     return _create_table("horse_results_table", "create_horse_results_table", skip)
 
 
-def get_rawdata_peds(html_files_peds=None, skip: bool = False) -> pd.DataFrame:
+def get_rawdata_peds(html_files_peds=None, skip: bool = True) -> pd.DataFrame:
     """ped HTML から血統テーブルを生成する（peds.pkl）。"""
     return _create_table("peds_list", "scrape_peds_list", skip)
 

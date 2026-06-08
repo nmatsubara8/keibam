@@ -123,7 +123,7 @@ class DataLoader:
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
-        local_comp_path = os.path.join(self.to_location + self.save_file_name)
+        local_comp_path = os.path.join(self.to_location, self.save_file_name)
         return local_comp_path
 
     def get_local_comp_path(self, alias):
