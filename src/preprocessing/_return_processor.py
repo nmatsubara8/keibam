@@ -64,17 +64,31 @@ def convert_to_int(s):
     return int(s) if s else 0
 
 
+def _str_to_int_list(s: str, sep: str) -> list:
+    """sep で分割後、各トークンをスペース除去して int 変換する。
+    sep で分割しても複数トークンが得られない場合はスペースでも再分割する。
+    """
+    parts = [p.strip() for p in s.split(sep) if p.strip()]
+    result = []
+    for p in parts:
+        # トークン内にスペースが残る場合（"4 4" 等）はさらにスペースで分割
+        for sub in p.split():
+            if sub:
+                result.append(int(sub))
+    return result
+
+
 def split_bar_to_int(s):
     """`-` 区切りの馬番文字列を int リストへ。"""
     if isinstance(s, str):
-        s = [int(num.strip()) for num in s.split(_COMBO_SEP) if num.strip()]
+        s = _str_to_int_list(s, _COMBO_SEP)
     return s
 
 
 def split_arrow_to_int(s):
     """`→` 区切りの馬番文字列を int リストへ（順序保持）。"""
     if isinstance(s, str):
-        s = [int(num.strip()) for num in s.split(_ORDERED_SEP) if num.strip()]
+        s = _str_to_int_list(s, _ORDERED_SEP)
     return s
 
 
