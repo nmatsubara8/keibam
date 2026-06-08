@@ -70,6 +70,11 @@ def get_rawdata_horse_results(html_files_horse=None, skip: bool = False) -> pd.D
     return _create_table("horse_results_table", "create_horse_results_table", skip)
 
 
+def get_rawdata_peds(html_files_peds=None, skip: bool = False) -> pd.DataFrame:
+    """ped HTML から血統テーブルを生成する（peds.pkl）。"""
+    return _create_table("peds_list", "scrape_peds_list", skip)
+
+
 def update_rawdata(filepath: str, new_df: pd.DataFrame) -> None:
     """既存の pkl テーブルに new_df をマージして上書き保存する。
 
