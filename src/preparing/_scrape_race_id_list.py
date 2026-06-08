@@ -33,4 +33,16 @@ def scrape_race_id_list(kaisai_date_list=None):
     )
     loader.scrape_race_id_list()
     save_path = os.path.join(rl[4], rl[5])
-    return pd.read_pickle(save_path)
+    df = pd.read_pickle(save_path)
+
+    # kaisai_date_list が指定されている場合、その年集合に含まれない race_id を除外する。
+    # scraping 中のフォールバック応答や古い pkl の残骸が混入しても確実に取り除く。
+    if kaisai_date_list is not None:
+        valid_years = set(
+            kaisai_date_list.iloc[:, -1].astype(str).str[:4].unique()
+        )
+        race_id_col = df.columns[-1]
+        mask = df[race_id_col].astype(str).str[:4].isin(valid_years)
+        df = df[mask].reset_index(drop=True)
+
+    return df
