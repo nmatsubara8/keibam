@@ -44,5 +44,7 @@ def scrape_race_id_list(kaisai_date_list=None):
         race_id_col = df.columns[-1]
         mask = df[race_id_col].astype(str).str[:4].isin(valid_years)
         df = df[mask].reset_index(drop=True)
+        # ディスク上の pkl も更新する（後続スクレイパーが正しいリストを読む）
+        df.to_pickle(save_path)
 
     return df
