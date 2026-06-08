@@ -57,8 +57,11 @@ def count_br(df, column):
 def convert_to_int(s):
     """カンマ区切りの数字文字列を整数化する。"""
     if isinstance(s, str):
-        s = s.replace(",", "")
-    return int(s)
+        s = s.replace(",", "").strip()
+        # スペース区切りで複数値が混入している場合は最初の値を使う
+        if " " in s:
+            s = s.split()[0]
+    return int(s) if s else 0
 
 
 def split_bar_to_int(s):
