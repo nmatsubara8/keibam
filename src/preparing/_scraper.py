@@ -179,7 +179,7 @@ class PlaywrightScraper(AbstractScraper):
         timeout_ms: int = 30000,
         rate_limit_sec: float = 1.0,
         click_delay_ms: int = 100,
-        selector_timeout_ms: int = 8000,
+        selector_timeout_ms: int = 3000,
     ) -> None:
         self._headless = headless
         self._timeout_ms = timeout_ms
