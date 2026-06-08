@@ -297,6 +297,7 @@ def process_bin_file(self, process_function):
     total_files = len(target_bin_files)  # 処理対象の全データ数
     logger.info("# of input files: %s", total_files)
     processed_files = 0  # 処理済みのファイル数
+    skipped_files = 0  # テーブルなし・スキップ件数
 
     logger.info("start %s processing", self.alias)
 
@@ -316,9 +317,10 @@ def process_bin_file(self, process_function):
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
                 # time.sleep(1)
-            except ValueError as e:
-                # pd.read_html が "No tables found" を返す場合（中止レース等）は warning に留める
-                logger.warning("テーブルなし（スキップ）: %s: %s", target_bin_file_path, e)
+            except ValueError:
+                # テーブルなし・data_intro なし（中止レース等）はカウントのみ
+                skipped_files += 1
+                pbar.update(1)
                 continue
             except Exception as e:
                 logger.error("Error at %s: %s", target_bin_file_path, e)
@@ -338,7 +340,9 @@ def process_bin_file(self, process_function):
     self.transfer_temp_file()
     self.copy_files()
 
-    logger.info("# of processed files: %s", processed_files)
+    logger.info("# of processed files: %s / %s (skipped: %s)", processed_files, total_files, skipped_files)
+    if skipped_files:
+        logger.warning("%s: %d 件をスキップ（テーブルなし・中止レース等）", self.alias, skipped_files)
 
 
 ################################# Done ####################################
