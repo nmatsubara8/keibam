@@ -262,7 +262,10 @@ class DataLoader:
                 # 残りのデータを読み込む
                 data = pd.DataFrame()
                 data = pickle.load(f)
-                data.iloc[:, -1] = data.iloc[:, -1].astype(int)
+                # pandas 3.x では Arrow 文字列列に int64 を直接代入できないため
+                # numpy array 経由で型変換する
+                last_col = data.columns[-1]
+                data[last_col] = pd.to_numeric(data[last_col], errors="coerce").fillna(0).astype(int).values
                 logger.debug("load_file_pkl:row type int:%s", data.dtypes)
                 logger.debug("type of data_Loaded: %s", type(data))
                 logger.debug("load_file_pkl:data.head: %s", data.head())
