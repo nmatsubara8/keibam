@@ -221,6 +221,9 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
     from bs4 import BeautifulSoup
 
     url = f"{self.from_location}?kaisai_date={ref_id}"
+    # リクエストした開催日の年（race_id 先頭4桁）。ページ読込失敗時に netkeiba が
+    # 現在のデフォルトレース一覧を返すことがあるため、年が一致する race_id だけ残す。
+    expected_year = str(ref_id)[:4]
     race_id_list = []
     df = pd.DataFrame({"race_id": []}, index=[])
     try:
@@ -234,7 +237,8 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
             race_id = re.findall(
                 r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", href
             )
-            if len(race_id) > 0:
+            # 年が一致しない race_id（=フォールバックで返った現在レース）は除外
+            if len(race_id) > 0 and race_id[0][:4] == expected_year:
                 race_id_list.append(race_id[0])
         df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
     except Exception as e:
