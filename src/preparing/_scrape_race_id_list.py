@@ -2,7 +2,8 @@ def scrape_race_id_list(kaisai_date_list=None):
     """開催日リストからレースIDリストを取得して返す。
 
     Playwright でスクレイピングし、pkl に保存後、DataFrame を返す。
-    kaisai_date_list: scrape_kaisai_date() の戻り値（使用しない、内部で pkl を参照）
+    kaisai_date_list: scrape_kaisai_date() の戻り値。指定するとそのデータを
+    入力 pkl として保存してからスクレイピングするため、年が混在しない。
     """
     import os
     import pandas as pd
@@ -11,6 +12,14 @@ def scrape_race_id_list(kaisai_date_list=None):
 
     url_paths = UrlPaths()
     rl = url_paths.RACE_LIST_URL
+
+    # 呼び出し元が kaisai_date_list を渡した場合、それを入力 pkl として保存する。
+    # これにより、ディスク上の古い pkl（別年のデータ混在）による誤スクレイピングを防ぐ。
+    if kaisai_date_list is not None:
+        input_pkl_path = os.path.join(rl[7], rl[8])
+        os.makedirs(rl[7], exist_ok=True)
+        kaisai_date_list.to_pickle(input_pkl_path)
+
     loader = KaisaiDateLoader(
         alias=rl[0],
         from_location=rl[1],

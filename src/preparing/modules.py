@@ -103,8 +103,6 @@ def process_pkl_file(self, process_function):
                 return_data = process_function(self, ref_id, driver, waiting_time)
 
                 time.sleep(0.2)  # サーバ負荷軽減の最小待機
-                if filetype == "bin":
-                    batch_data.append(return_data)
                 batch_data.append(return_data)
             # print(f"temp_df:{temp_df}")
             except Exception as e:
