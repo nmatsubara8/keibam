@@ -2,7 +2,6 @@ import logging
 import os
 import re
 import time
-from urllib.request import urlopen
 
 import pandas as pd
 
