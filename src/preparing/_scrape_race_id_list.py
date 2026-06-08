@@ -46,12 +46,15 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     # 既存 pkl を読み込む（部分完了分も活用する）
     existing_df: pd.DataFrame | None = None
     existing_dates: set = set()
+    print(f"[DEBUG] save_path={save_path}, exists={os.path.exists(save_path)}")
     if os.path.exists(save_path):
         try:
             existing_df = pd.read_pickle(save_path)
             existing_dates = _covered_dates(existing_df)
+            print(f"[DEBUG] existing_df cols={existing_df.columns.tolist()}, rows={len(existing_df)}, sample_dates={sorted(existing_dates)[:3]}")
         except Exception as e:
             logger.warning("既存 pkl の読み込みに失敗: %s", e)
+            print(f"[DEBUG] pkl読み込みエラー: {e}")
             existing_df = None
             existing_dates = set()
 
@@ -60,6 +63,7 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
         date_col = kaisai_date_list.columns[-1]
         all_dates = kaisai_date_list[date_col].astype(str).tolist()
         missing_dates = [d for d in all_dates if _normalize_date(d) not in existing_dates]
+        print(f"[DEBUG] date_col={date_col}, all_dates[:3]={all_dates[:3]}, missing={len(missing_dates)}/{len(all_dates)}")
     else:
         missing_dates = []
 
