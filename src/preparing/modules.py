@@ -296,7 +296,7 @@ def process_bin_file(self, process_function):
                 # time.sleep(1)
             except Exception as e:
                 logger.error("Error at %s: %s", target_bin_file_path, e)
-                break
+                continue
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす

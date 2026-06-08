@@ -375,8 +375,8 @@ class DataLoader:
         items = os.listdir(location)
 
         for item in items:
-            # ファイルの場合のみリストに追加
-            if os.path.isfile(os.path.join(self.from_local_location, item)):
+            # .bin ファイルのみリストに追加（.gitkeep 等を除外）
+            if os.path.isfile(os.path.join(self.from_local_location, item)) and item.endswith(".bin"):
                 file_list.append(item)
         return file_list
 
