@@ -611,7 +611,8 @@ def create_raw_horse_ped(target_bin_file_path):
 
         # htmlをsoupオブジェクトに変換
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
-        soup = BeautifulSoup(html, "lxml")
+        html_str = html.decode("utf-8", errors="replace")
+        soup = BeautifulSoup(html_str, "lxml")
         df = pd.DataFrame()
         peds_id_list = []
         # 血統データからhorse_idを取得する
