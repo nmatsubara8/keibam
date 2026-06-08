@@ -96,6 +96,7 @@ def process_pkl_file(self, process_function):
         batch_target_all_files = target_all_files[start_index:end_index]
         # print("ref_idの確認:", batch_target_all_files[0:2])
         batch_data = []
+        return_data = None  # 例外で process_function が完了しない場合への初期化
         for ref_id in batch_target_all_files:  #
             try:
                 # print(f"ref_id:{ref_id}")
@@ -117,19 +118,15 @@ def process_pkl_file(self, process_function):
 
         # print(f"直前 filetype:{filetype}")
         if filetype != "bin":
-            df = pd.concat(batch_data)
-            # if self.alias == "horse_id_list" and processed_files // 400 == 0:
-            #    time.sleep(60)
-            # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
-            self.target_data = df
-            # print(f"df:{df}")
-
+            if batch_data:
+                df = pd.concat(batch_data)
+                self.target_data = df
+                self.save_temp_file(self.alias)
         else:
-            self.processing_id = ref_id
-            self.target_data = return_data
-            # print(batch_data[0])
-            # rint(f"# of processed files: {processed_files}")
-        self.save_temp_file(self.alias)
+            if return_data is not None:
+                self.processing_id = ref_id
+                self.target_data = return_data
+                self.save_temp_file(self.alias)
 
     if filetype != "bin":
         storing_process(self)
@@ -250,12 +247,13 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
 def scrape_html(self, ref_id, driver, waiting_time):
     """from_location + ref_id の静的 HTML を取得する（race/horse/ped 共通）。
 
-    レース結果・馬成績・血統ページは JS 描画不要のため urlopen で直接取得する。
-    process_pkl_file に process_function として渡される。
+    db.netkeiba.com は素の urlopen（UA なし）に HTTP 400 を返すため、
+    PlaywrightScraper（driver）経由で取得する。JS 描画不要なページなので
+    domcontentloaded で十分。戻り値は bin ファイル書き込み用に UTF-8 bytes。
     """
     url = str(self.from_location) + str(ref_id)
-    html = urlopen(url).read()
-    return html
+    html_str = driver.fetch_sync(url)
+    return html_str.encode("utf-8")
 
 
 # race/horse/ped は同一実装。後方互換のため import 可能な別名として公開する
