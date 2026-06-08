@@ -52,3 +52,30 @@ def get_rawdata_info(html_files_race=None, skip: bool = False) -> pd.DataFrame:
 def get_rawdata_return(html_files_race=None, skip: bool = False) -> pd.DataFrame:
     """race HTML から払戻テーブルを生成する（return_tables.pkl）。"""
     return _create_table("race_return_table", "create_race_return_table", skip)
+
+
+def update_rawdata(filepath: str, new_df: pd.DataFrame) -> None:
+    """既存の pkl テーブルに new_df をマージして上書き保存する。
+
+    filepath の pkl が存在する場合は new_df に含まれない旧インデックスを保持したまま
+    マージする（重複インデックスは new_df を優先）。存在しない場合は新規作成。
+    """
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    if new_df is None or new_df.empty:
+        _logger.warning("update_rawdata: new_df が空のためスキップ (%s)", filepath)
+        return
+
+    if os.path.isfile(filepath):
+        backup = filepath + ".bak"
+        existing = pd.read_pickle(filepath)
+        filtered_old = existing[~existing.index.isin(new_df.index)]
+        updated = pd.concat([filtered_old, new_df])
+        if os.path.isfile(backup):
+            os.remove(backup)
+        os.rename(filepath, backup)
+        updated.to_pickle(filepath)
+    else:
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        new_df.to_pickle(filepath)
