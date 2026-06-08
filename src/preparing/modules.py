@@ -22,6 +22,25 @@ def scrape_scheduled_race_html(self, ref_id):
     return get_soup(url)[0].read()
 
 
+def _flush_batch_to_pkl(self):
+    """バッチ完了後、累積 temp CSV を最終 pkl へ即時書き出す。
+
+    カーネル再起動時に中断前の取得済みデータが保持され、
+    差分ダウンロードで再開できるようにする。
+    """
+    temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    if not os.path.exists(temp_path):
+        return
+    try:
+        df = self.csv_reader(temp_path)
+        final_path = os.path.join(self.to_location, self.save_file_name)
+        os.makedirs(self.to_location, exist_ok=True)
+        df.to_pickle(final_path)
+        logger.debug("中間 pkl を書き出し: %s (%d 行)", final_path, len(df))
+    except Exception as e:
+        logger.warning("中間 pkl の書き出し失敗（続行）: %s", e)
+
+
 def storing_process(self):
     df = []
     df_sorted = []
@@ -122,6 +141,8 @@ def process_pkl_file(self, process_function):
                 df = pd.concat(batch_data)
                 self.target_data = df
                 self.save_temp_file(self.alias)
+                # バッチ完了ごとに中間 pkl を書き出してカーネル再起動時の再取得を防ぐ
+                _flush_batch_to_pkl(self)
         else:
             if return_data is not None:
                 self.processing_id = ref_id

@@ -1,18 +1,36 @@
+"""レースIDリストのスクレイピング（差分ダウンロード対応）。
+
+既存 pkl に含まれる開催日はスキップし、未取得分だけダウンロードして
+既存データにマージする。カーネル再起動後も進捗が保持される。
+"""
+
+import logging
+import os
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+def _covered_dates(df: pd.DataFrame) -> set:
+    """pkl 内の race_id から取得済み開催日（8桁文字列）セットを返す。"""
+    race_id_col = df.columns[-1]
+    return set(df[race_id_col].astype(str).str[:8].unique())
+
+
 def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     """開催日リストからレースIDリストを取得して返す。
 
-    Playwright でスクレイピングし、pkl に保存後、DataFrame を返す。
+    差分ダウンロード: 既存 pkl に含まれる開催日はスクレイピングをスキップし、
+    未取得分だけダウンロードしてマージする。カーネル再起動後も進捗が保持される。
 
     Parameters
     ----------
     kaisai_date_list : DataFrame, optional
-        scrape_kaisai_date() の戻り値。指定するとそのデータを入力 pkl として保存する。
+        scrape_kaisai_date() の戻り値。指定するとその開催日を対象にする。
     skip : bool
-        True の場合、既存の pkl がある場合はスクレイピングを省略して返す。
-        kaisai_date_list が指定されていれば年フィルタは常に適用する。
+        True かつ全開催日が取得済みの場合、スクレイピングを完全省略する。
     """
-    import os
-    import pandas as pd
     from src.constants._url_paths import UrlPaths
     from src.preparing.url_loader import KaisaiDateLoader
 
@@ -20,24 +38,59 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     rl = url_paths.RACE_LIST_URL
     save_path = os.path.join(rl[4], rl[5])
 
-    if skip and os.path.exists(save_path):
-        df = pd.read_pickle(save_path)
-        # skip 時でも年フィルタは適用して返す
-        if kaisai_date_list is not None:
-            valid_years = set(
-                kaisai_date_list.iloc[:, -1].astype(str).str[:4].unique()
-            )
-            race_id_col = df.columns[-1]
-            mask = df[race_id_col].astype(str).str[:4].isin(valid_years)
-            df = df[mask].reset_index(drop=True)
-        return df
+    # 既存 pkl を読み込む（部分完了分も活用する）
+    existing_df: pd.DataFrame | None = None
+    existing_dates: set = set()
+    if os.path.exists(save_path):
+        try:
+            existing_df = pd.read_pickle(save_path)
+            existing_dates = _covered_dates(existing_df)
+        except Exception as e:
+            logger.warning("既存 pkl の読み込みに失敗: %s", e)
+            existing_df = None
+            existing_dates = set()
 
-    # 呼び出し元が kaisai_date_list を渡した場合、それを入力 pkl として保存する。
-    # これにより、ディスク上の古い pkl（別年のデータ混在）による誤スクレイピングを防ぐ。
+    # ダウンロード対象の開催日を決定
     if kaisai_date_list is not None:
+        date_col = kaisai_date_list.columns[-1]
+        all_dates = kaisai_date_list[date_col].astype(str).tolist()
+        missing_dates = [d for d in all_dates if d not in existing_dates]
+    else:
+        missing_dates = []
+
+    # skip=True かつ未取得分がなければキャッシュを即返す
+    if skip and not missing_dates and existing_df is not None:
+        logger.info("race_id_list: 全開催日取得済みのためスキップ (%d 件)", len(existing_df))
+        return _filter_by_years(existing_df, kaisai_date_list)
+
+    if not missing_dates:
+        # kaisai_date_list 未指定 or 全カバー済み → そのまま全件ダウンロード（後方互換）
+        missing_dates = None
+
+    # 未取得分のみ対象に絞った kaisai_date_list を作成
+    if missing_dates is not None and kaisai_date_list is not None:
+        date_col = kaisai_date_list.columns[-1]
+        to_scrape = kaisai_date_list[
+            kaisai_date_list[date_col].astype(str).isin(missing_dates)
+        ].reset_index(drop=True)
+        logger.info(
+            "race_id_list: %d 件中 %d 件は取得済み → %d 件をダウンロード",
+            len(kaisai_date_list),
+            len(existing_dates & set(missing_dates.__class__(missing_dates))),
+            len(to_scrape),
+        )
+    else:
+        to_scrape = kaisai_date_list
+
+    if to_scrape is not None and len(to_scrape) == 0:
+        # すべて取得済み
+        return _filter_by_years(existing_df, kaisai_date_list)
+
+    # 入力 pkl として保存（ローダーが参照する）
+    if to_scrape is not None:
         input_pkl_path = os.path.join(rl[7], rl[8])
         os.makedirs(rl[7], exist_ok=True)
-        kaisai_date_list.to_pickle(input_pkl_path)
+        to_scrape.to_pickle(input_pkl_path)
 
     loader = KaisaiDateLoader(
         alias=rl[0],
@@ -51,16 +104,27 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
         from_local_file_name=rl[8],
     )
     loader.scrape_race_id_list()
-    df = pd.read_pickle(save_path)
+    new_df = pd.read_pickle(save_path)
 
-    # kaisai_date_list が指定されている場合、その年集合に含まれない race_id を除外する。
-    if kaisai_date_list is not None:
-        valid_years = set(
-            kaisai_date_list.iloc[:, -1].astype(str).str[:4].unique()
-        )
-        race_id_col = df.columns[-1]
-        mask = df[race_id_col].astype(str).str[:4].isin(valid_years)
-        df = df[mask].reset_index(drop=True)
-        df.to_pickle(save_path)
+    # 既存データとマージ（新データ優先・重複除去）
+    if existing_df is not None and not existing_df.empty:
+        race_id_col = new_df.columns[-1]
+        old_filtered = existing_df[~existing_df[race_id_col].isin(new_df[race_id_col])]
+        merged = pd.concat([old_filtered, new_df], ignore_index=True)
+        merged.to_pickle(save_path)
+        new_df = merged
 
-    return df
+    # 年フィルタ適用
+    new_df = _filter_by_years(new_df, kaisai_date_list)
+    new_df.to_pickle(save_path)
+    return new_df
+
+
+def _filter_by_years(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
+    """kaisai_date_list の年集合に含まれない race_id を除外して返す。"""
+    if kaisai_date_list is None or df is None:
+        return df
+    valid_years = set(kaisai_date_list.iloc[:, -1].astype(str).str[:4].unique())
+    race_id_col = df.columns[-1]
+    mask = df[race_id_col].astype(str).str[:4].isin(valid_years)
+    return df[mask].reset_index(drop=True)
