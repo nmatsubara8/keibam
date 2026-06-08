@@ -316,6 +316,10 @@ def process_bin_file(self, process_function):
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
                 # time.sleep(1)
+            except ValueError as e:
+                # pd.read_html が "No tables found" を返す場合（中止レース等）は warning に留める
+                logger.warning("テーブルなし（スキップ）: %s: %s", target_bin_file_path, e)
+                continue
             except Exception as e:
                 logger.error("Error at %s: %s", target_bin_file_path, e)
                 continue
