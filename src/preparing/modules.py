@@ -324,6 +324,7 @@ def process_bin_file(self, process_function):
                 continue
             except Exception as e:
                 logger.error("Error at %s: %s", target_bin_file_path, e)
+                pbar.update(1)
                 continue
 
             processed_files += 1
