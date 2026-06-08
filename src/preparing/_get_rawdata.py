@@ -36,6 +36,12 @@ def _create_table(alias: str, create_method: str, skip: bool) -> pd.DataFrame:
     creator = TableCreator()
     creator.set_args(alias)
     getattr(creator, create_method)()
+    if not os.path.exists(save_path):
+        import logging
+        logging.getLogger(__name__).warning(
+            "%s: 出力 pkl が作成されませんでした（処理対象ファイルなし）", alias
+        )
+        return pd.DataFrame()
     return pd.read_pickle(save_path)
 
 
