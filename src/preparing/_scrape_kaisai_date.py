@@ -20,7 +20,16 @@ def scrape_kaisai_date(from_date: str, to_date: str, skip: bool = False):
     save_path = os.path.join(cal[4], cal[5])
 
     if skip and os.path.exists(save_path):
-        return pd.read_pickle(save_path)
+        cached = pd.read_pickle(save_path)
+        # from_date/to_date の範囲内の日付だけ返す（他年のキャッシュを混入させない）
+        date_col = cached.columns[-1]
+        from_8 = from_date.replace("-", "")[:8]
+        to_8 = to_date.replace("-", "")[:8]
+        mask = (cached[date_col].astype(str) >= from_8) & (cached[date_col].astype(str) < to_8)
+        filtered = cached[mask]
+        if not filtered.empty:
+            return filtered
+        # キャッシュに該当範囲がなければ再スクレイピング
 
     loader = KaisaiDateLoader(
         alias=cal[0],

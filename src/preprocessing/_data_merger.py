@@ -69,6 +69,8 @@ class DataMerger:
         logger.debug("merge_horse_info\n%s", self._merged_data.sort_values(by="horse_id").head().T)
 
         self._merge_peds()
+        import os as _os
+        _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
         self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
 
     def _merge_race_info(self):
