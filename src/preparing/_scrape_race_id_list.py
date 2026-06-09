@@ -62,6 +62,10 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     if os.path.exists(save_path):
         try:
             existing_df = pd.read_pickle(save_path)
+            # skip=True の場合、pkl が存在すれば日付チェックせずそのまま返す
+            if skip:
+                logger.info("race_id_list: skip=True かつ pkl 存在 → キャッシュを返す (%d 件)", len(existing_df))
+                return existing_df
             existing_dates = _covered_dates(existing_df)
             print(f"[DEBUG] existing_df cols={existing_df.columns.tolist()}, rows={len(existing_df)}, sample_dates={sorted(existing_dates)[:3]}")
         except Exception as e:
