@@ -92,6 +92,10 @@ class FeatureEngineering:
         """weatherカラムをダミー変数化する"""
         return self._dummify("weather", Master.WEATHER_LIST, prefix="weather_")
 
+    def dumminize_ground_state(self):
+        """ground_stateカラムをダミー変数化する（shutubaパイプライン用）"""
+        return self._dummify("ground_state", Master.GROUND_STATE_LIST, prefix="ground_state_")
+
     def dumminize_ground_state1(self):
         """ground_state1カラムをダミー変数化する"""
         return self._dummify("ground_state1", Master.GROUND_STATE_LIST, prefix="ground_state1_")
