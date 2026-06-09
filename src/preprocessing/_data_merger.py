@@ -343,13 +343,19 @@ class DataMerger:
     # ──────────────────────────────────────────
 
     def _merge_horse_info(self):
+        self._merged_data["horse_id"] = self._merged_data["horse_id"].astype(str)
+        info = self._horse_info.copy()
+        info.index = info.index.astype(str)
         self._merged_data = self._merged_data.merge(
-            self._horse_info, left_on="horse_id", right_index=True, how="left"
+            info, left_on="horse_id", right_index=True, how="left"
         )
 
     def _merge_peds(self):
+        self._merged_data["horse_id"] = self._merged_data["horse_id"].astype(str)
+        peds = self._peds.copy()
+        peds.index = peds.index.astype(str)
         self._merged_data = self._merged_data.merge(
-            self._peds, left_on="horse_id", right_index=True, how="left"
+            peds, left_on="horse_id", right_index=True, how="left"
         )
 
     @property
