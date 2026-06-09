@@ -22,8 +22,9 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     score_table[ResultsCols.WAKUBAN] = X[ResultsCols.WAKUBAN]
     # race_idごとにWAKUBANの組み合わせをカウント
     # race_idごとにUMABANとWAKUBANの個数を取得
-    umaban_count_per_race = X.groupby("race_id")[ResultsCols.UMABAN].nunique()
-    wakuban_count_per_race = X.groupby("race_id")[ResultsCols.WAKUBAN].nunique()
+    race_key = "race_id" if "race_id" in X.columns else X.index
+    umaban_count_per_race = X.groupby(race_key)[ResultsCols.UMABAN].nunique()
+    wakuban_count_per_race = X.groupby(race_key)[ResultsCols.WAKUBAN].nunique()
 
     # UMABANの個数がWAKUBANの個数よりも多い場合にwakuban_flagを設定
     wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
