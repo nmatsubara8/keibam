@@ -112,7 +112,9 @@ class _ComboStrategy(_BettingStrategy):
         self.min_horses = size
 
     def _expand(self, umaban):
-        return list(combinations(umaban, self._size))
+        # 組合せは順不同。_match が tuple(sorted(win_value)) で比較するため、
+        # キー側も sorted して揃える（馬番が降順で渡されても的中するように）。
+        return [tuple(sorted(c)) for c in combinations(umaban, self._size)]
 
     def _match(self, win_value, key) -> bool:
         return tuple(sorted(win_value)) == key

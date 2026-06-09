@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 def plot_single_threshold(df, N_SAMPLES, label=" "):  # noqa: N803
     import matplotlib.pyplot as plt
 
+    if df is None or len(df) == 0 or "return_rate" not in df.columns:
+        # 賭けが一度も成立しなかった等で集計結果が空のケース。
+        # KeyError でクラッシュさせず、原因が分かるメッセージを出す。
+        print(
+            f"[plot_single_threshold] '{label}': 集計結果が空のためプロットをスキップ"
+            "（全閾値で賭けが成立しなかった可能性。閾値レンジやスコアのスケールを確認してください）。"
+        )
+        return
+
     plt.figure(dpi=100)
     plt.fill_between(df.index, y1=df["return_rate"] - df["std"], y2=df["return_rate"] + df["std"], alpha=0.3)
     plt.plot(df.index, df["return_rate"], label=label)
