@@ -48,7 +48,7 @@ class UrlPaths:
         "temp_race_id_table.csv",  # 3
         TOP_URL[4] + "race_id_list/",  # 4
         "race_id_list.pkl",  # 5
-        10,  # 6 (was 100 — small batches so progress is saved incrementally)
+        1,  # 6 (was 100/10 — batch_size=1 so progress saves after every item)
         CALENDAR_URL[4],  # 7
         "kaisai_date_list.pkl",  # 8
         "",  # 9
