@@ -98,20 +98,21 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
         return _filter_by_years(existing_df, kaisai_date_list)
 
     # 入力 pkl として保存（ローダーが参照する）
+    _abs = DataLoader._abs
     if to_scrape is not None:
-        input_pkl_path = os.path.join(rl[7], rl[8])
-        os.makedirs(rl[7], exist_ok=True)
+        input_pkl_path = os.path.join(_abs(rl[7]), rl[8])
+        os.makedirs(_abs(rl[7]), exist_ok=True)
         to_scrape.to_pickle(input_pkl_path)
 
     loader = KaisaiDateLoader(
         alias=rl[0],
         from_location=rl[1],
-        to_temp_location=rl[2],
+        to_temp_location=_abs(rl[2]),
         temp_save_file_name=rl[3],
-        to_location=rl[4],
+        to_location=_abs(rl[4]),
         save_file_name=rl[5],
         batch_size=rl[6],
-        from_local_location=rl[7],
+        from_local_location=_abs(rl[7]),
         from_local_file_name=rl[8],
     )
     loader.scrape_race_id_list()
