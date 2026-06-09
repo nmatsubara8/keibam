@@ -154,8 +154,8 @@ class DataMerger:
             past["_rel_rank"] = past[rank_col] / past[n_horses_col]
         else:
             # Fallback: use binary rank (top-3 indicator)
-            past["_is_win"] = past["rank"].astype(float)
-            past["_rel_rank"] = 1.0 - past["rank"].astype(float)  # 0 = top-3, 1 = not
+            past["_is_win"] = past[rank_col].astype(float) if rank_col in past.columns else 0.0
+            past["_rel_rank"] = 1.0 - past[rank_col].astype(float) if rank_col in past.columns else 0.5
 
         # Jockey stats (last N races per jockey_id)
         jockey_recent = (
