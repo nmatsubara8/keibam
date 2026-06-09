@@ -152,6 +152,7 @@ class FeatureEngineering:
         # インデックスをリセットし、元のマスタと繋げる
         new_target.reset_index(drop=True, inplace=True)
         new_target_master = pd.concat([target_master, new_target]).set_index(target_col)["encoded_id"]
+        new_target_master = new_target_master[~new_target_master.index.duplicated(keep="first")]
         # マスタファイルを更新
         new_target_master.to_csv(csv_path)
         # ラベルエンコーディング実行
