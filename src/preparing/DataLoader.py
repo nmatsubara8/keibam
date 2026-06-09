@@ -392,6 +392,8 @@ class DataLoader:
         return file_list
 
     def delete_files_both(self):
+        os.makedirs(self.to_temp_location, exist_ok=True)
+        os.makedirs(self.to_location, exist_ok=True)
         files_to_temp = os.listdir(self.to_temp_location)
         files_to = os.listdir(self.to_location)
         # ファイルを削除
