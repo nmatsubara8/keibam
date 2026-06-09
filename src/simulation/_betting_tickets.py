@@ -96,7 +96,11 @@ class _SingleStrategy(_BettingStrategy):
         return list(umaban)
 
     def _match(self, win_value, key) -> bool:
-        return int(win_value) == key
+        s = str(win_value).strip()
+        # スペース区切りで複数値が混入している場合は最初の値を使う
+        if " " in s:
+            s = s.split()[0]
+        return int(s) == key if s and s != "0" else False
 
 
 class _ComboStrategy(_BettingStrategy):
