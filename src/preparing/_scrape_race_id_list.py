@@ -13,9 +13,19 @@ logger = logging.getLogger(__name__)
 
 
 def _covered_dates(df: pd.DataFrame) -> set:
-    """pkl 内の race_id から取得済み開催日（8桁・ハイフンなし）セットを返す。"""
-    race_id_col = df.columns[-1]
-    return set(df[race_id_col].astype(str).str[:8].unique())
+    """pkl 内の kaisai_date（インデックスまたは先頭列）を取得済み日付セットとして返す。
+
+    race_id_list pkl の構造:
+      - 先頭列 (Unnamed: 0 or 0列目) = kaisai_date (例: '20200105')
+      - 末尾列 = race_id
+    """
+    # 先頭列がkaisai_date（CSV経由で 'Unnamed: 0' になることがある）
+    first_col = df.iloc[:, 0].astype(str).str.strip()
+    # kaisai_date は8桁数字のはず
+    if first_col.str.match(r"^\d{8}$").any():
+        return set(first_col.unique())
+    # フォールバック: インデックスを使う
+    return set(df.index.astype(str).str.strip().unique())
 
 
 def _normalize_date(d: str) -> str:
