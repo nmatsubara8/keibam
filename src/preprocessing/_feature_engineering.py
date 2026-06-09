@@ -60,8 +60,8 @@ class FeatureEngineering:
         )
         temp_data = pd.get_dummies(self.__data[HorseResultsCols.PLACE], prefix=f"{HorseResultsCols.PLACE}_")
         self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop("place", axis=1, inplace=True)
-        self.__data.drop("time", axis=1, inplace=True)
+        self.__data.drop("place", axis=1, inplace=True, errors="ignore")
+        self.__data.drop("time", axis=1, inplace=True, errors="ignore")
         return self
 
     def _dummify(self, col, categories, prefix=None, extra_drops=()):
