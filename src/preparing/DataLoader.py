@@ -191,16 +191,15 @@ class DataLoader:
         elif filetype == "df":
             # CSVファイルに保存
             os.makedirs(self.to_temp_location, exist_ok=True)
-            if not os.listdir(self.to_temp_location):
+            temp_csv = os.path.join(self.to_temp_location, self.temp_save_file_name)
+            if not os.path.exists(temp_csv):
                 header = True
                 mode = "w"
             else:
                 header = False
                 mode = "a"
 
-            self.target_data.to_csv(
-                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode=mode
-            )
+            self.target_data.to_csv(temp_csv, header=header, index=True, mode=mode)
 
         elif filetype == "h5":
             # ファイルにデータを書き込む処理

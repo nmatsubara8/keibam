@@ -49,7 +49,8 @@ def _flush_batch_to_pkl(self):
         new_df.to_pickle(final_path)
         logger.debug("中間 pkl を書き出し（マージ済み）: %s (%d 行)", final_path, len(new_df))
     except Exception as e:
-        logger.warning("中間 pkl の書き出し失敗（続行）: %s", e)
+        import traceback
+        print(f"[FLUSH ERROR] {self.alias}: {e}\n{traceback.format_exc()}")
 
 
 def storing_process(self):
