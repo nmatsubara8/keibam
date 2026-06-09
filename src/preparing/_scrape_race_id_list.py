@@ -39,9 +39,11 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     from src.constants._url_paths import UrlPaths
     from src.preparing.url_loader import KaisaiDateLoader
 
+    from src.preparing.DataLoader import DataLoader
+
     url_paths = UrlPaths()
     rl = url_paths.RACE_LIST_URL
-    save_path = os.path.join(rl[4], rl[5])
+    save_path = os.path.join(DataLoader._abs(rl[4]), rl[5])
 
     # 既存 pkl を読み込む（部分完了分も活用する）
     existing_df: pd.DataFrame | None = None

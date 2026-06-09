@@ -50,6 +50,18 @@ class DataLoader:
         self.from_date = from_date
         self.to_date = to_date
 
+    # プロジェクトルート（DataLoader.py の 3階層上）を絶対パスで保持
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    @classmethod
+    def _abs(cls, path: str) -> str:
+        """相対パスをプロジェクトルート基準の絶対パスへ変換する。"""
+        if not path:
+            return path
+        if os.path.isabs(path):
+            return path
+        return os.path.normpath(os.path.join(cls._PROJECT_ROOT, path))
+
     def set_args(self, alias):
         # クラスの属性を取得
         url_paths = UrlPaths()
@@ -65,17 +77,17 @@ class DataLoader:
             # エイリアスが表すデータの取得先をセット
             self.from_location = getattr(url_paths, attr)[1]
             # エイリアスが表すデータの一時保存先をセット
-            self.to_temp_location = getattr(url_paths, attr)[2]
+            self.to_temp_location = self._abs(getattr(url_paths, attr)[2])
             # エイリアスが表すデータの一時保存先ファイル名をセット
             self.temp_save_file_name = getattr(url_paths, attr)[3]
             # エイリアスが表すデータの正本保存先をセット
-            self.to_location = getattr(url_paths, attr)[4]
+            self.to_location = self._abs(getattr(url_paths, attr)[4])
             # エイリアスが表すデータの正本ファイル名をセット
             self.save_file_name = getattr(url_paths, attr)[5]
             self.batch_size = getattr(url_paths, attr)[6]
             # エイリアスが表すデータが参照する必要がある外部キーを保有する
             # ローカルファイル（フォルダ名とファイル名）をセット
-            self.from_local_location = getattr(url_paths, attr)[7]
+            self.from_local_location = self._abs(getattr(url_paths, attr)[7])
             self.from_local_file_name = getattr(url_paths, attr)[8]
             # 異常終了時に使うskip処理を実施させるためのキーとフラグ
             self.skip = getattr(url_paths, attr)[10]  # デフォルトはFalse
