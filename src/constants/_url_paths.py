@@ -52,7 +52,7 @@ class UrlPaths:
         CALENDAR_URL[4],  # 7
         "kaisai_date_list.pkl",  # 8
         "",  # 9
-        False,  # 10
+        True,  # 10 skip=True: preserve existing pkl (do NOT delete on each run)
         "",  # 11
         "",  # 12
     )
