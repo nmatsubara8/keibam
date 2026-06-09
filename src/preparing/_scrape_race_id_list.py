@@ -66,7 +66,6 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     # 既存 pkl を読み込む（部分完了分も活用する）
     existing_df: pd.DataFrame | None = None
     existing_dates: set = set()
-    print(f"[DEBUG] save_path={save_path}, exists={os.path.exists(save_path)}")
     if os.path.exists(save_path):
         try:
             existing_df = pd.read_pickle(save_path)
@@ -75,10 +74,8 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
                 logger.info("race_id_list: skip=True かつ pkl 存在 → キャッシュを返す (%d 件)", len(existing_df))
                 return existing_df
             existing_dates = _covered_dates(existing_df)
-            print(f"[DEBUG] existing_df cols={existing_df.columns.tolist()}, rows={len(existing_df)}, sample_dates={sorted(existing_dates)[:3]}")
         except Exception as e:
             logger.warning("既存 pkl の読み込みに失敗: %s", e)
-            print(f"[DEBUG] pkl読み込みエラー: {e}")
             existing_df = None
             existing_dates = set()
 
@@ -87,14 +84,13 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
         date_col = kaisai_date_list.columns[-1]
         all_dates = kaisai_date_list[date_col].astype(str).tolist()
         missing_dates = [d for d in all_dates if _normalize_date(d) not in existing_dates]
-        print(f"[DEBUG] date_col={date_col}, all_dates[:3]={all_dates[:3]}, missing={len(missing_dates)}/{len(all_dates)}")
     else:
         missing_dates = []
 
     # skip=True かつ未取得分がなければキャッシュを即返す
     if skip and not missing_dates and existing_df is not None:
         logger.info("race_id_list: 全開催日取得済みのためスキップ (%d 件)", len(existing_df))
-        return _filter_by_years(existing_df, kaisai_date_list)
+        return _filter_requested(existing_df, kaisai_date_list)
 
     if not missing_dates:
         # kaisai_date_list 未指定 or 全カバー済み → そのまま全件ダウンロード（後方互換）
@@ -117,7 +113,7 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
 
     if to_scrape is not None and len(to_scrape) == 0:
         # すべて取得済み
-        return _filter_by_years(existing_df, kaisai_date_list)
+        return _filter_requested(existing_df, kaisai_date_list)
 
     # 入力 pkl として保存（ローダーが参照する）
     _abs = DataLoader._abs
@@ -148,17 +144,43 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
         merged.to_pickle(save_path)
         new_df = merged
 
-    # 年フィルタ適用
-    new_df = _filter_by_years(new_df, kaisai_date_list)
-    new_df.to_pickle(save_path)
-    return new_df
+    # 要求日付で絞って返す（save_path は全件のまま温存し、縮小データを書き戻さない）
+    return _filter_requested(new_df, kaisai_date_list)
 
 
-def _filter_by_years(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
-    """kaisai_date_list の年集合に含まれない race_id を除外して返す。"""
-    if kaisai_date_list is None or df is None:
+def _filter_requested(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
+    """要求された kaisai_date に該当する race_id だけを返す（多段フォールバック）。
+
+    pkl の構造は実行経路により不安定（先頭列が kaisai_date のことも RangeIndex の
+    こともある）なため、複数の手段を順に試し、**正常データを取りこぼして空を返す**
+    事故を防ぐ:
+
+      (1) 先頭列が要求 kaisai_date（例 '20220108'）に一致する行
+      (2) 一致が無ければ race_id 先頭4桁＝要求年で絞る
+      (3) それでも空なら df 全体を返す（空は返さない）
+    """
+    if kaisai_date_list is None or df is None or df.empty:
         return df
-    valid_years = set(kaisai_date_list.iloc[:, -1].astype(str).str[:4].unique())
+
+    requested = set(
+        kaisai_date_list.iloc[:, -1].astype(str).str.replace("-", "", regex=False).str[:8]
+    )
+
+    # (1) 先頭列の kaisai_date 完全一致（新規スクレイプ分はここでヒットする）
+    first_col = df.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    by_date = df[first_col.isin(requested)]
+    if not by_date.empty:
+        return by_date.reset_index(drop=True)
+
+    # (2) race_id 先頭4桁＝要求年で絞る
+    valid_years = {d[:4] for d in requested if len(d) >= 4}
     race_id_col = df.columns[-1]
-    mask = df[race_id_col].astype(str).str[:4].isin(valid_years)
-    return df[mask].reset_index(drop=True)
+    by_year = df[df[race_id_col].astype(str).str[:4].isin(valid_years)]
+    if not by_year.empty:
+        return by_year.reset_index(drop=True)
+
+    # (3) どのフィルタも空 → データはあるので全件返す（空返し事故を防ぐ）
+    logger.warning(
+        "race_id_list: 要求日付/年に一致する行が無いため全 %d 行を返します", len(df)
+    )
+    return df.reset_index(drop=True)

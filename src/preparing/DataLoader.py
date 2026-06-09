@@ -257,7 +257,7 @@ class DataLoader:
                     new_df = pd.concat([old_only, new_df], ignore_index=True)
             except Exception:
                 pass
-        print(f"[TRANSFER] saved {len(new_df)} rows → {to_target_file}")
+        logger.debug("transfer: saved %d rows → %s", len(new_df), to_target_file)
         new_df.to_pickle(to_target_file)
 
     def copy_files(self):
