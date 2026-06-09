@@ -51,6 +51,14 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
 
     from src.preparing.DataLoader import DataLoader
 
+    # list / tuple / Series で開催日が渡された場合は DataFrame に正規化する
+    # （DataFrame の最終列に開催日を持たせる規約に合わせる）。
+    if kaisai_date_list is not None and not isinstance(kaisai_date_list, pd.DataFrame):
+        if isinstance(kaisai_date_list, pd.Series):
+            kaisai_date_list = kaisai_date_list.to_frame(name="kaisai_data")
+        else:
+            kaisai_date_list = pd.DataFrame({"kaisai_data": list(kaisai_date_list)})
+
     url_paths = UrlPaths()
     rl = url_paths.RACE_LIST_URL
     save_path = os.path.join(DataLoader._abs(rl[4]), rl[5])
