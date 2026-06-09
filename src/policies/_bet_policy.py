@@ -119,6 +119,26 @@ class BetPolicySanrentanBox:
         return _threshold_umaban_judge(score_table, threshold, "sanrentan", min_horses=3)
 
 
+class BetPolicyTanshoFukusho:
+    """threshold1 を超えた馬に単勝、threshold2 を超えた馬に複勝を併用して賭ける戦略。
+
+    出力は {race_id: {'tansho': [馬番...], 'fukusho': [馬番...]}} 形式で、
+    単勝・複勝それぞれ独立の閾値で対象馬を選ぶ。
+    """
+
+    @staticmethod
+    def judge(score_table: pd.DataFrame, threshold1: float, threshold2: float) -> dict:
+        tansho = _threshold_umaban_judge(score_table, threshold1, "tansho")
+        fukusho = _threshold_umaban_judge(score_table, threshold2, "fukusho")
+        merged = {}
+        for race_id in set(tansho) | set(fukusho):
+            entry = {}
+            entry.update(tansho.get(race_id, {}))
+            entry.update(fukusho.get(race_id, {}))
+            merged[race_id] = entry
+        return merged
+
+
 class BetPolicyUmatanNagashi:
     """threshold1 を超えた馬を軸、threshold2 を超えた馬を相手に馬単流しで賭ける戦略（未実装）。"""
 
