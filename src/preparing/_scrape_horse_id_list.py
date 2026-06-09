@@ -33,10 +33,15 @@ def scrape_horse_id_list(race_id_list=None, skip: bool = False):
 
     _abs = DataLoader._abs
     if race_id_list is not None:
-        input_pkl_path = os.path.join(_abs(hl[7]), hl[8])
-        os.makedirs(_abs(hl[7]), exist_ok=True)
         if not isinstance(race_id_list, pd.DataFrame):
             race_id_list = pd.DataFrame({"race_id": list(race_id_list)})
+        if len(race_id_list) == 0:
+            raise ValueError(
+                "scrape_horse_id_list: race_id_list が空です。"
+                " 先に scrape_race_id_list で race_id を取得してください。"
+            )
+        input_pkl_path = os.path.join(_abs(hl[7]), hl[8])
+        os.makedirs(_abs(hl[7]), exist_ok=True)
         race_id_list.to_pickle(input_pkl_path)
 
     loader = KaisaiDateLoader(

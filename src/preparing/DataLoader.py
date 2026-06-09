@@ -290,6 +290,9 @@ class DataLoader:
                 logger.debug("load_file_pkl:row type int:%s", data.dtypes)
                 logger.debug("type of data_Loaded: %s", type(data))
                 logger.debug("load_file_pkl:data.head: %s", data.head())
+                if len(data) == 0:
+                    logger.warning("load_file_pkl: data is empty (path=%s)", target_file_path)
+                    return data
                 logger.debug("1st data: %s", data.iloc[0].values[0])
                 if not self.skip:
                     loaded_list = data
