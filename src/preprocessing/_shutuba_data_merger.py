@@ -39,6 +39,8 @@ class ShutubaDataMerger(DataMerger):
         self._separated_results_dict = {}
         # レース結果データのdateごとに分かれた馬の過去成績
         self._separated_horse_results_dict = {}
+        # 過去成績に種牡馬(peds_0)を付与した dateごとの辞書（§2j 種牡馬集計用）
+        self._separated_hr_with_sire_dict = {}
 
     def merge(self):
         """
