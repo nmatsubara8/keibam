@@ -138,9 +138,9 @@ class _PermStrategy(_BettingStrategy):
 class _WakurenStrategy(_BettingStrategy):
     """枠連 BOX: 同枠（重複あり）対応のため combinations_with_replacement + dedup。
 
-    既存の挙動を保持するため:
-    - 走査ループは `range(length - 1)`（最終列を読まない）
-    - 照合は `tuple(win_value)`（既に正順で格納されている前提・sorted しない）
+    照合は sorted tuple 同士で行い、走査は全 win 列を対象にする
+    （的中組合せが降順で格納されていても、また 2 つ目の的中枠連があっても
+    取りこぼさない）。fillna 由来の 0 セルは `_is_valid_entry` で除外する。
     """
 
     min_horses = 2
@@ -150,15 +150,14 @@ class _WakurenStrategy(_BettingStrategy):
         unique = {tuple(sorted(c)) for c in possible}
         return list(unique)
 
-    def _loop_bound(self, length: int) -> int:
-        return length - 1
-
     def _is_valid_entry(self, win_value) -> bool:
-        # 元実装は `tuple(win)` を真偽判定（空タプルは False）。再現する。
-        return bool(tuple(win_value))
+        # 0（fillna 由来の未的中セル・int）は無効。組合せ（tuple/list）のみ有効。
+        # `win_value != 0` を先に評価し、int 0 で tuple(0) が起きないようにする。
+        return win_value != 0 and bool(tuple(win_value))
 
     def _match(self, win_value, key) -> bool:
-        return tuple(win_value) == key
+        # _expand が sorted キーを返すため win 値も sorted して照合する。
+        return tuple(sorted(win_value)) == key
 
 
 # ---------------------------------------------------------------------------
