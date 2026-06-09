@@ -11,8 +11,14 @@ from src.preparing._scrape_html_horse import scrape_html_horse_with_master
 from src.preparing._scrape_html_ped import scrape_html_ped
 from src.preparing._scrape_race_id_list import scrape_race_id_list
 from src.preparing._scrape_horse_id_list import scrape_horse_id_list
+from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
+from src.preparing._scrape_shutuba import create_active_race_id_list
+from src.preparing._scrape_shutuba import scrape_shutuba_table
 
 __all__ = [
+    "scrape_race_id_race_time_list",
+    "create_active_race_id_list",
+    "scrape_shutuba_table",
     "scrape_kaisai_date",
     "scrape_html_race",
     "scrape_html_horse_with_master",
