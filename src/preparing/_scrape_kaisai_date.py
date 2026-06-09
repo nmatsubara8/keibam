@@ -1,4 +1,5 @@
-def scrape_kaisai_date(from_date: str, to_date: str, skip: bool = False):
+def scrape_kaisai_date(from_date: str = None, to_date: str = None, skip: bool = False,
+                       from_: str = None, to_: str = None):
     """指定期間の開催日リストを取得して返す。
 
     Playwright でスクレイピングし、pkl に保存後、DataFrame を返す。
@@ -7,9 +8,16 @@ def scrape_kaisai_date(from_date: str, to_date: str, skip: bool = False):
     ----------
     from_date, to_date : str
         期間指定（例: "2020-01-01", "2021-01-01"）。
+        後方互換のため from_ / to_ という別名でも指定できる。
     skip : bool
         True の場合、既存の pkl がある場合はスクレイピングを省略して返す。
     """
+    # 後方互換: from_ / to_ エイリアスを受け付ける
+    from_date = from_date if from_date is not None else from_
+    to_date = to_date if to_date is not None else to_
+    if from_date is None or to_date is None:
+        raise TypeError("scrape_kaisai_date() は from_date と to_date が必要です")
+
     import os
     import pandas as pd
     from src.constants._url_paths import UrlPaths
