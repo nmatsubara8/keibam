@@ -47,6 +47,7 @@ def _flush_batch_to_pkl(self):
             except Exception:
                 pass  # 既存 pkl が壊れていれば新データのみで上書き
         new_df.to_pickle(final_path)
+        print(f"[FLUSH] saved {len(new_df)} rows → {final_path}")
         logger.debug("中間 pkl を書き出し（マージ済み）: %s (%d 行)", final_path, len(new_df))
     except Exception as e:
         import traceback
