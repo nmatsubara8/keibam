@@ -53,7 +53,7 @@ def convert_column_types(df, col_types):
         elif to_data_type == "str" and padding:
             if from_data_type == "float":
                 converted_df[column] = (
-                    converted_df[column].astype(float).astype(str).str.split(".").str[0].str.zfill(width)
+                    converted_df[column].fillna(0).astype(float).astype(int).astype(str).str.zfill(width)
                 )
             else:
                 converted_df[column] = converted_df[column].astype(str).str.zfill(width)
