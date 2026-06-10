@@ -276,15 +276,24 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
 
 
 ################################# Done ####################################
+# alias ごとの JS 描画完了セレクタ。db.netkeiba.com の馬ページは戦績テーブル
+# （table.db_h_race_results）を JS で描画するため、domcontentloaded 直後の HTML には
+# 含まれない。セレクタ未出現（新馬等で戦績なし）の場合は selector_timeout 後に
+# 取得済み内容をそのまま返す（PlaywrightScraper.fetch の仕様）。
+_SCRAPE_WAIT_SELECTORS = {
+    "horse_html": "table.db_h_race_results",
+}
+
+
 def scrape_html(self, ref_id, driver, waiting_time):
-    """from_location + ref_id の静的 HTML を取得する（race/horse/ped 共通）。
+    """from_location + ref_id の HTML を取得する（race/horse/ped 共通）。
 
     db.netkeiba.com は素の urlopen（UA なし）に HTTP 400 を返すため、
-    PlaywrightScraper（driver）経由で取得する。JS 描画不要なページなので
-    domcontentloaded で十分。戻り値は bin ファイル書き込み用に UTF-8 bytes。
+    PlaywrightScraper（driver）経由で取得する。alias によっては JS 描画完了を
+    待つ（_SCRAPE_WAIT_SELECTORS）。戻り値は bin ファイル書き込み用に UTF-8 bytes。
     """
     url = str(self.from_location) + str(ref_id)
-    html_str = driver.fetch_sync(url)
+    html_str = driver.fetch_sync(url, wait_selector=_SCRAPE_WAIT_SELECTORS.get(self.alias))
     return html_str.encode("utf-8")
 
 
@@ -519,12 +528,19 @@ def create_raw_horse_info(target_bin_file_path):
         # 馬の基本情報を取得（bin は UTF-8 で保存されているため StringIO で解析）
         html_str = html.decode("utf-8", errors="replace")
         tables = pd.read_html(io.StringIO(html_str))
-        # プロフィールテーブルはインデックス1が基本だが、ページ構造によっては0の場合もある
+        # プロフィールテーブルは「生年月日」行を持つ 2 列テーブルで特定する。
+        # JS 描画後のページは 2 列テーブルが複数あり（次走予定・血統ミニ表等）、
+        # 「最初の 2 列テーブル」では血統表を誤って拾うことがある。
         profile_table = None
         for t in tables:
-            if t.shape[1] == 2 and t.iloc[:, 0].dtype == object:
+            if t.shape[1] == 2 and (t.iloc[:, 0].astype(str) == "生年月日").any():
                 profile_table = t
                 break
+        if profile_table is None:
+            for t in tables:
+                if t.shape[1] == 2 and t.iloc[:, 0].dtype == object:
+                    profile_table = t
+                    break
         if profile_table is None:
             if len(tables) < 2:
                 raise IndexError(f"馬プロフィールテーブルが見つかりません: {target_bin_file_path}")
