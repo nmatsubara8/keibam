@@ -163,6 +163,15 @@ class IngestJob:
                 logger.warning("[ingest --force] DB delete 失敗 (non-fatal): %s", e)
 
         existing_results = load_raw(self._cfg.raw_results_path)
+        # race_id が通常列にあり index が RangeIndex の場合は race_id を index に正規化する。
+        # これにより existing_race_ids と fetch_results の index が揃い
+        # append_idempotent が正しく重複判定できる。
+        if (
+            not existing_results.empty
+            and "race_id" in existing_results.columns
+            and existing_results.index.name != "race_id"
+        ):
+            existing_results = existing_results.set_index("race_id")
         existing_ids = existing_race_ids(existing_results)
 
         # --force 時は重複判定をスキップして全候補を取り直す

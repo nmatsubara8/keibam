@@ -75,8 +75,8 @@ class DataMerger:
 
     def _merge_race_info(self):
         # race_id インデックスの dtype 不一致（int64/float64 vs str）によるジョイン失敗を防ぐ
-        self._results.index = self._results.index.astype(str)
-        self._race_info.index = self._race_info.index.astype(str)
+        self._results.index = self._results.index.astype(str).str.replace(r'\.0$', '', regex=True)
+        self._race_info.index = self._race_info.index.astype(str).str.replace(r'\.0$', '', regex=True)
         self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
         dict_ = dict_selector("_results")
         self._results = convert_column_types(self._results, dict_)
