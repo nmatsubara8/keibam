@@ -115,7 +115,17 @@ class ReturnProcessor(AbstractDataProcessor):
         """
         subset = self.raw_data[self.raw_data[_RAW_CATEGORY_COL] == _LABEL[bet_type]][
             [_RAW_WIN_COL, _RAW_RETURN_COL, "race_id"]
-        ]
+        ].copy()
+        # 旧フォーマット（空白区切り：'2 - 6 3 - 6 2 - 3' / '150 170 110'）を
+        # 新フォーマット（br 区切り：'2-6br3-6br2-3' / '150br170br110'）に正規化。
+        for _col in [_RAW_WIN_COL, _RAW_RETURN_COL]:
+            subset[_col] = (
+                subset[_col]
+                .astype(str)
+                .str.replace(" - ", "-", regex=False)
+                .str.replace(" → ", "→", regex=False)
+                .str.replace(" ", "br", regex=False)
+            )
         row_num = count_br(subset, _RAW_WIN_COL) + 1
         logger.debug("%s 列数: %s", _LABEL[bet_type], row_num)
 
