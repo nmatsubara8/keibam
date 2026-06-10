@@ -73,6 +73,8 @@ class ShutubaDataMerger(DataMerger):
         """
         from src.preprocessing._data_cleaner import convert_column_types, dict_selector
 
+        if self._race_info is None:
+            return
         ri = self._race_info.copy()
         # race_id インデックスの dtype を統一
         ri.index = ri.index.astype(str).str.replace(r"\.0$", "", regex=True)
@@ -99,10 +101,6 @@ class ShutubaDataMerger(DataMerger):
         """
         if self._race_info is not None:
             self._merge_race_info_shutuba()
-            logger.info(
-                "[ShutubaDataMerger] race_info joined: %d cols added",
-                len(self._race_info.columns),
-            )
             logger.info(
                 "[ShutubaDataMerger] race_info joined: %d cols added",
                 len(self._race_info.columns),

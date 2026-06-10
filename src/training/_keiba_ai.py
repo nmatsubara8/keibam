@@ -182,19 +182,28 @@ class KeibaAI:
         model = self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
 
         # feature_names_ が保存済みでない旧モデルは datasets から補完する
-        if getattr(self, "feature_names_", None) is None:
+        feature_names: list[str] | None = getattr(self, "feature_names_", None)
+        if feature_names is None:
             try:
-                self.feature_names_ = list(self.__datasets.X_base_train.columns)
+                feature_names = list(self.__datasets.X_base_train.columns)
+                self.feature_names_ = feature_names
             except Exception:
                 pass
 
         # feature_names_ が保存済みの場合: 列を学習時の順序・セットに揃える
-        if getattr(self, "feature_names_", None) is not None:
-            from src.policies._score_policy import _DROP_FOR_PREDICT
+        if feature_names is not None:
             from src.constants._results_cols import ResultsCols
             # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
-            meta_cols = [c for c in [ResultsCols.UMABAN, ResultsCols.WAKUBAN, ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK] if c in X.columns]
-            feat_cols = [c for c in self.feature_names_ if c not in meta_cols]
+            candidate_meta = [
+                ResultsCols.UMABAN,
+                ResultsCols.WAKUBAN,
+                ResultsCols.TANSHO_ODDS,
+                "rank",
+                "date",
+                ResultsCols.RANK,
+            ]
+            meta_cols = [c for c in candidate_meta if c in X.columns]
+            feat_cols = [c for c in feature_names if c not in meta_cols]
             X_feat = X.reindex(columns=feat_cols, fill_value=0)
             missing = [c for c in feat_cols if c not in X.columns]
             if missing:

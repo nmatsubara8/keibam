@@ -62,7 +62,7 @@ def _parse_race_id_time_from_html(html: str, expected_year: str | None = None):
     for item in items:
         # race_id: 項目内の race_id を持つアンカー（無ければ item 自身）から取得
         anchor = item if item.name == "a" else item.find("a", href=_RACE_ID_RE)
-        href = (anchor.get("href", "") if anchor is not None else "") or ""
+        href = str(anchor.get("href", "") or "") if anchor is not None else ""
         m = _RACE_ID_RE.search(href)
         if not m:
             # data 属性等にある場合も拾う
@@ -169,7 +169,7 @@ def create_active_race_id_list():
     driver = PlaywrightScraper()
     driver.open_sync()
     try:
-        for race_id, race_time in zip(all_race_ids, all_times):
+        for race_id, race_time in zip(all_race_ids, all_times, strict=True):
             try:
                 html = driver.fetch_sync(
                     _SHUTUBA_URL.format(race_id=race_id),
@@ -339,7 +339,7 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
 
             # 馬名 / horse_id
             horse_a = tr.find("a", href=re.compile(r"/horse/"))
-            horse_id = _extract_id(horse_a["href"], "horse") if horse_a is not None else NaN
+            horse_id = _extract_id(str(horse_a["href"]), "horse") if horse_a is not None else NaN
 
             # 性齢（Barei）
             barei_td = tr.find("td", class_=re.compile("Barei"))
@@ -347,10 +347,10 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
 
             # 斤量（Txt_C のうち数値らしいもの）。Waku/Umaban/Barei も Txt_C のことが
             # あるため、それらの列を除外し、小数を含む値（例 57.0）を優先採用する。
-            kinryo = NaN
-            kinryo_fallback = NaN
+            kinryo: object = NaN
+            kinryo_fallback: object = NaN
             for td in tr.find_all("td", class_=re.compile("Txt_C")):
-                cls = " ".join(td.get("class", []))
+                cls = " ".join(td.get("class") or [])
                 if re.search(r"Waku|Umaban|Barei", cls):
                     continue
                 txt = td.get_text(strip=True)
@@ -364,11 +364,11 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
 
             # 騎手 / jockey_id
             jockey_a = tr.find("a", href=re.compile(r"/jockey/"))
-            jockey_id = _extract_id(jockey_a["href"], "jockey") if jockey_a is not None else NaN
+            jockey_id = _extract_id(str(jockey_a["href"]), "jockey") if jockey_a is not None else NaN
 
             # 調教師 / trainer_id
             trainer_a = tr.find("a", href=re.compile(r"/trainer/"))
-            trainer_id = _extract_id(trainer_a["href"], "trainer") if trainer_a is not None else NaN
+            trainer_id = _extract_id(str(trainer_a["href"]), "trainer") if trainer_a is not None else NaN
 
             # 馬体重（Weight）。未発表時は空のまま。
             weight_td = tr.find("td", class_=re.compile("Weight"))
