@@ -74,6 +74,16 @@ def test_save_and_load_metadata_roundtrip(tmp_path):
     assert history[1]["version"] == "v2"
 
 
+def test_save_metadata_replaces_same_version(tmp_path):
+    """同一 version の再保存は追記ではなく置き換え（同日再学習は pickle を上書きするため）。"""
+    path = str(tmp_path / "history.json")
+    save_metadata({"version": "v1", "auc_test": 0.72}, path)
+    save_metadata({"version": "v1", "auc_test": 0.75}, path)
+    history = load_metadata(path)
+    assert len(history) == 1
+    assert history[0]["auc_test"] == 0.75
+
+
 def test_load_metadata_missing_returns_empty(tmp_path):
     assert load_metadata(str(tmp_path / "nope.json")) == []
 

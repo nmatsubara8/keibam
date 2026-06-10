@@ -70,11 +70,17 @@ def evaluate_test(model, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
 
 
 def save_metadata(meta: dict, path: str) -> None:
-    """バージョン情報・メトリクスを JSON で履歴追記する（旧版は削除しない）。"""
+    """バージョン情報・メトリクスを JSON で履歴追記する（旧版は削除しない）。
+
+    同一 version のエントリが既にある場合は置き換える。version は日付ベース
+    （YYYYMMDD_prefix）で、同日の再学習はモデル pickle を上書きするため、
+    履歴も現存する実体を指すエントリ 1 件に保つ。
+    """
     existing: list = []
     if os.path.exists(path):
         with open(path) as f:
             existing = json.load(f)
+    existing = [m for m in existing if m.get("version") != meta.get("version")]
     existing.append(meta)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
