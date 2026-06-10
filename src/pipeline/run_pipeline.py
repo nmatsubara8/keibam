@@ -170,7 +170,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     # ingest サブコマンド
     ingest_p = sub.add_parser("ingest", help="終了レースを日次取込")
-    ingest_p.add_argument("--race-id", dest="race_ids", nargs="+", required=True, help="対象 race_id")
+    ingest_p.add_argument("--race-id", dest="race_ids", nargs="+", type=int, required=True, help="対象 race_id")
     # Phase 1: 誤情報修正時に既存 DB 行を削除してから再取込するためのフラグ
     ingest_p.add_argument(
         "--force",
