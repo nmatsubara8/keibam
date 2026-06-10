@@ -18,12 +18,14 @@ from __future__ import annotations
 import datetime
 import logging
 import re
+from typing import TYPE_CHECKING
 
 import pandas as pd
-from bs4 import BeautifulSoup
 
 from src.constants._master import Master
-from src.preparing._scraper import PlaywrightScraper
+
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,7 @@ def _parse_race_id_time_from_html(html: str, expected_year: str | None = None):
     各レース項目（``li.RaceList_DataItem`` 相当）ごとに race_id と発走時刻を対にする。
     race_id の重複は除去し、race_id と time の並びを揃えたまま返す。
     """
+    from bs4 import BeautifulSoup  # noqa: PLC0415
     soup = BeautifulSoup(html, "lxml")
     race_id_list: list[str] = []
     race_time_list: list[str] = []
@@ -105,6 +108,7 @@ def scrape_race_id_race_time_list(kaisai_date: str):
         (race_id_list, race_time_list)。それぞれ 12 桁 race_id と 'HH:MM' の
         並列リスト（並びは対応）。race_id は重複除去済み。
     """
+    from src.preparing._scraper import PlaywrightScraper  # noqa: PLC0415
     url = _RACE_LIST_SUB_URL.format(kaisai_date=kaisai_date)
     expected_year = str(kaisai_date)[:4]
     driver = PlaywrightScraper()
@@ -126,6 +130,7 @@ def scrape_race_id_race_time_list(kaisai_date: str):
 
 def _is_weight_published(html: str) -> bool:
     """出馬表 HTML の馬体重列に実値が入っているか（=発走間近か）を判定する。"""
+    from bs4 import BeautifulSoup  # noqa: PLC0415
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", class_=re.compile("Shutuba_Table"))
     if table is None:
@@ -153,6 +158,7 @@ def create_active_race_id_list():
     tuple[list[str], list[str]]
         (race_id_list, race_time_list)。馬体重発表済みレースのみ。
     """
+    from src.preparing._scraper import PlaywrightScraper  # noqa: PLC0415
     today = datetime.date.today().strftime("%Y%m%d")
     all_race_ids, all_times = scrape_race_id_race_time_list(today)
     if not all_race_ids:
@@ -305,6 +311,8 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
     馬体重が未発表（前日予想）の場合は空文字になることがあるが、呼び出し側で '0(0)' に
     上書きされるため問題ない。
     """
+    from bs4 import BeautifulSoup  # noqa: PLC0415
+    from src.preparing._scraper import PlaywrightScraper  # noqa: PLC0415
     url = _SHUTUBA_URL.format(race_id=race_id)
     driver = PlaywrightScraper()
     html = driver.fetch_sync(url, wait_selector=".Shutuba_Table")
