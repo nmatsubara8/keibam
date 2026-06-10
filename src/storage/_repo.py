@@ -151,6 +151,9 @@ class RawDataRepo:
         # index_col 指定があれば index に戻す
         if spec.index_col is not None and spec.index_col in df.columns:
             df = df.set_index(spec.index_col)
+            # 元の raw pickle は index と同名の列を持つ（results.pkl 等）。
+            # ResultsProcessor._select_columns が df[["race_id", ...]] を期待するため復元する。
+            df[spec.index_col] = df.index
 
         return df
 
