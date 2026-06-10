@@ -97,11 +97,13 @@ def snapshots_to_dataframe(snapshots: list) -> pd.DataFrame:
     """OddsSnapshot リストを DataFrame に変換する（フィルタ・集計用）。"""
     if not snapshots:
         return pd.DataFrame(columns=["race_id", "bet_type", "combo", "odds", "captured_at", "minutes_to_post", "phase"])
+    from src.preparing._odds_snapshot import combo_to_str
+
     rows = [
         {
             "race_id": s.race_id,
             "bet_type": s.bet_type,
-            "combo": "-".join(str(h) for h in s.combo),
+            "combo": combo_to_str(s.combo),
             "odds": s.odds,
             "captured_at": s.captured_at,
             "minutes_to_post": s.minutes_to_post,

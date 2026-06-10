@@ -21,6 +21,7 @@ import pandas as pd
 from src.constants._bet_types import BetType
 from src.constants._odds_phases import OddsPhase
 from src.preparing._odds_snapshot import OddsSnapshot
+from src.preparing._odds_snapshot import combo_to_str
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,6 @@ def snapshots_to_phase_table(
     combo はタプルではなく DB 表現と同じ文字列（例 ``"1"`` / ``"1-2"``）。
     同一 (race_id, combo, phase) が複数ある場合は取得時刻が最新のものを採用する。
     """
-    from src.preparing._odds_snapshot import combo_to_str
-
     rows = [
         {
             "race_id": s.race_id,

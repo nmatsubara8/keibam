@@ -192,17 +192,9 @@ class KeibaAI:
 
         # feature_names_ が保存済みの場合: 列を学習時の順序・セットに揃える
         if feature_names is not None:
-            from src.constants._results_cols import ResultsCols
+            from src.policies._score_policy import META_COLS
             # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
-            candidate_meta = [
-                ResultsCols.UMABAN,
-                ResultsCols.WAKUBAN,
-                ResultsCols.TANSHO_ODDS,
-                "rank",
-                "date",
-                ResultsCols.RANK,
-            ]
-            meta_cols = [c for c in candidate_meta if c in X.columns]
+            meta_cols = [c for c in META_COLS if c in X.columns]
             feat_cols = [c for c in feature_names if c not in meta_cols]
             X_feat = X.reindex(columns=feat_cols, fill_value=0)
             missing = [c for c in feat_cols if c not in X.columns]

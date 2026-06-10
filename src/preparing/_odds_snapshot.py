@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import re
 from typing import Iterable
 from typing import Sequence
 
@@ -44,6 +45,14 @@ ODDS_ID_TYPE = {
     BetType.SANRENPUKU: "7",
     BetType.SANRENTAN: "8",
 }
+
+# 馬券種ごとの id 抽出パターン（パース時の再コンパイルを避けるため事前コンパイル）
+_ODDS_ID_RE = {
+    bet_type: re.compile(rf"^odds-{code}-(\d+)$") for bet_type, code in ODDS_ID_TYPE.items()
+}
+
+# オッズ値（"12.3" / レンジ "1.5 - 2.0"）の数値部分
+_ODDS_VALUE_RE = re.compile(r"\d+(?:\.\d+)?")
 
 _ODDS_BASE_URL = "https://race.netkeiba.com/odds/index.html"
 
@@ -204,9 +213,7 @@ def parse_odds_value(text: str) -> float | None:
     最小値（下限）を採用する（期待値計算で過大評価しないため）。
     数値が取れない（"---" 等の未確定表示）場合は None。
     """
-    import re  # noqa: PLC0415
-
-    nums = re.findall(r"\d+(?:\.\d+)?", text)
+    nums = _ODDS_VALUE_RE.findall(text)
     if not nums:
         return None
     return float(nums[0])
@@ -231,15 +238,12 @@ def parse_combo_odds_html(html: str, bet_type: str) -> list[tuple[tuple[int, ...
     同一 combo が複数回現れた場合（一覧と人気順表示の重複等）は最初の値を採用する。
     失敗時・未確定（"---"）の行はスキップする。
     """
-    import re  # noqa: PLC0415
-
     from bs4 import BeautifulSoup  # 遅延 import
 
-    type_code = ODDS_ID_TYPE.get(bet_type)
-    if type_code is None:
+    id_re = _ODDS_ID_RE.get(bet_type)
+    if id_re is None:
         raise ValueError(f"未対応の馬券種です: {bet_type}")
 
-    id_re = re.compile(rf"^odds-{type_code}-(\d+)$")
     soup = BeautifulSoup(html, "lxml")
     seen: dict[tuple[int, ...], float] = {}
     for el in soup.find_all(id=id_re):

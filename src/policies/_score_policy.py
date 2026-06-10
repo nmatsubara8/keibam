@@ -15,6 +15,10 @@ CURRENT_ODDS = "current_odds"
 # predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ）
 _DROP_FOR_PREDICT = [ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK]
 
+# score_policy が参照する非特徴量列（枠番・馬番 + 除外列）。モデルの特徴量ではないが
+# 推論時に X へ残す必要がある列の単一の定義元（KeibaAI.calc_score が参照する）。
+META_COLS = [ResultsCols.UMABAN, ResultsCols.WAKUBAN, *_DROP_FOR_PREDICT]
+
 
 # common funcs
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
