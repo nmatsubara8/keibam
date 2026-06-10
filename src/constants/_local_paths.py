@@ -29,6 +29,8 @@ class LocalPaths:
     RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
     ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）
     FEATURED_DATA_PATH: str = os.path.join(RAW_DIR, "featured_data.pkl")
+    ### Phase 2: dtype を完全保持する Parquet バックアップ（pyarrow が必要）
+    FEATURED_DATA_PARQUET_PATH: str = os.path.join(RAW_DIR, "featured_data.parquet")
 
     ### Phase 1: raw データの永続化先 SQLite ファイル
     ### pickle が消えても DB から再生成できるように、scrape 結果をここに upsert する。

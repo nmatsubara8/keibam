@@ -81,6 +81,19 @@ def append_idempotent(existing: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame
 # ---------------------------------------------------------------------------
 
 
+def _save_featured_phase2(featured: "pd.DataFrame", cfg: "IngestConfig") -> None:
+    """Phase 2: featured_data を Parquet 保存し、DB メタを記録する（non-fatal）。"""
+    try:
+        from src.constants._local_paths import LocalPaths
+        from src.storage._featured import save_featured_meta, save_parquet
+
+        parquet_path = LocalPaths.FEATURED_DATA_PARQUET_PATH
+        save_parquet(featured, parquet_path)
+        save_featured_meta(featured, parquet_path=parquet_path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ingest] Phase2 featured save failed (non-fatal): %s", e)
+
+
 def load_raw(path: str) -> pd.DataFrame:
     """pickle を読み込む（ファイルが無ければ空 DataFrame）。"""
     if not os.path.exists(path):
@@ -217,6 +230,8 @@ class IngestJob:
         try:
             featured = self._builder.build(self._cfg)
             save_raw(featured, self._cfg.featured_data_path)
+            # Phase 2: Parquet バックアップ + DB メタ記録
+            _save_featured_phase2(featured, self._cfg)
         except Exception as e:
             logger.warning("[ingest] featured_data build failed (non-fatal): %s", e, exc_info=True)
 

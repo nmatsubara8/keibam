@@ -127,6 +127,13 @@ def alias_to_pickle_path(alias: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Phase 2: featured_data メタ情報テーブル名（固定スキーマ、TABLE_SPECS 外）
+# ---------------------------------------------------------------------------
+
+FEATURED_META_TABLE = "featured_data_meta"
+
+
+# ---------------------------------------------------------------------------
 # エンジン管理（シングルトン）
 # ---------------------------------------------------------------------------
 
@@ -200,6 +207,23 @@ def _reset_engine_for_testing() -> None:
 # こうすることで「Phase 1 は raw のまま全列を持つ」要件と SQLite の現実的制約を両立する。
 
 
+def _create_featured_meta_table(engine: Engine) -> None:
+    """Phase 2: featured_data_meta テーブルを作成する（固定スキーマ）。"""
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS "{FEATURED_META_TABLE}" (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                n_rows      INTEGER NOT NULL,
+                n_cols      INTEGER NOT NULL,
+                min_race_id TEXT,
+                max_race_id TEXT,
+                parquet_path TEXT,
+                schema_json TEXT
+            )
+        """))
+
+
 def _create_tables(engine: Engine) -> None:
     """全テーブルを作成する。既存テーブルの PK 列が現在の仕様と合わない場合は DROP して再作成する。
 
@@ -238,6 +262,9 @@ def _create_tables(engine: Engine) -> None:
             cols_sql = ",\n  ".join(cols)
             sql = f'CREATE TABLE IF NOT EXISTS "{spec.table_name}" (\n  {cols_sql},\n  {pk_sql}\n)'
             conn.execute(text(sql))
+
+    # Phase 2: featured_data_meta テーブル（固定スキーマ、別関数に委譲）
+    _create_featured_meta_table(engine)
 
 
 def ensure_columns(engine: Engine, table_name: str, columns: list[str]) -> None:
