@@ -12,5 +12,12 @@
     "n_races": 3744,
     "use_stacking": true,
     "auc_test": 0.777
+  },
+  {
+    "version": "20260610_keibam",
+    "trained_at": "2026-06-10T12:46:55.292891",
+    "n_races": 3744,
+    "use_stacking": true,
+    "auc_test": 0.774
   }
 ]
