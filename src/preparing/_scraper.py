@@ -17,6 +17,7 @@ Playwright 採用理由（KB shards 22-24 / batch001 / 00context）:
 from __future__ import annotations
 
 import asyncio
+import os
 from abc import ABC
 from abc import abstractmethod
 from typing import TYPE_CHECKING
@@ -171,6 +172,10 @@ class PlaywrightScraper(AbstractScraper):
     timeout_ms : ページ遷移・要素待機のタイムアウト（ミリ秒）。
     rate_limit_sec : fetch_many の各取得間に挟むスリープ秒（負荷軽減）。
     click_delay_ms : クリック時の待機（KB batch001「クリック待機 delay」）。
+    ignore_https_errors : TLS 検証をスキップする。TLS を中間検査するプロキシ配下の
+        実行環境（CI・クラウドサンドボックス等）で Chromium がプロキシ CA を信頼できず
+        ERR_CERT_AUTHORITY_INVALID になる場合のみ使う。None（既定）は環境変数
+        ``KEIBAM_IGNORE_HTTPS_ERRORS=1`` が設定されている場合のみ有効。
     """
 
     def __init__(
@@ -180,12 +185,16 @@ class PlaywrightScraper(AbstractScraper):
         rate_limit_sec: float = 1.0,
         click_delay_ms: int = 100,
         selector_timeout_ms: int = 3000,
+        ignore_https_errors: bool | None = None,
     ) -> None:
         self._headless = headless
         self._timeout_ms = timeout_ms
         self._rate_limit_sec = rate_limit_sec
         self._click_delay_ms = click_delay_ms
         self._selector_timeout_ms = selector_timeout_ms
+        if ignore_https_errors is None:
+            ignore_https_errors = os.environ.get("KEIBAM_IGNORE_HTTPS_ERRORS", "") == "1"
+        self._ignore_https_errors = ignore_https_errors
         self._playwright: "Playwright | None" = None
         self._browser: "Browser | None" = None
 
@@ -239,7 +248,10 @@ class PlaywrightScraper(AbstractScraper):
             assert self._browser is not None  # _start() で必ず設定済み（型ナローイング）
             # netkeiba は UA で bot 判定し中身の異なるページを返すことがあるため、
             # 実ブラウザ相当の User-Agent を設定する。
-            page = await self._browser.new_page(user_agent=_DEFAULT_USER_AGENT)
+            page = await self._browser.new_page(
+                user_agent=_DEFAULT_USER_AGENT,
+                ignore_https_errors=self._ignore_https_errors,
+            )
             try:
                 await page.goto(url, wait_until=wait_until, timeout=self._timeout_ms)
                 if wait_selector is not None:

@@ -6,9 +6,26 @@
 import datetime as dt
 import os
 
+import pytest
+
 from src.constants._bet_types import BetType
 from src.preparing import odds_scheduler
 from src.preparing._odds_snapshot import make_snapshot
+
+
+@pytest.fixture(autouse=True)
+def _isolate_db(tmp_path, monkeypatch):
+    """persist() → _upsert_db が実 DB (data/keibam.db) を汚染しないよう tmp DB に隔離する。"""
+    import src.storage
+    from src.storage import RawDataRepo
+
+    db_path = os.path.join(tmp_path, "isolated.db")
+
+    class _TmpRepo(RawDataRepo):
+        def __init__(self):
+            super().__init__(db_path)
+
+    monkeypatch.setattr(src.storage, "RawDataRepo", _TmpRepo)
 
 
 class _StubScraper:
@@ -146,20 +163,15 @@ def test_parse_args_manual_mode_requires_args():
         odds_scheduler._parse_args(["--race-id", "r1"])  # --phase / --post-time 不足
 
 
-def test_persist_upserts_to_db(tmp_path, monkeypatch):
-    """persist は pickle 保存に加えて SQLite にも冪等 upsert する。"""
-    import src.storage
-    from src.storage import RawDataRepo
+def test_persist_upserts_to_db(tmp_path):
+    """persist は pickle 保存に加えて SQLite にも冪等 upsert する。
 
-    db_path = os.path.join(tmp_path, "test.db")
+    DB の向き先は autouse の _isolate_db fixture が tmp_path/isolated.db に隔離済み。
+    検証読出しは未パッチの実クラス（src.storage._repo）で同じ DB を直接開く。
+    """
+    from src.storage._repo import RawDataRepo as _RealRepo
 
-    class _TmpRepo(RawDataRepo):
-        """テスト用 DB に固定するリポジトリ（_upsert_db の遅延 import 先を差し替え）。"""
-
-        def __init__(self):
-            super().__init__(db_path)
-
-    monkeypatch.setattr(src.storage, "RawDataRepo", _TmpRepo)
+    db_path = os.path.join(tmp_path, "isolated.db")
 
     path = os.path.join(tmp_path, "odds.pkl")
     post = dt.datetime(2024, 1, 1, 15, 40)
@@ -170,6 +182,6 @@ def test_persist_upserts_to_db(tmp_path, monkeypatch):
     # 同じスナップショットの再投入は INSERT OR IGNORE で重複しない
     odds_scheduler.persist([snap], path)
 
-    df = RawDataRepo(db_path).read("raw_odds_snapshots")
+    df = _RealRepo(db_path).read("raw_odds_snapshots")
     assert len(df) == 1
     assert df.iloc[0]["combo"] == "1"

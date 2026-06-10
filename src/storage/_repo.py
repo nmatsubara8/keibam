@@ -96,10 +96,13 @@ class RawDataRepo:
         df_norm.columns = [str(c) for c in df_norm.columns]
 
         # 全列を文字列化（SQLite TEXT に統一保存）。NaN は None に変換。
+        # 整数値の float（202301010101.0 等）は int 表記に正規化する。race_id が
+        # int64 由来（"202301010101"）と float64 由来（"202301010101.0"）で別文字列に
+        # なると PK 重複判定が壊れ、同一行が二重登録されるため。
         # 列名は scrape 由来の日本語列を含むため、二重引用符でクォートする。
         df_norm = df_norm.where(pd.notna(df_norm), None)
         for col in df_norm.columns:
-            df_norm[col] = df_norm[col].map(lambda v: None if v is None else str(v))
+            df_norm[col] = df_norm[col].map(_to_db_str)
 
         # 不足列を ALTER TABLE で追加（PK 以外の自由列のみ対象）
         free_cols = [c for c in df_norm.columns if c not in spec.primary_key]
@@ -264,9 +267,45 @@ class RawDataRepo:
             logger.warning("[auto_migrate] %s: pickle 読込失敗 %s", alias, e)
             return 0
 
+        if not isinstance(df, pd.DataFrame):
+            # odds_snapshots.pkl は OddsSnapshot のリスト。DB へは odds_scheduler が
+            # 取得のたびに直接 upsert するため、ここでの移行対象外とする。
+            logger.info("[auto_migrate] %s: DataFrame ではない pickle のためスキップ", alias)
+            return 0
+
         inserted = self.upsert(alias, df)
         logger.info("[auto_migrate] %s: %d rows migrated from %s", alias, inserted, pickle_path)
         return inserted
+
+    def auto_migrate_all(self) -> dict:
+        """全 raw テーブルについて auto_migrate_if_empty を実行する。
+
+        pipeline（ingest / retrain）の起動時に 1 回呼ぶ想定。DB に既に行がある
+        テーブルは has_rows チェックのみで即スキップされるため毎回呼んでも安価。
+
+        Returns
+        -------
+        dict : alias → 移行行数（移行が発生したテーブルのみ）。
+        """
+        migrated: dict = {}
+        for alias in TABLE_SPECS:
+            try:
+                inserted = self.auto_migrate_if_empty(alias)
+            except Exception as e:  # noqa: BLE001 — 1 テーブルの失敗で全体を止めない
+                logger.warning("[auto_migrate] %s: 失敗 (non-fatal): %s", alias, e)
+                continue
+            if inserted:
+                migrated[alias] = inserted
+        return migrated
+
+
+def _to_db_str(v) -> Optional[str]:
+    """DB 保存用の正準文字列化。None はそのまま、整数値 float は int 表記に揃える。"""
+    if v is None:
+        return None
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
 
 
 def _safe_param_name(col: str, idx: int) -> str:
