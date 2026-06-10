@@ -75,9 +75,13 @@ class DataMerger:
 
     def _merge_race_info(self):
         # race_id インデックスの dtype 不一致（int64/float64 vs str）によるジョイン失敗を防ぐ
+        logger.debug("_merge_race_info: results index dtype=%s sample=%s", self._results.index.dtype, self._results.index[:3].tolist())
+        logger.debug("_merge_race_info: race_info index dtype=%s sample=%s", self._race_info.index.dtype, self._race_info.index[:3].tolist())
         self._results.index = self._results.index.astype(str)
         self._race_info.index = self._race_info.index.astype(str)
         self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
+        date_null = self._results["date"].isna().sum() if "date" in self._results.columns else "NO DATE COL"
+        logger.warning("_merge_race_info: after merge date null=%s total=%s", date_null, len(self._results))
         dict_ = dict_selector("_results")
         self._results = convert_column_types(self._results, dict_)
 
