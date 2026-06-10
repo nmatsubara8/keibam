@@ -45,7 +45,7 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
         elif X_pred.shape[1] >= n:
             X_pred = X_pred.iloc[:, :n]
         else:
-            X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
+            X_pred = X_pred.reindex(columns=list(feat_names or []), fill_value=0)
         score = model.predict_proba(X_pred)[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合

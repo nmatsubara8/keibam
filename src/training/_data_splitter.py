@@ -171,11 +171,11 @@ class DataSplitter:
             self.__train_data_optuna, test_size=meta_ratio
         )
         base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
-        self.__lgb_train_optuna = lgb_o.Dataset(
+        self.__lgb_train_optuna = lgb_o.Dataset(  # type: ignore[attr-defined]
             base_opt_train.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             base_opt_train["rank"],
         )
-        self.__lgb_valid_optuna = lgb_o.Dataset(
+        self.__lgb_valid_optuna = lgb_o.Dataset(  # type: ignore[attr-defined]
             base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
             base_opt_valid["rank"],
         )

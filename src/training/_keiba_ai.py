@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 import pandas as pd
 
 from src.policies._bet_policy import AbstractBetPolicy
@@ -15,7 +19,7 @@ class KeibaAI:
     def __init__(self, datasets: DataSplitter):
         self.__datasets = datasets
         self.__model_wrapper = ModelWrapper()
-        self._calibrated_model = None  # train_with_stacking 後に設定される
+        self._calibrated_model: Any = None  # train_with_stacking 後に設定される
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
 
@@ -70,7 +74,7 @@ class KeibaAI:
         params = dict(self.__model_wrapper.params)
         params.setdefault("scale_pos_weight", TrainingWeights.SCALE_POS_WEIGHT)
         lgb_base = lgb.LGBMClassifier(**params)
-        base_models = [lgb_base]
+        base_models: list[Any] = [lgb_base]
         base_sample_weights = [ev_weights]
 
         # base②: NN（Entity Embedding）。専用 NN ストリーム（PreparedFeatures 経由で

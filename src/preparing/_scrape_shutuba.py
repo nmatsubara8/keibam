@@ -182,7 +182,7 @@ def create_active_race_id_list():
     return active_ids, active_times
 
 
-def _extract_id(href: str, kind: str) -> str:
+def _extract_id(href: str, kind: str) -> object:
     """href から horse/jockey/trainer の ID を抜き出す。失敗時は NaN。
 
     netkeiba の href は ``/horse/2019104123`` 形式と
@@ -204,7 +204,7 @@ def _parse_race_header(soup: BeautifulSoup, race_id: str):
     dict
         course_len(int), race_type, weather, ground_state, around, race_class。
     """
-    info = {
+    info: dict[str, object] = {
         "course_len": NaN,
         "race_type": NaN,
         "weather": NaN,
@@ -369,7 +369,7 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
                 weight = ""
 
             # 単勝オッズ（Txt_R Popular / Odds）
-            tansho = NaN
+            tansho: object = NaN
             odds_td = tr.find("td", class_=re.compile("Odds|Popular"))
             if odds_td is not None:
                 m = re.search(r"\d+(\.\d+)?", odds_td.get_text(strip=True))

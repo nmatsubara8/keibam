@@ -141,6 +141,8 @@ def save_featured_meta(
     n_cols = len(df.columns)
 
     # race_id の最小・最大（index が race_id 前提）
+    min_rid: str | None
+    max_rid: str | None
     try:
         min_rid = str(df.index.min())
         max_rid = str(df.index.max())
