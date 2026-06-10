@@ -209,7 +209,7 @@ class IngestJob:
             featured = self._builder.build(self._cfg)
             save_raw(featured, self._cfg.featured_data_path)
         except Exception as e:
-            logger.warning("[ingest] featured_data build failed (non-fatal): %s", e)
+            logger.warning("[ingest] featured_data build failed (non-fatal): %s", e, exc_info=True)
 
         n_total = len(existing_race_ids(load_raw(self._cfg.raw_results_path)))
         return {
