@@ -67,6 +67,10 @@ class RawDataRepo:
             if df_norm.index.name != spec.index_col:
                 # index 名が違う場合でも値は妥当（呼出元の DataFrame 構造を信用）
                 df_norm.index = df_norm.index.rename(spec.index_col)
+            # raw DataFrame は index と同名の列を持つことがある（例: index=race_id かつ列にも race_id）。
+            # reset_index() で "cannot insert race_id, already exists" になるため、先に drop する。
+            if spec.index_col in df_norm.columns:
+                df_norm = df_norm.drop(columns=[spec.index_col])
             df_norm = df_norm.reset_index()
 
         if spec.auto_row_idx_col:
