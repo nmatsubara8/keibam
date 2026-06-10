@@ -22,6 +22,7 @@ class KeibaAI:
         self._calibrated_model: Any = None  # train_with_stacking 後に設定される
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
+        self.feature_names_: list[str] | None = None  # 学習時の列順序（推論時の列整合用）
 
     @property
     def datasets(self):
@@ -112,6 +113,7 @@ class KeibaAI:
             self.__datasets.X_calib.values,
             self.__datasets.y_calib.values,
         )
+        self.feature_names_ = list(self.__datasets.X_base_train.columns)
 
     def __compute_base_ev_weights(self, x_base, y_base):
         """base_train でブートストラップ LightGBM を学習し EV境界重みを返す。
@@ -170,6 +172,33 @@ class KeibaAI:
         """
         score_policyを元に、馬の「勝ちやすさスコア」を計算する。
         train_with_stacking 済みの場合は較正済みスタッキングモデルを使用する。
+
+        feature_names_ が保存されている場合はライブ推論時の列不一致を自動修正する:
+        - 不足列は 0 埋め、余分な列は無視。
+        - score_policy が必要とする 枠番・馬番・単勝 等の非特徴量列は X から保持。
         """
+        import logging as _log
+        _logger = _log.getLogger(__name__)
         model = self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
+
+        # feature_names_ が保存済みでない旧モデルは datasets から補完する
+        if getattr(self, "feature_names_", None) is None:
+            try:
+                self.feature_names_ = list(self.__datasets.X_base_train.columns)
+            except Exception:
+                pass
+
+        # feature_names_ が保存済みの場合: 列を学習時の順序・セットに揃える
+        if getattr(self, "feature_names_", None) is not None:
+            from src.policies._score_policy import _DROP_FOR_PREDICT
+            from src.constants._results_cols import ResultsCols
+            # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
+            meta_cols = [c for c in [ResultsCols.UMABAN, ResultsCols.WAKUBAN, ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK] if c in X.columns]
+            feat_cols = [c for c in self.feature_names_ if c not in meta_cols]
+            X_feat = X.reindex(columns=feat_cols, fill_value=0)
+            missing = [c for c in feat_cols if c not in X.columns]
+            if missing:
+                _logger.warning("calc_score: %d 列が X に存在しないため 0 で補完: %s ...", len(missing), missing[:5])
+            X = pd.concat([X[[c for c in meta_cols if c in X.columns]], X_feat], axis=1)
+
         return score_policy.calc(model, X)
