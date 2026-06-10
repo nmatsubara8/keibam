@@ -33,20 +33,28 @@ def _ingest(args: argparse.Namespace) -> None:
     class _ScrapingFetcher:
         """netkeiba から実データを取得する実 adapter（bs4/selenium 依存）。"""
 
-        def fetch_results(self, race_ids):
-            from src.preprocessing._results_processor import ResultsProcessor
+        @staticmethod
+        def _load_indexed(path: str) -> "pd.DataFrame":
+            """pickle を読み込み race_id をインデックスに正規化して返す。
 
-            return ResultsProcessor(cfg.raw_results_path).preprocessed_data
+            ResultsProcessor を経由すると _preprocess() が走り pickle の状態に
+            依存した例外が発生するため、load_raw で直接読む。
+            """
+            df = load_raw(path)
+            if df.empty:
+                return df
+            if "race_id" in df.columns and df.index.name != "race_id":
+                df = df.set_index("race_id")
+            return df
+
+        def fetch_results(self, race_ids):
+            return _ScrapingFetcher._load_indexed(cfg.raw_results_path)
 
         def fetch_race_info(self, race_ids):
-            from src.preprocessing._race_info_processor import RaceInfoProcessor
-
-            return RaceInfoProcessor(cfg.raw_race_info_path).preprocessed_data
+            return _ScrapingFetcher._load_indexed(cfg.raw_race_info_path)
 
         def fetch_return_tables(self, race_ids):
-            from src.preprocessing._return_processor import ReturnProcessor
-
-            return ReturnProcessor(cfg.raw_return_tables_path).raw_data
+            return _ScrapingFetcher._load_indexed(cfg.raw_return_tables_path)
 
     class _FullPipelineBuilder:
         """raw pickles から FeatureEngineering を実行する実 adapter。"""
