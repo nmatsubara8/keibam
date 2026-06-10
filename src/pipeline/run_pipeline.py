@@ -40,6 +40,7 @@ def _ingest(args: argparse.Namespace) -> None:
             ResultsProcessor を経由すると _preprocess() が走り pickle の状態に
             依存した例外が発生するため、load_raw で直接読む。
             """
+            from src.pipeline._ingestion import load_raw
             df = load_raw(path)
             if df.empty:
                 return df
