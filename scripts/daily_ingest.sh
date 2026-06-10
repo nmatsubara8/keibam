@@ -15,6 +15,10 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$PROJECT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# 失敗通知ヘルパーを読み込む
+# shellcheck source=scripts/on_failure_notify.sh
+source "$SCRIPT_DIR/on_failure_notify.sh"
+
 # 引数で日付を受け取る。省略時は前日（date -d は GNU coreutils、macOS は date -v-1d）
 if [[ $# -ge 1 ]]; then
     POST_DATE="$1"
@@ -24,6 +28,9 @@ fi
 
 LOG_FILE="$LOG_DIR/ingest_${POST_DATE}.log"
 TIMESTAMP="$(date '+%Y-%m-%d %H:%M:%S')"
+
+# 失敗時に通知を送る trap
+trap 'notify_failure "daily_ingest" "$POST_DATE" "$LOG_FILE"' ERR
 
 echo "[$TIMESTAMP] === daily_ingest START post_date=$POST_DATE ===" | tee -a "$LOG_FILE"
 

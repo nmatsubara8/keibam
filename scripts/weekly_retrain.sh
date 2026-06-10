@@ -16,9 +16,16 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$PROJECT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+# 失敗通知ヘルパーを読み込む
+# shellcheck source=scripts/on_failure_notify.sh
+source "$SCRIPT_DIR/on_failure_notify.sh"
+
 TIMESTAMP_TAG="$(date '+%Y%m%d_%H%M%S')"
 LOG_FILE="$LOG_DIR/retrain_${TIMESTAMP_TAG}.log"
 TIMESTAMP="$(date '+%Y-%m-%d %H:%M:%S')"
+
+# 失敗時に通知を送る trap
+trap 'notify_failure "weekly_retrain" "$TIMESTAMP_TAG" "$LOG_FILE"' ERR
 
 # オプション解析
 WITH_TUNING=""
