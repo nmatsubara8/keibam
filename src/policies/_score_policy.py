@@ -34,7 +34,14 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     if feat_names is None and hasattr(model, "booster_"):
         feat_names = model.booster_.feature_name()
     if feat_names is not None:
-        X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
+        feat_names = list(feat_names)
+        cur_cols = list(X_pred.columns)
+        # 列名が完全一致しない場合のみ reindex（shutuba ライブ推論で列が欠ける場合の救済）。
+        # 一致時は reindex により fill_value=0 で X_pred が破壊されるのを防ぐ。
+        if cur_cols != feat_names and set(cur_cols) != set(feat_names):
+            X_pred = X_pred.reindex(columns=feat_names, fill_value=0)
+        elif cur_cols != feat_names:
+            X_pred = X_pred[feat_names]
     score = model.predict_proba(X_pred)[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合
