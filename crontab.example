@@ -22,3 +22,11 @@ PROJECT_DIR=/path/to/keibam
 # ── 週次再学習（Optuna チューニングあり、月 1 回・毎月第 1 月曜 3:00） ────────
 # 毎週は不要だが、月 1 回はハイパラを探索し直すのが望ましい。
 # 0 3 * * 1 [ $(date +\%d) -le 7 ] && $PROJECT_DIR/scripts/weekly_retrain.sh --tuning >> $PROJECT_DIR/logs/cron.log 2>&1
+
+# ── 段階オッズ取得（開催日 = 土日） ──────────────────────────────────────────
+# フェーズ（prev_day / hours_before / thirty_min / just_before）は取得時点の
+# minutes_to_post から自動分類される。開催が無い日は対象 0 件で即終了する。
+# 朝 8:00: 当日全レース（〜600 分先）の hours_before スナップショット
+0 8 * * 6,0 $PROJECT_DIR/scripts/odds_snapshot.sh 600 >> $PROJECT_DIR/logs/cron.log 2>&1
+# 9〜16 時は 10 分間隔: 発走 45 分以内のレースの thirty_min / just_before を取得
+*/10 9-16 * * 6,0 $PROJECT_DIR/scripts/odds_snapshot.sh 45 >> $PROJECT_DIR/logs/cron.log 2>&1

@@ -83,3 +83,30 @@ def test_merge_snapshots_keeps_distinct_phases():
     thirty = make_snapshot("r1", BetType.TANSHO, [1], 2.5, post, dt.datetime(2024, 1, 1, 15, 10))
     merged = merge_snapshots([], [just, thirty])
     assert len(merged) == 2
+
+
+def test_combo_to_str_joins_with_hyphen():
+    from src.preparing._odds_snapshot import combo_to_str
+
+    assert combo_to_str((3, 7, 11)) == "3-7-11"
+    assert combo_to_str([1]) == "1"
+
+
+def test_snapshots_to_records_serializes_for_db():
+    from src.preparing._odds_snapshot import snapshots_to_records
+
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    captured = dt.datetime(2024, 1, 1, 15, 35)
+    s = make_snapshot("r1", BetType.TANSHO, [3], 4.5, post, captured)
+    records = snapshots_to_records([s])
+    assert records == [
+        {
+            "race_id": "r1",
+            "bet_type": BetType.TANSHO,
+            "combo": "3",
+            "odds": 4.5,
+            "captured_at": "2024-01-01T15:35:00",
+            "minutes_to_post": 5,
+            "phase": OddsPhase.JUST_BEFORE,
+        }
+    ]

@@ -98,7 +98,8 @@ TABLE_SPECS: dict[str, TableSpec] = {
     "raw_odds_snapshots": TableSpec(
         table_name="raw_odds_snapshots",
         # OddsSnapshot dataclass の (race_id, captured_at, bet_type, combo) で一意。
-        # combo は "3-7-11" のような文字列で保存する想定（Phase 2 で実装）。
+        # combo は "3-7-11" のような文字列、captured_at は ISO8601 文字列で保存する
+        # （odds_scheduler.persist → snapshots_to_records が変換して upsert する）。
         primary_key=("race_id", "captured_at", "bet_type", "combo"),
         index_col=None,
     ),

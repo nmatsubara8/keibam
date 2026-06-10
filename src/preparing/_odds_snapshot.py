@@ -110,6 +110,30 @@ def snapshots_from_rows(
     return out
 
 
+def combo_to_str(combo: Sequence[int]) -> str:
+    """combo タプルを DB 保存用の文字列（例 ``"3-7-11"``）へ変換する（純粋関数）。"""
+    return "-".join(str(int(x)) for x in combo)
+
+
+def snapshots_to_records(snapshots: Sequence[OddsSnapshot]) -> list[dict]:
+    """OddsSnapshot 群を `raw_odds_snapshots` テーブルの行 dict へ変換する（純粋関数）。
+
+    combo は文字列、captured_at は ISO8601 文字列にして SQLite に保存できる形にする。
+    """
+    return [
+        {
+            "race_id": s.race_id,
+            "bet_type": s.bet_type,
+            "combo": combo_to_str(s.combo),
+            "odds": s.odds,
+            "captured_at": s.captured_at.isoformat(),
+            "minutes_to_post": s.minutes_to_post,
+            "phase": s.phase,
+        }
+        for s in snapshots
+    ]
+
+
 def _dedup_key(s: OddsSnapshot) -> tuple:
     """冪等な蓄積のための一意キー（同一レース・馬券・組合せ・フェーズは 1 件）。"""
     return (s.race_id, s.bet_type, s.combo, s.phase)
