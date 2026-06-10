@@ -38,7 +38,11 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     score = model.predict_proba(X_pred)[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合
-    score_table = pd.merge(score_table, wakuban_flag, left_on="race_id", right_index=True)
+    if "race_id" in score_table.columns:
+        score_table = pd.merge(score_table, wakuban_flag, left_on="race_id", right_index=True)
+    else:
+        score_table = score_table.join(wakuban_flag.rename("wakuban_flag"), how="left")
+        score_table["wakuban_flag"] = score_table["wakuban_flag"].fillna(0).astype(int)
 
     return score_table
 
