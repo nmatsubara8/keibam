@@ -29,7 +29,13 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     # UMABANの個数がWAKUBANの個数よりも多い場合にwakuban_flagを設定
     wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
     wakuban_flag.name = "wakuban_flag"
-    score = model.predict_proba(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))[:, 1]
+    X_pred = X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore")
+    feat_names = getattr(model, "feature_name_", None) or getattr(model, "feature_names_in_", None)
+    if feat_names is None and hasattr(model, "booster_"):
+        feat_names = model.booster_.feature_name()
+    if feat_names is not None:
+        X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
+    score = model.predict_proba(X_pred)[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合
     score_table = pd.merge(score_table, wakuban_flag, left_on="race_id", right_index=True)
