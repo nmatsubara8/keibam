@@ -85,7 +85,7 @@ CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）と同じ 4 ゲー
 ローカルでも以下を順に実行すれば同等の検証ができる。
 
 ```bash
-# ① ユニット + アーキテクチャテスト（478 件）
+# ① ユニット + アーキテクチャテスト（590 件）
 #    architecture テストが import-linter の 4 契約も subprocess で検証する
 python -m pytest tests/ -q
 
@@ -99,7 +99,7 @@ python -m mypy --config-file pyproject.toml
 lint-imports
 ```
 
-期待結果の目安: pytest は **pass（一部 selenium/Playwright 必須テストは skip）**、
+期待結果の目安: pytest は **590 件 pass（一部 selenium/Playwright 必須テストは skip）**、
 mypy は対象モジュールで **clean**、import-linter は **4 contracts kept**。
 
 > 補足: `tests/preparing/` のスクレイピング実依存テストは `@pytest.mark.skip` で
@@ -181,6 +181,7 @@ src/                ドメイン本体（レイヤ単方向依存）
 ├─ portfolio/       資金配分（ケリー）
 ├─ simulation/      バックテスト・指標・可視化
 ├─ operation/       運用モード・発注アダプタ・設定
+├─ storage/         raw データ SQLite 永続化（Phase 1: pickle 揮発時の保険）
 └─ pipeline/        継続学習 CLI（ingest / retrain）
 app/                Streamlit UI（Home + pages/）
 tests/              ユニット + アーキテクチャテスト
@@ -190,7 +191,7 @@ docs/               ARCHITECTURE.md / setup_vps.md
 レイヤ依存の方向（下位 → 上位、上位は下位のみ import 可）:
 
 ```
-constants → preprocessing / preparing → policies → training → portfolio → simulation → operation → pipeline → ui
+constants → storage → preprocessing / preparing → policies → training → portfolio → simulation → operation → pipeline → ui
 ```
 
 この制約は `tests/architecture/` と `import-linter`（`.importlinter`）で機械的に検証される。
@@ -257,3 +258,18 @@ constants → preprocessing / preparing → policies → training → portfolio 
 - モデルロードを `glob` で最新ディレクトリ自動検出に変更（`models/<latest_date>/basemodel_*.pickle`）。
 - `BetPolicyTanshoFukusho` を追加（threshold1 = 単勝 / threshold2 = 複勝 の併用戦略）。
 - `race_id_list[0]` → `race_id_list.iloc[0]["race_id"]`（戻り値が DataFrame であるため）。
+
+### 8-6. Phase 1: raw データの SQLite 永続化（`src/storage/`）
+
+- pickle が消えると全件 re-scrape が必要という問題を解消するため、SQLAlchemy + SQLite
+  （`data/keibam.db`）で raw データを永続化する `src/storage/` レイヤを新設。
+- `RawDataRepo`（`_repo.py`）が `upsert / read / delete / auto_migrate_if_empty` を提供。
+  `INSERT OR IGNORE` による冪等 upsert で、同じ DataFrame を何度投入しても重複しない。
+- `update_rawdata`（`_get_rawdata.py`）の末尾に DB フックを追加。pickle 更新後に対応 alias を
+  逆引きして DB に upsert する（失敗は warning のみ、pickle 側は成功を保証）。
+- `raw_return_tables` の主キーは `(race_id, row_idx)` で、同一 race_id に複数馬券種行を
+  持てるよう設計。払戻 raw の int 列名（`0/1/2`）は upsert 時に文字列化して PRAGMA 比較ズレを解消。
+- `ingest --force` オプションを追加（`run_pipeline.py`）。誤情報修正時に対象 race_id の
+  DB 行を事前 DELETE してから再投入できる。
+- 既存 Processor は従来通り pickle を読み続ける（pickle が消えたら `RawDataRepo.read` で
+  再生成 → 再 scrape 不要）。WAL モードで同時読み書き安定性を確保。
