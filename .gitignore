@@ -10,6 +10,10 @@ data/**/*.csv
 data/**/**/*.bin
 data/**/*.pkl
 data/*.pkl
+# Phase 1: SQLite raw データベース（WAL/SHM 含む）は容量・差分追跡の理由から除外
+data/keibam.db
+data/keibam.db-wal
+data/keibam.db-shm
 models/**/*.pickle
 *.pickle
 .DS_Store

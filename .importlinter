@@ -21,6 +21,7 @@ layers =
     src.policies
     src.preparing
     src.preprocessing
+    src.storage
     src.constants
 exhaustive = false
 

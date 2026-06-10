@@ -26,7 +26,8 @@ def _ingest(args: argparse.Namespace) -> None:
     from src.pipeline._ingestion import IngestConfig
     from src.pipeline._ingestion import IngestJob
 
-    cfg = IngestConfig()
+    # Phase 1: --force フラグを IngestConfig に伝搬（DB 行の事前 DELETE を有効化）
+    cfg = IngestConfig(force=getattr(args, "force", False))
 
     # I/O アダプタ: preparing を遅延 import して DI
     class _ScrapingFetcher:
@@ -161,6 +162,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # ingest サブコマンド
     ingest_p = sub.add_parser("ingest", help="終了レースを日次取込")
     ingest_p.add_argument("--race-id", dest="race_ids", nargs="+", required=True, help="対象 race_id")
+    # Phase 1: 誤情報修正時に既存 DB 行を削除してから再取込するためのフラグ
+    ingest_p.add_argument(
+        "--force",
+        action="store_true",
+        help="既存 DB 行を削除してから再取込（誤情報修正時に使用）",
+    )
 
     # retrain サブコマンド
     retrain_p = sub.add_parser("retrain", help="全データで週次再学習")

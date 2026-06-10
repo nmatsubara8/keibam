@@ -30,6 +30,10 @@ class LocalPaths:
     ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）
     FEATURED_DATA_PATH: str = os.path.join(RAW_DIR, "featured_data.pkl")
 
+    ### Phase 1: raw データの永続化先 SQLite ファイル
+    ### pickle が消えても DB から再生成できるように、scrape 結果をここに upsert する。
+    DB_PATH: str = os.path.join(DATA_DIR, "keibam.db")
+
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")

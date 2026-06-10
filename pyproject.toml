@@ -104,6 +104,7 @@ files = [
     "src/preparing/odds_scheduler.py",
     "src/pipeline/_ingestion.py",
     "src/pipeline/_retrain.py",
+    "src/storage",
     "app/_betting_history.py",
     "app/_formatters.py",
     "app/_prediction_service.py",

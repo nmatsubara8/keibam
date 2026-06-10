@@ -80,6 +80,10 @@ def update_rawdata(filepath: str, new_df: pd.DataFrame) -> None:
 
     filepath の pkl が存在する場合は new_df に含まれない旧インデックスを保持したまま
     マージする（重複インデックスは new_df を優先）。存在しない場合は新規作成。
+
+    Phase 1: pickle 更新後、`LocalPaths.RAW_*_PATH` に対応する alias が判明する場合は
+    SQLite (`RawDataRepo`) にも冪等 upsert する。DB 書き込みは「pickle が消えた時の保険」で
+    あり、失敗しても pickle 側は成功している前提で warning のみ吐いて続行する。
     """
     import logging
     _logger = logging.getLogger(__name__)
@@ -100,3 +104,18 @@ def update_rawdata(filepath: str, new_df: pd.DataFrame) -> None:
     else:
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         new_df.to_pickle(filepath)
+
+    # Phase 1: SQLite への冪等 upsert（pickle 揮発時の保険）
+    # 失敗しても pickle 側は完了済みなので、pipeline 全体を落とさない。
+    try:
+        from src.storage import PICKLE_PATH_TO_ALIAS
+        from src.storage import RawDataRepo
+
+        alias = PICKLE_PATH_TO_ALIAS.get(filepath)
+        if alias is None:
+            # 既知の RAW_*_PATH 以外（テスト等）は DB 書き込み対象外
+            return
+        inserted = RawDataRepo().upsert(alias, new_df)
+        _logger.info("update_rawdata: DB upsert %s: %d rows inserted", alias, inserted)
+    except Exception as e:  # noqa: BLE001
+        _logger.warning("update_rawdata: DB upsert 失敗 (non-fatal) %s: %s", filepath, e)

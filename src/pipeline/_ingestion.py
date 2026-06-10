@@ -40,6 +40,8 @@ class IngestConfig:
     raw_horse_info_path: str = LocalPaths.RAW_HORSE_INFO_PATH
     raw_peds_path: str = LocalPaths.RAW_PEDS_PATH
     featured_data_path: str = LocalPaths.FEATURED_DATA_PATH
+    # Phase 1: --force 指定時、対象 race_id の DB 行を先に削除してから再投入する
+    force: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -146,10 +148,28 @@ class IngestJob:
         -------
         dict : status, n_new (新規取込数), n_total (全取込累計数), ingest_time。
         """
+        # Phase 1: --force 指定時は対象 race_id の DB 行を先に削除し、
+        # 「DB 上の既存行」を理由に upsert がスキップされないようにする。
+        # pickle 側のマージは既存ロジック（update_rawdata 経由）が new_df を優先するので問題なし。
+        if self._cfg.force and candidate_race_ids:
+            try:
+                from src.storage import RawDataRepo
+
+                repo = RawDataRepo()
+                for alias in ("raw_results", "raw_race_info", "raw_return_tables"):
+                    deleted = repo.delete_by_index(alias, candidate_race_ids)
+                    logger.info("[ingest --force] DB delete %s: %d rows", alias, deleted)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[ingest --force] DB delete 失敗 (non-fatal): %s", e)
+
         existing_results = load_raw(self._cfg.raw_results_path)
         existing_ids = existing_race_ids(existing_results)
 
-        new_ids = find_new_race_ids(existing_ids, candidate_race_ids)
+        # --force 時は重複判定をスキップして全候補を取り直す
+        if self._cfg.force:
+            new_ids = list(candidate_race_ids)
+        else:
+            new_ids = find_new_race_ids(existing_ids, candidate_race_ids)
         if not new_ids:
             return {
                 "status": "no_new_races",
