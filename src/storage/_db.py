@@ -78,18 +78,22 @@ TABLE_SPECS: dict[str, TableSpec] = {
     ),
     "raw_horse_results": TableSpec(
         table_name="raw_horse_results",
-        primary_key=("horse_id", "date", "race_id"),
-        index_col="horse_id",
+        # 実 DataFrame: index は名前なし RangeIndex、horse_id と 日付 は通常列。
+        # 1頭が同日に複数出走することはないため (horse_id, 日付) で一意。
+        primary_key=("horse_id", "日付"),
+        index_col=None,
     ),
     "raw_horse_info": TableSpec(
         table_name="raw_horse_info",
+        # 実 DataFrame: index は名前なし RangeIndex、horse_id は通常列。
         primary_key=("horse_id",),
-        index_col="horse_id",
+        index_col=None,
     ),
     "raw_peds": TableSpec(
         table_name="raw_peds",
+        # 実 DataFrame: index は名前なし RangeIndex、horse_id は通常列。
         primary_key=("horse_id",),
-        index_col="horse_id",
+        index_col=None,
     ),
     "raw_odds_snapshots": TableSpec(
         table_name="raw_odds_snapshots",
