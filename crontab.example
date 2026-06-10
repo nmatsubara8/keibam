@@ -1,0 +1,24 @@
+# keibam crontab.example
+#
+# セットアップ手順:
+#   1. PROJECT_DIR を実際のパスに置換
+#   2. crontab -e で以下を追記
+#
+# 注意: crontab では % をエスケープする必要がある（\% と書く）。
+#       シェルスクリプト経由で実行するため本ファイルでは不要。
+
+PROJECT_DIR=/path/to/keibam
+
+# ── 日次取込（毎朝 6:00 に前日分を取込む） ─────────────────────────────────
+# レース終了後の早朝に実行。前日の全レースを自動取得して DB に保存する。
+# Playwright（Chromium）が必要なため、VPS でのみ有効。
+0 6 * * * $PROJECT_DIR/scripts/daily_ingest.sh >> $PROJECT_DIR/logs/cron.log 2>&1
+
+# ── 週次再学習（毎週月曜 3:00） ──────────────────────────────────────────────
+# 直近の全データで LightGBM + NN スタッキングモデルを再学習する。
+# --tuning を付けると Optuna ハイパラ探索（約 2 時間）が追加される。
+0 3 * * 1 $PROJECT_DIR/scripts/weekly_retrain.sh >> $PROJECT_DIR/logs/cron.log 2>&1
+
+# ── 週次再学習（Optuna チューニングあり、月 1 回・毎月第 1 月曜 3:00） ────────
+# 毎週は不要だが、月 1 回はハイパラを探索し直すのが望ましい。
+# 0 3 * * 1 [ $(date +\%d) -le 7 ] && $PROJECT_DIR/scripts/weekly_retrain.sh --tuning >> $PROJECT_DIR/logs/cron.log 2>&1

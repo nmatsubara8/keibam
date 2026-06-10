@@ -159,3 +159,7 @@ dmypy.json
 # スクレイピング一時ファイル（ディレクトリ構造は .gitkeep で保持）
 data/tmp/**
 !data/tmp/**/.gitkeep
+
+# cron ログ（構造は .gitkeep で保持）
+logs/*.log
+!logs/.gitkeep

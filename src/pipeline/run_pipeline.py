@@ -21,10 +21,25 @@ from typing import Sequence
 logger = logging.getLogger(__name__)
 
 
+def _resolve_race_ids(post_date: str) -> list[int]:
+    """--post-date YYYYMMDD から当日の race_id リストを取得する（Playwright 必須）。"""
+    from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
+
+    race_ids_str, _ = scrape_race_id_race_time_list(post_date)
+    if not race_ids_str:
+        raise RuntimeError(f"--post-date {post_date}: race_id を取得できませんでした（ネットワーク・HTML 構造を確認）")
+    logger.info("[ingest] --post-date %s: %d レースを取得: %s", post_date, len(race_ids_str), race_ids_str[:3])
+    return [int(r) for r in race_ids_str]
+
+
 def _ingest(args: argparse.Namespace) -> None:
     """取込ジョブを実行する（selenium / bs4 が実行時に必要）。"""
     from src.pipeline._ingestion import IngestConfig
     from src.pipeline._ingestion import IngestJob
+
+    # --post-date が指定された場合は race_id を自動取得する
+    if getattr(args, "post_date", None):
+        args.race_ids = _resolve_race_ids(args.post_date)
 
     # Phase 1: --force フラグを IngestConfig に伝搬（DB 行の事前 DELETE を有効化）
     cfg = IngestConfig(force=getattr(args, "force", False))
@@ -172,7 +187,14 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     # ingest サブコマンド
     ingest_p = sub.add_parser("ingest", help="終了レースを日次取込")
-    ingest_p.add_argument("--race-id", dest="race_ids", nargs="+", type=int, required=True, help="対象 race_id")
+    race_id_group = ingest_p.add_mutually_exclusive_group(required=True)
+    race_id_group.add_argument("--race-id", dest="race_ids", nargs="+", type=int, help="対象 race_id（個別指定）")
+    race_id_group.add_argument(
+        "--post-date",
+        dest="post_date",
+        metavar="YYYYMMDD",
+        help="開催日を指定して当日の全 race_id を自動取得（cron 用）",
+    )
     # Phase 1: 誤情報修正時に既存 DB 行を削除してから再取込するためのフラグ
     ingest_p.add_argument(
         "--force",
