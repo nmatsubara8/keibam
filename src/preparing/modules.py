@@ -638,14 +638,18 @@ def create_raw_horse_ped(target_bin_file_path):
             ped_table = soup.find("table", class_="blood_table")
         if ped_table is None:
             raise ValueError(f"血統テーブルが見つかりません: {target_bin_file_path}")
-        horse_a_list = ped_table.find_all(
-            "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
-        )
+        # 血統セルの馬リンクは相対（/horse/<id>）と絶対（https://db.netkeiba.com/horse/<id>/）
+        # の両形式がある。各祖先には /horse/ped/<id>/・/horse/sire/<id>/ も併設される
+        # ため、パスが /horse/<id> で終わる直接リンクだけを対象にする。
+        ped_href_re = re.compile(r"(?:^|netkeiba\.com)/horse/(\w{10})/?$")
+        horse_a_list = ped_table.find_all("a", attrs={"href": ped_href_re})
 
         for a in horse_a_list:
             # 血統データのhorse_idを抜き出す
-            work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
-            peds_id_list.append(work_peds_id)
+            m = ped_href_re.search(a["href"])
+            if m is None:
+                continue
+            peds_id_list.append(m.group(1))
 
         df[horse_id] = peds_id_list
 
