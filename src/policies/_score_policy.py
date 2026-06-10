@@ -30,14 +30,23 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
     wakuban_flag.name = "wakuban_flag"
     X_pred = X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore")
-    feat_names = getattr(model, "feature_name_", None) or getattr(model, "feature_names_in_", None)
-    if feat_names is None and hasattr(model, "booster_"):
-        feat_names = model.booster_.feature_name()
-    # 列数が一致するなら LightGBM は位置ベースで予測可能（列名違いは無視）。
-    # 列数が違う場合のみ、共通列で reindex（不足列は 0 埋め）して shutuba ライブ推論を救済する。
-    if feat_names is not None and len(feat_names) != X_pred.shape[1]:
-        X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
-    score = model.predict_proba(X_pred)[:, 1]
+    try:
+        score = model.predict_proba(X_pred)[:, 1]
+    except Exception:
+        # 列数不一致の場合のみフォールバック。モデルが Column_N の generic 名で
+        # 保存されていると名前マッチが効かないため、最初に X_pred の先頭 N 列で再試行。
+        feat_names = getattr(model, "feature_name_", None) or getattr(model, "feature_names_in_", None)
+        if feat_names is None and hasattr(model, "booster_"):
+            feat_names = model.booster_.feature_name()
+        n = len(list(feat_names)) if feat_names is not None else X_pred.shape[1]
+        common = [c for c in (feat_names or []) if c in X_pred.columns]
+        if len(common) == n:
+            X_pred = X_pred[common]
+        elif X_pred.shape[1] >= n:
+            X_pred = X_pred.iloc[:, :n]
+        else:
+            X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
+        score = model.predict_proba(X_pred)[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合
     if "race_id" in score_table.columns:
