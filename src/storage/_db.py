@@ -201,9 +201,29 @@ def _reset_engine_for_testing() -> None:
 
 
 def _create_tables(engine: Engine) -> None:
-    """全テーブルを `CREATE TABLE IF NOT EXISTS` で作成する（冪等）。"""
+    """全テーブルを作成する。既存テーブルの PK 列が現在の仕様と合わない場合は DROP して再作成する。
+
+    TableSpec の primary_key が変わった場合（スキーマ修正時）に古い DB を持ち込んでも
+    サイレントに正しいスキーマへ移行できるよう、PK 列の存在チェックを行う。
+    テーブルを DROP するとデータも消えるが、pickle から再 migrate すれば復元できる。
+    """
     with engine.begin() as conn:
         for spec in TABLE_SPECS.values():
+            # 既存テーブルの列を調べ、PK 列が揃っているか確認する
+            rows = conn.execute(text(f'PRAGMA table_info("{spec.table_name}")')).fetchall()
+            if rows:
+                existing_cols = {row[1] for row in rows}
+                missing_pk = [c for c in spec.primary_key if c not in existing_cols]
+                if missing_pk:
+                    # 古いスキーマ（PK 列不足）はデータを捨てて再作成する
+                    # pickle から auto_migrate_if_empty で再投入できる
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "_create_tables: %s は PK 列 %s が不足しているため DROP して再作成します",
+                        spec.table_name, missing_pk,
+                    )
+                    conn.execute(text(f'DROP TABLE "{spec.table_name}"'))
+
             cols: list[str] = []
             # 主キー列は TEXT（race_id / horse_id / 日付 / combo 等は全て文字列で扱える）
             for pk_col in spec.primary_key:
@@ -213,13 +233,9 @@ def _create_tables(engine: Engine) -> None:
                 cols.append(f'"{spec.index_col}" TEXT')
             # 取込日時
             cols.append('"ingested_at" TIMESTAMP DEFAULT CURRENT_TIMESTAMP')
-            # 主キー制約
             pk_def = ", ".join(f'"{c}"' for c in spec.primary_key)
-            cols.append(f"PRAGMA_KEY_PLACEHOLDER PRIMARY KEY ({pk_def})")
-            # PRAGMA_KEY_PLACEHOLDER は単に PRIMARY KEY 行を末尾に置くためのダミー。
-            # 実 SQL では除外して PRIMARY KEY 行をそのまま使う。
-            cols_sql = ",\n  ".join(c for c in cols if not c.startswith("PRAGMA_KEY_PLACEHOLDER"))
             pk_sql = f"PRIMARY KEY ({pk_def})"
+            cols_sql = ",\n  ".join(cols)
             sql = f'CREATE TABLE IF NOT EXISTS "{spec.table_name}" (\n  {cols_sql},\n  {pk_sql}\n)'
             conn.execute(text(sql))
 
