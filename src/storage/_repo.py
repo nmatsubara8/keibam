@@ -64,14 +64,18 @@ class RawDataRepo:
         # 2) auto_row_idx_col が True なら、index ごとの cumcount で row_idx 列を付与
         df_norm = df.copy()
         if spec.index_col is not None:
-            if df_norm.index.name != spec.index_col:
-                # index 名が違う場合でも値は妥当（呼出元の DataFrame 構造を信用）
+            if df_norm.index.name == spec.index_col:
+                # index が race_id そのもの → 列に重複があれば drop してから column 化
+                if spec.index_col in df_norm.columns:
+                    df_norm = df_norm.drop(columns=[spec.index_col])
+                df_norm = df_norm.reset_index()
+            elif spec.index_col in df_norm.columns:
+                # race_id は通常列として既にある（RangeIndex の場合）→ RangeIndex は捨てる
+                df_norm = df_norm.reset_index(drop=True)
+            else:
+                # race_id が index に name として設定されている可能性 → index を column 化
                 df_norm.index = df_norm.index.rename(spec.index_col)
-            # raw DataFrame は index と同名の列を持つことがある（例: index=race_id かつ列にも race_id）。
-            # reset_index() で "cannot insert race_id, already exists" になるため、先に drop する。
-            if spec.index_col in df_norm.columns:
-                df_norm = df_norm.drop(columns=[spec.index_col])
-            df_norm = df_norm.reset_index()
+                df_norm = df_norm.reset_index()
 
         if spec.auto_row_idx_col:
             # 主キーが (race_id, row_idx) のような場合、同じ index 内での連番を付与
