@@ -49,7 +49,7 @@ class DataSplitter:
         """
         訓練データとテストデータに分ける。さらに訓練データをoptuna用の訓練データと検証データに分ける。
         """
-        import optuna.integration.lightgbm as lgb_o
+        from src.training._lgb_optuna import lgb_o
 
         self.__train_data, self.__test_data = self.__split_by_date(self.__featured_data, test_size=test_size)
         self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(
@@ -165,7 +165,7 @@ class DataSplitter:
         calib_holdout は valid_data_optuna をそのまま使用。
         base_train 内の 80/20 split で Optuna ハイパラ探索用データを再構築する。
         """
-        import optuna.integration.lightgbm as lgb_o
+        from src.training._lgb_optuna import lgb_o
 
         self.__base_train, self.__meta_train = self.__split_by_date(
             self.__train_data_optuna, test_size=meta_ratio

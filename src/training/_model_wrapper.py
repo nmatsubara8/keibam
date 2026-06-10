@@ -1,7 +1,6 @@
 import logging
 
 import lightgbm as lgb
-import optuna.integration.lightgbm as lgb_o
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
@@ -9,6 +8,7 @@ from src.constants._bet_thresholds import TrainingWeights
 from src.constants._results_cols import ResultsCols
 
 from ._data_splitter import DataSplitter
+from ._lgb_optuna import lgb_o
 
 logger = logging.getLogger(__name__)
 
