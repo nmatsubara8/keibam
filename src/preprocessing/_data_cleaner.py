@@ -45,39 +45,18 @@ def dict_selector(dict_name):
     return column_types_dict
 
 
-def convert_column_types(df, dict):
+def convert_column_types(df, col_types):
     converted_df = df.copy()
-    for column, (from_data_type, to_data_type, width, padding) in dict.items():
-        if from_data_type == "str":
-            if to_data_type == "str":
-                if padding:
-                    # ゼロパディングが必要な場合
-                    converted_df[column] = converted_df[column].astype(str).str.zfill(width)
-                else:
-                    # ゼロパディングが不要な場合
-                    converted_df[column] = converted_df[column].astype(to_data_type)
-
-        if from_data_type == "int":
-            if to_data_type == "str":
-                if padding:
-                    # ゼロパディングが必要な場合
-                    converted_df[column] = converted_df[column].astype(str).str.zfill(width)
-                else:
-                    # ゼロパディングが不要な場合
-                    converted_df[column] = converted_df[column].astype(to_data_type)
-
-    for column, (from_data_type, to_data_type, width, padding) in dict.items():
-        if from_data_type == "float":
-            if to_data_type == "str":
-                if padding:
-                    # ゼロパディングが必要な場合
-                    converted_df[column] = (
-                        converted_df[column].astype(float).astype(str).str.split(".").str[0].str.zfill(width)
-                    )
-                else:
-                    # ゼロパディングが不要な場合
-                    converted_df[column] = converted_df[column].astype(to_data_type)
-            if to_data_type == "int":
-                converted_df[column] = converted_df[column].fillna(0).astype(to_data_type)
-
+    for column, (from_data_type, to_data_type, width, padding) in col_types.items():
+        if from_data_type == "float" and to_data_type == "int":
+            converted_df[column] = converted_df[column].fillna(0).astype(to_data_type)
+        elif to_data_type == "str" and padding:
+            if from_data_type == "float":
+                converted_df[column] = (
+                    converted_df[column].astype(float).astype(str).str.split(".").str[0].str.zfill(width)
+                )
+            else:
+                converted_df[column] = converted_df[column].astype(str).str.zfill(width)
+        else:
+            converted_df[column] = converted_df[column].astype(to_data_type)
     return converted_df

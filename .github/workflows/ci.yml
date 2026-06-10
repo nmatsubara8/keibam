@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: pytest + lint-imports + ruff + mypy
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-ci.txt
+
+      # ── テスト ────────────────────────────────────────────────────────────
+      # アーキテクチャテスト (tests/architecture/) は含む。
+      # test_import_linter_contracts_pass が lint-imports を subprocess で実行し
+      # .importlinter の 4 契約を検証するため、lint-imports の別途実行は不要。
+      # tests/preparing/ 内の selenium 必須テストは @pytest.mark.skip で個別除外済み。
+      - name: Run tests
+        env:
+          PYTHONPATH: "."
+        run: |
+          python -m pytest tests/ \
+            -q --tb=short
+
+      # ── 静的解析 ─────────────────────────────────────────────────────────
+      # ruff: E/F/W/B ルール（pyproject.toml 設定に従う）
+      # エラーを報告するが、まだ CI 失敗にしない（--no-fix で修正は行わない）
+      - name: Lint (ruff)
+        run: |
+          python -m ruff check src/ app/ --output-format=github
+        continue-on-error: true
+
+      # ── 型チェック ───────────────────────────────────────────────────────
+      # pyproject.toml [tool.mypy] files に列挙した新規モジュールを段階的に検査。
+      # 既存コード全体は対象外（ignore_missing_imports=true で外部スタブ不要）。
+      - name: Type check (mypy)
+        run: |
+          python -m mypy --config-file pyproject.toml

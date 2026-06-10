@@ -1,6 +1,7 @@
 import pandas as pd
 
 from src.constants._results_cols import ResultsCols as Cols
+from src.constants._units import COURSE_LEN_BUCKET_METERS
 from src.preprocessing._results_processor import ResultsProcessor
 
 
@@ -12,7 +13,7 @@ class ShutubaTableProcessor(ResultsProcessor):
         df = super()._preprocess()
 
         # 距離は10の位を切り捨てる
-        df["course_len"] = df["course_len"].astype(float) // 100
+        df["course_len"] = df["course_len"].astype(float) // COURSE_LEN_BUCKET_METERS
 
         # 開催場所
         df["開催"] = df.index.map(lambda x: str(x)[4:6])

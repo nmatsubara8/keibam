@@ -1,18 +1,24 @@
 numpy
 pandas
+streamlit
+streamlit-autorefresh
 matplotlib
 tqdm
 beautifulsoup4
 requests
 dill
-selenium >= 4.0.0
+playwright
+selenium>=4.0.0
 scikit-learn
 lightgbm
 optuna
+optuna-integration[lightgbm]
+pyyaml
 jupyterlab
 ipywidgets
-webdriver-manager
+nest_asyncio
 lxml
 html5lib
 pyarrow
 chardet
+sqlalchemy>=2.0

@@ -1,5 +1,6 @@
 import csv
 import json
+import logging
 import os
 import pickle
 import shutil
@@ -8,6 +9,8 @@ import numpy as np
 import pandas as pd
 
 from src.constants._url_paths import UrlPaths
+
+logger = logging.getLogger(__name__)
 
 
 class DataLoader:
@@ -47,6 +50,18 @@ class DataLoader:
         self.from_date = from_date
         self.to_date = to_date
 
+    # プロジェクトルート（DataLoader.py の 3階層上）を絶対パスで保持
+    _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    @classmethod
+    def _abs(cls, path: str) -> str:
+        """相対パスをプロジェクトルート基準の絶対パスへ変換する。"""
+        if not path:
+            return path
+        if os.path.isabs(path):
+            return path
+        return os.path.normpath(os.path.join(cls._PROJECT_ROOT, path))
+
     def set_args(self, alias):
         # クラスの属性を取得
         url_paths = UrlPaths()
@@ -62,17 +77,17 @@ class DataLoader:
             # エイリアスが表すデータの取得先をセット
             self.from_location = getattr(url_paths, attr)[1]
             # エイリアスが表すデータの一時保存先をセット
-            self.to_temp_location = getattr(url_paths, attr)[2]
+            self.to_temp_location = self._abs(getattr(url_paths, attr)[2])
             # エイリアスが表すデータの一時保存先ファイル名をセット
             self.temp_save_file_name = getattr(url_paths, attr)[3]
             # エイリアスが表すデータの正本保存先をセット
-            self.to_location = getattr(url_paths, attr)[4]
+            self.to_location = self._abs(getattr(url_paths, attr)[4])
             # エイリアスが表すデータの正本ファイル名をセット
             self.save_file_name = getattr(url_paths, attr)[5]
             self.batch_size = getattr(url_paths, attr)[6]
             # エイリアスが表すデータが参照する必要がある外部キーを保有する
             # ローカルファイル（フォルダ名とファイル名）をセット
-            self.from_local_location = getattr(url_paths, attr)[7]
+            self.from_local_location = self._abs(getattr(url_paths, attr)[7])
             self.from_local_file_name = getattr(url_paths, attr)[8]
             # 異常終了時に使うskip処理を実施させるためのキーとフラグ
             self.skip = getattr(url_paths, attr)[10]  # デフォルトはFalse
@@ -84,7 +99,7 @@ class DataLoader:
             self.to_date = getattr(url_paths, attr)[12]
 
         else:
-            print("No such data")
+            logger.warning("No such data")
 
         # skip対象ではないゴミファイルの掃除
         if not self.skip:
@@ -120,7 +135,7 @@ class DataLoader:
         return local_temp_path
 
     def get_local_comp_file_path(self, alias):
-        local_comp_path = os.path.join(self.to_location + self.save_file_name)
+        local_comp_path = os.path.join(self.to_location, self.save_file_name)
         return local_comp_path
 
     def get_local_comp_path(self, alias):
@@ -187,16 +202,16 @@ class DataLoader:
                 # self.obtained_last_key = self.target_data[-1]
         elif filetype == "df":
             # CSVファイルに保存
-            if not os.listdir(self.to_temp_location):
+            os.makedirs(self.to_temp_location, exist_ok=True)
+            temp_csv = os.path.join(self.to_temp_location, self.temp_save_file_name)
+            if not os.path.exists(temp_csv):
                 header = True
                 mode = "w"
             else:
                 header = False
                 mode = "a"
 
-            self.target_data.to_csv(
-                os.path.join(self.to_temp_location, self.temp_save_file_name), header=header, index=True, mode=mode
-            )
+            self.target_data.to_csv(temp_csv, header=header, index=True, mode=mode)
 
         elif filetype == "h5":
             # ファイルにデータを書き込む処理
@@ -206,7 +221,7 @@ class DataLoader:
             )
             # self.obtained_last_key = self.target_data[-1]
         else:
-            print("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
+            logger.error("Unsupported filetype. Please choose 'csv', 'txt', or 'pkl'.")
 
     def csv_reader(self, local_temp_file_path):
         if self.alias == "race_results_table":
@@ -229,12 +244,21 @@ class DataLoader:
 
     def transfer_temp_file(self):
         local_temp_file_path = self.get_local_temp_file_path()
-        df = self.csv_reader(local_temp_file_path)
+        new_df = self.csv_reader(local_temp_file_path)
 
         to_target_file = self.get_local_comp_file_path(self.alias)
-        # Pickleファイルにデータを保存する
-
-        df.to_pickle(to_target_file)
+        # 既存 pkl がある場合はマージ（新データ優先）してから保存
+        if os.path.exists(to_target_file):
+            try:
+                existing = pd.read_pickle(to_target_file)
+                key_col = new_df.columns[-1]
+                if key_col in existing.columns:
+                    old_only = existing[~existing[key_col].isin(new_df[key_col])]
+                    new_df = pd.concat([old_only, new_df], ignore_index=True)
+            except Exception:
+                pass
+        logger.debug("transfer: saved %d rows → %s", len(new_df), to_target_file)
+        new_df.to_pickle(to_target_file)
 
     def copy_files(self):
         files = os.listdir(self.to_location)
@@ -244,11 +268,11 @@ class DataLoader:
             # Copy the file from source to destination
             try:
                 shutil.copy2(source_path, destination_path)
-                print(f"File {file} copied successfully.")
+                logger.info("File %s copied successfully.", file)
             except FileNotFoundError:
-                print(f"File {file} not found.")
+                logger.warning("File %s not found.", file)
             except IOError as e:
-                print(f"Error copying file {file}: {e}")
+                logger.error("Error copying file %s: %s", file, e)
 
     def load_file_pkl(self):
         if (self.from_local_location and self.from_local_file_name) is not None:
@@ -259,15 +283,20 @@ class DataLoader:
                 # 残りのデータを読み込む
                 data = pd.DataFrame()
                 data = pickle.load(f)
-                data.iloc[:, -1] = data.iloc[:, -1].astype(int)
-                print(f"load_file_pkl:row type int:{data.dtypes}")
-                print(f"type of data_Loaded: {type(data)}")
-                print(f"load_file_pkl:data.head: {data.head()}")
-                print(f"1st data: {data.iloc[0].values[0]}")
-                # print(f"type of data.iloc[1,1]: {type(data.iloc[0,1])}")
+                # pandas 3.x では Arrow 文字列列に int64 を直接代入できないため
+                # numpy array 経由で型変換する
+                last_col = data.columns[-1]
+                data[last_col] = pd.to_numeric(data[last_col], errors="coerce").fillna(0).astype(int).values
+                logger.debug("load_file_pkl:row type int:%s", data.dtypes)
+                logger.debug("type of data_Loaded: %s", type(data))
+                logger.debug("load_file_pkl:data.head: %s", data.head())
+                if len(data) == 0:
+                    logger.warning("load_file_pkl: data is empty (path=%s)", target_file_path)
+                    return data
+                logger.debug("1st data: %s", data.iloc[0].values[0])
                 if not self.skip:
                     loaded_list = data
-                    print("start from scratch")
+                    logger.info("start from scratch")
                 else:  # skip=True時のリスト範囲限定処理
                     try:
                         # ファイルfから1行ずつ読み込んで、文字列としてリストに追加する
@@ -284,36 +313,35 @@ class DataLoader:
                         ###########################################
                         ###########################################
 
-                        print(f"length of data:{len(data)}")
-                        print(f"shape of data:{data.shape}")
-                        # for j in range(0, 3):
-                        #    print(f"print test :data.iloc[{j}]: {data.iloc[j].values[0]}")
+                        logger.debug("length of data:%s", len(data))
+                        logger.debug("shape of data:%s", data.shape)
                         index = 0
                         for idx in range(0, len(data) - 1):
                             preprocessed_data = np.int64(data.iloc[idx].values[0])
-                            # print(f"target_number:{target_number}")
-                            # print(f"type of target_number:{type(target_number)}")
-                            # print(f"type of loaded data:{type(preprocessed_data)}")
                             if target_number == preprocessed_data:
-                                print(f"{target_number}:{data.iloc[idx].values[0]}")
+                                logger.debug("%s:%s", target_number, data.iloc[idx].values[0])
                                 index = idx
-                                print(f"matchde index:{index}")
+                                logger.debug("matchde index:%s", index)
                         if index != 0:
                             # 範囲外の場合や最後の要素の場合に注意
                             length = len(data)
                             if index < length:
                                 loaded_list = data[index:length]
-                                print(f"re-entered from {data.iloc[index:]} to  {data.iloc[:length]} ")
-                                print(f"length of reloaded files is {len(loaded_list)}. / originally {len(data)}")
+                                logger.debug("re-entered from %s to %s", data.iloc[index:], data.iloc[:length])
+                                logger.info(
+                                    "length of reloaded files is %s. / originally %s",
+                                    len(loaded_list),
+                                    len(data),
+                                )
                                 self.skip = False
                                 return loaded_list
                             else:
-                                print("指定したIDがリストの最後にあります。")
+                                logger.warning("指定したIDがリストの最後にあります。")
 
                         else:
-                            print("指定したIDがリスト内に見つかりません。")
+                            logger.warning("指定したIDがリスト内に見つかりません。")
                     except ValueError:
-                        print("ファイルからの読み込み中にエラーが発生しました。")
+                        logger.error("ファイルからの読み込み中にエラーが発生しました。")
                 return loaded_list
 
     def load_file_txt(self):
@@ -334,10 +362,10 @@ class DataLoader:
                                 next(f)
                             loaded_list = [line.strip() for line in f]
                         else:
-                            print("指定したIDがリストの最後にあります。")
+                            logger.warning("指定したIDがリストの最後にあります。")
                             loaded_list = []
                     except UnicodeDecodeError:
-                        print("指定したIDがリスト内に見つかりません。")
+                        logger.warning("指定したIDがリスト内に見つかりません。")
                         loaded_list = []
             self.skip = False
             return loaded_list
@@ -360,10 +388,10 @@ class DataLoader:
                                 next(reader)
                             loaded_list = [row for row in reader]
                         else:
-                            print("指定したIDがリストの最後にあります。")
+                            logger.warning("指定したIDがリストの最後にあります。")
                             loaded_list = []
                     except ValueError:
-                        print("指定したIDがリスト内に見つかりません。")
+                        logger.warning("指定したIDがリスト内に見つかりません。")
                         loaded_list = []
             self.skip = False
             return loaded_list
@@ -374,12 +402,14 @@ class DataLoader:
         items = os.listdir(location)
 
         for item in items:
-            # ファイルの場合のみリストに追加
-            if os.path.isfile(os.path.join(self.from_local_location, item)):
+            # .bin ファイルのみリストに追加（.gitkeep 等を除外）
+            if os.path.isfile(os.path.join(self.from_local_location, item)) and item.endswith(".bin"):
                 file_list.append(item)
         return file_list
 
     def delete_files_both(self):
+        os.makedirs(self.to_temp_location, exist_ok=True)
+        os.makedirs(self.to_location, exist_ok=True)
         files_to_temp = os.listdir(self.to_temp_location)
         files_to = os.listdir(self.to_location)
         # ファイルを削除
@@ -389,14 +419,14 @@ class DataLoader:
                 if os.path.isfile(file_path_to_temp):
                     os.remove(file_path_to_temp)
             except Exception as e:
-                print(f"Error deleting {file_path_to_temp}: {e}")
+                logger.error("Error deleting %s: %s", file_path_to_temp, e)
         for file in files_to:
             file_path_to = os.path.join(self.to_location, file)
             try:
                 if os.path.isfile(file_path_to):
                     os.remove(file_path_to)
             except Exception as e:
-                print(f"Error deleting {file_path_to}: {e}")
+                logger.error("Error deleting %s: %s", file_path_to, e)
 
     def delete_files_tmp(self):
         files_to_temp = os.listdir(self.to_temp_location)
@@ -408,29 +438,59 @@ class DataLoader:
                 if os.path.isfile(file_path_to_temp):
                     os.remove(file_path_to_temp)
             except Exception as e:
-                print(f"Error deleting {file_path_to_temp}: {e}")
+                logger.error("Error deleting %s: %s", file_path_to_temp, e)
 
     def pre_process_display(self):  # 処理開始時のメッセージ出力
-        print(f"処理対象:{self.alias} 開始")
-        print("self.from_location: ", self.from_location)
-        print("to_temp_location: ", self.to_temp_location)
-        print("to_location: ", self.to_location)
+        logger.info("処理対象:%s 開始", self.alias)
+        logger.info("self.from_location: %s", self.from_location)
+        logger.info("to_temp_location: %s", self.to_temp_location)
+        logger.info("to_location: %s", self.to_location)
         if self.from_local_location != "":
-            print("self.from_local_location: ", self.from_local_location)
+            logger.info("self.from_local_location: %s", self.from_local_location)
         if self.from_local_file_name != "":
-            print("self.from_local_file_name: ", self.from_local_file_name)
-        print("batch_size:", self.batch_size)
+            logger.info("self.from_local_file_name: %s", self.from_local_file_name)
+        logger.info("batch_size: %s", self.batch_size)
         if self.from_local_file_name != "":
-            print(f"reloaded_{self.from_local_file_name} type: ", self.from_local_file_name)
+            logger.info("reloaded_%s type: %s", self.from_local_file_name, self.from_local_file_name)
 
     def post_process_display(self):  # 処理終了時のメッセージ出力
-        # df = pd.read_pickle(os.path.join(self.to_location, self.save_file_name))
-        print(f"{self.alias}target_df[-5:]:", self.target_data[-5:])
-        # print(f"{self.alias}savede_pkl[-5:]:", df.tail())
-        print(f"{self.alias} type: ", type(self.target_data))
-        print("len:", len(os.path.join(self.to_location, self.save_file_name)))
-        print("Done / obtained_last_key: ", self.obtained_last_key)
-        print(f"新規作成: {self.temp_save_file_name} -> {self.save_file_name} 終了+'\n'")
+        logger.info("%starget_df[-5:]: %s", self.alias, self.target_data[-5:])
+        logger.info("%s type: %s", self.alias, type(self.target_data))
+        logger.info("len: %s", len(os.path.join(self.to_location, self.save_file_name)))
+        logger.info("Done / obtained_last_key: %s", self.obtained_last_key)
+        logger.info("新規作成: %s -> %s 終了", self.temp_save_file_name, self.save_file_name)
+
+
+class CustomDataLoader:
+    """Lightweight data loader for local file access (no scraping required)."""
+
+    def __init__(
+        self,
+        from_location: str = "./data/",
+        load_file_name: str = "",
+        to_location: str = "./data/",
+        save_file_name: str = "output.pkl",
+    ):
+        self.from_location = from_location
+        self.load_file_name = load_file_name
+        self.to_location = to_location
+        self.save_file_name = save_file_name
+        self.save_file_path = os.path.join(to_location, save_file_name)
+        self._data: pd.DataFrame = pd.DataFrame()
+
+    def load_data_from_local(self) -> pd.DataFrame:
+        """Load data from local file and save to save_file_path."""
+        src_path = os.path.join(self.from_location, self.load_file_name)
+        if os.path.exists(src_path):
+            if src_path.endswith(".pkl"):
+                self._data = pd.read_pickle(src_path)
+            else:
+                self._data = pd.DataFrame()
+        else:
+            self._data = pd.DataFrame()
+        os.makedirs(self.to_location, exist_ok=True)
+        self._data.to_pickle(self.save_file_path)
+        return self._data
 
 
 """
@@ -445,7 +505,7 @@ class DataLoader:
         backupfilepath = filepath + '.bak'
         # 結合データがない場合
         if new_df.empty:
-            print('preparing update raw data empty')
+            logger.warning("preparing update raw data empty")
         else:
             # 元々のテーブルを読み込み
             filedf = pd.read_pickle(filepath)

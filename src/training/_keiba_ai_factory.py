@@ -13,9 +13,20 @@ class KeibaAIFactory:
     """
 
     @staticmethod
-    def create(featured_data, test_size=0.3, valid_size=0.3) -> KeibaAI:
+    def create(featured_data, peds_processor=None, test_size=0.3, valid_size=0.3) -> KeibaAI:
+        """
+        featured_data: PreparedFeatures DTO または plain pd.DataFrame。
+            PreparedFeatures を渡すと NN ストリーム (nn_scaler / X_nn_*) が有効になる。
+        peds_processor: 学習済み LabelEncoder を持つ PedsProcessor。
+            渡すと KeibaAI に紐付けられ、dill.dump 時に自動同梱される。
+            推論時は ai.peds_processor.encoders_ で復元する。
+        nn_scaler は DataSplitter が内部で生成し datasets.nn_scaler 経由で取得する。
+        """
         datasets = DataSplitter(featured_data, test_size, valid_size)
-        return KeibaAI(datasets)
+        ai = KeibaAI(datasets)
+        ai.peds_processor = peds_processor
+        ai.nn_scaler = datasets.nn_scaler  # None if plain DataFrame was passed
+        return ai
 
     @staticmethod
     def save(keibaAI: KeibaAI, version_name: str) -> None:

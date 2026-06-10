@@ -1,3 +1,5 @@
+import pytest
+
 from src.preparing._scrape_kaisai_date import scrape_kaisai_date
 
 # @pytest.fixture()
@@ -5,6 +7,7 @@ from src.preparing._scrape_kaisai_date import scrape_kaisai_date
 #  return
 
 
+@pytest.mark.skip(reason="requires selenium and network access")
 def test_init():
     assert scrape_kaisai_date("2020-01-01", "2021-01-01") == 0
 

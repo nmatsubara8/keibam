@@ -1,0 +1,12 @@
+# 運用設定（src.operation.OperationConfig が読み込む）
+# operation_mode: advisory | semi_auto | full_auto
+#   advisory  : 推奨表示のみ。実行は人間（履歴記録のみ）= 当面の既定
+#   semi_auto : 購入リストを出力（発注は人間）
+#   full_auto : 自動発注（規約・法的リスクのため既定無効。enable_auto を別途要求）
+operation_mode: advisory
+
+# 資金・リスク
+bankroll: 100000.0
+kelly_fraction_ratio: 0.5   # フラクショナル・ケリー係数（0<r<=1）
+per_bet_cap_ratio: 0.05     # 1馬券あたり上限（bankroll比）
+max_daily_ratio: 1.0        # 1日総投資上限（bankroll比）

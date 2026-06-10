@@ -1,0 +1,21 @@
+# CI 専用依存リスト（requirements.txt から selenium / webdriver-manager /
+# jupyterlab / ipywidgets を除いたもの）。
+# テストに不要な重いパッケージを外すことで CI のインストール時間を短縮する。
+numpy
+pandas
+matplotlib
+tqdm
+beautifulsoup4
+requests
+dill
+scikit-learn
+lightgbm
+optuna
+lxml
+html5lib
+pyarrow
+chardet
+import-linter
+mypy
+pytest
+ruff

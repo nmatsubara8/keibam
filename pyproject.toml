@@ -1,6 +1,7 @@
 [tool.ruff]
 line-length = 120
 indent-width = 4
+exclude = ["**/*.ipynb"]
 #target-version = "py311"
 
 ignore = [
@@ -52,6 +53,12 @@ ignore = []
 
 fixable = ["ALL"]
 
+[tool.ruff.lint.per-file-ignores]
+# Streamlit アプリは sys.path ブートストラップ／set_page_config を import より前に
+# 置く必要があるため、E402（import が先頭にない）を許容する。
+"app/Home.py" = ["E402"]
+"app/pages/*.py" = ["E402"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 5
 
@@ -71,3 +78,35 @@ addopts = [
     "--import-mode=importlib",
 ]
 PYTHONPATH="./"
+
+# 型チェック（境界の契約を型で固定する）。段階導入のため対象を新規モジュールから広げる。
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_redundant_casts = true
+explicit_package_bases = true
+namespace_packages = true
+mypy_path = "."
+files = [
+    "src/policies",
+    "src/preprocessing",
+    "src/portfolio",
+    "src/operation",
+    "src/simulation/_metrics.py",
+    "src/simulation/_plot.py",
+    "src/simulation/_popularity_baseline.py",
+    "src/training/_sample_weights.py",
+    "src/constants/_odds_phases.py",
+    "src/constants/_logging_config.py",
+    "src/constants/_units.py",
+    "src/preparing/_scraper.py",
+    "src/preparing/_odds_snapshot.py",
+    "src/preparing/odds_scheduler.py",
+    "src/pipeline/_ingestion.py",
+    "src/pipeline/_retrain.py",
+    "src/storage",
+    "app/_betting_history.py",
+    "app/_formatters.py",
+    "app/_prediction_service.py",
+    "app/_model_eval.py",
+]

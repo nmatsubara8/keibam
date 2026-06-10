@@ -14,6 +14,8 @@ class LocalPaths:
     HTML_RACE_DIR: str = os.path.join(HTML_DIR, "race")
     HTML_HORSE_DIR: str = os.path.join(HTML_DIR, "horse")
     HTML_PED_DIR: str = os.path.join(HTML_DIR, "ped")
+    ### 段階オッズ取得の生 HTML 保存ディレクトリ（race_id/フェーズ単位）
+    HTML_ODDS_DIR: str = os.path.join(HTML_DIR, "odds")
 
     ### rawディレクトリのパス
     RAW_DIR: str = os.path.join(DATA_DIR, "raw")
@@ -23,6 +25,14 @@ class LocalPaths:
     RAW_HORSE_RESULTS_PATH: str = os.path.join(RAW_DIR, "horse_results.pkl")
     RAW_HORSE_INFO_PATH: str = os.path.join(RAW_DIR, "horse_info.pkl")
     RAW_PEDS_PATH: str = os.path.join(RAW_DIR, "peds.pkl")
+    ### 段階オッズ スナップショットの集約 pickle（Layer2 学習データの蓄積先）
+    RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
+    ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）
+    FEATURED_DATA_PATH: str = os.path.join(RAW_DIR, "featured_data.pkl")
+
+    ### Phase 1: raw データの永続化先 SQLite ファイル
+    ### pickle が消えても DB から再生成できるように、scrape 結果をここに upsert する。
+    DB_PATH: str = os.path.join(DATA_DIR, "keibam.db")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

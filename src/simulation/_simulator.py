@@ -1,8 +1,8 @@
-import numpy as np
 import pandas as pd
 
 from src.preprocessing._return_processor import ReturnProcessor
 from src.simulation._betting_tickets import BettingTickets
+from src.simulation._metrics import summarize_returns
 
 
 class Simulator:
@@ -26,46 +26,29 @@ class Simulator:
         """
         returns_per_race_dict = {}
 
-        for race_id in actions:
-            # print(f"race_id:{race_id}")
+        # 馬券種 → BettingTickets の対応メソッド名のディスパッチ表。
+        # 全 bet_* は (race_id, 馬番リスト, 金額) -> (n_bets, bet_amount, return_amount)。
+        dispatch = {
+            "tansho": "bet_tansho",
+            "fukusho": "bet_fukusho",
+            "wakuren": "bet_wakuren_box",
+            "umaren": "bet_umaren_box",
+            "umatan": "bet_umatan_box",
+            "wide": "bet_wide_box",
+            "sanrenpuku": "bet_sanrenpuku_box",
+            "sanrentan": "bet_sanrentan_box",
+        }
 
+        for race_id in actions:
             n_bets_race = 0
             bet_amount_race = 0
             return_amount_race = 0
             for action in actions[race_id]:
-                if action == "tansho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_tansho(
-                        race_id, actions[race_id][action], 1
-                    )
-                    # print(f"n_bets, bet_amount, return_amount:{n_bets, bet_amount, return_amount}")
-                elif action == "fukusho":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_fukusho(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "wakuren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wakuren_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "umaren":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umaren_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "umatan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_umatan_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "wide":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_wide_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "sanrenpuku":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrenpuku_box(
-                        race_id, actions[race_id][action], 1
-                    )
-                elif action == "sanrentan":
-                    n_bets, bet_amount, return_amount = self.betting_tickets.bet_sanrentan_box(
-                        race_id, actions[race_id][action], 1
-                    )
+                method_name = dispatch.get(action)
+                if method_name is None:
+                    continue  # 未知の馬券種はスキップ
+                bet_method = getattr(self.betting_tickets, method_name)
+                n_bets, bet_amount, return_amount = bet_method(race_id, actions[race_id][action], 1)
 
                 n_bets_race += n_bets
                 bet_amount_race += bet_amount
@@ -76,34 +59,16 @@ class Simulator:
                     "return_amount": return_amount_race,
                     "hit_or_not": 1 if return_amount_race > 0 else 0,
                 }
-                # print(f"returns_per_race_dict:{returns_per_race_dict}")
         return pd.DataFrame.from_dict(returns_per_race_dict, orient="index")
 
     def calc_returns(self, actions: dict) -> dict:
         """
-        self.calc_returns_per_race(actions)の結果を集計する
+        self.calc_returns_per_race(actions)の結果を集計する。
+
+        回収率・標準偏差に加え、シャープレシオ・的中率・最大ドローダウン・損益を返す
+        （指標計算は src.simulation._metrics.summarize_returns に委譲）。
         """
-        returns_dict = {}
-        if len(actions) != 0:
-            returns_per_race = self.calc_returns_per_race(actions)
-
-            returns_dict["n_bets"] = returns_per_race["n_bets"].sum()
-            returns_dict["n_races"] = returns_per_race.index.nunique()
-            returns_dict["n_hits"] = returns_per_race["hit_or_not"].sum()
-            returns_dict["total_bet_amount"] = returns_per_race["bet_amount"].sum()
-
-            if returns_dict["total_bet_amount"] == 0:
-                returns_dict["return_rate"] = 0
-            else:
-                returns_dict["return_rate"] = returns_per_race["return_amount"].sum() / returns_dict["total_bet_amount"]
-
-            if returns_dict["total_bet_amount"] == 0:
-                returns_dict["std"] = 0
-            else:
-                returns_dict["std"] = (
-                    returns_per_race["return_amount"].std()
-                    * np.sqrt(returns_dict["n_races"])
-                    / returns_dict["total_bet_amount"]
-                )
-            # print("returns_dict in sim", returns_dict)
-        return returns_dict
+        if len(actions) == 0:
+            return {}
+        returns_per_race = self.calc_returns_per_race(actions)
+        return summarize_returns(returns_per_race)

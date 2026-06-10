@@ -1,18 +1,16 @@
+import io
+import logging
 import os
 import re
 import time
-from urllib.request import urlopen
 
 import pandas as pd
-from bs4 import BeautifulSoup
-from numpy import NaN
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from tqdm import tqdm
 
 from src.constants._master import Master
-from src.preparing.prepare_chrome_driver import prepare_chrome_driver
+
+NaN = float("nan")
+
+logger = logging.getLogger(__name__)
 
 
 def scrape_scheduled_race_html(self, ref_id):
@@ -22,6 +20,36 @@ def scrape_scheduled_race_html(self, ref_id):
     query = ["?race_id=" + str(ref_id)]
     url = self.from_location + query[0]
     return get_soup(url)[0].read()
+
+
+def _flush_batch_to_pkl(self):
+    """バッチ完了後、累積 temp CSV を最終 pkl へ即時書き出す（既存データとマージ）。
+
+    既存 pkl がある場合は新データとマージして上書き（新データ優先）。
+    カーネル再起動後も中断前のデータが保持され、差分ダウンロードで再開できる。
+    """
+    temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    if not os.path.exists(temp_path):
+        return
+    try:
+        new_df = self.csv_reader(temp_path)
+        final_path = os.path.join(self.to_location, self.save_file_name)
+        os.makedirs(self.to_location, exist_ok=True)
+        # 既存 pkl とマージ（新データ優先）
+        if os.path.exists(final_path):
+            try:
+                existing = pd.read_pickle(final_path)
+                # 最後の列をキーとして重複除去
+                key_col = new_df.columns[-1]
+                if key_col in existing.columns:
+                    old_only = existing[~existing[key_col].isin(new_df[key_col])]
+                    new_df = pd.concat([old_only, new_df], ignore_index=True)
+            except Exception:
+                pass  # 既存 pkl が壊れていれば新データのみで上書き
+        new_df.to_pickle(final_path)
+        logger.debug("中間 pkl を書き出し（マージ済み）: %s (%d 行)", final_path, len(new_df))
+    except Exception as e:
+        logger.error("[FLUSH ERROR] %s: %s", self.alias, e, exc_info=True)
 
 
 def storing_process(self):
@@ -53,34 +81,44 @@ def process_pkl_file(self, process_function):
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
     """
     if self.alias == "kaisai_date_list":
-        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数.to_の月は含まないので注意。
+        # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数。
+        # to_の月は含まないので注意。
         df = pd.DataFrame({"kaisai_data": []})
         target_all_files = pd.date_range(start=self.from_date, end=self.to_date, freq="ME").astype(str)
     else:
         df = self.load_file_pkl()
-        target_all_files = df.iloc[:, 0]
+        # ID（日付/race_id 等）は最後の列に入る（load_file_pkl も iloc[:, -1] を
+        # int 変換して扱う）。先頭列は "Unnamed: 0" などの連番のことがあるため
+        # iloc[:, -1] を使う。
+        target_all_files = df.iloc[:, -1]
 
         # print("target_pkl_fileはここから+''")
-        print(target_all_files.head())
+        logger.debug("%s", target_all_files.head())
 
     total_batches = (len(target_all_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_all_files)  # 処理対象の全データ数
     filetype = self.get_filetype()
-    print(f"filetype:{filetype}")
-    print(f"# of input files: {total_files}")
-    print(f"# of total_batches: {total_batches}")
+    logger.info("filetype:%s", filetype)
+    logger.info("# of input files: %s", total_files)
+    logger.info("# of total_batches: %s", total_batches)
     processed_files = 0  # 処理済みのファイル数
     # print(f"start {self.alias} processing")
     # target_data_name = {}
 
-    # tqdmインスタンスの作成
-    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
+    # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
+    from tqdm.auto import tqdm
+    pbar = tqdm(total=total_files, desc=f"{self.alias} 取得", unit="件", leave=True)
 
-    # ドライバーのインスタンス化
-    driver = prepare_chrome_driver()
-    # 取得し終わらないうちに先に進んでしまうのを防ぐため、暗黙的な待機（デフォルト10秒）
+    # スクレイパーのインスタンス化（Playwright 全面移行）。
+    # process_function には従来の driver 引数位置で AbstractScraper を渡す
+    # （同期パイプライン互換のため fetch_sync 境界を内部で使う）。
+    from src.preparing._scraper import PlaywrightScraper
+    driver = PlaywrightScraper()
+    # ブラウザをループ全体で 1 度だけ起動して使い回す（毎回の起動・終了を避け高速化）。
+    driver.open_sync()
+    # Playwright は wait_for_selector / domcontentloaded で描画完了を判定するため
+    # implicitly_wait 相当は不要。waiting_time は後方互換のためのプレースホルダ。
     waiting_time = 30
-    driver.implicitly_wait(waiting_time)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
@@ -88,50 +126,47 @@ def process_pkl_file(self, process_function):
         batch_target_all_files = target_all_files[start_index:end_index]
         # print("ref_idの確認:", batch_target_all_files[0:2])
         batch_data = []
+        return_data = None  # 例外で process_function が完了しない場合への初期化
         for ref_id in batch_target_all_files:  #
             try:
                 # print(f"ref_id:{ref_id}")
                 self.processing_id = ref_id
                 return_data = process_function(self, ref_id, driver, waiting_time)
 
-                time.sleep(1)
-                if filetype == "bin":
-                    batch_data.append(return_data)
+                time.sleep(0.2)  # サーバ負荷軽減の最小待機
                 batch_data.append(return_data)
             # print(f"temp_df:{temp_df}")
             except Exception as e:
-                print("Error at {}: {}:{}".format(processed_files + 1, ref_id, e))
+                logger.error("Error at %s: %s:%s", processed_files + 1, ref_id, e)
                 self.obtained_last_key = ref_id
-                break
+                pbar.update(1)
+                continue
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
-            # temp_df = pd.concat([temp_df[key] for key in temp_df])
             self.obtained_last_key = ref_id
 
         # print(f"直前 filetype:{filetype}")
         if filetype != "bin":
-            df = pd.concat(batch_data)
-            # if self.alias == "horse_id_list" and processed_files // 400 == 0:
-            #    time.sleep(60)
-            # print(f"batch_df:{batch_df}")  # バッチごとのDataFrameを結合
-            self.target_data = df
-            # print(f"df:{df}")
-
+            if batch_data:
+                df = pd.concat(batch_data)
+                self.target_data = df
+                self.save_temp_file(self.alias)
+                # バッチ完了ごとに中間 pkl を書き出してカーネル再起動時の再取得を防ぐ
+                _flush_batch_to_pkl(self)
         else:
-            self.processing_id = ref_id
-            self.target_data = return_data
-            # print(batch_data[0])
-            # rint(f"# of processed files: {processed_files}")
-        self.save_temp_file(self.alias)
+            if return_data is not None:
+                self.processing_id = ref_id
+                self.target_data = return_data
+                self.save_temp_file(self.alias)
 
     if filetype != "bin":
         storing_process(self)
 
-    print(f"# of processed files: {processed_files}")
-    # ドライバーのクローズ
-    driver.close()
-    driver.quit()
+    # ループ全体で使い回したブラウザを終了する。
+    driver.close_sync()
+
+    logger.info("# of processed files: %s", processed_files)
 
 
 def get_kaisai_date_list(self, ref_id, driver, waiting_time):
@@ -142,7 +177,7 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
         # print("Year:", year)
         # print("Month:", month)
     else:
-        print("Invalid date format")
+        logger.warning("Invalid date format")
 
     # 開催日一覧を入れるリスト
     kaisai_date_list = []
@@ -168,11 +203,15 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
 
 
 ################################# Done ####################################
-def get_soup(url, driver, waiting_time):
-    driver.get(url)
-    wait = WebDriverWait(driver, waiting_time)
-    wait.until(EC.presence_of_all_elements_located)
-    html = urlopen(url)
+def get_soup(url, driver, waiting_time=None):
+    """URL の HTML を取得して BeautifulSoup を返す（Playwright 同期ブリッジ）。
+
+    driver は AbstractScraper（PlaywrightScraper）。JS 描画ページでも
+    domcontentloaded まで待って HTML を取得する。waiting_time は後方互換の未使用引数。
+    """
+    from bs4 import BeautifulSoup
+
+    html = driver.fetch_sync(url)
     soup = BeautifulSoup(html, "lxml")
     return soup
 
@@ -200,58 +239,60 @@ def get_raw_horse_id_list(self, ref_id, driver, waiting_time):
 
 
 ################################# Done ####################################
-def scrape_race_id_list(self, ref_id, driver, waiting_time):
-    # query = ["kaisai_date=" + str(ref_id)]
-    url = f"{self.from_location}?kaisai_date={ref_id}"
-    # print(f"url:{url}")
-    # df = pd.DataFrame()
-    race_id_list = []
-    max_attempt = 5
-    try:
-        driver.get(url)
-        for i in range(1, max_attempt):
-            try:
-                a_list = driver.find_element(By.CLASS_NAME, "RaceList_Box").find_elements(By.TAG_NAME, "a")
-                break
-            except Exception as e:
-                # 取得できない場合は、リトライを実施
-                print(f"error:{e} retry:{i}/{max_attempt} waiting more {waiting_time} seconds")
-        for a in a_list:
-            race_id = re.findall(
-                r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", a.get_attribute("href")
-            )
-            if len(race_id) > 0:
-                race_id_list.append(race_id[0])
+def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
+    """開催日のレース一覧ページから race_id を抽出する（Playwright + bs4）。
 
-                # インデックスをhorse_idにする
-        # DataFrameを作成し、インデックスをref_idに設定する
+    driver は AbstractScraper。RaceList_Box が JS 描画されるまで待って HTML を取得し、
+    アンカーの href から race_id を正規表現で抜き出す（selenium の find_element を廃止）。
+    """
+    from bs4 import BeautifulSoup
+
+    url = f"{self.from_location}?kaisai_date={ref_id}"
+    # リクエストした開催日の年（race_id 先頭4桁）。ページ読込失敗時に netkeiba が
+    # 現在のデフォルトレース一覧を返すことがあるため、年が一致する race_id だけ残す。
+    expected_year = str(ref_id)[:4]
+    race_id_list = []
+    df = pd.DataFrame({"race_id": []}, index=[])
+    try:
+        # RaceList_Box の描画完了を待ってから HTML を取得
+        html = driver.fetch_sync(url, wait_selector=".RaceList_Box")
+        soup = BeautifulSoup(html, "lxml")
+        box = soup.find(class_="RaceList_Box")
+        a_list = box.find_all("a") if box is not None else []
+        for a in a_list:
+            href = a.get("href", "")
+            race_id = re.findall(
+                r"(?<=shutuba.html\?race_id=)\d+|(?<=result.html\?race_id=)\d+", href
+            )
+            # 年が一致しない race_id（=フォールバックで返った現在レース）は除外
+            if len(race_id) > 0 and race_id[0][:4] == expected_year:
+                race_id_list.append(race_id[0])
         df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
     except Exception as e:
-        print("Error at {}: {}".format(ref_id, e))
-        print("error / obtained_last_key: ", self.obtained_last_key)
+        logger.error("Error at %s: %s", ref_id, e)
+        logger.error("error / obtained_last_key: %s", self.obtained_last_key)
 
     return df
 
 
 ################################# Done ####################################
-def scrape_html_race(self, ref_id, driver, waiting_time):
+def scrape_html(self, ref_id, driver, waiting_time):
+    """from_location + ref_id の静的 HTML を取得する（race/horse/ped 共通）。
+
+    db.netkeiba.com は素の urlopen（UA なし）に HTTP 400 を返すため、
+    PlaywrightScraper（driver）経由で取得する。JS 描画不要なページなので
+    domcontentloaded で十分。戻り値は bin ファイル書き込み用に UTF-8 bytes。
+    """
     url = str(self.from_location) + str(ref_id)
-    html = urlopen(url).read()
-    return html
+    html_str = driver.fetch_sync(url)
+    return html_str.encode("utf-8")
 
 
-################################# Done ####################################
-def scrape_html_horse(self, ref_id, driver, waiting_time):
-    url = str(self.from_location) + str(ref_id)
-    html = urlopen(url).read()
-    return html
-
-
-################################# Done ####################################
-def scrape_html_ped(self, ref_id, driver, waiting_time):
-    url = str(self.from_location) + str(ref_id)
-    html = urlopen(url).read()
-    return html
+# race/horse/ped は同一実装。後方互換のため import 可能な別名として公開する
+# （url_loader.py が名前で import し process_function として渡すため）。
+scrape_html_race = scrape_html
+scrape_html_horse = scrape_html
+scrape_html_ped = scrape_html
 
 
 ################################# Done ####################################
@@ -265,13 +306,15 @@ def process_bin_file(self, process_function):
     target_bin_files = sorted(self.get_file_list(self.from_local_location))
     total_batches = (len(target_bin_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_bin_files)  # 処理対象の全データ数
-    print(f"# of input files: {total_files}")
+    logger.info("# of input files: %s", total_files)
     processed_files = 0  # 処理済みのファイル数
+    skipped_files = 0  # テーブルなし・スキップ件数
 
-    print(f"start {self.alias} processing")
+    logger.info("start %s processing", self.alias)
 
-    # tqdmインスタンスの作成
-    pbar = tqdm(total=total_files, desc="Processing Batches", unit="%", unit_scale=True, leave=False)
+    # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
+    from tqdm.auto import tqdm
+    pbar = tqdm(total=total_files, desc=f"{self.alias} 取得", unit="件", leave=True)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
@@ -285,9 +328,15 @@ def process_bin_file(self, process_function):
             try:
                 self.target_data = process_function(target_bin_file_path)  # , target_data_name)
                 # time.sleep(1)
+            except (ValueError, IndexError):
+                # テーブルなし / テーブル数不足（中止レース等）はカウントのみ
+                skipped_files += 1
+                pbar.update(1)
+                continue
             except Exception as e:
-                print("Error at {}: {}".format(target_bin_file_path, e))
-                break
+                logger.error("Error at %s: %s", target_bin_file_path, e)
+                pbar.update(1)
+                continue
 
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
@@ -300,10 +349,17 @@ def process_bin_file(self, process_function):
             # target_data_name = {}  # バッチ処理が完了したので辞書をクリア
 
         self.obtained_last_key = target_bin_files[-1]
-    self.transfer_temp_file()
-    self.copy_files()
 
-    print(f"# of processed files: {processed_files}")
+    temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    if processed_files > 0 and os.path.exists(temp_path):
+        self.transfer_temp_file()
+        self.copy_files()
+    elif processed_files == 0:
+        logger.warning("%s: 処理成功ファイルが 0 件のため pkl を更新しません", self.alias)
+
+    logger.info("# of processed files: %s / %s (skipped: %s)", processed_files, total_files, skipped_files)
+    if skipped_files:
+        logger.warning("%s: %d 件をスキップ（テーブルなし・中止レース等）", self.alias, skipped_files)
 
 
 ################################# Done ####################################
@@ -320,13 +376,14 @@ def trim_function(df):
 
 ################################# Done ####################################
 def create_raw_race_results(target_bin_file_path):
+    from bs4 import BeautifulSoup
     race_results = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
         # メインとなるレース結果テーブルデータを取得
-        df = pd.read_html(html)[0]
+        df = pd.read_html(io.BytesIO(html))[0]
 
         # htmlをsoupオブジェクトに変換
         soup = BeautifulSoup(html, "lxml")
@@ -415,16 +472,17 @@ def create_raw_horse_results(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
-        df = pd.read_html(html)[3]
+        html_str = html.decode("utf-8", errors="replace")
+        df = pd.read_html(io.StringIO(html_str))[3]
         # 受賞歴がある馬の場合、3番目に受賞歴テーブルが来るため、4番目のデータを取得する
         if df.columns[0] == "受賞歴":
-            df = pd.read_html(html)[4]
+            df = pd.read_html(io.StringIO(html_str))[4]
             # print(f"test df:{df.iloc[:,1]}")
 
         # 新馬の競走馬レビューが付いた場合、
         # 列名に0が付与されるため、次のhtmlへ飛ばす
         if df.columns[0] == 0:
-            print("horse_results empty case1 {}".format(target_bin_file_path))
+            logger.warning("horse_results empty case1 %s", target_bin_file_path)
             # continue
 
         # インデックスをhorse_idにする
@@ -452,16 +510,29 @@ def create_raw_horse_results(target_bin_file_path):
 
 ################################# Done ####################################
 def create_raw_horse_info(target_bin_file_path):
+    from bs4 import BeautifulSoup
     horse_info = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
-        # 馬の基本情報を取得
-        df = pd.read_html(html)[1].set_index(0).T
+        # 馬の基本情報を取得（bin は UTF-8 で保存されているため StringIO で解析）
+        html_str = html.decode("utf-8", errors="replace")
+        tables = pd.read_html(io.StringIO(html_str))
+        # プロフィールテーブルはインデックス1が基本だが、ページ構造によっては0の場合もある
+        profile_table = None
+        for t in tables:
+            if t.shape[1] == 2 and t.iloc[:, 0].dtype == object:
+                profile_table = t
+                break
+        if profile_table is None:
+            if len(tables) < 2:
+                raise IndexError(f"馬プロフィールテーブルが見つかりません: {target_bin_file_path}")
+            profile_table = tables[1]
+        df = profile_table.set_index(0).T
 
         # htmlをsoupオブジェクトに変換
-        soup = BeautifulSoup(html, "lxml")
+        soup = BeautifulSoup(html_str, "lxml")
         # 列に "募集情報" が含まれているかを調べる
         funding_info = df.apply(lambda x: x.str.contains("募集情報")).any()
 
@@ -531,6 +602,7 @@ def create_raw_horse_info(target_bin_file_path):
 
 ################################# Done ####################################
 def create_raw_horse_ped(target_bin_file_path):
+    from bs4 import BeautifulSoup
     horse_ped = {}
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
@@ -539,11 +611,18 @@ def create_raw_horse_ped(target_bin_file_path):
 
         # htmlをsoupオブジェクトに変換
         horse_id = re.findall(r"\d+", target_bin_file_path)[0]
-        soup = BeautifulSoup(html, "lxml")
+        html_str = html.decode("utf-8", errors="replace")
+        soup = BeautifulSoup(html_str, "html.parser")
         df = pd.DataFrame()
         peds_id_list = []
         # 血統データからhorse_idを取得する
-        horse_a_list = soup.find("table", attrs={"summary": "5代血統表"}).find_all(
+        ped_table = soup.find("table", attrs={"summary": "5代血統表"})
+        if ped_table is None:
+            # Try finding by class or other attributes for newer page formats
+            ped_table = soup.find("table", class_="blood_table")
+        if ped_table is None:
+            raise ValueError(f"血統テーブルが見つかりません: {target_bin_file_path}")
+        horse_a_list = ped_table.find_all(
             "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
         )
 
@@ -576,8 +655,8 @@ def create_raw_race_return(target_bin_file_path):
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
         html = f.read()
-        html = html.replace(b"<br />", b"br")
-        dfs = pd.read_html(html)
+        html_bytes = html.replace(b"<br />", b"br")
+        dfs = pd.read_html(io.BytesIO(html_bytes))
 
         # dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
         df = pd.concat([dfs[1], dfs[2]])
@@ -613,6 +692,7 @@ def count_ground_state(text1):
 
 
 def create_raw_race_info(target_bin_file_path):
+    from bs4 import BeautifulSoup
     # print(f"target_bin_file_path:{target_bin_file_path}")
     with open(target_bin_file_path, "rb") as f:
         # 保存してあるbinファイルを読み込む
@@ -622,8 +702,11 @@ def create_raw_race_info(target_bin_file_path):
         soup = BeautifulSoup(html, "lxml")
 
         # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-        text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
+        data_intro = soup.find("div", attrs={"class": "data_intro"})
+        if data_intro is None:
+            raise ValueError(f"data_intro not found (cancelled race?): {target_bin_file_path}")
+        text1 = data_intro.find_all("p")[0].text
+        text2 = data_intro.find_all("p")[1].text
         # print(f"text1:{text1}")
         # print(f"text2:{text2}")
         race_id = str(re.findall(r"\d+", target_bin_file_path)[0])
@@ -635,7 +718,7 @@ def create_raw_race_info(target_bin_file_path):
         if weather in Master.WEATHER_LIST:
             pass
         else:
-            print(f"unknown weather definition appeared:{race_id}")
+            logger.warning("unknown weather definition appeared:%s", race_id)
 
         race_type = text1.split("/")[2].split(":")[0].strip()
         # 発走時刻
@@ -666,24 +749,28 @@ def create_raw_race_info(target_bin_file_path):
             if key in race_name:
                 place_id = value
                 place_name = key
+        # 未知の馬場状態でも DataFrame 構築（後段 768-769 行）まで到達できるよう、
+        # スクレイプ生値をそのまま使うフォールバックを置く（既存は NameError でクラッシュ）。
+        ground_state1 = NaN
+        ground_state2 = NaN
         if count_ground_state(text1) == 1:
             temp_ground_state0 = text1.split("/")[2].split(":")[1].strip()
-            if temp_ground_state0 in Master.GROUND_STATE_LIST:
-                ground_state1 = temp_ground_state0
-                ground_state2 = temp_ground_state0
-            else:
-                print(f"unknown GROUND_STATE definition appeared1:{race_id}{ground_state1}{ground_state2}")
+            # 既知/未知に関わらず生値を採用。未知時のみ警告を残す。
+            ground_state1 = temp_ground_state0
+            ground_state2 = temp_ground_state0
+            if temp_ground_state0 not in Master.GROUND_STATE_LIST:
+                logger.warning(
+                    "unknown GROUND_STATE definition appeared1:%s%s", race_id, temp_ground_state0
+                )
         elif dart_checker(text1) and count_ground_state(text1) == 2:
             temp_ground_state1 = text1.split("/")[2].split(":")[1].split()[0].strip()
-            if temp_ground_state1 in Master.GROUND_STATE_LIST:
-                ground_state1 = temp_ground_state1
-            else:
-                print(f"unknown GROUND_STATE definition appeared2:{race_id}{ground_state1}")
+            ground_state1 = temp_ground_state1
+            if temp_ground_state1 not in Master.GROUND_STATE_LIST:
+                logger.warning("unknown GROUND_STATE definition appeared2:%s%s", race_id, temp_ground_state1)
             temp_ground_state2 = text1.split("/")[2].split(":")[2].strip()
-            if temp_ground_state2 in Master.GROUND_STATE_LIST:
-                ground_state2 = temp_ground_state2
-            else:
-                print(f"unknown GROUND_STATE definition appeared3:{race_id}{temp_ground_state2}")
+            ground_state2 = temp_ground_state2
+            if temp_ground_state2 not in Master.GROUND_STATE_LIST:
+                logger.warning("unknown GROUND_STATE definition appeared3:%s%s", race_id, temp_ground_state2)
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         # 馬齢を取得
@@ -704,7 +791,7 @@ def create_raw_race_info(target_bin_file_path):
                 if race_class in race_condition:
                     race_class_info = race_class
             if race_class_info is None:
-                print(f"unknown race_class definition appeared:{race_id}")
+                logger.warning("unknown race_class definition appeared:%s", race_id)
             # 向きを取得
 
             if (around_info is None) and (("障害" in race_class_info or race_condition) or dart):
@@ -775,10 +862,13 @@ def create_tmp_race_info(target_bin_file_path):
         soup = BeautifulSoup(html, "lxml")
 
         # 天候、レースの種類、コースの長さ、馬場の状態、日付、回り、レースクラスをスクレイピング
-        text1 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[0].text
-        text2 = soup.find("div", attrs={"class": "data_intro"}).find_all("p")[1].text
-        print(f"text1:{text1}")
-        print(f"text2:{text2}")
+        data_intro = soup.find("div", attrs={"class": "data_intro"})
+        if data_intro is None:
+            raise ValueError(f"data_intro not found (cancelled race?): {target_bin_file_path}")
+        text1 = data_intro.find_all("p")[0].text
+        text2 = data_intro.find_all("p")[1].text
+        logger.debug("text1:%s", text1)
+        logger.debug("text2:%s", text2)
 
         # テキスト情報を解析してDataFrameに変換
         race_distance = re.search(r"\d+", text1.split("/")[0]).group()
@@ -787,7 +877,7 @@ def create_tmp_race_info(target_bin_file_path):
         if weather in Master.WEATHER_LIST:
             pass
         else:
-            print("unknown weather definition appeared")
+            logger.warning("unknown weather definition appeared")
 
         race_type = text1.split("/")[2].split(":")[0].strip()
         # 向きを取得
@@ -797,13 +887,13 @@ def create_tmp_race_info(target_bin_file_path):
             if around in text1.split(" ")[0]:
                 around_info = around
         if around_info is None:
-            print("unknown around definition appeared")
+            logger.warning("unknown around definition appeared")
 
         ground_state1 = text1.split("/")[2].split(":")[1].strip()
         if ground_state1 in Master.GROUND_STATE_LIST:
             pass
         else:
-            print("unknown GROUND_STATE definition appeared")
+            logger.warning("unknown GROUND_STATE definition appeared")
 
         start_time = text1.split("/")[-1].split(":")[1:3]
         start_time = ":".join(start_time).strip()
@@ -829,14 +919,14 @@ def create_tmp_race_info(target_bin_file_path):
             if sex in race_condition:
                 sex_info = sex
         if sex_info is None:
-            print("unknown sex definition appeared")
+            logger.warning("unknown sex definition appeared")
         # レースクラスを取得
         race_class_info = None
         for race_class in Master.RACE_CLASS_LIST:
             if race_class in race_condition:
                 race_class_info = race_class
         if race_class_info is None:
-            print("unknown race_class definition appeared")
+            logger.warning("unknown race_class definition appeared")
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         race_condition = (
@@ -891,7 +981,7 @@ def create_tmp_race_info(target_bin_file_path):
         )
 
         info = re.findall(r"\w+", texts)
-        print(f"info:{info}")
+        logger.debug("info:%s", info)
         df = pd.DataFrame()
         race_id = re.findall(r"\d+", target_bin_file_path)[0]
 
@@ -913,12 +1003,13 @@ def create_tmp_race_info(target_bin_file_path):
                 df["course_len"] = [int(extracted_number)]
 
             if "右" in text:
-                df["around"] = [Master.AROUND_LIST[0]]
+                df["around"] = [Master.AROUND_RIGHT]
             if "左" in text:
-                df["around"] = [Master.AROUND_LIST[1]]
+                df["around"] = [Master.AROUND_LEFT]
             if "直線" in text:
-                df["around"] = [Master.AROUND_LIST[2]]
+                df["around"] = [Master.AROUND_STRAIGHT]
             if "障害" in text:
+                # AROUND_LIST[3] は範囲外: 既存挙動保持のため位置参照を残す。
                 df["around"] = [Master.AROUND_LIST[3]]
                 hurdle_race_flg = True
 
@@ -930,36 +1021,29 @@ def create_tmp_race_info(target_bin_file_path):
                 df["date"] = [text]
 
             if "新馬" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[0]]
+                df["race_class"] = [Master.RACE_CLASS_SHINBA]
             if "未勝利" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[1]]
+                df["race_class"] = [Master.RACE_CLASS_MISHORI]
             if ("1勝クラス" in text) or ("500万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[2]]
+                df["race_class"] = [Master.RACE_CLASS_1SHO]
             if ("2勝クラス" in text) or ("1000万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[3]]
+                df["race_class"] = [Master.RACE_CLASS_2SHO]
             if ("3勝クラス" in text) or ("1600万下" in text):
-                df["race_class"] = [Master.RACE_CLASS_LIST[4]]
+                df["race_class"] = [Master.RACE_CLASS_3SHO]
             if "オープン" in text:
-                df["race_class"] = [Master.RACE_CLASS_LIST[5]]
+                df["race_class"] = [Master.RACE_CLASS_OPEN]
             if hurdle_race_flg:
-                # df["around"] = [Master.AROUND_LIST[3]]
-                # df["race_type"] = ["障害"]
-                df["race_class"] = [Master.RACE_CLASS_LIST[9]]
+                # 障害は race_class を上書きしない（障害判定は race_type 側で表現）。
                 hurdle_race_flg = False
-                # 障害レースの場合
-        # if hurdle_race_flg:
-        # df["around"] = [Master.AROUND_LIST[3]]
-        # df["race_class"] = [Master.RACE_CLASS_LIST[9]]
-        # hurdle_race_flg = False
 
-        # グレードレース情報の取得
+        # グレードレース情報の取得（grade アイコン → 対応グレードへ正しくマップ）
         grade_text = soup.find("div", attrs={"class": "data_intro"}).find_all("h1")[0].text
         if "G3" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[6]] * len(df)
+            df["race_class"] = [Master.RACE_CLASS_G3] * len(df)
         elif "G2" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[7]] * len(df)
+            df["race_class"] = [Master.RACE_CLASS_G2] * len(df)
         elif "G1" in grade_text:
-            df["race_class"] = [Master.RACE_CLASS_LIST[8]] * len(df)
+            df["race_class"] = [Master.RACE_CLASS_G1] * len(df)
 
         df["race_id"] = race_id
 

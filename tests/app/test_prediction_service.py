@@ -1,0 +1,89 @@
+"""app/_prediction_service.py のテスト（スタブモデル使用）。"""
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from app._prediction_service import default_thresholds
+from app._prediction_service import run_prediction
+from src.constants._bet_types import BetType
+from src.constants._results_cols import ResultsCols
+from src.operation._config import OperationConfig
+
+
+class _StubModel:
+    """固定確率を返すスタブ較正モデル。"""
+
+    def __init__(self, probs):
+        self._probs = np.asarray(probs)
+
+    def predict_proba(self, x):
+        return np.column_stack([1.0 - self._probs, self._probs])
+
+
+def _make_X(race_id: str, rows: list) -> pd.DataFrame:
+    """(umaban, wakuban, tansho_odds, feat) のリストから X を組む。"""
+    data = []
+    for umaban, wakuban, tansho_odds, feat in rows:
+        data.append(
+            {
+                ResultsCols.UMABAN: umaban,
+                ResultsCols.WAKUBAN: wakuban,
+                ResultsCols.TANSHO_ODDS: tansho_odds,
+                "feat": feat,
+            }
+        )
+    return pd.DataFrame(data, index=[race_id] * len(data))
+
+
+def _default_op_config(**kwargs) -> OperationConfig:
+    defaults = dict(bankroll=100_000.0, kelly_fraction_ratio=0.5, per_bet_cap_ratio=0.1, max_daily_ratio=1.0)
+    defaults.update(kwargs)
+    return OperationConfig(**defaults)
+
+
+def test_run_prediction_returns_candidates_when_ev_positive():
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    thresholds = {BetType.TANSHO: 1.0, BetType.UMAREN: 1.0, BetType.SANRENPUKU: 1.0}
+    result = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
+    assert isinstance(result, list)
+    assert len(result) > 0
+    assert all(c.expected_value > 1.0 for c in result)
+
+
+def test_run_prediction_stake_within_bankroll():
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    thresholds = {BetType.TANSHO: 1.0, BetType.UMAREN: 1.0}
+    op = _default_op_config(bankroll=50_000.0)
+    result = run_prediction(model, X, op, thresholds=thresholds)
+    total = sum(c.stake for c in result)
+    assert total <= 50_000.0
+
+
+def test_run_prediction_returns_empty_when_no_ev():
+    """全馬の EV が閾値未満なら空リスト。"""
+    X = _make_X("r1", [(1, 1, 1.1, 0.1), (2, 2, 1.2, 0.1)])
+    model = _StubModel([0.4, 0.6])
+    # 高い閾値を設定して全候補を弾く
+    thresholds = {BetType.TANSHO: 10.0, BetType.UMAREN: 10.0}
+    result = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
+    assert result == []
+
+
+def test_run_prediction_confidence_in_range():
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    thresholds = {BetType.TANSHO: 1.0}
+    result = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
+    for c in result:
+        assert 0.0 <= c.confidence <= 1.0
+
+
+def test_default_thresholds_covers_all_bet_types():
+    th = default_thresholds()
+    for bt in (BetType.TANSHO, BetType.FUKUSHO, BetType.UMAREN, BetType.UMATAN,
+               BetType.WIDE, BetType.SANRENPUKU, BetType.SANRENTAN):
+        assert bt in th
+        assert th[bt] > 0.0

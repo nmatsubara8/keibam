@@ -48,11 +48,11 @@ class UrlPaths:
         "temp_race_id_table.csv",  # 3
         TOP_URL[4] + "race_id_list/",  # 4
         "race_id_list.pkl",  # 5
-        100,  # 6
+        1,  # 6 (was 100/10 — batch_size=1 so progress saves after every item)
         CALENDAR_URL[4],  # 7
         "kaisai_date_list.pkl",  # 8
         "",  # 9
-        False,  # 10
+        True,  # 10 skip=True: preserve existing pkl (do NOT delete on each run)
         "",  # 11
         "",  # 12
     )
@@ -288,6 +288,23 @@ class UrlPaths:
         False,  # 10
         SCHEDULE[11],  # 11
         SCHEDULE[12],  # 12
+    )
+
+    # 出馬表ページ（当日・予定）
+    SHUTUBA_TABLE: tuple = (
+        "shutuba_table",  # 0
+        "https://race.netkeiba.com/race/shutuba.html",  # 1
+        TOP_URL[2] + "shutuba_table/",  # 2
+        "temp_shutuba_table.csv",  # 3
+        TOP_URL[4] + "shutuba_table/",  # 4
+        "shutuba_table.pkl",  # 5
+        1,  # 6
+        TOP_URL[4] + "schedule/",  # 7
+        "schedule.pkl",  # 8
+        "",  # 9
+        False,  # 10
+        "",  # 11
+        "",  # 12
     )
 
     # 当日の出馬表ページ
