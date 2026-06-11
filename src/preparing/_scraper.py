@@ -17,6 +17,7 @@ Playwright 採用理由（KB shards 22-24 / batch001 / 00context）:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from abc import ABC
 from abc import abstractmethod
@@ -24,6 +25,11 @@ from typing import TYPE_CHECKING
 from typing import Callable
 from typing import Literal
 from typing import Sequence
+
+from src.preparing._rate_limiter import get_hourly_limiter
+from src.preparing._rate_limiter import polite_interval
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser
@@ -95,7 +101,8 @@ class AbstractScraper(ABC):
                 break
             pages.append(html)
             if rate_limit_sec > 0:
-                await asyncio.sleep(rate_limit_sec)
+                # 最低 1 秒 + ランダム揺らぎ（netkeiba 自主規制）
+                await asyncio.sleep(polite_interval(rate_limit_sec))
         return pages
 
     # ------------------------------------------------------------------
@@ -241,6 +248,17 @@ class PlaywrightScraper(AbstractScraper):
         wait_selector: str | None = None,
         wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> str:
+        # netkeiba 自主規制: 1 時間あたりリクエスト数の上限（プロセス共有の
+        # スライディングウィンドウ）。全リクエストがこの fetch を通るため、
+        # ここが上限制御の単一チョークポイントになる。
+        limiter = get_hourly_limiter()
+        while (wait := limiter.try_acquire()) > 0:
+            logger.warning(
+                "[rate-limit] 1時間あたり上限 %d 件に到達。%.0f 秒待機します",
+                limiter.max_per_hour, wait,
+            )
+            await asyncio.sleep(wait)
+
         own_lifecycle = self._browser is None
         if own_lifecycle:
             await self._start()
@@ -291,7 +309,8 @@ class PlaywrightScraper(AbstractScraper):
                     await self.fetch(url, wait_selector=wait_selector, wait_until=wait_until)
                 )
                 if self._rate_limit_sec > 0 and i < len(urls) - 1:
-                    await asyncio.sleep(self._rate_limit_sec)
+                    # 最低 1 秒 + ランダム揺らぎ（netkeiba 自主規制）
+                    await asyncio.sleep(polite_interval(self._rate_limit_sec))
             return results
         finally:
             if own_lifecycle:

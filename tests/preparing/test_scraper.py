@@ -282,3 +282,50 @@ class TestPlaywrightScraper:
         result = asyncio.run(s.fetch_many(["http://a", "http://b"]))
         assert result == [_NONEMPTY, _NONEMPTY]
         assert s._browser is None  # cleaned up after
+
+
+class TestHourlyLimiterIntegration:
+    """PlaywrightScraper.fetch が時間あたり上限リミッタを通ること（netkeiba 自主規制）。"""
+
+    def test_fetch_consumes_hourly_slot(self, _pw_stub, monkeypatch):
+        from src.preparing import _scraper as scraper_mod
+
+        class _RecordingLimiter:
+            max_per_hour = 10
+
+            def __init__(self):
+                self.calls = 0
+
+            def try_acquire(self):
+                self.calls += 1
+                return 0.0  # 常に枠あり
+
+        rec = _RecordingLimiter()
+        monkeypatch.setattr(scraper_mod, "get_hourly_limiter", lambda: rec)
+
+        s = PlaywrightScraper(rate_limit_sec=0)
+        asyncio.run(s.fetch_many(["http://a", "http://b"]))
+        assert rec.calls == 2  # 1 リクエスト = 1 枠消費
+
+    def test_fetch_waits_until_slot_frees(self, _pw_stub, monkeypatch):
+        from src.preparing import _scraper as scraper_mod
+
+        class _OneWaitLimiter:
+            """初回は待機を要求し、2 回目に枠を与えるリミッタ。"""
+
+            max_per_hour = 1
+
+            def __init__(self):
+                self.calls = 0
+
+            def try_acquire(self):
+                self.calls += 1
+                return 0.01 if self.calls == 1 else 0.0
+
+        lim = _OneWaitLimiter()
+        monkeypatch.setattr(scraper_mod, "get_hourly_limiter", lambda: lim)
+
+        s = PlaywrightScraper()
+        html = asyncio.run(s.fetch("http://x"))
+        assert html == _NONEMPTY
+        assert lim.calls == 2  # 待機 → 再取得の 2 回呼ばれる

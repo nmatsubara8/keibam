@@ -7,6 +7,7 @@ import time
 import pandas as pd
 
 from src.constants._master import Master
+from src.preparing._rate_limiter import polite_interval
 
 
 def _re_first_int(text: str, default: str = "0") -> str:
@@ -200,7 +201,11 @@ def process_pkl_file(self, process_function):
     waiting_time = 30
 
     # レート制限対策（環境変数で調整可能）:
-    #   KEIBA_SCRAPE_DELAY     リクエスト間の待機秒（デフォルト 1.0）
+    #   KEIBA_SCRAPE_DELAY     リクエスト間の基準待機秒（デフォルト 1.0、最低 1.0 に切上げ。
+    #                          0 以下で明示無効化。実際の待機は _rate_limiter.polite_interval が
+    #                          ランダム揺らぎを加えて 1〜3 秒程度にする）
+    #   KEIBA_SCRAPE_JITTER_MAX 揺らぎ上限秒（デフォルト 2.0）
+    #   KEIBA_MAX_REQUESTS_PER_HOUR 1 時間あたりの自主上限（デフォルト 1000、fetch 側で制御）
     #   KEIBA_SCRAPE_MAX_RETRY ブロック時のリトライ回数（デフォルト 4）
     #   KEIBA_SCRAPE_BACKOFF   バックオフ基準秒（デフォルト 10、指数増）
     #   KEIBA_SCRAPE_ABORT_AFTER 連続ブロックがこの回数に達したら中断（デフォルト 5）
@@ -245,7 +250,8 @@ def process_pkl_file(self, process_function):
                 continue
 
             consecutive_blocks = 0  # 成功したらリセット
-            time.sleep(delay)  # サーバ負荷軽減の待機（環境変数で調整可能）
+            # サーバ負荷軽減の待機: 最低 1 秒 + ランダム揺らぎ（netkeiba 自主規制）
+            time.sleep(polite_interval(delay))
             batch_data.append(return_data)
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
