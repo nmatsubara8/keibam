@@ -151,19 +151,25 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
 
 
 def _kaisai_date_column(df: pd.DataFrame):
-    """8桁日付（YYYYMMDD）を多く含む列名を返す（kaisai_date 列の特定）。
+    """kaisai_date 列名を返す（無ければ None）。
 
-    race_id は12桁、kaisai_date は8桁なので桁数で区別できる。列の位置や名前に
-    依存せず内容で判定することで、CSV 往復や列構造の揺れに強くする。
-    見つからなければ None。
+    優先順位:
+      (1) 列名が 'kaisai_date' / 'kaisai_data'（旧データとの混在で 8桁日付の
+          割合が下がっても確実に拾う）
+      (2) 8桁日付（YYYYMMDD）を一定割合含む列（race_id は12桁なので桁数で区別）
     """
+    # (1) 名前で確定
+    for name in ("kaisai_date", "kaisai_data"):
+        if name in df.columns:
+            return name
+    # (2) 内容で推定（8桁日付を1割以上含む列）
     best_col, best_ratio = None, 0.0
     for col in df.columns:
         vals = df[col].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
         ratio = vals.str.match(r"^\d{8}$").mean()
         if ratio > best_ratio:
             best_col, best_ratio = col, ratio
-    return best_col if best_ratio > 0.5 else None
+    return best_col if best_ratio > 0.1 else None
 
 
 def _filter_requested(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:

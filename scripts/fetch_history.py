@@ -43,14 +43,36 @@ LP = LocalPaths()
 # ロールバック
 # ---------------------------------------------------------------------------
 
-def _remove_period_race_bins(prefix: str) -> int:
-    """指定プレフィックス（例 "200801"）の race bin を削除して件数を返す。"""
+def _race_ids_of(race_id_list) -> list[str]:
+    """scrape_race_id_list の戻り値から race_id（最終列）を文字列リストで返す。"""
+    if race_id_list is None or len(race_id_list) == 0:
+        return []
+    col = race_id_list.columns[-1]
+    return (
+        race_id_list[col]
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+        .tolist()
+    )
+
+
+def _remove_bins_for(race_ids) -> int:
+    """指定 race_id 群の bin ファイルを削除して件数を返す。"""
     race_dir = Path(LP.HTML_RACE_DIR)
     removed = 0
-    for p in race_dir.glob(f"{prefix}*.bin"):
-        p.unlink()
-        removed += 1
+    for rid in race_ids:
+        p = race_dir / f"{rid}.bin"
+        if p.exists():
+            p.unlink()
+            removed += 1
     return removed
+
+
+def _count_bins_for(race_ids) -> int:
+    """指定 race_id 群のうち bin が存在する件数を返す。"""
+    race_dir = Path(LP.HTML_RACE_DIR)
+    return sum(1 for rid in race_ids if (race_dir / f"{rid}.bin").exists())
 
 
 # ---------------------------------------------------------------------------
@@ -81,12 +103,12 @@ def fetch_one_month(year: int, month: int) -> bool:
     from_date = f"{year:04d}-{month:02d}-01"
     next_y, next_m = (year + 1, 1) if month == 12 else (year, month + 1)
     to_date = f"{next_y:04d}-{next_m:02d}-01"
-    prefix = f"{year:04d}{month:02d}"  # bin ファイル名の年月プレフィックス
     label = f"{year:04d}-{month:02d}"
 
     logger.info("=" * 60)
     logger.info("▶ %s 取得開始 (%s 〜 %s)", label, from_date, to_date)
 
+    month_race_ids: list[str] = []
     try:
         # Step 1: 開催日リスト
         logger.info("[1/4] 開催日リスト取得")
@@ -97,20 +119,23 @@ def fetch_one_month(year: int, month: int) -> bool:
             logger.warning("  開催日が 0 件。%s はスキップします", label)
             return True  # データなし月はエラーではない
 
-        # Step 2: レース ID リスト
+        # Step 2: レース ID リスト（当月分に絞られた結果が返る）
         logger.info("[2/4] レース ID リスト取得")
         race_id_list = scrape_race_id_list(kaisai_date_list=kaisai_dates)
-        n_races = len(race_id_list)
-        logger.info("  → %d レース ID", n_races)
-        if n_races == 0:
+        month_race_ids = _race_ids_of(race_id_list)
+        logger.info("  → %d レース ID（%s 分）", len(month_race_ids), label)
+        if not month_race_ids:
             logger.warning("  レース ID が 0 件。%s はスキップします", label)
             return True
 
         # Step 3: レース HTML 取得（skip=True で差分のみ）
         logger.info("[3/4] レース HTML 取得 (skip=True で差分のみ)")
         scrape_html_race(race_id_list=race_id_list, skip=True)
-        n_bins = len(list(Path(LP.HTML_RACE_DIR).glob(f"{prefix}*.bin")))
-        logger.info("  → %d 件の bin ファイル（%s 分）", n_bins, label)
+        # 当月の race_id 群のうち bin が揃った件数を数える（prefix glob は
+        # race_id の「年+場所」にマッチしてしまうため race_id 集合で正確に数える）
+        n_bins = _count_bins_for(month_race_ids)
+        logger.info("  → %d/%d 件の bin ファイル取得済み（%s 分）",
+                    n_bins, len(month_race_ids), label)
 
         # Step 4: bin 取得件数の簡易検証
         logger.info("[4/4] 取得件数検証")
@@ -123,7 +148,7 @@ def fetch_one_month(year: int, month: int) -> bool:
     except Exception as e:
         logger.error("❌ %s 取得失敗: %s", label, e, exc_info=True)
         logger.info("ロールバック開始...")
-        removed = _remove_period_race_bins(prefix)
+        removed = _remove_bins_for(month_race_ids)
         logger.info("  %d 件の race bin を削除", removed)
         logger.info("ロールバック完了。再試行: --from %s --to %s", label, label)
         return False

@@ -68,17 +68,18 @@ def storing_process(self):
     # CSV 往復で付く index 由来のゴミ列（"Unnamed: N"）を除去する。
     # これが最終列に残ると ID 列（kaisai_date / race_id）を取り違える。
     df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
-    # 最終列（ID列: kaisai_date / race_id 等）を取り出して正規化する。
+    # 最終列（ID列: race_id 等）で正規化・重複除去する。
     # race_id は大きな整数で float 表記（2.0e+11）になり得るため to_numeric→int64→str。
-    # 既存列への in-place 代入は dtype 不整合（LossySetitemError）になるので
-    # 新しい Series を組み立てて target_data に渡す。
-    col_name = df.columns[-1]
-    ids = pd.to_numeric(df[col_name], errors="coerce").dropna().astype("int64").astype(str)
-    ids = ids.sort_values().drop_duplicates().reset_index(drop=True)
-    self.target_data = ids
+    # kaisai_date 等の他列は捨てずに保持する（月単位フィルタに必要）。
+    id_col = df.columns[-1]
+    df = df.copy()
+    df[id_col] = pd.to_numeric(df[id_col], errors="coerce")
+    df = df.dropna(subset=[id_col])
+    df[id_col] = df[id_col].astype("int64").astype(str)
+    df = df.drop_duplicates(subset=[id_col]).sort_values(id_col).reset_index(drop=True)
+    self.target_data = df
     self.delete_files_tmp()
     self.save_temp_file(self.alias)
-    self.target_data = df
 
     self.transfer_temp_file()
 
@@ -273,7 +274,10 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
     # 現在のデフォルトレース一覧を返すことがあるため、年が一致する race_id だけ残す。
     expected_year = str(ref_id)[:4]
     race_id_list = []
-    df = pd.DataFrame({"race_id": []}, index=[])
+    # kaisai_date を named 列として保持する（index に置くと CSV 往復で Unnamed→NaN
+    # となり月単位フィルタができなくなる）。列順は [kaisai_date, race_id] とし、
+    # 「ID は最終列」という規約に合わせて race_id を末尾に置く。
+    df = pd.DataFrame({"kaisai_date": [], "race_id": []})
     try:
         # RaceList_Box の描画完了を待ってから HTML を取得
         html = driver.fetch_sync(url, wait_selector=".RaceList_Box")
@@ -288,7 +292,9 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
             # 年が一致しない race_id（=フォールバックで返った現在レース）は除外
             if len(race_id) > 0 and race_id[0][:4] == expected_year:
                 race_id_list.append(race_id[0])
-        df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
+        df = pd.DataFrame(
+            {"kaisai_date": [str(ref_id)] * len(race_id_list), "race_id": race_id_list}
+        )
     except Exception as e:
         logger.error("Error at %s: %s", ref_id, e)
         logger.error("error / obtained_last_key: %s", self.obtained_last_key)
