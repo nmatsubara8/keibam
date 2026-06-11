@@ -119,28 +119,18 @@ def fetch_one_year(year: int) -> bool:
             logger.warning("  レース ID が 0 件。%d 年はスキップします", year)
             return True
 
-        # Step 3: レース HTML 取得
-        logger.info("[3/5] レース HTML 取得 (skip=True で差分のみ)")
+        # Step 3: レース HTML 取得（skip=True で差分のみ・既存 bin は再取得しない）
+        logger.info("[3/4] レース HTML 取得 (skip=True で差分のみ)")
         scrape_html_race(race_id_list=race_id_list, skip=True)
         n_bins = len(list(Path(LP.HTML_RACE_DIR).glob(f"{year}*.bin")))
         logger.info("  → %d 件の bin ファイル（%d 年分）", n_bins, year)
 
-        # Step 4: テーブル生成（skip=False で全 bin を再パース）
-        logger.info("[4/5] テーブル生成")
-        results = get_rawdata_results(skip=False)
-        race_info = get_rawdata_info(skip=False)
-        returns = get_rawdata_return(skip=False)
+        # Step 4: bin 取得件数の簡易検証のみ（テーブル生成は全年完了後に一括で行う）
+        logger.info("[4/4] 取得件数検証")
+        if n_bins == 0:
+            raise ValueError(f"{year} 年の race bin が 0 件")
 
-        # Step 5: 検証
-        logger.info("[5/5] データ検証")
-        year_str = str(year)
-        r_year = results["race_id"].astype(str).str[:4] == year_str if "race_id" in results.columns else results.index.astype(str).str[:4] == year_str
-        n_result_rows = r_year.sum()
-        logger.info("  results  %d 年分: %d 行", year, n_result_rows)
-        if n_result_rows == 0:
-            raise ValueError(f"results に {year} 年のデータが 0 行")
-
-        logger.info("✅ %d 年 取得完了 (results=%d 行)", year, n_result_rows)
+        logger.info("✅ %d 年 取得完了 (bin=%d 件)", year, n_bins)
         return True
 
     except Exception as e:
@@ -181,8 +171,17 @@ def main() -> None:
         logger.warning("失敗した年: %s", failed_years)
         logger.info("再試行例: python scripts/fetch_history.py --from-year %d --to-year %d", failed_years[0], failed_years[-1])
         sys.exit(1)
-    else:
-        logger.info("🎉 全年取得完了")
+
+    # 全年の HTML 取得が完了してから一括テーブル生成
+    # （bin ファイルを全部揃えてから1回だけパースすることで二重取込を防ぐ）
+    logger.info("=" * 60)
+    logger.info("▶ テーブル生成（全 bin を一括パース・重複は自動除外）")
+    results = get_rawdata_results(skip=False)
+    get_rawdata_info(skip=False)
+    get_rawdata_return(skip=False)
+    n_total = len(results)
+    logger.info("  results 総行数: %d 行", n_total)
+    logger.info("🎉 全年取得・テーブル生成完了")
 
 
 if __name__ == "__main__":
