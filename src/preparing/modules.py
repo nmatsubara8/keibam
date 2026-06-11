@@ -801,8 +801,7 @@ def create_raw_race_info(target_bin_file_path):
             if race_class_info is None:
                 logger.warning("unknown race_class definition appeared:%s", race_id)
             # 向きを取得
-
-            if (around_info is None) and (("障害" in race_class_info or race_condition) or dart):
+            if (around_info is None) and (("障害" in (race_class_info or "") or race_condition) or dart):
                 around_info = "直線"
 
             for key, value in Master.RACE_CONDITION_DICT.items():
@@ -938,7 +937,7 @@ def create_tmp_race_info(target_bin_file_path):
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         race_condition = (
-            race_condition.replace(age, "").replace("歳", "").replace(sex_info, "").replace(race_class_info, "").strip()
+            race_condition.replace(age, "").replace("歳", "").replace(sex_info, "").replace(race_class_info or "", "").strip()
         )
 
         # DataFrame作成歳

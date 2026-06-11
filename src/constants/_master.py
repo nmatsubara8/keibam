@@ -123,6 +123,10 @@ class Master:
     RACE_CLASS_G3: ClassVar[str] = "G3"
     RACE_CLASS_G2: ClassVar[str] = "G2"
     RACE_CLASS_G1: ClassVar[str] = "G1"
+    # 2019年クラス改編前の旧称（〜2019年）
+    RACE_CLASS_500: ClassVar[str] = "500万下"
+    RACE_CLASS_1000: ClassVar[str] = "1000万下"
+    RACE_CLASS_1600: ClassVar[str] = "1600万下"
     RACE_CLASS_LIST: tuple = (
         RACE_CLASS_SHINBA,
         RACE_CLASS_MISHORI,
@@ -135,6 +139,10 @@ class Master:
         RACE_CLASS_G3,
         RACE_CLASS_G2,
         RACE_CLASS_G1,
+        # 旧称（2019年以前）
+        RACE_CLASS_500,
+        RACE_CLASS_1000,
+        RACE_CLASS_1600,
     )
 
     # ------------------------------------------------------------------
