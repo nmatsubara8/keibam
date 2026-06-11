@@ -42,6 +42,39 @@ def is_blocked_html(html) -> bool:
         return True
     return False
 
+
+def _fetch_with_retry(process_function, self, ref_id, driver, waiting_time,
+                      max_retry: int = 4, backoff: float = 10.0):
+    """process_function を呼び、ブロック時は指数バックオフでリトライする。
+
+    Returns
+    -------
+    (return_data, blocked) : tuple
+        成功時は (取得データ, False)。失敗時は (None, blocked) で
+        blocked はブロック起因の失敗かどうか。
+    """
+    last_blocked = False
+    for attempt in range(max_retry + 1):
+        try:
+            return process_function(self, ref_id, driver, waiting_time), False
+        except Exception as e:
+            blocked = "blocked" in str(e).lower()
+            last_blocked = blocked
+            if not blocked:
+                # 通常エラー（中止レース等）はリトライせず即失敗として返す
+                logger.error("Error at %s: %s", ref_id, e)
+                return None, False
+            if attempt < max_retry:
+                wait = backoff * (2 ** attempt)  # 10, 20, 40, 80...
+                logger.warning(
+                    "ブロック検知 %s（%d/%d 回目）。%.0f 秒待機して再試行",
+                    ref_id, attempt + 1, max_retry, wait,
+                )
+                time.sleep(wait)
+            else:
+                logger.error("ブロックでリトライ上限 %s（%d 回）", ref_id, max_retry)
+    return None, last_blocked
+
 from src.constants._master import Master
 
 NaN = float("nan")
@@ -167,6 +200,17 @@ def process_pkl_file(self, process_function):
     # implicitly_wait 相当は不要。waiting_time は後方互換のためのプレースホルダ。
     waiting_time = 30
 
+    # レート制限対策（環境変数で調整可能）:
+    #   KEIBA_SCRAPE_DELAY     リクエスト間の待機秒（デフォルト 1.0）
+    #   KEIBA_SCRAPE_MAX_RETRY ブロック時のリトライ回数（デフォルト 4）
+    #   KEIBA_SCRAPE_BACKOFF   バックオフ基準秒（デフォルト 10、指数増）
+    #   KEIBA_SCRAPE_ABORT_AFTER 連続ブロックがこの回数に達したら中断（デフォルト 5）
+    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+    max_retry = int(os.environ.get("KEIBA_SCRAPE_MAX_RETRY", "4"))
+    backoff = float(os.environ.get("KEIBA_SCRAPE_BACKOFF", "10"))
+    abort_after = int(os.environ.get("KEIBA_SCRAPE_ABORT_AFTER", "5"))
+    consecutive_blocks = 0  # 連続ブロック数（解消したら 0 に戻す）
+
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
         end_index = min((batch_index + 1) * self.batch_size, len(target_all_files))
@@ -175,20 +219,35 @@ def process_pkl_file(self, process_function):
         batch_data = []
         return_data = None  # 例外で process_function が完了しない場合への初期化
         for ref_id in batch_target_all_files:  #
-            try:
-                # print(f"ref_id:{ref_id}")
-                self.processing_id = ref_id
-                return_data = process_function(self, ref_id, driver, waiting_time)
-
-                time.sleep(0.2)  # サーバ負荷軽減の最小待機
-                batch_data.append(return_data)
-            # print(f"temp_df:{temp_df}")
-            except Exception as e:
-                logger.error("Error at %s: %s:%s", processed_files + 1, ref_id, e)
+            self.processing_id = ref_id
+            # ブロック検知時は指数バックオフでリトライする。
+            return_data, blocked = _fetch_with_retry(
+                process_function, self, ref_id, driver, waiting_time,
+                max_retry=max_retry, backoff=backoff,
+            )
+            if return_data is None:
+                # 取得失敗（通常エラー or ブロックでリトライ尽き）
+                if blocked:
+                    consecutive_blocks += 1
+                    logger.warning(
+                        "ブロック継続中（連続 %d 回）。レート制限の可能性: %s",
+                        consecutive_blocks, ref_id,
+                    )
+                    if consecutive_blocks >= abort_after:
+                        driver.close_sync()
+                        raise RuntimeError(
+                            f"連続 {consecutive_blocks} 回ブロックされたため中断します。"
+                            f"netkeiba のレート制限の可能性が高いです。"
+                            f"しばらく待ってから再実行してください"
+                            f"（KEIBA_SCRAPE_DELAY を増やすと緩和されます）"
+                        )
                 self.obtained_last_key = ref_id
                 pbar.update(1)
                 continue
 
+            consecutive_blocks = 0  # 成功したらリセット
+            time.sleep(delay)  # サーバ負荷軽減の待機（環境変数で調整可能）
+            batch_data.append(return_data)
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
             self.obtained_last_key = ref_id
