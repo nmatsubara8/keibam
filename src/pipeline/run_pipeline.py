@@ -321,8 +321,43 @@ def _retrain(args: argparse.Namespace) -> None:
     else:
         featured_data = pd.read_pickle(featured_path)
 
+    # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
+    # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
+    lgb_params = None
+    params_rank = getattr(args, "params_rank", None)
+    if params_rank is not None:
+        from src.training._tuning_history import get_params_by_rank
+        from src.training._tuning_history import load_tuning_history
+        from src.training._tuning_history import tuning_history_path
+
+        history = load_tuning_history(tuning_history_path(cfg.models_dir))
+        lgb_params = get_params_by_rank(history, params_rank)
+        logger.info("[retrain] tuning_history rank=%d のパラメータで学習します", params_rank)
+    elif getattr(args, "use_selected_params", False):
+        import json
+
+        selected_path = os.path.join(cfg.models_dir, "selected_params.json")
+        if not os.path.exists(selected_path):
+            raise FileNotFoundError(
+                f"{selected_path} がありません（UI のモデルラボでパラメータを選択してください）"
+            )
+        with open(selected_path) as f:
+            selected = json.load(f)
+        lgb_params = selected["params"]
+        params_rank = selected.get("rank")
+        logger.info(
+            "[retrain] selected_params.json（version=%s rank=%s）のパラメータで学習します",
+            selected.get("version"), params_rank,
+        )
+
     job = RetrainJob(KeibaAIFactory, cfg)
-    result = job.run(featured_data, vname=args.version_name, with_tuning=args.with_tuning)
+    result = job.run(
+        featured_data,
+        vname=args.version_name,
+        with_tuning=args.with_tuning,
+        lgb_params=lgb_params,
+        params_rank=params_rank,
+    )
     logger.info("[retrain] %s", result)
 
 
@@ -352,6 +387,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     retrain_p.add_argument("--version-name", default=None, help="バージョン名（省略時は日付自動生成）")
     retrain_p.add_argument("--no-stacking", action="store_true", help="スタッキングを使わない（LightGBM のみ）")
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
+    retrain_p.add_argument(
+        "--params-rank",
+        type=int,
+        default=None,
+        help="保存済みチューニング履歴（成績順）の指定 rank のパラメータで学習する（--with-tuning と排他）",
+    )
+    retrain_p.add_argument(
+        "--use-selected-params",
+        action="store_true",
+        help="UI（モデルラボ）で選択・保存したパラメータ（models/selected_params.json）で学習する",
+    )
 
     return parser.parse_args(argv)
 

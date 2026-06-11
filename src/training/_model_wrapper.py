@@ -29,10 +29,18 @@ class ModelWrapper:
         )
         self.__feature_importance = None
 
-    def tune_hyper_params(self, datasets: DataSplitter):
+    def tune_hyper_params(self, datasets: DataSplitter, study=None):
         """
         optunaによるチューニングを実行。
+
+        study を明示的に生成して渡すことで、終了後に全 trial（パラメータと成績）を
+        回収できる（`last_study_` に保持。RetrainJob が tuning_history.json へ保存する）。
         """
+        import optuna  # noqa: PLC0415
+
+        if study is None:
+            study = optuna.create_study(direction="minimize")
+        self.last_study_ = study
 
         params = {"objective": "binary", "verbose": -1}
 
@@ -43,6 +51,7 @@ class ModelWrapper:
             valid_sets=[datasets.lgb_valid_optuna],
             # verbose_eval=100,
             # early_stopping_rounds=10,
+            study=study,
             optuna_seed=100,  # optunaのseed固定
         )
 
@@ -50,6 +59,7 @@ class ModelWrapper:
         tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
 
         self.__lgb_model.set_params(**tunedParams)
+        return study
 
     @property
     def params(self):

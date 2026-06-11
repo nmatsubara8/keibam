@@ -28,6 +28,20 @@ class KeibaAI:
     def datasets(self):
         return self.__datasets
 
+    @property
+    def tuning_study_(self):
+        """直近の Optuna 探索 study（未実行なら None）。全 trial の成績・パラメータを持つ。"""
+        return getattr(self.__model_wrapper, "last_study_", None)
+
+    def set_lgb_params(self, params: dict) -> None:
+        """LightGBM ハイパーパラメータを外部から注入する。
+
+        保存済みのチューニング履歴（tuning_history.json）から選んだパラメータで
+        学習する場合に、train_without_tuning / train_with_stacking(with_tuning=False)
+        の前に呼ぶ。
+        """
+        self.__model_wrapper.set_params(params)
+
     def train_with_tuning(self):
         """
         optunaでのチューニング後、訓練させる。
