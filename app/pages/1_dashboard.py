@@ -83,6 +83,43 @@ st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=Tru
 st.divider()
 
 # ------------------------------------------------------------------
+# DB 特徴量スナップショット統計（Phase 2）
+# ------------------------------------------------------------------
+st.subheader("🗄️ 特徴量スナップショット（SQLite）")
+if os.path.exists(LocalPaths.DB_PATH):
+    try:
+        from src.storage import FeaturedDataRepo
+
+        metas = FeaturedDataRepo().list_meta()
+        if metas:
+            latest = metas[0]
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("スナップショット数", f"{len(metas):,} 件")
+            m2.metric("最新レース数", f"{latest['n_races'] or 0:,}")
+            m3.metric("最新行数", f"{latest['n_rows'] or 0:,}")
+            m4.metric("最新特徴量数", f"{latest['n_features'] or 0:,}")
+            snap_rows = [
+                {
+                    "バージョン": m["version"],
+                    "レース数": m["n_races"],
+                    "行数": m["n_rows"],
+                    "特徴量数": m["n_features"],
+                    "期間": f"{m['date_min'] or '—'} 〜 {m['date_max'] or '—'}",
+                    "作成日時": m["created_at"],
+                }
+                for m in metas
+            ]
+            st.dataframe(pd.DataFrame(snap_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("特徴量スナップショットはまだ DB に保存されていません（`retrain` / `ingest` 実行で蓄積されます）。")
+    except Exception as e:  # noqa: BLE001
+        st.warning(f"スナップショット統計の取得に失敗しました: {e}")
+else:
+    st.info(f"`{LocalPaths.DB_PATH}` が存在しません（取込実行で作成されます）。")
+
+st.divider()
+
+# ------------------------------------------------------------------
 # 次締切カウントダウン（スケジュールデータがある場合）
 # ------------------------------------------------------------------
 st.subheader("⏱️ 次締切")

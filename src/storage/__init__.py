@@ -9,10 +9,12 @@ from src.storage._db import TABLE_SPECS
 from src.storage._db import TableSpec
 from src.storage._db import alias_to_pickle_path
 from src.storage._db import get_engine
+from src.storage._featured_repo import FeaturedDataRepo
 from src.storage._repo import RawDataRepo
 
 __all__ = [
     "RawDataRepo",
+    "FeaturedDataRepo",
     "TABLE_SPECS",
     "TableSpec",
     "PICKLE_PATH_TO_ALIAS",

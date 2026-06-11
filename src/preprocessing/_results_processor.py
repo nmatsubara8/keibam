@@ -5,11 +5,11 @@ from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
 class ResultsProcessor(AbstractDataProcessor):
-    def __init__(self, filepath):
+    def __init__(self, filepath=None, *, repo=None, alias="raw_results"):
         """
         初期処理
         """
-        super().__init__(filepath)
+        super().__init__(filepath, repo=repo, alias=alias)
 
     def _preprocess(self):
         """

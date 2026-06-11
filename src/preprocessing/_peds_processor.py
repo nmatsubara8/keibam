@@ -18,11 +18,18 @@ class PedsProcessor(AbstractDataProcessor):
                                     未知カテゴリは "__unknown__" にマップ。
     """
 
-    def __init__(self, filepath: str, encoders: Optional[Dict[str, LabelEncoder]] = None):
+    def __init__(
+        self,
+        filepath: Optional[str] = None,
+        encoders: Optional[Dict[str, LabelEncoder]] = None,
+        *,
+        repo=None,
+        alias: str = "raw_peds",
+    ):
         # encoders_ は _preprocess() 内で populate される（train）か、引数をコピーする（inference）
         self.encoders_: Dict[str, LabelEncoder] = {}
         self._provided_encoders = encoders  # None = training mode
-        super().__init__(filepath)
+        super().__init__(filepath, repo=repo, alias=alias)
 
     def _preprocess(self) -> pd.DataFrame:
         df = self.raw_data.copy()

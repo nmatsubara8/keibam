@@ -93,8 +93,8 @@ def split_arrow_to_int(s):
 
 
 class ReturnProcessor(AbstractDataProcessor):
-    def __init__(self, filepath):
-        super().__init__(filepath)
+    def __init__(self, filepath=None, *, repo=None, alias="raw_return_tables"):
+        super().__init__(filepath, repo=repo, alias=alias)
 
     def _preprocess(self):
         return {

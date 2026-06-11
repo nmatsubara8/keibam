@@ -1,12 +1,37 @@
 from abc import ABCMeta
 from abc import abstractmethod
+from typing import Optional
 
 import pandas as pd
 
 
 class AbstractDataProcessor(metaclass=ABCMeta):
-    def __init__(self, filepath: str):
-        self.__raw_data = pd.read_pickle(filepath)
+    """raw データを読み込んで前処理する基底クラス。
+
+    入力ソースは 2 通り（Phase 2 で DB 直読みを追加）:
+    - `filepath` 指定: pickle を `pd.read_pickle` で読む（従来動作）。
+    - `repo` + `alias` 指定: `repo.read(alias)` で SQLite から読む。
+      pickle が揮発しても DB から直接前処理を再開できる。
+
+    `repo` は `read(alias) -> pd.DataFrame` を持つオブジェクト（`RawDataRepo`）を
+    想定するが、duck typing で受けるため storage レイヤへの import 依存は持たない。
+    """
+
+    def __init__(
+        self,
+        filepath: Optional[str] = None,
+        *,
+        repo: object = None,
+        alias: Optional[str] = None,
+    ):
+        if filepath is not None:
+            self.__raw_data = pd.read_pickle(filepath)
+        elif repo is not None and alias is not None:
+            self.__raw_data = repo.read(alias)  # type: ignore[attr-defined]
+        else:
+            raise ValueError(
+                "AbstractDataProcessor: filepath か (repo, alias) のいずれかを指定してください"
+            )
         self.__preprocessed_data = self._preprocess()
 
     @abstractmethod

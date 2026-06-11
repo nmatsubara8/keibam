@@ -42,6 +42,8 @@ class IngestConfig:
     featured_data_path: str = LocalPaths.FEATURED_DATA_PATH
     # Phase 1: --force 指定時、対象 race_id の DB 行を先に削除してから再投入する
     force: bool = False
+    # Phase 2: 再生成した featured_data を DB にスナップショット保存するか
+    save_featured_to_db: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,17 @@ def save_raw(df: pd.DataFrame, path: str) -> None:
     """pickle を保存する（ディレクトリは自動作成）。"""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_pickle(path)
+
+
+def _save_featured_snapshot(df: pd.DataFrame) -> None:
+    """featured_data を DB にスナップショット保存する（失敗は warning で握り潰す）。"""
+    try:
+        from src.storage import FeaturedDataRepo
+
+        version = FeaturedDataRepo().save(df)
+        logger.info("[ingest] featured snapshot を DB に保存: version=%s", version)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ingest] featured snapshot DB 保存失敗 (non-fatal): %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +221,9 @@ class IngestJob:
         try:
             featured = self._builder.build(self._cfg)
             save_raw(featured, self._cfg.featured_data_path)
+            # Phase 2: pickle と併せて DB にスナップショット保存（揮発時の高速復元用）
+            if self._cfg.save_featured_to_db:
+                _save_featured_snapshot(featured)
         except Exception as e:
             logger.warning("[ingest] featured_data build failed (non-fatal): %s", e)
 

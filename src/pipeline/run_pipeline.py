@@ -109,6 +109,21 @@ def _retrain(args: argparse.Namespace) -> None:
 
     featured_path = LocalPaths.FEATURED_DATA_PATH
     if not os.path.exists(featured_path):
+        # Phase 2: pickle が無くても DB スナップショットがあれば再計算せず復元する
+        from src.storage import FeaturedDataRepo
+
+        snapshot = FeaturedDataRepo().load()
+        if snapshot is not None:
+            logger.info(
+                "[retrain] featured_data.pkl は無いが DB スナップショットから復元します shape=%s",
+                snapshot.shape,
+            )
+            snapshot.to_pickle(featured_path)
+            job = RetrainJob(KeibaAIFactory, cfg)
+            result = job.run(snapshot, vname=args.version_name, with_tuning=args.with_tuning)
+            logger.info("[retrain] %s", result)
+            return
+
         logger.info("[retrain] featured_data.pkl が見つからないため自動生成します")
         from src.pipeline._ingestion import IngestConfig
         cfg_ing = IngestConfig()
@@ -147,6 +162,14 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = _Builder().build(cfg_ing)
         featured_data.to_pickle(featured_path)
         logger.info("[retrain] featured_data.pkl を生成しました shape=%s", featured_data.shape)
+        # Phase 2: 再計算結果を DB スナップショットにも保存する（非致命）
+        try:
+            from src.storage import FeaturedDataRepo
+
+            version = FeaturedDataRepo().save(featured_data)
+            logger.info("[retrain] featured snapshot を DB に保存: version=%s", version)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[retrain] featured snapshot DB 保存失敗 (non-fatal): %s", e)
     else:
         featured_data = pd.read_pickle(featured_path)
 

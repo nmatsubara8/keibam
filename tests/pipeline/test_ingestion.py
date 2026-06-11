@@ -98,7 +98,7 @@ def test_save_load_raw_roundtrip(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _make_config(tmp_path):
+def _make_config(tmp_path, save_featured_to_db=False):
     base = str(tmp_path)
     return IngestConfig(
         raw_results_path=os.path.join(base, "results.pkl"),
@@ -108,6 +108,8 @@ def _make_config(tmp_path):
         raw_horse_info_path=os.path.join(base, "horse_info.pkl"),
         raw_peds_path=os.path.join(base, "peds.pkl"),
         featured_data_path=os.path.join(base, "featured.pkl"),
+        # 既定では実 DB を汚さないよう DB 保存を無効化（DB 保存は専用テストで検証）
+        save_featured_to_db=save_featured_to_db,
     )
 
 
@@ -160,3 +162,29 @@ def test_ingest_run_saves_featured_data(tmp_path):
     job = IngestJob(_StubFetcher(), _StubBuilder(), cfg)
     job.run(["r1"])
     assert os.path.exists(cfg.featured_data_path)
+
+
+def test_ingest_saves_featured_snapshot_to_db(tmp_path, monkeypatch):
+    """save_featured_to_db=True で featured スナップショットが DB に保存される（Phase 2）。
+
+    IngestJob 内部の FeaturedDataRepo() は db_path 省略で LocalPaths.DB_PATH を引くため、
+    実 DB を汚さないよう DB_PATH を tmp に差し替え、エンジンシングルトンをリセットする。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.storage._db import _reset_engine_for_testing
+    from src.storage._featured_repo import FeaturedDataRepo
+
+    db_path = str(tmp_path / "test.db")
+    monkeypatch.setattr(LocalPaths, "DB_PATH", db_path)
+    _reset_engine_for_testing()
+
+    cfg = _make_config(tmp_path, save_featured_to_db=True)
+    job = IngestJob(_StubFetcher(), _StubBuilder(), cfg)
+    job.run(["r1"])
+
+    repo = FeaturedDataRepo()  # db_path 省略 → 差し替えた tmp DB を参照
+    metas = repo.list_meta()
+    assert len(metas) == 1
+    loaded = repo.load()
+    assert loaded is not None and len(loaded) == 1
+    _reset_engine_for_testing()
