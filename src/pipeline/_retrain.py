@@ -70,11 +70,17 @@ def evaluate_test(model, X_test: pd.DataFrame, y_test: pd.Series) -> dict:
 
 
 def save_metadata(meta: dict, path: str) -> None:
-    """バージョン情報・メトリクスを JSON で履歴追記する（旧版は削除しない）。"""
+    """バージョン情報・メトリクスを JSON で履歴追記する（旧版は削除しない）。
+
+    同一 version のエントリが既にある場合は置き換える。version は日付ベース
+    （YYYYMMDD_prefix）で、同日の再学習はモデル pickle を上書きするため、
+    履歴も現存する実体を指すエントリ 1 件に保つ。
+    """
     existing: list = []
     if os.path.exists(path):
         with open(path) as f:
             existing = json.load(f)
+    existing = [m for m in existing if m.get("version") != meta.get("version")]
     existing.append(meta)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
@@ -129,6 +135,8 @@ class RetrainJob:
         featured_data: pd.DataFrame,
         vname: str | None = None,
         with_tuning: bool = False,
+        lgb_params: dict | None = None,
+        params_rank: int | None = None,
     ) -> dict:
         """featured_data で全再学習し、バージョン付きモデルを保存する。
 
@@ -137,6 +145,10 @@ class RetrainJob:
         featured_data : 全レース特徴量 DataFrame（race_id インデックス）。
         vname : バージョン名（未指定なら日付自動生成）。
         with_tuning : True なら Optuna ハイパラ探索（週次運用では False 推奨）。
+            探索後は全 trial を成績順で tuning_history.json に保存する。
+        lgb_params : 指定時はこのパラメータを LightGBM に注入して学習する
+            （保存済みチューニング履歴から選んだもの。with_tuning とは排他）。
+        params_rank : lgb_params の出所 rank（メタデータ記録用）。
 
         Returns
         -------
@@ -148,6 +160,11 @@ class RetrainJob:
             test_size=self._cfg.test_size,
             valid_size=self._cfg.valid_size,
         )
+        if lgb_params:
+            with_tuning = False
+            if hasattr(ai, "set_lgb_params"):
+                ai.set_lgb_params(lgb_params)
+
         if self._cfg.use_stacking:
             ai.train_with_stacking(meta_ratio=self._cfg.meta_ratio, with_tuning=with_tuning)
         else:
@@ -155,6 +172,19 @@ class RetrainJob:
                 ai.train_with_tuning()
             else:
                 ai.train_without_tuning()
+
+        # Optuna 探索を行った場合は全 trial を成績順で保存（ユーザーが後から選択できる）
+        study = getattr(ai, "tuning_study_", None)
+        if with_tuning and study is not None:
+            try:
+                from src.training._tuning_history import save_tuning_history
+                from src.training._tuning_history import trials_to_records
+                from src.training._tuning_history import tuning_history_path
+
+                records = trials_to_records(study, vname)
+                save_tuning_history(records, tuning_history_path(self._cfg.models_dir))
+            except Exception as e:  # noqa: BLE001 — 履歴保存失敗で学習結果を失わない
+                logger.warning("[retrain] tuning_history 保存失敗 (non-fatal): %s", e)
 
         metrics = evaluate_test(ai.effective_model, ai.datasets.X_test, ai.datasets.y_test)
         meta: dict[str, Any] = {
@@ -164,6 +194,9 @@ class RetrainJob:
             "use_stacking": self._cfg.use_stacking,
             **metrics,
         }
+        if lgb_params:
+            meta["params_rank"] = params_rank
+            meta["lgb_params"] = lgb_params
 
         self._factory.save(ai, vname)
         save_metadata(meta, metadata_path(self._cfg.models_dir))

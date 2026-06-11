@@ -96,7 +96,7 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
 
     if not missing_dates:
         # kaisai_date_list 未指定 or 全カバー済み → そのまま全件ダウンロード（後方互換）
-        missing_dates = None
+        missing_dates = None  # type: ignore[assignment]
 
     # 未取得分のみ対象に絞った kaisai_date_list を作成
     if missing_dates is not None and kaisai_date_list is not None:

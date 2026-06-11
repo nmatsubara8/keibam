@@ -23,6 +23,9 @@ class OperationConfig:
     kelly_fraction_ratio: float = 0.5
     per_bet_cap_ratio: float = 0.05
     max_daily_ratio: float = 1.0
+    # オッズ力学モデルの予測確定オッズで EV を計算する（odds_watch の最新予測を使用。
+    # 予測が無いレース/馬は現在オッズへ自動フォールバック）
+    use_predicted_odds: bool = False
 
     def __post_init__(self) -> None:
         if self.operation_mode not in VALID_MODES:

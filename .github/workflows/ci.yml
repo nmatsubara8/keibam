@@ -36,12 +36,10 @@ jobs:
             -q --tb=short
 
       # ── 静的解析 ─────────────────────────────────────────────────────────
-      # ruff: E/F/W/B ルール（pyproject.toml 設定に従う）
-      # エラーを報告するが、まだ CI 失敗にしない（--no-fix で修正は行わない）
+      # ruff: E/F/W/B ルール（pyproject.toml 設定に従う）。0 件を達成済みのため必須化。
       - name: Lint (ruff)
         run: |
           python -m ruff check src/ app/ --output-format=github
-        continue-on-error: true
 
       # ── 型チェック ───────────────────────────────────────────────────────
       # pyproject.toml [tool.mypy] files に列挙した新規モジュールを段階的に検査。

@@ -10,6 +10,11 @@ from src.training._odds_predictor import (
     IdentityOddsPredictor,
     LgbOddsPredictor,
 )
+from src.training._odds_feature_builder import (
+    build_training_frame,
+    snapshots_to_phase_table,
+    train_odds_predictor,
+)
 
 __all__ = [
     "KeibaAI",
@@ -22,4 +27,7 @@ __all__ = [
     "AbstractOddsPredictor",
     "IdentityOddsPredictor",
     "LgbOddsPredictor",
+    "build_training_frame",
+    "snapshots_to_phase_table",
+    "train_odds_predictor",
 ]

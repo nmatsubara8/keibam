@@ -251,21 +251,38 @@ class DataLoader:
         new_df = self.csv_reader(local_temp_file_path)
 
         to_target_file = self.get_local_comp_file_path(self.alias)
-        # 既存 pkl がある場合はマージ（新データ優先）してから保存
-        if os.path.exists(to_target_file):
-            try:
-                existing = pd.read_pickle(to_target_file)
-                # 既存 pkl 側の "Unnamed: N" ゴミ列も除去してから突き合わせる
-                existing = existing.loc[:, ~existing.columns.astype(str).str.match(r"^Unnamed")]
-                key_col = new_df.columns[-1]
-                if key_col in existing.columns:
-                    old_only = existing[~existing[key_col].isin(new_df[key_col])]
-                    new_df = pd.concat([old_only, new_df], ignore_index=True)
-            except Exception:
-                pass
+        # 既存データとマージ（新データ優先）してから保存する。
+        # マージ元は ./data/raw/ の本番 pkl を最優先（全 Processor の正本）。
+        # data/html/ 側のキャッシュ pkl は gitignore 対象で fresh 環境に存在しないため、
+        # ここを見ないと既存全件が新規スクレイプ分だけで上書きされる（データ喪失）。
+        existing = None
+        raw_path = os.path.join("./data/raw", self.save_file_name)
+        for candidate in (raw_path, to_target_file):
+            if os.path.exists(candidate):
+                try:
+                    existing = pd.read_pickle(candidate)
+                    break
+                except Exception as e:
+                    logger.warning("transfer: 既存 pkl 読込失敗 %s: %s", candidate, e)
+        if existing is not None and isinstance(existing, pd.DataFrame) and not existing.empty:
+            # 既存 pkl 側の "Unnamed: N" ゴミ列も除去してから突き合わせる
+            existing = existing.loc[:, ~existing.columns.astype(str).str.match(r"^Unnamed")]
+            # マージキーは行の所属単位（レース系: race_id / 馬系: horse_id）。
+            # 旧実装の columns[-1]（owner_id 等）では同一馬主の既存行まで落ちていた。
+            key_col = next((k for k in ("race_id", "horse_id") if k in new_df.columns), None)
+            if key_col is not None and key_col in existing.columns:
+                old_only = existing[~existing[key_col].isin(new_df[key_col])]
+                new_df = pd.concat([old_only, new_df], ignore_index=True)
+            else:
+                # キー不明でも既存データは捨てない（重複の可能性より喪失の方が重い）
+                logger.warning(
+                    "transfer: マージキー(race_id/horse_id)が見つからないため既存 %d 行へ単純追記します",
+                    len(existing),
+                )
+                new_df = pd.concat([existing, new_df], ignore_index=True)
         # 最終的にも "Unnamed: N" 列を残さない
         new_df = new_df.loc[:, ~new_df.columns.astype(str).str.match(r"^Unnamed")]
-        logger.debug("transfer: saved %d rows → %s", len(new_df), to_target_file)
+        logger.info("transfer: saved %d rows → %s", len(new_df), to_target_file)
         new_df.to_pickle(to_target_file)
 
     def copy_files(self):

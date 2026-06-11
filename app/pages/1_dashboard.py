@@ -48,6 +48,14 @@ c2.metric("AUC (test)", f"{status['model_auc']:.4f}" if status["model_auc"] else
 c3.metric("スナップショット", f"{status['n_snapshots']:,} 件")
 c4.metric("最終取込", status["last_ingest"] or "未実行")
 
+# Phase 2: 特徴量データの統計
+if status.get("n_featured_rows"):
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("特徴量 行数", f"{status['n_featured_rows']:,}")
+    c6.metric("特徴量 列数", f"{status['n_featured_cols']:,}")
+    c7.metric("最古 race_id", status.get("featured_min_race_id") or "—")
+    c8.metric("最新 race_id", status.get("featured_max_race_id") or "—")
+
 mode_color = {"advisory": "🟢", "semi_auto": "🟡", "full_auto": "🔴"}.get(status["operation_mode"], "⚪")
 st.info(f"{mode_color} 運用モード: **{status['operation_mode']}**")
 

@@ -97,11 +97,13 @@ def snapshots_to_dataframe(snapshots: list) -> pd.DataFrame:
     """OddsSnapshot リストを DataFrame に変換する（フィルタ・集計用）。"""
     if not snapshots:
         return pd.DataFrame(columns=["race_id", "bet_type", "combo", "odds", "captured_at", "minutes_to_post", "phase"])
+    from src.preparing._odds_snapshot import combo_to_str
+
     rows = [
         {
             "race_id": s.race_id,
             "bet_type": s.bet_type,
-            "combo": "-".join(str(h) for h in s.combo),
+            "combo": combo_to_str(s.combo),
             "odds": s.odds,
             "captured_at": s.captured_at,
             "minutes_to_post": s.minutes_to_post,
@@ -123,15 +125,38 @@ def load_system_status(
     snapshots_path: str = LocalPaths.RAW_ODDS_SNAPSHOT_PATH,
     featured_path: str = LocalPaths.FEATURED_DATA_PATH,
 ) -> dict:
-    """ダッシュボード用のシステム状態サマリを返す。"""
+    """ダッシュボード用のシステム状態サマリを返す。
+
+    Phase 2: featured_data のメタ情報を SQLite から優先取得し、
+    DB がない場合は pickle のファイル更新日時にフォールバックする。
+    """
     versions = list_model_versions(models_dir)
     latest_version = versions[0]["version"] if versions else None
     latest_auc = versions[0].get("auc_test") if versions else None
 
     n_snapshots = len(load_odds_snapshots(snapshots_path))
 
+    # Phase 2: DB メタから featured_data 統計を取得
     last_ingest = None
-    if os.path.exists(featured_path):
+    n_featured_rows = None
+    n_featured_cols = None
+    featured_min_race_id = None
+    featured_max_race_id = None
+
+    try:
+        from src.storage._featured import load_featured_meta
+        meta = load_featured_meta()
+        if meta:
+            last_ingest = meta["created_at"][:16] if meta.get("created_at") else None
+            n_featured_rows = meta.get("n_rows")
+            n_featured_cols = meta.get("n_cols")
+            featured_min_race_id = meta.get("min_race_id")
+            featured_max_race_id = meta.get("max_race_id")
+    except Exception:
+        pass
+
+    # DB メタがない場合は pickle のファイル更新日時にフォールバック
+    if last_ingest is None and os.path.exists(featured_path):
         mtime = os.path.getmtime(featured_path)
         last_ingest = dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M")
 
@@ -141,6 +166,11 @@ def load_system_status(
         "n_snapshots": n_snapshots,
         "last_ingest": last_ingest,
         "operation_mode": load_operation_config(config_path).operation_mode,
+        # Phase 2 追加フィールド
+        "n_featured_rows": n_featured_rows,
+        "n_featured_cols": n_featured_cols,
+        "featured_min_race_id": featured_min_race_id,
+        "featured_max_race_id": featured_max_race_id,
     }
 
 

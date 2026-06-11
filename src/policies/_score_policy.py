@@ -15,6 +15,10 @@ CURRENT_ODDS = "current_odds"
 # predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ）
 _DROP_FOR_PREDICT = [ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK]
 
+# score_policy が参照する非特徴量列（枠番・馬番 + 除外列）。モデルの特徴量ではないが
+# 推論時に X へ残す必要がある列の単一の定義元（KeibaAI.calc_score が参照する）。
+META_COLS = [ResultsCols.UMABAN, ResultsCols.WAKUBAN, *_DROP_FOR_PREDICT]
+
 
 # common funcs
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
@@ -45,7 +49,7 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
         elif X_pred.shape[1] >= n:
             X_pred = X_pred.iloc[:, :n]
         else:
-            X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
+            X_pred = X_pred.reindex(columns=list(feat_names or []), fill_value=0)
         score = model.predict_proba(X_pred)[:, 1]
     score_table[_SCORE] = score
     # race_idに対応するwakuban_flagを結合

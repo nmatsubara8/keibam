@@ -27,8 +27,12 @@ class LocalPaths:
     RAW_PEDS_PATH: str = os.path.join(RAW_DIR, "peds.pkl")
     ### 段階オッズ スナップショットの集約 pickle（Layer2 学習データの蓄積先）
     RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
+    ### オッズ力学モデルの予測テーブル（チェックポイント別の次時点/確定予測）
+    RAW_ODDS_PREDICTIONS_PATH: str = os.path.join(RAW_DIR, "odds_predictions.pkl")
     ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）
     FEATURED_DATA_PATH: str = os.path.join(RAW_DIR, "featured_data.pkl")
+    ### Phase 2: dtype を完全保持する Parquet バックアップ（pyarrow が必要）
+    FEATURED_DATA_PARQUET_PATH: str = os.path.join(RAW_DIR, "featured_data.parquet")
 
     ### Phase 1: raw データの永続化先 SQLite ファイル
     ### pickle が消えても DB から再生成できるように、scrape 結果をここに upsert する。

@@ -20,6 +20,8 @@ KB 追加（§2）:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 
 
@@ -68,9 +70,9 @@ class NnWinModel:
         self._patience = patience
         self._min_delta = min_delta
         self._val_ratio = val_ratio
-        self._net = None
+        self._net: Any = None
 
-    def _build_net(self):
+    def _build_net(self) -> "Any":  # type: ignore[return]
         import torch
         from torch import nn
 

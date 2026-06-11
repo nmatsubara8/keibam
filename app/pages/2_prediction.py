@@ -99,9 +99,23 @@ with col_right:
     st.metric("使用率", f"{total_stake / op_config.bankroll * 100:.1f}%")
 
 # ------------------------------------------------------------------
-# Advisory モード: 承認ボタン
+# 発注カートへ追加（発注ページ 🛒 で金額編集・発注票出力・清算ができる）
 # ------------------------------------------------------------------
 st.divider()
+from app._order_service import add_orders
+from app._order_service import candidates_to_orders
+from app._order_service import load_basket
+from app._order_service import save_basket
+
+if st.button("🛒 発注カートへ追加"):
+    new_orders = candidates_to_orders(candidates)
+    basket = add_orders(load_basket(), new_orders)
+    save_basket(basket)
+    st.success(f"{len(new_orders)} 件をカートに追加しました（発注ページで確認・編集できます）。")
+
+# ------------------------------------------------------------------
+# Advisory モード: 承認ボタン
+# ------------------------------------------------------------------
 if op_config.operation_mode == ADVISORY:
     st.subheader("承認（Advisory モード）")
     st.caption("推奨を確認後、「承認して記録」ボタンを押すと投票履歴に保存されます。実際の馬券購入は人間が行ってください。")
