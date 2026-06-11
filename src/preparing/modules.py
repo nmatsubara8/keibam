@@ -55,15 +55,17 @@ def _flush_batch_to_pkl(self):
 def storing_process(self):
     self_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
     df = pd.read_csv(self_path)
+    # CSV 往復で付く index 由来のゴミ列（"Unnamed: N"）を除去する。
+    # これが最終列に残ると ID 列（kaisai_date / race_id）を取り違える。
+    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
     # 最終列（ID列: kaisai_date / race_id 等）を取り出して正規化する。
-    # race_id は大きな整数で float 表記（2.0e+11）になり得るため to_numeric→Int64→str。
+    # race_id は大きな整数で float 表記（2.0e+11）になり得るため to_numeric→int64→str。
     # 既存列への in-place 代入は dtype 不整合（LossySetitemError）になるので
     # 新しい Series を組み立てて target_data に渡す。
     col_name = df.columns[-1]
     ids = pd.to_numeric(df[col_name], errors="coerce").dropna().astype("int64").astype(str)
     ids = ids.sort_values().drop_duplicates().reset_index(drop=True)
     self.target_data = ids
-
     self.delete_files_tmp()
     self.save_temp_file(self.alias)
     self.target_data = df

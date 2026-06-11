@@ -240,6 +240,10 @@ class DataLoader:
         else:
             df = pd.read_csv(local_temp_file_path)
 
+        # CSV 往復で付与される index 由来のゴミ列（"Unnamed: N"）を除去する。
+        # これを残すと「ID は最終列」という規約が崩れ、日付/ race_id 列を
+        # 取り違える（kaisai_date のフィルタが全件 False になる等）。
+        df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
         return df
 
     def transfer_temp_file(self):
@@ -251,12 +255,16 @@ class DataLoader:
         if os.path.exists(to_target_file):
             try:
                 existing = pd.read_pickle(to_target_file)
+                # 既存 pkl 側の "Unnamed: N" ゴミ列も除去してから突き合わせる
+                existing = existing.loc[:, ~existing.columns.astype(str).str.match(r"^Unnamed")]
                 key_col = new_df.columns[-1]
                 if key_col in existing.columns:
                     old_only = existing[~existing[key_col].isin(new_df[key_col])]
                     new_df = pd.concat([old_only, new_df], ignore_index=True)
             except Exception:
                 pass
+        # 最終的にも "Unnamed: N" 列を残さない
+        new_df = new_df.loc[:, ~new_df.columns.astype(str).str.match(r"^Unnamed")]
         logger.debug("transfer: saved %d rows → %s", len(new_df), to_target_file)
         new_df.to_pickle(to_target_file)
 
