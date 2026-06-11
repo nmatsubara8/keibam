@@ -160,3 +160,44 @@ def test_ingest_run_saves_featured_data(tmp_path):
     job = IngestJob(_StubFetcher(), _StubBuilder(), cfg)
     job.run(["r1"])
     assert os.path.exists(cfg.featured_data_path)
+
+
+# ---------------------------------------------------------------------------
+# index 正規化（append_idempotent の前提を揃えるヘルパ）
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_race_id_index_from_range_index():
+    from src.pipeline._ingestion import normalize_race_id_index
+
+    df = pd.DataFrame({"race_id": [101, 102], "v": [1, 2]})
+    out = normalize_race_id_index(df)
+    assert out.index.name == "race_id"
+    assert list(out.index) == [101, 102]
+
+
+def test_normalize_race_id_index_already_indexed_is_noop():
+    from src.pipeline._ingestion import normalize_race_id_index
+
+    df = pd.DataFrame({"v": [1]}, index=pd.Index([101], name="race_id"))
+    out = normalize_race_id_index(df)
+    assert out is df
+
+
+def test_to_raw_format_restores_race_id_column():
+    from src.pipeline._ingestion import to_raw_format
+
+    df = pd.DataFrame({"v": [1, 2]}, index=pd.Index([101, 102], name="race_id"))
+    out = to_raw_format(df)
+    assert "race_id" in out.columns
+    assert list(out.index) == [0, 1]
+
+
+def test_append_idempotent_mixed_index_does_not_duplicate():
+    """既存(RangeIndex+race_id列)と新規(race_id index)を正規化してから比較すると二重化しない。"""
+    from src.pipeline._ingestion import normalize_race_id_index
+
+    existing = pd.DataFrame({"race_id": [101, 102], "v": [1, 2]})
+    new = pd.DataFrame({"v": [2, 3]}, index=pd.Index([102, 103], name="race_id"))
+    result = append_idempotent(normalize_race_id_index(existing), new)
+    assert sorted(result.index) == [101, 102, 103]

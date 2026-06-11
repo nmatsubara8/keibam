@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 import pandas as pd
 
 from src.policies._bet_policy import AbstractBetPolicy
@@ -15,13 +19,28 @@ class KeibaAI:
     def __init__(self, datasets: DataSplitter):
         self.__datasets = datasets
         self.__model_wrapper = ModelWrapper()
-        self._calibrated_model = None  # train_with_stacking 後に設定される
+        self._calibrated_model: Any = None  # train_with_stacking 後に設定される
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
+        self.feature_names_: list[str] | None = None  # 学習時の列順序（推論時の列整合用）
 
     @property
     def datasets(self):
         return self.__datasets
+
+    @property
+    def tuning_study_(self):
+        """直近の Optuna 探索 study（未実行なら None）。全 trial の成績・パラメータを持つ。"""
+        return getattr(self.__model_wrapper, "last_study_", None)
+
+    def set_lgb_params(self, params: dict) -> None:
+        """LightGBM ハイパーパラメータを外部から注入する。
+
+        保存済みのチューニング履歴（tuning_history.json）から選んだパラメータで
+        学習する場合に、train_without_tuning / train_with_stacking(with_tuning=False)
+        の前に呼ぶ。
+        """
+        self.__model_wrapper.set_params(params)
 
     def train_with_tuning(self):
         """
@@ -70,7 +89,7 @@ class KeibaAI:
         params = dict(self.__model_wrapper.params)
         params.setdefault("scale_pos_weight", TrainingWeights.SCALE_POS_WEIGHT)
         lgb_base = lgb.LGBMClassifier(**params)
-        base_models = [lgb_base]
+        base_models: list[Any] = [lgb_base]
         base_sample_weights = [ev_weights]
 
         # base②: NN（Entity Embedding）。専用 NN ストリーム（PreparedFeatures 経由で
@@ -108,6 +127,7 @@ class KeibaAI:
             self.__datasets.X_calib.values,
             self.__datasets.y_calib.values,
         )
+        self.feature_names_ = list(self.__datasets.X_base_train.columns)
 
     def __compute_base_ev_weights(self, x_base, y_base):
         """base_train でブートストラップ LightGBM を学習し EV境界重みを返す。
@@ -166,6 +186,34 @@ class KeibaAI:
         """
         score_policyを元に、馬の「勝ちやすさスコア」を計算する。
         train_with_stacking 済みの場合は較正済みスタッキングモデルを使用する。
+
+        feature_names_ が保存されている場合はライブ推論時の列不一致を自動修正する:
+        - 不足列は 0 埋め、余分な列は無視。
+        - score_policy が必要とする 枠番・馬番・単勝 等の非特徴量列は X から保持。
         """
+        import logging as _log
+        _logger = _log.getLogger(__name__)
         model = self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
+
+        # feature_names_ が保存済みでない旧モデルは datasets から補完する
+        feature_names: list[str] | None = getattr(self, "feature_names_", None)
+        if feature_names is None:
+            try:
+                feature_names = list(self.__datasets.X_base_train.columns)
+                self.feature_names_ = feature_names
+            except Exception:
+                pass
+
+        # feature_names_ が保存済みの場合: 列を学習時の順序・セットに揃える
+        if feature_names is not None:
+            from src.policies._score_policy import META_COLS
+            # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
+            meta_cols = [c for c in META_COLS if c in X.columns]
+            feat_cols = [c for c in feature_names if c not in meta_cols]
+            X_feat = X.reindex(columns=feat_cols, fill_value=0)
+            missing = [c for c in feat_cols if c not in X.columns]
+            if missing:
+                _logger.warning("calc_score: %d 列が X に存在しないため 0 で補完: %s ...", len(missing), missing[:5])
+            X = pd.concat([X[[c for c in meta_cols if c in X.columns]], X_feat], axis=1)
+
         return score_policy.calc(model, X)

@@ -26,7 +26,6 @@ from app._data_loader import snapshots_to_dataframe
 from app._formatters import snapshots_to_chart_df
 from src.constants._bet_types import BetType
 from src.constants._local_paths import LocalPaths
-from src.constants._odds_phases import OddsPhase
 
 st.set_page_config(page_title="オッズ推移 — KeibaAM", page_icon="📈", layout="wide")
 st.title("📈 オッズ推移モニタ")
@@ -107,10 +106,53 @@ else:
 if selected_bet == BetType.TANSHO:
     st.subheader("フェーズ間 オッズ変動サマリ")
     pivot_phase = df_race.pivot_table(index="combo", columns="phase", values="odds", aggfunc="last")
-    phases = [OddsPhase.PREV_DAY, OddsPhase.HOURS_BEFORE, OddsPhase.THIRTY_MIN, OddsPhase.JUST_BEFORE]
+    from src.constants._odds_phases import PHASE_TIMELINE
+    phases = list(PHASE_TIMELINE)
     existing_phases = [p for p in phases if p in pivot_phase.columns]
     if len(existing_phases) >= 2:
         pivot_phase = pivot_phase[existing_phases]
         st.dataframe(pivot_phase.round(1), use_container_width=True)
     else:
         st.info("フェーズが 2 つ以上揃うと変動幅を表示します。")
+
+
+# ------------------------------------------------------------------
+# オッズ力学モデルの照会（各時点の実績 vs 次時点・確定の予測）
+# ------------------------------------------------------------------
+st.subheader("🔮 オッズ力学モデル予測の照会")
+
+from app._odds_dynamics_compare import available_models
+from app._odds_dynamics_compare import available_races
+from app._odds_dynamics_compare import inquiry_matrix
+from src.pipeline.odds_watch import load_predictions
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_predictions():
+    return load_predictions()
+
+
+predictions = _load_predictions()
+pred_races = available_races(predictions)
+if not pred_races:
+    st.info(
+        "予測データがまだありません。開催日に `python -m src.pipeline.odds_watch --once` "
+        "がタイマー実行されると、チェックポイント（発走 30/10/5/1 分前）ごとの実績と"
+        "次時点・確定オッズの予測がここに表示されます。"
+    )
+else:
+    col_a, col_b = st.columns(2)
+    with col_a:
+        pred_race = st.selectbox("照会するレース", pred_races, key="pred_race")
+    with col_b:
+        pred_model = st.selectbox("モデル", available_models(predictions), key="pred_model")
+    matrix = inquiry_matrix(predictions, pred_race, pred_model)
+    if matrix.empty:
+        st.info("このレース・モデルの予測がありません。")
+    else:
+        st.dataframe(matrix.round(3), use_container_width=True)
+        st.caption(
+            "各時点（チェックポイント）の実績オッズと、その時点で計算した「次時点の予測シェア」"
+            "「発走時の予測確定オッズ」。最新の予測確定オッズは期待値計算"
+            "（config.yaml: use_predicted_odds: true）に自動で使われます。"
+        )

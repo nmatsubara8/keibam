@@ -276,15 +276,35 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
 
 
 ################################# Done ####################################
+# alias ごとの JS 描画完了セレクタ。db.netkeiba.com の馬ページは戦績テーブル
+# （table.db_h_race_results）を JS で描画するため、domcontentloaded 直後の HTML には
+# 含まれない。セレクタ未出現（新馬等で戦績なし）の場合は selector_timeout 後に
+# 取得済み内容をそのまま返す（PlaywrightScraper.fetch の仕様）。
+_SCRAPE_WAIT_SELECTORS = {
+    "horse_html": "table.db_h_race_results",
+}
+
+
 def scrape_html(self, ref_id, driver, waiting_time):
-    """from_location + ref_id の静的 HTML を取得する（race/horse/ped 共通）。
+    """from_location + ref_id の HTML を取得する（race/horse/ped 共通）。
 
     db.netkeiba.com は素の urlopen（UA なし）に HTTP 400 を返すため、
-    PlaywrightScraper（driver）経由で取得する。JS 描画不要なページなので
-    domcontentloaded で十分。戻り値は bin ファイル書き込み用に UTF-8 bytes。
+    PlaywrightScraper（driver）経由で取得する。alias によっては JS 描画完了を
+    待つ（_SCRAPE_WAIT_SELECTORS）。戻り値は bin ファイル書き込み用に UTF-8 bytes。
     """
+    from src.preparing._scraper import _looks_empty
+
     url = str(self.from_location) + str(ref_id)
-    html_str = driver.fetch_sync(url)
+    wait_selector = _SCRAPE_WAIT_SELECTORS.get(self.alias)
+    # ナビゲーション直後の空ページ（本文なし数十バイト）を稀に掴むため、
+    # 空判定時は短い待機を挟んで最大 3 回まで再取得する。
+    html_str = ""
+    for attempt in range(3):
+        html_str = driver.fetch_sync(url, wait_selector=wait_selector)
+        if not _looks_empty(html_str):
+            break
+        logger.warning("scrape_html: 空ページを検出 (%s, attempt %d/3)", ref_id, attempt + 1)
+        time.sleep(2 * (attempt + 1))
     return html_str.encode("utf-8")
 
 
@@ -382,62 +402,40 @@ def create_raw_race_results(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
 
-        # メインとなるレース結果テーブルデータを取得
-        df = pd.read_html(io.BytesIO(html))[0]
+        # メインとなるレース結果テーブルデータを取得。
+        # 旧年代（〜1990s）のページは空テーブルを含み、全テーブル一括の read_html が
+        # IndexError で落ちるため、summary 属性で対象テーブルだけを解析する
+        # （summary="レース結果" は 1986〜現在まで全年代で共通）。
+        df = pd.read_html(io.BytesIO(html), attrs={"summary": "レース結果"})[0]
 
         # htmlをsoupオブジェクトに変換
         soup = BeautifulSoup(html, "lxml")
-        # 馬IDをスクレイピング
-        horse_id_list = []
-        horse_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-            "a", attrs={"href": re.compile("^/horse")}
-        )
-        for a in horse_a_list:
-            horse_id = re.findall(r"\d+", a["href"])
-            horse_id_list.append(horse_id[0])
-        df["horse_id"] = horse_id_list
-        df["horse_id"].astype(int)
 
-        # 騎手IDをスクレイピング
-        jockey_id_list = []
-        jockey_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-            "a", attrs={"href": re.compile("^/jockey")}
-        )
-        for a in jockey_a_list:
-            #'jockey/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-            jockey_id = re.findall(r"jockey/result/recent/(\w*)", a["href"])
-            jockey_id_list.append(jockey_id[0])
+        # 馬・騎手・調教師・馬主の ID をスクレイピング。
+        # 旧年代（1970s 等）はリンクの無い行（未登録馬・データ未整備）があり、
+        # テーブル一括の find_all では行数と ID 数がずれるため、行単位で対応付ける
+        # （リンクが無いセルは None）。また旧 horse_id は "1972z00735" のような
+        # 英字混じりがあるため \d+ ではなく URL パスから \w+ で抽出する。
+        result_table = soup.find("table", attrs={"summary": "レース結果"})
+        body_rows = [tr for tr in result_table.find_all("tr") if tr.find("td") is not None]
+        if len(body_rows) != len(df):
+            raise ValueError(
+                f"レース結果テーブルの行数不一致 rows={len(body_rows)} df={len(df)}: {target_bin_file_path}"
+            )
 
-        df["jockey_id"] = jockey_id_list
-        df["jockey_id"].astype(str)
+        def _row_id(tr, href_pattern, id_regex):
+            a = tr.find("a", attrs={"href": re.compile(href_pattern)})
+            if a is None:
+                return None
+            m = re.search(id_regex, a["href"])
+            return m.group(1) if m else None
 
-        # 調教師IDをスクレイピング
-        trainer_id_list = []
-        trainer_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-            "a", attrs={"href": re.compile("^/trainer")}
-        )
-        for a in trainer_a_list:
-            #'trainer/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-            trainer_id = re.findall(r"trainer/result/recent/(\w*)", a["href"])
-            trainer_id_list.append(trainer_id[0])
+        df["horse_id"] = [_row_id(tr, "^/horse", r"/horse/(\w+)") for tr in body_rows]
+        df["jockey_id"] = [_row_id(tr, "^/jockey", r"jockey/result/recent/(\w+)") for tr in body_rows]
+        df["trainer_id"] = [_row_id(tr, "^/trainer", r"trainer/result/recent/(\w+)") for tr in body_rows]
+        df["owner_id"] = [_row_id(tr, "^/owner", r"owner/result/recent/(\w+)") for tr in body_rows]
 
-        df["trainer_id"] = trainer_id_list
-        df["trainer_id"].astype(str)
-
-        # 馬主IDをスクレイピング
-        owner_id_list = []
-        owner_a_list = soup.find("table", attrs={"summary": "レース結果"}).find_all(
-            "a", attrs={"href": re.compile("^/owner")}
-        )
-        for a in owner_a_list:
-            #'owner/result/recent/'より後ろの英数字(及びアンダーバー)を抽出
-            owner_id = re.findall(r"owner/result/recent/(\w*)", a["href"])
-            owner_id_list.append(owner_id[0])
-
-        df["owner_id"] = owner_id_list
-        df["owner_id"].astype(str)
-
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        race_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
         df["race_id"] = race_id
         df["race_id"].astype(int)
 
@@ -456,6 +454,10 @@ def create_raw_race_results(target_bin_file_path):
 
 # パターンにマッチする部分を抽出する関数を定義
 def convert_string(value):
+    # 旧年代（〜1990s）の馬戦績は 開催 列が欠損（NaN=float）のことがあるため、
+    # 文字列以外はそのまま返す（地方・海外遠征のない時代の欠損値）。
+    if not isinstance(value, str):
+        return value
     # 正規表現パターンを定義
     pattern = r"\d{0,2}([^\d]+)\d{0,2}"
     match = re.search(pattern, value)
@@ -486,7 +488,7 @@ def create_raw_horse_results(target_bin_file_path):
             # continue
 
         # インデックスをhorse_idにする
-        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
+        horse_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
         df["horse_id"].astype(int)
@@ -519,12 +521,19 @@ def create_raw_horse_info(target_bin_file_path):
         # 馬の基本情報を取得（bin は UTF-8 で保存されているため StringIO で解析）
         html_str = html.decode("utf-8", errors="replace")
         tables = pd.read_html(io.StringIO(html_str))
-        # プロフィールテーブルはインデックス1が基本だが、ページ構造によっては0の場合もある
+        # プロフィールテーブルは「生年月日」行を持つ 2 列テーブルで特定する。
+        # JS 描画後のページは 2 列テーブルが複数あり（次走予定・血統ミニ表等）、
+        # 「最初の 2 列テーブル」では血統表を誤って拾うことがある。
         profile_table = None
         for t in tables:
-            if t.shape[1] == 2 and t.iloc[:, 0].dtype == object:
+            if t.shape[1] == 2 and (t.iloc[:, 0].astype(str) == "生年月日").any():
                 profile_table = t
                 break
+        if profile_table is None:
+            for t in tables:
+                if t.shape[1] == 2 and t.iloc[:, 0].dtype == object:
+                    profile_table = t
+                    break
         if profile_table is None:
             if len(tables) < 2:
                 raise IndexError(f"馬プロフィールテーブルが見つかりません: {target_bin_file_path}")
@@ -587,7 +596,7 @@ def create_raw_horse_info(target_bin_file_path):
         df["breeder_id"] = breeder_id
 
         # インデックスをhorse_idにする
-        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
+        horse_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
         df.index = [horse_id] * len(df)
         df["horse_id"] = df.index
         df["horse_id"].astype(int)
@@ -610,7 +619,7 @@ def create_raw_horse_ped(target_bin_file_path):
         # horse_idを取得
 
         # htmlをsoupオブジェクトに変換
-        horse_id = re.findall(r"\d+", target_bin_file_path)[0]
+        horse_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
         html_str = html.decode("utf-8", errors="replace")
         soup = BeautifulSoup(html_str, "html.parser")
         df = pd.DataFrame()
@@ -622,14 +631,18 @@ def create_raw_horse_ped(target_bin_file_path):
             ped_table = soup.find("table", class_="blood_table")
         if ped_table is None:
             raise ValueError(f"血統テーブルが見つかりません: {target_bin_file_path}")
-        horse_a_list = ped_table.find_all(
-            "a", attrs={"href": re.compile(r"^/horse/\w{10}")}
-        )
+        # 血統セルの馬リンクは相対（/horse/<id>）と絶対（https://db.netkeiba.com/horse/<id>/）
+        # の両形式がある。各祖先には /horse/ped/<id>/・/horse/sire/<id>/ も併設される
+        # ため、パスが /horse/<id> で終わる直接リンクだけを対象にする。
+        ped_href_re = re.compile(r"(?:^|netkeiba\.com)/horse/(\w{10})/?$")
+        horse_a_list = ped_table.find_all("a", attrs={"href": ped_href_re})
 
         for a in horse_a_list:
             # 血統データのhorse_idを抜き出す
-            work_peds_id = re.findall(r"horse\W(\w{10})", a["href"])[0]
-            peds_id_list.append(work_peds_id)
+            m = ped_href_re.search(a["href"])
+            if m is None:
+                continue
+            peds_id_list.append(m.group(1))
 
         df[horse_id] = peds_id_list
 
@@ -656,14 +669,15 @@ def create_raw_race_return(target_bin_file_path):
         # 保存してあるbinファイルを読み込む
         html = f.read()
         html_bytes = html.replace(b"<br />", b"br")
-        dfs = pd.read_html(io.BytesIO(html_bytes))
-
-        # dfsの1番目に単勝〜馬連、2番目にワイド〜三連単がある
-        df = pd.concat([dfs[1], dfs[2]])
+        # 払戻テーブルは summary="払い戻し" で特定する（1986〜現在まで全年代で共通、
+        # 通常 2 表: 単勝〜馬連 / ワイド〜三連単。旧年代は馬券種が少ない）。
+        # テーブル位置 (dfs[1], dfs[2]) 前提だと旧ページの空テーブルで崩れる。
+        dfs = pd.read_html(io.BytesIO(html_bytes), attrs={"summary": "払い戻し"})
+        df = pd.concat(dfs)
         # 列名を整数に変更
 
         # インデックスをrace_idにする
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        race_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
         df.index = [race_id] * len(df)
         # df["race_id"].astype(int)
         df["race_id"] = df.index
@@ -709,7 +723,7 @@ def create_raw_race_info(target_bin_file_path):
         text2 = data_intro.find_all("p")[1].text
         # print(f"text1:{text1}")
         # print(f"text2:{text2}")
-        race_id = str(re.findall(r"\d+", target_bin_file_path)[0])
+        race_id = str(re.findall(r"\d+", os.path.basename(target_bin_file_path))[0])
         # print(f"race_id :{race_id}")
         # テキスト情報を解析してDataFrameに変換
         race_distance = re.search(r"\d+", text1.split("/")[0]).group()
@@ -791,10 +805,19 @@ def create_raw_race_info(target_bin_file_path):
                 if race_class in race_condition:
                     race_class_info = race_class
             if race_class_info is None:
+                # 2019 年のクラス名称変更以前（500万下/1000万下/1600万下 等）は
+                # 現行クラスへ正規化する
+                for legacy, modern in Master.RACE_CLASS_LEGACY_ALIASES.items():
+                    if legacy in race_condition:
+                        race_class_info = modern
+                        break
+            if race_class_info is None:
                 logger.warning("unknown race_class definition appeared:%s", race_id)
             # 向きを取得
 
-            if (around_info is None) and (("障害" in race_class_info or race_condition) or dart):
+            if (around_info is None) and (
+                ("障害" in (race_class_info or "") or race_condition) or dart
+            ):
                 around_info = "直線"
 
             for key, value in Master.RACE_CONDITION_DICT.items():
@@ -964,7 +987,7 @@ def create_tmp_race_info(target_bin_file_path):
         length = len(info)
 
         # インデックスをrace_idにする
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        race_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
         df.index = [race_id] * length
         df["id"] = range(1, length + 1)
         df["info"] = info
@@ -983,7 +1006,7 @@ def create_tmp_race_info(target_bin_file_path):
         info = re.findall(r"\w+", texts)
         logger.debug("info:%s", info)
         df = pd.DataFrame()
-        race_id = re.findall(r"\d+", target_bin_file_path)[0]
+        race_id = re.findall(r"\d+", os.path.basename(target_bin_file_path))[0]
 
         # 障害レースフラグを初期化
         hurdle_race_flg = False

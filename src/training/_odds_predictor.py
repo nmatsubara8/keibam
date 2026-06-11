@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from abc import ABC
 from abc import abstractmethod
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -65,7 +66,7 @@ class LgbOddsPredictor(AbstractOddsPredictor):
         self._feature_cols = list(feature_cols)
         self._current_col = current_odds_col
         self._lgb_params = lgb_params
-        self._model = None
+        self._model: Any = None
 
     def fit(self, features: pd.DataFrame, final_odds) -> "LgbOddsPredictor":
         import lightgbm as lgb

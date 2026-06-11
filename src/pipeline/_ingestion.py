@@ -76,9 +76,50 @@ def append_idempotent(existing: pd.DataFrame, new: pd.DataFrame) -> pd.DataFrame
     return pd.concat([existing, new_only])
 
 
+def normalize_race_id_index(df: pd.DataFrame) -> pd.DataFrame:
+    """race_id 列を index に正規化する（純粋関数）。
+
+    append_idempotent は index ベースで重複判定するため、既存・新規の両辺を
+    同じ index 形式に揃えてから比較する必要がある。片側だけ RangeIndex のままだと
+    全行が「新規」と誤判定され、テーブルが二重化する。
+    """
+    if df.empty:
+        return df
+    if "race_id" in df.columns and df.index.name != "race_id":
+        return df.set_index("race_id")
+    return df
+
+
+def to_raw_format(df: pd.DataFrame) -> pd.DataFrame:
+    """race_id index を通常列に戻し、raw pickle の正準形式（RangeIndex + race_id 列）にする。
+
+    raw pickle はスクレイピング直後の形式（RangeIndex + race_id 通常列）が正準で、
+    各 Processor が読み込み時に set_index する。index 形式のまま保存すると
+    race_id 列が失われ、後続の merge / DB upsert が壊れる。
+    """
+    if df.empty:
+        return df
+    if df.index.name == "race_id" and "race_id" not in df.columns:
+        return df.reset_index()
+    return df
+
+
 # ---------------------------------------------------------------------------
 # I/O ヘルパ（遅延 import の必要がある重い依存は持たない軽量 pandas 操作）
 # ---------------------------------------------------------------------------
+
+
+def _save_featured_phase2(featured: "pd.DataFrame", cfg: "IngestConfig") -> None:
+    """Phase 2: featured_data を Parquet 保存し、DB メタを記録する（non-fatal）。"""
+    try:
+        from src.constants._local_paths import LocalPaths
+        from src.storage._featured import save_featured_meta, save_parquet
+
+        parquet_path = LocalPaths.FEATURED_DATA_PARQUET_PATH
+        save_parquet(featured, parquet_path)
+        save_featured_meta(featured, parquet_path=parquet_path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ingest] Phase2 featured save failed (non-fatal): %s", e)
 
 
 def load_raw(path: str) -> pd.DataFrame:
@@ -89,9 +130,25 @@ def load_raw(path: str) -> pd.DataFrame:
 
 
 def save_raw(df: pd.DataFrame, path: str) -> None:
-    """pickle を保存する（ディレクトリは自動作成）。"""
+    """pickle を保存する（ディレクトリは自動作成）。
+
+    Phase 1: 保存先が RAW_*_PATH（PICKLE_PATH_TO_ALIAS に登録済み）の場合は
+    SQLite にも冪等 upsert する（pickle 揮発時の保険、non-fatal）。
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     df.to_pickle(path)
+
+    try:
+        from src.storage import PICKLE_PATH_TO_ALIAS
+        from src.storage import RawDataRepo
+
+        alias = PICKLE_PATH_TO_ALIAS.get(path)
+        if alias is None:
+            return  # featured_data 等は対象外（Phase 2 の _save_featured_phase2 が担う）
+        inserted = RawDataRepo().upsert(alias, df)
+        logger.info("[ingest] DB upsert %s: %d rows inserted", alias, inserted)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ingest] DB upsert 失敗 (non-fatal) %s: %s", path, e)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +220,15 @@ class IngestJob:
                 logger.warning("[ingest --force] DB delete 失敗 (non-fatal): %s", e)
 
         existing_results = load_raw(self._cfg.raw_results_path)
+        # race_id が通常列にあり index が RangeIndex の場合は race_id を index に正規化する。
+        # これにより existing_race_ids と fetch_results の index が揃い
+        # append_idempotent が正しく重複判定できる。
+        if (
+            not existing_results.empty
+            and "race_id" in existing_results.columns
+            and existing_results.index.name != "race_id"
+        ):
+            existing_results = existing_results.set_index("race_id")
         existing_ids = existing_race_ids(existing_results)
 
         # --force 時は重複判定をスキップして全候補を取り直す
@@ -179,28 +245,30 @@ class IngestJob:
 
         # results
         try:
-            new_results = self._fetcher.fetch_results(new_ids)
+            new_results = normalize_race_id_index(self._fetcher.fetch_results(new_ids))
             updated = append_idempotent(existing_results, new_results)
-            save_raw(updated, self._cfg.raw_results_path)
+            save_raw(to_raw_format(updated), self._cfg.raw_results_path)
         except Exception as e:
             logger.error("[ingest] fetch_results failed: %s", e)
             return {"status": "error", "message": str(e), "n_new": 0}
 
         # race_info（失敗しても results は保存済み）
         try:
-            new_info = self._fetcher.fetch_race_info(new_ids)
+            new_info = normalize_race_id_index(self._fetcher.fetch_race_info(new_ids))
             if not new_info.empty:
-                updated_info = append_idempotent(load_raw(self._cfg.raw_race_info_path), new_info)
-                save_raw(updated_info, self._cfg.raw_race_info_path)
+                existing_info = normalize_race_id_index(load_raw(self._cfg.raw_race_info_path))
+                updated_info = append_idempotent(existing_info, new_info)
+                save_raw(to_raw_format(updated_info), self._cfg.raw_race_info_path)
         except Exception as e:
             logger.warning("[ingest] fetch_race_info failed (non-fatal): %s", e)
 
         # return_tables（失敗しても継続）
         try:
-            new_ret = self._fetcher.fetch_return_tables(new_ids)
+            new_ret = normalize_race_id_index(self._fetcher.fetch_return_tables(new_ids))
             if not new_ret.empty:
-                updated_ret = append_idempotent(load_raw(self._cfg.raw_return_tables_path), new_ret)
-                save_raw(updated_ret, self._cfg.raw_return_tables_path)
+                existing_ret = normalize_race_id_index(load_raw(self._cfg.raw_return_tables_path))
+                updated_ret = append_idempotent(existing_ret, new_ret)
+                save_raw(to_raw_format(updated_ret), self._cfg.raw_return_tables_path)
         except Exception as e:
             logger.warning("[ingest] fetch_return_tables failed (non-fatal): %s", e)
 
@@ -208,10 +276,12 @@ class IngestJob:
         try:
             featured = self._builder.build(self._cfg)
             save_raw(featured, self._cfg.featured_data_path)
+            # Phase 2: Parquet バックアップ + DB メタ記録
+            _save_featured_phase2(featured, self._cfg)
         except Exception as e:
-            logger.warning("[ingest] featured_data build failed (non-fatal): %s", e)
+            logger.warning("[ingest] featured_data build failed (non-fatal): %s", e, exc_info=True)
 
-        n_total = len(existing_race_ids(load_raw(self._cfg.raw_results_path)))
+        n_total = len(existing_race_ids(normalize_race_id_index(load_raw(self._cfg.raw_results_path))))
         return {
             "status": "ok",
             "n_new": len(new_ids),

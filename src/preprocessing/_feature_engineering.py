@@ -78,10 +78,13 @@ class FeatureEngineering:
         extra_drops : col 以外に追加で drop する列名。
         """
         prefix = prefix if prefix is not None else f"{col}_"
+        if col not in self.__data.columns:
+            return self
         self.__data[col] = pd.Categorical(self.__data[col], list(categories))
         temp_data = pd.get_dummies(self.__data[col], prefix=prefix)
         self.__data = pd.concat([self.__data, temp_data], axis=1)
-        self.__data.drop([col, *extra_drops], axis=1, inplace=True)
+        drops = [col, *[c for c in extra_drops if c in self.__data.columns]]
+        self.__data.drop(drops, axis=1, inplace=True)
         return self
 
     def dumminize_race_type(self):

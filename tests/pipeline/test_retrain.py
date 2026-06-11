@@ -74,6 +74,16 @@ def test_save_and_load_metadata_roundtrip(tmp_path):
     assert history[1]["version"] == "v2"
 
 
+def test_save_metadata_replaces_same_version(tmp_path):
+    """同一 version の再保存は追記ではなく置き換え（同日再学習は pickle を上書きするため）。"""
+    path = str(tmp_path / "history.json")
+    save_metadata({"version": "v1", "auc_test": 0.72}, path)
+    save_metadata({"version": "v1", "auc_test": 0.75}, path)
+    history = load_metadata(path)
+    assert len(history) == 1
+    assert history[0]["auc_test"] == 0.75
+
+
 def test_load_metadata_missing_returns_empty(tmp_path):
     assert load_metadata(str(tmp_path / "nope.json")) == []
 
@@ -196,3 +206,36 @@ def test_retrain_job_records_n_races(tmp_path):
     job = RetrainJob(_StubFactory(), cfg)
     meta = job.run(df, vname="v1")
     assert meta["n_races"] == len(df.index.unique())
+
+
+def test_retrain_job_injects_lgb_params(tmp_path):
+    """lgb_params 指定時は set_lgb_params で注入され、メタに記録される。"""
+
+    class _ParamAwareAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            self.injected_params = None
+
+        def set_lgb_params(self, params):
+            self.injected_params = params
+
+    class _ParamFactory(_StubFactory):
+        def __init__(self):
+            super().__init__()
+            self.created = []
+
+        def create(self, featured_data, test_size, valid_size):
+            ai = _ParamAwareAI(featured_data)
+            self.created.append(ai)
+            return ai
+
+    factory = _ParamFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False)
+    job = RetrainJob(factory, cfg)
+    params = {"num_leaves": 31, "feature_fraction": 0.8}
+
+    meta = job.run(_make_featured(), vname="v_params", lgb_params=params, params_rank=2)
+
+    assert factory.created[0].injected_params == params
+    assert meta["params_rank"] == 2
+    assert meta["lgb_params"] == params
