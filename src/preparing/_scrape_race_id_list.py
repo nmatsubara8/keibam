@@ -150,16 +150,29 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     return _filter_requested(new_df, kaisai_date_list)
 
 
+def _kaisai_date_column(df: pd.DataFrame):
+    """8桁日付（YYYYMMDD）を多く含む列名を返す（kaisai_date 列の特定）。
+
+    race_id は12桁、kaisai_date は8桁なので桁数で区別できる。列の位置や名前に
+    依存せず内容で判定することで、CSV 往復や列構造の揺れに強くする。
+    見つからなければ None。
+    """
+    best_col, best_ratio = None, 0.0
+    for col in df.columns:
+        vals = df[col].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        ratio = vals.str.match(r"^\d{8}$").mean()
+        if ratio > best_ratio:
+            best_col, best_ratio = col, ratio
+    return best_col if best_ratio > 0.5 else None
+
+
 def _filter_requested(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
     """要求された kaisai_date に該当する race_id だけを返す（多段フォールバック）。
 
-    pkl の構造は実行経路により不安定（先頭列が kaisai_date のことも RangeIndex の
-    こともある）なため、複数の手段を順に試し、**正常データを取りこぼして空を返す**
-    事故を防ぐ:
-
-      (1) 先頭列が要求 kaisai_date（例 '20220108'）に一致する行
-      (2) 一致が無ければ race_id 先頭4桁＝要求年で絞る
-      (3) それでも空なら df 全体を返す（空は返さない）
+    優先順位:
+      (1) kaisai_date 列（8桁日付）を内容で特定し、要求日付に完全一致する行
+      (2) kaisai_date 列が無い場合のみ race_id 先頭4桁＝要求年で絞る
+      (3) それでも空なら df 全体を返す（空返し事故を防ぐ）
     """
     if kaisai_date_list is None or df is None or df.empty:
         return df
@@ -168,13 +181,17 @@ def _filter_requested(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
         kaisai_date_list.iloc[:, -1].astype(str).str.replace("-", "", regex=False).str[:8]
     )
 
-    # (1) 先頭列の kaisai_date 完全一致（新規スクレイプ分はここでヒットする）
-    first_col = df.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-    by_date = df[first_col.isin(requested)]
-    if not by_date.empty:
+    # (1) kaisai_date 列（8桁日付）を内容で特定して要求日付に完全一致で絞る。
+    #     月単位リクエストでも当該日のレースだけが返るようにする。
+    date_col = _kaisai_date_column(df)
+    if date_col is not None:
+        dates = df[date_col].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        by_date = df[dates.isin(requested)]
+        # 該当日付列が特定できた場合は、たとえ 0 件でもそれが正しい結果。
+        # （年フォールバックで他月を混ぜない）
         return by_date.reset_index(drop=True)
 
-    # (2) race_id 先頭4桁＝要求年で絞る
+    # (2) kaisai_date 列が無い → race_id 先頭4桁＝要求年で絞る
     valid_years = {d[:4] for d in requested if len(d) >= 4}
     race_id_col = df.columns[-1]
     by_year = df[df[race_id_col].astype(str).str[:4].isin(valid_years)]
