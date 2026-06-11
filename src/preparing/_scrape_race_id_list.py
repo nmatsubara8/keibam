@@ -28,9 +28,11 @@ def _covered_dates(df: pd.DataFrame) -> set:
     return set(df.index.astype(str).str.strip().unique())
 
 
-def _normalize_date(d: str) -> str:
-    """日付文字列をハイフンなし8桁に統一する（"2020-01-01" → "20200101"）。"""
-    return d.replace("-", "")[:8]
+def _normalize_date(d) -> str:
+    """日付文字列をハイフンなし8桁に統一する（"2020-01-01" → "20200101"）。NaN は空文字を返す。"""
+    if d is None or (isinstance(d, float) and d != d):  # NaN check
+        return ""
+    return str(d).replace("-", "")[:8]
 
 
 def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
@@ -82,8 +84,8 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     # ダウンロード対象の開催日を決定
     if kaisai_date_list is not None:
         date_col = kaisai_date_list.columns[-1]
-        all_dates = kaisai_date_list[date_col].astype(str).tolist()
-        missing_dates = [d for d in all_dates if _normalize_date(d) not in existing_dates]
+        all_dates = kaisai_date_list[date_col].dropna().astype(str).tolist()
+        missing_dates = [d for d in all_dates if _normalize_date(d) and _normalize_date(d) not in existing_dates]
     else:
         missing_dates = []
 
