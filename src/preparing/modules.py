@@ -191,9 +191,17 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
     url = str(self.from_location) + "?" + ref_id
     # print(f"url:{url}")
     soup = get_soup(url, driver, waiting_time)
-    a_list = soup.find("table", class_="Calendar_Table").find_all("a")
+    calendar_table = soup.find("table", class_="Calendar_Table")
+    if calendar_table is None:
+        logger.warning("Calendar_Table が見つかりません: %s", url)
+        return pd.DataFrame({"kaisai_data": []})
+    a_list = calendar_table.find_all("a")
     for a in a_list:
-        kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
+        found = re.findall(r"(?<=kaisai_date=)\d+", a.get("href", ""))
+        if found:
+            kaisai_date_list.append(found[0])
+        else:
+            logger.debug("kaisai_date= が見つからないリンクをスキップ: %s", a.get("href", ""))
     # print(f"kaisai_date_list:{kaisai_date_list}")
     # DataFrameを作成し、インデックスをリセットして整形する
     df = pd.DataFrame({"kaisai_data": kaisai_date_list}, index=[ref_ym] * len(kaisai_date_list))
