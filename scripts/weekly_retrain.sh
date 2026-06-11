@@ -5,6 +5,7 @@
 #   ./scripts/weekly_retrain.sh            # スタッキング有効（既定）
 #   ./scripts/weekly_retrain.sh --tuning   # Optuna ハイパラ探索あり（長時間）
 #   ./scripts/weekly_retrain.sh --no-stack # LightGBM 単体（高速確認用）
+#   ./scripts/weekly_retrain.sh --selected-params # UI で選択したハイパラで学習
 #
 # crontab 例（毎週月曜 3:00 に再学習）:
 #   0 3 * * 1 /path/to/keibam/scripts/weekly_retrain.sh >> /path/to/keibam/logs/cron.log 2>&1
@@ -30,10 +31,13 @@ trap 'notify_failure "weekly_retrain" "$TIMESTAMP_TAG" "$LOG_FILE"' ERR
 # オプション解析
 WITH_TUNING=""
 NO_STACKING=""
+SELECTED_PARAMS=""
 for arg in "$@"; do
     case "$arg" in
         --tuning)   WITH_TUNING="--with-tuning" ;;
         --no-stack) NO_STACKING="--no-stacking" ;;
+        # UI（モデルラボ）で選択・保存したハイパーパラメータで学習する
+        --selected-params) SELECTED_PARAMS="--use-selected-params" ;;
     esac
 done
 
@@ -51,6 +55,7 @@ fi
 python -m src.pipeline.run_pipeline retrain \
     ${WITH_TUNING} \
     ${NO_STACKING} \
+    ${SELECTED_PARAMS} \
     2>&1 | tee -a "$LOG_FILE"
 
 EXIT_CODE=${PIPESTATUS[0]}
