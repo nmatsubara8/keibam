@@ -6,6 +6,8 @@ import time
 
 import pandas as pd
 
+from src.constants._master import Master
+
 
 def _re_first_int(text: str, default: str = "0") -> str:
     """text から最初の連続数字を返す。見つからなければ default を返す。
@@ -73,7 +75,6 @@ def _fetch_with_retry(process_function, self, ref_id, driver, waiting_time,
                 logger.error("ブロックでリトライ上限 %s（%d 回）", ref_id, max_retry)
     return None, last_blocked
 
-from src.constants._master import Master
 
 NaN = float("nan")
 
@@ -1082,7 +1083,11 @@ def create_tmp_race_info(target_bin_file_path):
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         race_condition = (
-            race_condition.replace(age, "").replace("歳", "").replace(sex_info, "").replace(race_class_info or "", "").strip()
+            race_condition.replace(age, "")
+            .replace("歳", "")
+            .replace(sex_info, "")
+            .replace(race_class_info or "", "")
+            .strip()
         )
 
         # DataFrame作成歳
