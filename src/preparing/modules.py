@@ -8,6 +8,74 @@ import pandas as pd
 
 from src.constants._master import Master
 
+
+def _re_first_int(text: str, default: str = "0") -> str:
+    """text から最初の連続数字を返す。見つからなければ default を返す。
+
+    re.search(...).group() が None.group() でクラッシュするのを防ぐ
+    （古い/特殊なレース名で数字が無いケースに対応）。
+    """
+    m = re.search(r"\d+", text or "")
+    return m.group() if m else default
+
+
+# netkeiba が bot 検知・レート制限時に返す空ページ
+# （例: "<html><head></head><body></body></html>" ≒ 39 bytes）を判定する。
+_BLOCKED_BODY_RE = re.compile(r"<body[^>]*>\s*</body>", re.IGNORECASE)
+
+
+def is_blocked_html(html) -> bool:
+    """空/ブロックされた HTML かどうかを判定する。
+
+    bot 検知時の空ページ（body 空・極端に短い）を「取得失敗」として扱い、
+    39 バイト空ファイルの保存や古い temp の再処理を防ぐ。
+    """
+    if html is None:
+        return True
+    if isinstance(html, bytes):
+        try:
+            html = html.decode("utf-8", errors="ignore")
+        except Exception:
+            return True
+    text = html.strip()
+    if _BLOCKED_BODY_RE.search(text):  # body が空
+        return True
+    return False
+
+
+def _fetch_with_retry(process_function, self, ref_id, driver, waiting_time,
+                      max_retry: int = 4, backoff: float = 10.0):
+    """process_function を呼び、ブロック時は指数バックオフでリトライする。
+
+    Returns
+    -------
+    (return_data, blocked) : tuple
+        成功時は (取得データ, False)。失敗時は (None, blocked) で
+        blocked はブロック起因の失敗かどうか。
+    """
+    last_blocked = False
+    for attempt in range(max_retry + 1):
+        try:
+            return process_function(self, ref_id, driver, waiting_time), False
+        except Exception as e:
+            blocked = "blocked" in str(e).lower()
+            last_blocked = blocked
+            if not blocked:
+                # 通常エラー（中止レース等）はリトライせず即失敗として返す
+                logger.error("Error at %s: %s", ref_id, e)
+                return None, False
+            if attempt < max_retry:
+                wait = backoff * (2 ** attempt)  # 10, 20, 40, 80...
+                logger.warning(
+                    "ブロック検知 %s（%d/%d 回目）。%.0f 秒待機して再試行",
+                    ref_id, attempt + 1, max_retry, wait,
+                )
+                time.sleep(wait)
+            else:
+                logger.error("ブロックでリトライ上限 %s（%d 回）", ref_id, max_retry)
+    return None, last_blocked
+
+
 NaN = float("nan")
 
 logger = logging.getLogger(__name__)
@@ -53,22 +121,23 @@ def _flush_batch_to_pkl(self):
 
 
 def storing_process(self):
-    df = []
-    df_sorted = []
-    df_supressed = []
     self_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
     df = pd.read_csv(self_path)
-    df_copy = df.copy()
-    df_copy.iloc[:, -1] = df_copy.iloc[:, -1].astype(int)
-    # 最後の列にstrip()メソッドを適用する
-    df_copy.iloc[:, -1] = df_copy.iloc[:, -1].apply(lambda x: x.strip() if isinstance(x, str) else x)
-    df_sorted = df_copy.iloc[:, -1].sort_values()
-    df_supressed = df_sorted.drop_duplicates()
-    self.target_data = df_supressed.reset_index(drop=True)
-
+    # CSV 往復で付く index 由来のゴミ列（"Unnamed: N"）を除去する。
+    # これが最終列に残ると ID 列（kaisai_date / race_id）を取り違える。
+    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
+    # 最終列（ID列: race_id 等）で正規化・重複除去する。
+    # race_id は大きな整数で float 表記（2.0e+11）になり得るため to_numeric→int64→str。
+    # kaisai_date 等の他列は捨てずに保持する（月単位フィルタに必要）。
+    id_col = df.columns[-1]
+    df = df.copy()
+    df[id_col] = pd.to_numeric(df[id_col], errors="coerce")
+    df = df.dropna(subset=[id_col])
+    df[id_col] = df[id_col].astype("int64").astype(str)
+    df = df.drop_duplicates(subset=[id_col]).sort_values(id_col).reset_index(drop=True)
+    self.target_data = df
     self.delete_files_tmp()
     self.save_temp_file(self.alias)
-    self.target_data = df
 
     self.transfer_temp_file()
 
@@ -80,6 +149,16 @@ def process_pkl_file(self, process_function):
     process_functionを入れ替えながら汎用的に使う共通モジュール
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
     """
+    # 前回実行の temp CSV が残っていると、今回のスクレイプが空でも古いデータを
+    # 再処理してしまう（ブロック時に1年分の古い race_id が蘇る等）。実行前に消す。
+    temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    if os.path.exists(temp_path):
+        try:
+            os.remove(temp_path)
+            logger.debug("古い temp を削除: %s", temp_path)
+        except OSError as e:
+            logger.warning("temp 削除に失敗: %s (%s)", temp_path, e)
+
     if self.alias == "kaisai_date_list":
         # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数。
         # to_の月は含まないので注意。
@@ -120,6 +199,17 @@ def process_pkl_file(self, process_function):
     # implicitly_wait 相当は不要。waiting_time は後方互換のためのプレースホルダ。
     waiting_time = 30
 
+    # レート制限対策（環境変数で調整可能）:
+    #   KEIBA_SCRAPE_DELAY     リクエスト間の待機秒（デフォルト 1.0）
+    #   KEIBA_SCRAPE_MAX_RETRY ブロック時のリトライ回数（デフォルト 4）
+    #   KEIBA_SCRAPE_BACKOFF   バックオフ基準秒（デフォルト 10、指数増）
+    #   KEIBA_SCRAPE_ABORT_AFTER 連続ブロックがこの回数に達したら中断（デフォルト 5）
+    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+    max_retry = int(os.environ.get("KEIBA_SCRAPE_MAX_RETRY", "4"))
+    backoff = float(os.environ.get("KEIBA_SCRAPE_BACKOFF", "10"))
+    abort_after = int(os.environ.get("KEIBA_SCRAPE_ABORT_AFTER", "5"))
+    consecutive_blocks = 0  # 連続ブロック数（解消したら 0 に戻す）
+
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
         end_index = min((batch_index + 1) * self.batch_size, len(target_all_files))
@@ -128,20 +218,35 @@ def process_pkl_file(self, process_function):
         batch_data = []
         return_data = None  # 例外で process_function が完了しない場合への初期化
         for ref_id in batch_target_all_files:  #
-            try:
-                # print(f"ref_id:{ref_id}")
-                self.processing_id = ref_id
-                return_data = process_function(self, ref_id, driver, waiting_time)
-
-                time.sleep(0.2)  # サーバ負荷軽減の最小待機
-                batch_data.append(return_data)
-            # print(f"temp_df:{temp_df}")
-            except Exception as e:
-                logger.error("Error at %s: %s:%s", processed_files + 1, ref_id, e)
+            self.processing_id = ref_id
+            # ブロック検知時は指数バックオフでリトライする。
+            return_data, blocked = _fetch_with_retry(
+                process_function, self, ref_id, driver, waiting_time,
+                max_retry=max_retry, backoff=backoff,
+            )
+            if return_data is None:
+                # 取得失敗（通常エラー or ブロックでリトライ尽き）
+                if blocked:
+                    consecutive_blocks += 1
+                    logger.warning(
+                        "ブロック継続中（連続 %d 回）。レート制限の可能性: %s",
+                        consecutive_blocks, ref_id,
+                    )
+                    if consecutive_blocks >= abort_after:
+                        driver.close_sync()
+                        raise RuntimeError(
+                            f"連続 {consecutive_blocks} 回ブロックされたため中断します。"
+                            f"netkeiba のレート制限の可能性が高いです。"
+                            f"しばらく待ってから再実行してください"
+                            f"（KEIBA_SCRAPE_DELAY を増やすと緩和されます）"
+                        )
                 self.obtained_last_key = ref_id
                 pbar.update(1)
                 continue
 
+            consecutive_blocks = 0  # 成功したらリセット
+            time.sleep(delay)  # サーバ負荷軽減の待機（環境変数で調整可能）
+            batch_data.append(return_data)
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
             self.obtained_last_key = ref_id
@@ -185,15 +290,29 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
 
     # 取得したdate_rangeから、スクレイピング対象urlを作成する。
     # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
-    ref_id = "year=" + str(year) + "&month=" + str(month)
-    ref_ym = str(year) + str(month)
+    # netkeiba は month=01 のようなゼロ埋めだとカレンダーを返さないため、int に正規化して
+    # ゼロ埋めを外す（month=1）。
+    month = str(int(month))
+    ref_id = "year=" + str(year) + "&month=" + month
+    ref_ym = str(year) + month.zfill(2)
 
     url = str(self.from_location) + "?" + ref_id
     # print(f"url:{url}")
     soup = get_soup(url, driver, waiting_time)
-    a_list = soup.find("table", class_="Calendar_Table").find_all("a")
+    # 空/ブロックページなら「0件」と誤認せず明示的に失敗させる（レート制限の検知）。
+    if is_blocked_html(str(soup)):
+        raise ValueError(f"blocked/empty calendar page: {url}（レート制限の可能性）")
+    calendar_table = soup.find("table", class_="Calendar_Table")
+    if calendar_table is None:
+        logger.warning("Calendar_Table が見つかりません: %s", url)
+        return pd.DataFrame({"kaisai_data": []})
+    a_list = calendar_table.find_all("a")
     for a in a_list:
-        kaisai_date_list.append(re.findall(r"(?<=kaisai_date=)\d+", a["href"])[0])
+        found = re.findall(r"(?<=kaisai_date=)\d+", a.get("href", ""))
+        if found:
+            kaisai_date_list.append(found[0])
+        else:
+            logger.debug("kaisai_date= が見つからないリンクをスキップ: %s", a.get("href", ""))
     # print(f"kaisai_date_list:{kaisai_date_list}")
     # DataFrameを作成し、インデックスをリセットして整形する
     df = pd.DataFrame({"kaisai_data": kaisai_date_list}, index=[ref_ym] * len(kaisai_date_list))
@@ -252,10 +371,16 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
     # 現在のデフォルトレース一覧を返すことがあるため、年が一致する race_id だけ残す。
     expected_year = str(ref_id)[:4]
     race_id_list = []
-    df = pd.DataFrame({"race_id": []}, index=[])
+    # kaisai_date を named 列として保持する（index に置くと CSV 往復で Unnamed→NaN
+    # となり月単位フィルタができなくなる）。列順は [kaisai_date, race_id] とし、
+    # 「ID は最終列」という規約に合わせて race_id を末尾に置く。
+    df = pd.DataFrame({"kaisai_date": [], "race_id": []})
     try:
         # RaceList_Box の描画完了を待ってから HTML を取得
         html = driver.fetch_sync(url, wait_selector=".RaceList_Box")
+        # 空/ブロックページなら明示的に失敗させる（レート制限の検知）。
+        if is_blocked_html(html):
+            raise ValueError(f"blocked/empty race_list page: {url}（レート制限の可能性）")
         soup = BeautifulSoup(html, "lxml")
         box = soup.find(class_="RaceList_Box")
         a_list = box.find_all("a") if box is not None else []
@@ -267,7 +392,9 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
             # 年が一致しない race_id（=フォールバックで返った現在レース）は除外
             if len(race_id) > 0 and race_id[0][:4] == expected_year:
                 race_id_list.append(race_id[0])
-        df = pd.DataFrame({"race_id": race_id_list}, index=[ref_id] * len(race_id_list))
+        df = pd.DataFrame(
+            {"kaisai_date": [str(ref_id)] * len(race_id_list), "race_id": race_id_list}
+        )
     except Exception as e:
         logger.error("Error at %s: %s", ref_id, e)
         logger.error("error / obtained_last_key: %s", self.obtained_last_key)
@@ -305,6 +432,10 @@ def scrape_html(self, ref_id, driver, waiting_time):
             break
         logger.warning("scrape_html: 空ページを検出 (%s, attempt %d/3)", ref_id, attempt + 1)
         time.sleep(2 * (attempt + 1))
+    # 再取得しても空/ブロックページ（39バイト等）なら保存しない。ValueError を投げると
+    # process_bin_file 側でスキップされ、39バイト空 bin の量産を防ぐ。
+    if is_blocked_html(html_str):
+        raise ValueError(f"blocked/empty response for {ref_id} (len={len(html_str or '')})")
     return html_str.encode("utf-8")
 
 
@@ -726,7 +857,7 @@ def create_raw_race_info(target_bin_file_path):
         race_id = str(re.findall(r"\d+", os.path.basename(target_bin_file_path))[0])
         # print(f"race_id :{race_id}")
         # テキスト情報を解析してDataFrameに変換
-        race_distance = re.search(r"\d+", text1.split("/")[0]).group()
+        race_distance = _re_first_int(text1.split("/")[0])
         weather = text1.split("/")[1].split(":")[1].strip()
 
         if weather in Master.WEATHER_LIST:
@@ -754,8 +885,8 @@ def create_raw_race_info(target_bin_file_path):
                 around_info = None
 
         # 開催日数と開催回数を取得
-        race_day_count = re.search(r"\d+", race_name.split("日目")[0]).group()  # 開催日数
-        race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
+        race_day_count = _re_first_int(race_name.split("日目")[0])  # 開催日数
+        race_round_count = _re_first_int(race_name.split("回")[0])  # 開催回数
 
         # 開催場所を取得
         # place_id = None
@@ -814,7 +945,6 @@ def create_raw_race_info(target_bin_file_path):
             if race_class_info is None:
                 logger.warning("unknown race_class definition appeared:%s", race_id)
             # 向きを取得
-
             if (around_info is None) and (
                 ("障害" in (race_class_info or "") or race_condition) or dart
             ):
@@ -828,10 +958,10 @@ def create_raw_race_info(target_bin_file_path):
                     race_flags[value] = 0
 
         if "歳以上" in race_condition:
-            age = re.search(r"\d+", race_condition.split("歳以上")[0]).group() + "+"
+            age = _re_first_int(race_condition.split("歳以上")[0]) + "+"
 
         else:
-            age = re.search(r"\d+", race_condition.split("歳")[0]).group()
+            age = _re_first_int(race_condition.split("歳")[0])
         if race_condition is not None:
             # ageの処理を修正
             if age is not None and age != "":
@@ -894,7 +1024,7 @@ def create_tmp_race_info(target_bin_file_path):
         logger.debug("text2:%s", text2)
 
         # テキスト情報を解析してDataFrameに変換
-        race_distance = re.search(r"\d+", text1.split("/")[0]).group()
+        race_distance = _re_first_int(text1.split("/")[0])
         weather = text1.split("/")[1].split(":")[1].strip()
 
         if weather in Master.WEATHER_LIST:
@@ -924,8 +1054,8 @@ def create_tmp_race_info(target_bin_file_path):
         race_name = text2.split(" ")[1]
 
         # 開催日数と開催回数を取得
-        race_day_count = re.search(r"\d+", race_name.split("日目")[0]).group()  # 開催日数
-        race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
+        race_day_count = _re_first_int(race_name.split("日目")[0])  # 開催日数
+        race_round_count = _re_first_int(race_name.split("回")[0])  # 開催回数
 
         # 開催場所を取得
         place_id = None
@@ -935,7 +1065,7 @@ def create_tmp_race_info(target_bin_file_path):
                 place_name = key
         # 馬齢を取得
         race_condition = text2.split(" ")[2]
-        age = re.search(r"\d+", race_condition.split("歳")[0]).group()
+        age = _re_first_int(race_condition.split("歳")[0])
         # 性別を取得
         sex_info = None
         for sex in Master.SEX_LIST:
@@ -953,7 +1083,11 @@ def create_tmp_race_info(target_bin_file_path):
         # 不要な部分を削除
         # レース条件から年齢、性別、レースクラスを削除
         race_condition = (
-            race_condition.replace(age, "").replace("歳", "").replace(sex_info, "").replace(race_class_info, "").strip()
+            race_condition.replace(age, "")
+            .replace("歳", "")
+            .replace(sex_info, "")
+            .replace(race_class_info or "", "")
+            .strip()
         )
 
         # DataFrame作成歳

@@ -240,6 +240,10 @@ class DataLoader:
         else:
             df = pd.read_csv(local_temp_file_path)
 
+        # CSV 往復で付与される index 由来のゴミ列（"Unnamed: N"）を除去する。
+        # これを残すと「ID は最終列」という規約が崩れ、日付/ race_id 列を
+        # 取り違える（kaisai_date のフィルタが全件 False になる等）。
+        df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
         return df
 
     def transfer_temp_file(self):
@@ -261,6 +265,8 @@ class DataLoader:
                 except Exception as e:
                     logger.warning("transfer: 既存 pkl 読込失敗 %s: %s", candidate, e)
         if existing is not None and isinstance(existing, pd.DataFrame) and not existing.empty:
+            # 既存 pkl 側の "Unnamed: N" ゴミ列も除去してから突き合わせる
+            existing = existing.loc[:, ~existing.columns.astype(str).str.match(r"^Unnamed")]
             # マージキーは行の所属単位（レース系: race_id / 馬系: horse_id）。
             # 旧実装の columns[-1]（owner_id 等）では同一馬主の既存行まで落ちていた。
             key_col = next((k for k in ("race_id", "horse_id") if k in new_df.columns), None)
@@ -274,6 +280,8 @@ class DataLoader:
                     len(existing),
                 )
                 new_df = pd.concat([existing, new_df], ignore_index=True)
+        # 最終的にも "Unnamed: N" 列を残さない
+        new_df = new_df.loc[:, ~new_df.columns.astype(str).str.match(r"^Unnamed")]
         logger.info("transfer: saved %d rows → %s", len(new_df), to_target_file)
         new_df.to_pickle(to_target_file)
 
@@ -282,10 +290,29 @@ class DataLoader:
         for file in files:
             source_path = os.path.join(self.to_location, file)
             destination_path = os.path.join("./data/raw", file)
-            # Copy the file from source to destination
             try:
-                shutil.copy2(source_path, destination_path)
-                logger.info("File %s copied successfully.", file)
+                if destination_path.endswith(".pkl") and os.path.exists(destination_path):
+                    # 既存の data/raw pkl とマージ（race_id 等のキー列で重複除去）
+                    new_df = pd.read_pickle(source_path)
+                    existing_df = pd.read_pickle(destination_path)
+                    if not new_df.empty and not existing_df.empty:
+                        # 最終列をキーとして重複除去（新データ優先）
+                        key_col = new_df.columns[-1]
+                        if key_col in existing_df.columns:
+                            old_only = existing_df[~existing_df[key_col].isin(new_df[key_col])]
+                            merged = pd.concat([old_only, new_df], ignore_index=True)
+                            merged.to_pickle(destination_path)
+                            logger.info("File %s merged (existing=%d, new=%d, merged=%d rows).",
+                                        file, len(existing_df), len(new_df), len(merged))
+                        else:
+                            shutil.copy2(source_path, destination_path)
+                            logger.info("File %s copied (key col not found, overwritten).", file)
+                    else:
+                        shutil.copy2(source_path, destination_path)
+                        logger.info("File %s copied (one side empty).", file)
+                else:
+                    shutil.copy2(source_path, destination_path)
+                    logger.info("File %s copied successfully.", file)
             except FileNotFoundError:
                 logger.warning("File %s not found.", file)
             except IOError as e:

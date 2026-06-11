@@ -172,3 +172,44 @@ def load_system_status(
         "featured_min_race_id": featured_min_race_id,
         "featured_max_race_id": featured_max_race_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# DB 統計（Phase 2）
+# ---------------------------------------------------------------------------
+
+
+def load_db_stats() -> dict:
+    """テーブル別行数と DB ファイルサイズを返す。
+
+    Returns
+    -------
+    {
+      "table_counts": {alias: int},
+      "db_size_mb": float,
+    }
+    """
+    try:
+        from src.storage import TABLE_SPECS
+        from src.storage._db import get_engine
+        from sqlalchemy import text
+
+        engine = get_engine()
+        counts: dict[str, int] = {}
+        with engine.connect() as conn:
+            for alias, spec in TABLE_SPECS.items():
+                try:
+                    row = conn.execute(
+                        text(f'SELECT COUNT(*) FROM "{spec.table_name}"')
+                    ).fetchone()
+                    counts[alias] = int(row[0]) if row else 0
+                except Exception:
+                    counts[alias] = -1
+    except Exception:
+        counts = {}
+
+    db_size_mb = 0.0
+    if os.path.exists(LocalPaths.DB_PATH):
+        db_size_mb = os.path.getsize(LocalPaths.DB_PATH) / (1024 * 1024)
+
+    return {"table_counts": counts, "db_size_mb": db_size_mb}

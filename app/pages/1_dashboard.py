@@ -24,6 +24,7 @@ try:
 except ImportError:
     _HAS_AUTOREFRESH = False
 
+from app._data_loader import load_db_stats
 from app._data_loader import load_system_status
 from src.constants._local_paths import LocalPaths
 
@@ -87,6 +88,23 @@ for label, path in raw_files.items():
     status_rows.append({"データ": label, "状態": "✅" if exists else "❌", "最終更新": mtime, "サイズ": size_mb})
 
 st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+
+st.divider()
+
+# ------------------------------------------------------------------
+# DB 統計（Phase 2）
+# ------------------------------------------------------------------
+st.subheader("🗄️ データベース統計")
+db_stats = load_db_stats()
+if db_stats["table_counts"]:
+    db_rows = [
+        {"テーブル": alias, "行数": cnt if cnt >= 0 else "エラー"}
+        for alias, cnt in db_stats["table_counts"].items()
+    ]
+    st.dataframe(pd.DataFrame(db_rows), use_container_width=True, hide_index=True)
+    st.caption(f"DB ファイルサイズ: {db_stats['db_size_mb']:.1f} MB  ({LocalPaths.DB_PATH})")
+else:
+    st.info("DB が未初期化です。取込実行後に統計が表示されます。")
 
 st.divider()
 

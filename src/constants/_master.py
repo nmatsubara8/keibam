@@ -137,6 +137,12 @@ class Master:
         RACE_CLASS_G1,
     )
 
+    # 2019年クラス改編前の旧称（〜2019年）— RACE_CLASS_LIST とは別管理
+    RACE_CLASS_500: ClassVar[str] = "500万下"
+    RACE_CLASS_1000: ClassVar[str] = "1000万下"
+    RACE_CLASS_1600: ClassVar[str] = "1600万下"
+    RACE_CLASS_LIST_LEGACY: tuple = ("500万下", "1000万下", "1600万下")
+
     # 2019 年のクラス名称変更以前（〜2018）の旧条件クラス → 現行クラスへの正規化。
     # 賞金条件ベースの旧名称: 500万下=1勝クラス、1000万下=2勝クラス、1600万下=3勝クラス。
     # 900万下は 1984〜1995 年頃の旧体系（2勝クラス相当）。

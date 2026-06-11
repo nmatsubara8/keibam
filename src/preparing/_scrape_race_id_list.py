@@ -28,9 +28,11 @@ def _covered_dates(df: pd.DataFrame) -> set:
     return set(df.index.astype(str).str.strip().unique())
 
 
-def _normalize_date(d: str) -> str:
-    """日付文字列をハイフンなし8桁に統一する（"2020-01-01" → "20200101"）。"""
-    return d.replace("-", "")[:8]
+def _normalize_date(d) -> str:
+    """日付文字列をハイフンなし8桁に統一する（"2020-01-01" → "20200101"）。NaN は空文字を返す。"""
+    if d is None or (isinstance(d, float) and d != d):  # NaN check
+        return ""
+    return str(d).replace("-", "")[:8]
 
 
 def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
@@ -82,8 +84,8 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     # ダウンロード対象の開催日を決定
     if kaisai_date_list is not None:
         date_col = kaisai_date_list.columns[-1]
-        all_dates = kaisai_date_list[date_col].astype(str).tolist()
-        missing_dates = [d for d in all_dates if _normalize_date(d) not in existing_dates]
+        all_dates = kaisai_date_list[date_col].dropna().astype(str).tolist()
+        missing_dates = [d for d in all_dates if _normalize_date(d) and _normalize_date(d) not in existing_dates]
     else:
         missing_dates = []
 
@@ -148,16 +150,35 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     return _filter_requested(new_df, kaisai_date_list)
 
 
+def _kaisai_date_column(df: pd.DataFrame):
+    """kaisai_date 列名を返す（無ければ None）。
+
+    優先順位:
+      (1) 列名が 'kaisai_date' / 'kaisai_data'（旧データとの混在で 8桁日付の
+          割合が下がっても確実に拾う）
+      (2) 8桁日付（YYYYMMDD）を一定割合含む列（race_id は12桁なので桁数で区別）
+    """
+    # (1) 名前で確定
+    for name in ("kaisai_date", "kaisai_data"):
+        if name in df.columns:
+            return name
+    # (2) 内容で推定（8桁日付を1割以上含む列）
+    best_col, best_ratio = None, 0.0
+    for col in df.columns:
+        vals = df[col].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        ratio = vals.str.match(r"^\d{8}$").mean()
+        if ratio > best_ratio:
+            best_col, best_ratio = col, ratio
+    return best_col if best_ratio > 0.1 else None
+
+
 def _filter_requested(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
     """要求された kaisai_date に該当する race_id だけを返す（多段フォールバック）。
 
-    pkl の構造は実行経路により不安定（先頭列が kaisai_date のことも RangeIndex の
-    こともある）なため、複数の手段を順に試し、**正常データを取りこぼして空を返す**
-    事故を防ぐ:
-
-      (1) 先頭列が要求 kaisai_date（例 '20220108'）に一致する行
-      (2) 一致が無ければ race_id 先頭4桁＝要求年で絞る
-      (3) それでも空なら df 全体を返す（空は返さない）
+    優先順位:
+      (1) kaisai_date 列（8桁日付）を内容で特定し、要求日付に完全一致する行
+      (2) kaisai_date 列が無い場合のみ race_id 先頭4桁＝要求年で絞る
+      (3) それでも空なら df 全体を返す（空返し事故を防ぐ）
     """
     if kaisai_date_list is None or df is None or df.empty:
         return df
@@ -166,13 +187,17 @@ def _filter_requested(df: pd.DataFrame, kaisai_date_list) -> pd.DataFrame:
         kaisai_date_list.iloc[:, -1].astype(str).str.replace("-", "", regex=False).str[:8]
     )
 
-    # (1) 先頭列の kaisai_date 完全一致（新規スクレイプ分はここでヒットする）
-    first_col = df.iloc[:, 0].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-    by_date = df[first_col.isin(requested)]
-    if not by_date.empty:
+    # (1) kaisai_date 列（8桁日付）を内容で特定して要求日付に完全一致で絞る。
+    #     月単位リクエストでも当該日のレースだけが返るようにする。
+    date_col = _kaisai_date_column(df)
+    if date_col is not None:
+        dates = df[date_col].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+        by_date = df[dates.isin(requested)]
+        # 該当日付列が特定できた場合は、たとえ 0 件でもそれが正しい結果。
+        # （年フォールバックで他月を混ぜない）
         return by_date.reset_index(drop=True)
 
-    # (2) race_id 先頭4桁＝要求年で絞る
+    # (2) kaisai_date 列が無い → race_id 先頭4桁＝要求年で絞る
     valid_years = {d[:4] for d in requested if len(d) >= 4}
     race_id_col = df.columns[-1]
     by_year = df[df[race_id_col].astype(str).str[:4].isin(valid_years)]

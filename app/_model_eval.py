@@ -227,3 +227,152 @@ def compute_ev_sweep(
         rows.append({"threshold": th, "return_rate": rr, "sharpe_ratio": sharpe, "n_bets": n})
 
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# フルシミュレーション（AI 推奨通りに購入した場合の通算成績）
+# ---------------------------------------------------------------------------
+
+def compute_full_backtest(
+    model,
+    featured_data: pd.DataFrame,
+    ev_threshold: float = 1.5,
+    test_size: float = 0.2,
+    valid_size: float = 0.2,
+) -> dict:
+    """テストセット全レースで EV 閾値を超えた馬に単勝を賭けたときの通算成績。
+
+    Returns
+    -------
+    {
+      "summary": dict,          # return_rate, profit, hit_rate, n_bets, n_races,
+                                #   sharpe_ratio, max_drawdown, total_bet_amount
+      "per_race": pd.DataFrame, # race_id, n_bets, bet_amount, return_amount,
+                                #   hit_or_not, cumulative_profit
+    }
+    """
+    splits = _get_splits(featured_data, test_size, valid_size)
+    X_test = splits["X_test"]
+    X_test_model = splits["X_test_model"]
+    y_test = np.asarray(splits["y_test"])
+
+    try:
+        eff = getattr(model, "effective_model", model)
+        prob_win = np.asarray(eff.predict_proba(X_test_model.values))[:, 1]
+    except Exception:
+        return {"summary": {}, "per_race": pd.DataFrame()}
+
+    odds_arr = np.asarray(X_test[ResultsCols.TANSHO_ODDS], dtype=float)
+    ev_arr = prob_win * odds_arr
+    wins = (y_test == 1).astype(float)
+
+    # race_id はインデックスに格納されている
+    race_ids = X_test.index.to_numpy()
+
+    per_race_dict: dict = {}
+    for race_id, ev, odds, win in zip(race_ids, ev_arr, odds_arr, wins, strict=False):
+        if ev <= ev_threshold:
+            continue
+        payout = float(odds * win)
+        if race_id not in per_race_dict:
+            per_race_dict[race_id] = {"n_bets": 0, "bet_amount": 0.0, "return_amount": 0.0}
+        per_race_dict[race_id]["n_bets"] += 1
+        per_race_dict[race_id]["bet_amount"] += 1.0
+        per_race_dict[race_id]["return_amount"] += payout
+
+    if not per_race_dict:
+        return {"summary": {}, "per_race": pd.DataFrame()}
+
+    per_race_df = pd.DataFrame.from_dict(per_race_dict, orient="index")
+    per_race_df.index.name = "race_id"
+    per_race_df["hit_or_not"] = (per_race_df["return_amount"] > 0).astype(int)
+    per_race_df["profit"] = per_race_df["return_amount"] - per_race_df["bet_amount"]
+    per_race_df["cumulative_profit"] = per_race_df["profit"].cumsum()
+    per_race_df = per_race_df.reset_index()
+
+    from src.simulation._metrics import summarize_returns
+    summary = summarize_returns(per_race_df.set_index("race_id"))
+
+    return {"summary": summary, "per_race": per_race_df}
+
+
+# ---------------------------------------------------------------------------
+# 確信度（EV 閾値）スイープ（hit_rate / profit / max_drawdown も追加）
+# ---------------------------------------------------------------------------
+
+def compute_confidence_sweep(
+    model,
+    featured_data: pd.DataFrame,
+    thresholds: list[float] | None = None,
+    test_size: float = 0.2,
+    valid_size: float = 0.2,
+) -> pd.DataFrame:
+    """単勝 EV 閾値スイープ。return_rate / hit_rate / profit / max_drawdown / sharpe / n_bets を返す。
+
+    Returns
+    -------
+    pd.DataFrame (columns: threshold, return_rate, hit_rate, profit,
+                            max_drawdown, sharpe_ratio, n_bets)
+    """
+    if thresholds is None:
+        thresholds = [round(t, 2) for t in np.arange(1.0, 2.6, 0.1)]
+
+    splits = _get_splits(featured_data, test_size, valid_size)
+    X_test = splits["X_test"]
+    X_test_model = splits["X_test_model"]
+    y_test = np.asarray(splits["y_test"])
+
+    try:
+        eff = getattr(model, "effective_model", model)
+        prob_win = np.asarray(eff.predict_proba(X_test_model.values))[:, 1]
+    except Exception:
+        return pd.DataFrame(
+            columns=["threshold", "return_rate", "hit_rate", "profit",
+                     "max_drawdown", "sharpe_ratio", "n_bets"]
+        )
+
+    odds_arr = np.asarray(X_test[ResultsCols.TANSHO_ODDS], dtype=float)
+    ev_arr = prob_win * odds_arr
+    wins = (y_test == 1).astype(float)
+    race_ids = X_test.index.to_numpy()
+
+    rows = []
+    for th in thresholds:
+        mask = ev_arr > th
+        n = int(mask.sum())
+        if n == 0:
+            rows.append({
+                "threshold": th, "return_rate": float("nan"), "hit_rate": float("nan"),
+                "profit": float("nan"), "max_drawdown": float("nan"),
+                "sharpe_ratio": float("nan"), "n_bets": 0,
+            })
+            continue
+
+        payouts = odds_arr[mask] * wins[mask]
+        rr = float(payouts.sum()) / n
+        pnl = payouts - 1.0
+        profit = float(pnl.sum())
+        std = float(pnl.std()) if n > 1 else 0.0
+        sharpe = (rr - 1.0) / std if std > 0 else 0.0
+
+        # hit_rate: レース単位（同一 race_id で 1 頭でも的中したらヒット）
+        masked_race_ids = race_ids[mask]
+        masked_wins = wins[mask]
+        race_hit: dict = {}
+        for rid, w in zip(masked_race_ids, masked_wins, strict=False):
+            race_hit[rid] = race_hit.get(rid, 0) + w
+        n_races = len(race_hit)
+        n_hits = sum(1 for v in race_hit.values() if v > 0)
+        hit_rate = n_hits / n_races if n_races else 0.0
+
+        # max_drawdown: 賭け単位の損益系列から
+        from src.simulation._metrics import max_drawdown as _max_dd
+        pnl_series = pd.Series(pnl)
+        md = _max_dd(pnl_series)
+
+        rows.append({
+            "threshold": th, "return_rate": rr, "hit_rate": hit_rate,
+            "profit": profit, "max_drawdown": md, "sharpe_ratio": sharpe, "n_bets": n,
+        })
+
+    return pd.DataFrame(rows)

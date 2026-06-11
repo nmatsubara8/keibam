@@ -195,6 +195,60 @@ def best_ev_threshold(sweep_df: pd.DataFrame, min_bets: int = 5) -> float:
     return float(df.loc[df["return_rate"].idxmax(), "threshold"])
 
 
+def plot_confidence_sweep(
+    sweep_df: pd.DataFrame,
+    optimal_threshold: float | None = None,
+) -> "matplotlib.figure.Figure":
+    """確信度（EV 閾値）スイープ結果を 4 パネルで描画する。
+
+    Parameters
+    ----------
+    sweep_df : compute_confidence_sweep() の戻り値
+        columns: threshold, return_rate, hit_rate, profit, max_drawdown, sharpe_ratio, n_bets
+    optimal_threshold : 推奨閾値（赤破線で表示）
+    """
+    import matplotlib.pyplot as plt
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    fig.suptitle("確信度（EV 閾値）スイープ", fontsize=14)
+
+    th = sweep_df["threshold"]
+
+    panels = [
+        (axes[0, 0], "return_rate", "回収率", "回収率 (1.0 = 収支トントン)"),
+        (axes[0, 1], "hit_rate", "的中率", "的中率（レース単位）"),
+        (axes[1, 0], "sharpe_ratio", "シャープレシオ", "シャープレシオ"),
+        (axes[1, 1], "n_bets", "賭け回数", "賭け回数（賭け単位）"),
+    ]
+
+    for ax, col, title, ylabel in panels:
+        if col in sweep_df.columns:
+            ax.plot(th, sweep_df[col], marker="o", markersize=3)
+            if optimal_threshold is not None:
+                ax.axvline(
+                    optimal_threshold, color="red", linestyle="--",
+                    linewidth=1, label=f"推奨: {optimal_threshold:.2f}",
+                )
+                ax.legend(fontsize=8)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("EV 閾値")
+        ax.set_ylabel(ylabel, fontsize=8)
+        ax.grid(True, alpha=0.4)
+        if col == "return_rate":
+            ax.axhline(1.0, color="gray", linestyle=":", linewidth=1)
+
+    # max_drawdown を n_bets パネルに重ねて表示
+    if "max_drawdown" in sweep_df.columns:
+        ax2 = axes[1, 1].twinx()
+        ax2.plot(th, sweep_df["max_drawdown"], color="orange", linestyle="--", marker="s", markersize=3, label="最大DD")
+        ax2.set_ylabel("最大ドローダウン", fontsize=8, color="orange")
+        ax2.tick_params(axis="y", labelcolor="orange")
+        ax2.legend(loc="upper right", fontsize=8)
+
+    fig.tight_layout()
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # 新規: オッズ予測精度プロット
 # ---------------------------------------------------------------------------
