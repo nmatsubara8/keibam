@@ -36,8 +36,6 @@ def is_blocked_html(html) -> bool:
         except Exception:
             return True
     text = html.strip()
-    if len(text) < 200:  # 正常な netkeiba ページは数万バイト
-        return True
     if _BLOCKED_BODY_RE.search(text):  # body が空
         return True
     return False
