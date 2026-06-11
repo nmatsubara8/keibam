@@ -6,6 +6,16 @@ import time
 
 import pandas as pd
 
+
+def _re_first_int(text: str, default: str = "0") -> str:
+    """text から最初の連続数字を返す。見つからなければ default を返す。
+
+    re.search(...).group() が None.group() でクラッシュするのを防ぐ
+    （古い/特殊なレース名で数字が無いケースに対応）。
+    """
+    m = re.search(r"\d+", text or "")
+    return m.group() if m else default
+
 from src.constants._master import Master
 
 NaN = float("nan")
@@ -720,7 +730,7 @@ def create_raw_race_info(target_bin_file_path):
         race_id = str(re.findall(r"\d+", target_bin_file_path)[0])
         # print(f"race_id :{race_id}")
         # テキスト情報を解析してDataFrameに変換
-        race_distance = re.search(r"\d+", text1.split("/")[0]).group()
+        race_distance = _re_first_int(text1.split("/")[0])
         weather = text1.split("/")[1].split(":")[1].strip()
 
         if weather in Master.WEATHER_LIST:
@@ -748,8 +758,8 @@ def create_raw_race_info(target_bin_file_path):
                 around_info = None
 
         # 開催日数と開催回数を取得
-        race_day_count = re.search(r"\d+", race_name.split("日目")[0]).group()  # 開催日数
-        race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
+        race_day_count = _re_first_int(race_name.split("日目")[0])  # 開催日数
+        race_round_count = _re_first_int(race_name.split("回")[0])  # 開催回数
 
         # 開催場所を取得
         # place_id = None
@@ -812,10 +822,10 @@ def create_raw_race_info(target_bin_file_path):
                     race_flags[value] = 0
 
         if "歳以上" in race_condition:
-            age = re.search(r"\d+", race_condition.split("歳以上")[0]).group() + "+"
+            age = _re_first_int(race_condition.split("歳以上")[0]) + "+"
 
         else:
-            age = re.search(r"\d+", race_condition.split("歳")[0]).group()
+            age = _re_first_int(race_condition.split("歳")[0])
         if race_condition is not None:
             # ageの処理を修正
             if age is not None and age != "":
@@ -878,7 +888,7 @@ def create_tmp_race_info(target_bin_file_path):
         logger.debug("text2:%s", text2)
 
         # テキスト情報を解析してDataFrameに変換
-        race_distance = re.search(r"\d+", text1.split("/")[0]).group()
+        race_distance = _re_first_int(text1.split("/")[0])
         weather = text1.split("/")[1].split(":")[1].strip()
 
         if weather in Master.WEATHER_LIST:
@@ -908,8 +918,8 @@ def create_tmp_race_info(target_bin_file_path):
         race_name = text2.split(" ")[1]
 
         # 開催日数と開催回数を取得
-        race_day_count = re.search(r"\d+", race_name.split("日目")[0]).group()  # 開催日数
-        race_round_count = re.search(r"\d+", race_name.split("回")[0]).group()  # 開催回数
+        race_day_count = _re_first_int(race_name.split("日目")[0])  # 開催日数
+        race_round_count = _re_first_int(race_name.split("回")[0])  # 開催回数
 
         # 開催場所を取得
         place_id = None
@@ -919,7 +929,7 @@ def create_tmp_race_info(target_bin_file_path):
                 place_name = key
         # 馬齢を取得
         race_condition = text2.split(" ")[2]
-        age = re.search(r"\d+", race_condition.split("歳")[0]).group()
+        age = _re_first_int(race_condition.split("歳")[0])
         # 性別を取得
         sex_info = None
         for sex in Master.SEX_LIST:
