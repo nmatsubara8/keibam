@@ -265,10 +265,29 @@ class DataLoader:
         for file in files:
             source_path = os.path.join(self.to_location, file)
             destination_path = os.path.join("./data/raw", file)
-            # Copy the file from source to destination
             try:
-                shutil.copy2(source_path, destination_path)
-                logger.info("File %s copied successfully.", file)
+                if destination_path.endswith(".pkl") and os.path.exists(destination_path):
+                    # 既存の data/raw pkl とマージ（race_id 等のキー列で重複除去）
+                    new_df = pd.read_pickle(source_path)
+                    existing_df = pd.read_pickle(destination_path)
+                    if not new_df.empty and not existing_df.empty:
+                        # 最終列をキーとして重複除去（新データ優先）
+                        key_col = new_df.columns[-1]
+                        if key_col in existing_df.columns:
+                            old_only = existing_df[~existing_df[key_col].isin(new_df[key_col])]
+                            merged = pd.concat([old_only, new_df], ignore_index=True)
+                            merged.to_pickle(destination_path)
+                            logger.info("File %s merged (existing=%d, new=%d, merged=%d rows).",
+                                        file, len(existing_df), len(new_df), len(merged))
+                        else:
+                            shutil.copy2(source_path, destination_path)
+                            logger.info("File %s copied (key col not found, overwritten).", file)
+                    else:
+                        shutil.copy2(source_path, destination_path)
+                        logger.info("File %s copied (one side empty).", file)
+                else:
+                    shutil.copy2(source_path, destination_path)
+                    logger.info("File %s copied successfully.", file)
             except FileNotFoundError:
                 logger.warning("File %s not found.", file)
             except IOError as e:
