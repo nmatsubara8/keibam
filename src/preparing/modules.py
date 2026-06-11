@@ -195,8 +195,11 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
 
     # 取得したdate_rangeから、スクレイピング対象urlを作成する。
     # urlは例えば、https://race.netkeiba.com/top/calendar.html?year=2022&month=7 のような構造になっている。
-    ref_id = "year=" + str(year) + "&month=" + str(month)
-    ref_ym = str(year) + str(month)
+    # netkeiba は month=01 のようなゼロ埋めだとカレンダーを返さないため、int に正規化して
+    # ゼロ埋めを外す（month=1）。
+    month = str(int(month))
+    ref_id = "year=" + str(year) + "&month=" + month
+    ref_ym = str(year) + month.zfill(2)
 
     url = str(self.from_location) + "?" + ref_id
     # print(f"url:{url}")
