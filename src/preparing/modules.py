@@ -53,20 +53,16 @@ def _flush_batch_to_pkl(self):
 
 
 def storing_process(self):
-    df = []
-    df_sorted = []
-    df_supressed = []
     self_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
     df = pd.read_csv(self_path)
-    df_copy = df.copy()
-    # race_id は大きな整数（例: 200001010101）で float 表記になることがあるため
-    # NaN を除外してから Int64 変換し、文字列として扱う
-    last_col = df_copy.iloc[:, -1]
-    df_copy.iloc[:, -1] = pd.to_numeric(last_col, errors="coerce").dropna().astype("Int64").astype(str)
-    df_copy = df_copy[df_copy.iloc[:, -1].notna() & (df_copy.iloc[:, -1] != "")]
-    df_sorted = df_copy.iloc[:, -1].sort_values()
-    df_supressed = df_sorted.drop_duplicates()
-    self.target_data = df_supressed.reset_index(drop=True)
+    # 最終列（ID列: kaisai_date / race_id 等）を取り出して正規化する。
+    # race_id は大きな整数で float 表記（2.0e+11）になり得るため to_numeric→Int64→str。
+    # 既存列への in-place 代入は dtype 不整合（LossySetitemError）になるので
+    # 新しい Series を組み立てて target_data に渡す。
+    col_name = df.columns[-1]
+    ids = pd.to_numeric(df[col_name], errors="coerce").dropna().astype("int64").astype(str)
+    ids = ids.sort_values().drop_duplicates().reset_index(drop=True)
+    self.target_data = ids
 
     self.delete_files_tmp()
     self.save_temp_file(self.alias)

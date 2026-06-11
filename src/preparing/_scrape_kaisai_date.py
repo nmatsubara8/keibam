@@ -27,15 +27,22 @@ def scrape_kaisai_date(from_date: str = None, to_date: str = None, skip: bool = 
     cal = url_paths.CALENDAR_URL
     save_path = os.path.join(cal[4], cal[5])
 
+    from_8 = from_date.replace("-", "")[:8]
+    to_8 = to_date.replace("-", "")[:8]
+
+    def _filter_range(df):
+        """from_date/to_date の範囲内の日付だけに絞る（他年のキャッシュ混入を防ぐ）。"""
+        if df is None or df.empty:
+            return df
+        date_col = df.columns[-1]
+        dates = df[date_col].astype(str)
+        mask = (dates >= from_8) & (dates < to_8)
+        return df[mask]
+
     if skip and os.path.exists(save_path):
         cached = pd.read_pickle(save_path)
-        # from_date/to_date の範囲内の日付だけ返す（他年のキャッシュを混入させない）
-        date_col = cached.columns[-1]
-        from_8 = from_date.replace("-", "")[:8]
-        to_8 = to_date.replace("-", "")[:8]
-        mask = (cached[date_col].astype(str) >= from_8) & (cached[date_col].astype(str) < to_8)
-        filtered = cached[mask]
-        if not filtered.empty:
+        filtered = _filter_range(cached)
+        if filtered is not None and not filtered.empty:
             return filtered
         # キャッシュに該当範囲がなければ再スクレイピング
 
@@ -51,4 +58,5 @@ def scrape_kaisai_date(from_date: str = None, to_date: str = None, skip: bool = 
         to_date=to_date,
     )
     loader.scrape_kaisai_date()
-    return pd.read_pickle(save_path)
+    # スクレイプ後も全件 pkl から要求範囲だけ返す（過去年キャッシュの混入を防ぐ）
+    return _filter_range(pd.read_pickle(save_path))
