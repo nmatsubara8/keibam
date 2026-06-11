@@ -33,7 +33,7 @@ def _race_series(race_id, horse, prev_day, hours_before, thirty_min, just_before
         _snap(race_id, [horse], prev_day, OddsPhase.PREV_DAY, 1200),
         _snap(race_id, [horse], hours_before, OddsPhase.HOURS_BEFORE, 180),
         _snap(race_id, [horse], thirty_min, OddsPhase.THIRTY_MIN, 30),
-        _snap(race_id, [horse], just_before, OddsPhase.JUST_BEFORE, 5),
+        _snap(race_id, [horse], just_before, OddsPhase.T0, 1),
     ]
 
 
@@ -42,7 +42,7 @@ class TestSnapshotsToPhaseTable:
         snaps = _race_series("r1", 1, 4.0, 3.5, 3.0, 2.5)
         wide = snapshots_to_phase_table(snaps)
         assert wide.loc[("r1", "1"), f"odds_{OddsPhase.PREV_DAY}"] == 4.0
-        assert wide.loc[("r1", "1"), f"odds_{OddsPhase.JUST_BEFORE}"] == 2.5
+        assert wide.loc[("r1", "1"), f"odds_{OddsPhase.T0}"] == 2.5
 
     def test_filters_bet_type(self):
         snaps = [
@@ -84,10 +84,10 @@ class TestBuildTrainingFrame:
             # target なし
             _snap("r1", [1], 3.0, OddsPhase.THIRTY_MIN),
             # current なし
-            _snap("r1", [2], 2.5, OddsPhase.JUST_BEFORE),
+            _snap("r1", [2], 2.5, OddsPhase.T0),
             # 両方あり
             _snap("r1", [3], 6.0, OddsPhase.THIRTY_MIN),
-            _snap("r1", [3], 5.0, OddsPhase.JUST_BEFORE),
+            _snap("r1", [3], 5.0, OddsPhase.T0),
         ]
         features, final_odds, _ = build_training_frame(snaps)
         assert list(features.index) == [("r1", "3")]
@@ -96,14 +96,14 @@ class TestBuildTrainingFrame:
     def test_missing_earlier_phase_fills_zero_ratio(self):
         snaps = [
             _snap("r1", [1], 3.0, OddsPhase.THIRTY_MIN),
-            _snap("r1", [1], 2.5, OddsPhase.JUST_BEFORE),
+            _snap("r1", [1], 2.5, OddsPhase.T0),
         ]
         features, _, _ = build_training_frame(snaps)
         assert features.loc[("r1", "1"), f"log_ratio_{OddsPhase.PREV_DAY}"] == 0.0
 
     def test_invalid_current_phase_raises(self):
         with pytest.raises(ValueError):
-            build_training_frame([], current_phase=OddsPhase.JUST_BEFORE)
+            build_training_frame([], current_phase=OddsPhase.T0)
 
     def test_empty_snapshots(self):
         features, final_odds, feature_cols = build_training_frame([])

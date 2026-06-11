@@ -361,6 +361,42 @@ def _retrain(args: argparse.Namespace) -> None:
     logger.info("[retrain] %s", result)
 
 
+def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
+    """オッズ力学モデル（Dirichlet/Kalman/Particle/Ensemble）の比較評価ジョブ。
+
+    蓄積スナップショットを時系列 holdout で分割し、各モデルの精度を比較して
+    models/odds_dynamics_eval.json と models/odds_gravity.json を更新する。
+    結果はモデルラボの「オッズ力学モデル」タブに表示される。
+    """
+    from src.constants._bet_types import BetType
+    from src.constants._local_paths import LocalPaths
+    from src.preparing.odds_scheduler import load_snapshots
+    from src.training._odds_dynamics_eval import dynamics_eval_path
+    from src.training._odds_dynamics_eval import evaluate_dynamics_models
+    from src.training._odds_dynamics_eval import save_dynamics_eval
+    from src.training._odds_feature_builder import snapshots_to_phase_table
+    from src.training._odds_gravity import gravity_path
+    from src.training._odds_gravity import save_gravity
+    from src.training._simplex import race_share_sequences
+
+    snapshots = load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
+    if not snapshots:
+        logger.warning("[odds-dynamics] スナップショットがありません（odds_watch の蓄積待ち）")
+        return
+    table = snapshots_to_phase_table(snapshots, BetType.TANSHO)
+    sequences = race_share_sequences(table)
+    if len(sequences) < 5:
+        logger.warning("[odds-dynamics] 評価には 5 レース以上の系列が必要です（現在 %d）", len(sequences))
+        return
+
+    evaluation = evaluate_dynamics_models(sequences, holdout_frac=args.holdout_frac)
+    save_dynamics_eval(evaluation, dynamics_eval_path("models"))
+    save_gravity(evaluation["gravity"], gravity_path("models"))
+    for name, metrics in evaluation["results"].items():
+        logger.info("[odds-dynamics] %s: KL=%.4f mae=%.4f mape=%.3f",
+                    name, metrics["kl_mean"], metrics["share_mae"], metrics["odds_mape"])
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="継続学習パイプライン")
     sub = parser.add_subparsers(dest="job", required=True)
@@ -399,6 +435,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="UI（モデルラボ）で選択・保存したパラメータ（models/selected_params.json）で学習する",
     )
 
+    # evaluate-odds-dynamics サブコマンド
+    eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
+    eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
+
     return parser.parse_args(argv)
 
 
@@ -409,6 +449,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     if args.job == "ingest":
         _ingest(args)
+    elif args.job == "evaluate-odds-dynamics":
+        _evaluate_odds_dynamics(args)
     elif args.job == "retrain":
         _retrain(args)
 

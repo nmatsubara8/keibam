@@ -39,7 +39,7 @@ st.title("🧪 モデルラボ")
 
 SELECTED_PARAMS_PATH = os.path.join("models", "selected_params.json")
 
-tabs = st.tabs(["🔧 ハイパラ探索結果", "🆚 モデル比較シミュレーション"])
+tabs = st.tabs(["🔧 ハイパラ探索結果", "🆚 モデル比較シミュレーション", "📈 オッズ力学モデル"])
 
 
 @st.cache_data(show_spinner=False)
@@ -205,3 +205,50 @@ with tabs[1]:
             chart_df = align_profit_curves(profits)
             chart_df.index = pd.RangeIndex(1, len(chart_df) + 1, name="レース通番")
             st.line_chart(chart_df)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Tab 3: オッズ力学モデル（投票シェア予測）の比較
+# ──────────────────────────────────────────────────────────────────
+with tabs[2]:
+    from app._odds_dynamics_compare import eval_comparison_table
+    from src.training._odds_dynamics_eval import dynamics_eval_path
+    from src.training._odds_dynamics_eval import load_dynamics_eval
+
+    records = load_dynamics_eval(dynamics_eval_path("models"))
+    if not records:
+        st.info(
+            "オッズ力学モデルの評価結果がまだありません。スナップショットが蓄積されたら "
+            "`python -m src.pipeline.run_pipeline evaluate-odds-dynamics` を実行すると、"
+            "Dirichlet 回帰 / Kalman Filter / Particle Filter / アンサンブルの比較が"
+            "ここに表示されます。"
+        )
+    else:
+        st.markdown(
+            "投票シェアベクトル（Σ=1）の確率過程として締切オッズを予測する各モデルの"
+            " held-out 精度。**KL（実現シェア‖予測シェア）が小さいほど良い**。"
+        )
+        comp = eval_comparison_table(records)
+        display = comp.rename(
+            columns={
+                "kl_mean": "KL↓",
+                "winner_logloss": "勝ち馬logloss↓",
+                "share_mae": "シェアMAE↓",
+                "odds_mape": "オッズMAPE↓",
+                "ensemble_weight": "アンサンブル重み",
+                "n_test_races": "検証レース",
+                "n_train_races": "学習レース",
+            }
+        )
+        st.dataframe(
+            display.style.format({
+                "KL↓": "{:.4f}", "勝ち馬logloss↓": "{:.3f}", "シェアMAE↓": "{:.4f}",
+                "オッズMAPE↓": "{:.1%}", "アンサンブル重み": "{:.2f}",
+            }),
+            use_container_width=True,
+        )
+        st.bar_chart(comp["kl_mean"])
+        st.caption(
+            "アンサンブル重みは検証 KL の逆数比。最良の総合判断モデル（ensemble）の"
+            "予測確定オッズが odds_watch 経由で EV 計算に供給されます。"
+        )

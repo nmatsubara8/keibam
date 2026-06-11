@@ -103,6 +103,13 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("race_id", "captured_at", "bet_type", "combo"),
         index_col=None,
     ),
+    "raw_odds_predictions": TableSpec(
+        table_name="raw_odds_predictions",
+        # オッズ力学モデルのチェックポイント別予測（odds_watch が upsert する）。
+        # 同一チェックポイントの再計算は checkpoint キーが同じため IGNORE され冪等。
+        primary_key=("race_id", "checkpoint", "model", "umaban"),
+        index_col=None,
+    ),
 }
 
 
@@ -116,6 +123,7 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_HORSE_INFO_PATH: "raw_horse_info",
     LocalPaths.RAW_PEDS_PATH: "raw_peds",
     LocalPaths.RAW_ODDS_SNAPSHOT_PATH: "raw_odds_snapshots",
+    LocalPaths.RAW_ODDS_PREDICTIONS_PATH: "raw_odds_predictions",
 }
 
 

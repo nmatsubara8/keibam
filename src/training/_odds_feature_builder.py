@@ -26,10 +26,16 @@ from src.preparing._odds_snapshot import combo_to_str
 logger = logging.getLogger(__name__)
 
 # 説明変数に使えるフェーズ（締切から遠い順）。current_phase より前のフェーズだけ使う。
-_PHASE_SEQUENCE = (OddsPhase.PREV_DAY, OddsPhase.HOURS_BEFORE, OddsPhase.THIRTY_MIN)
+_PHASE_SEQUENCE = (
+    OddsPhase.PREV_DAY,
+    OddsPhase.HOURS_BEFORE,
+    OddsPhase.THIRTY_MIN,
+    OddsPhase.T10,
+    OddsPhase.T5,
+)
 
 # 目的変数のフェーズ（締切直前のオッズを確定オッズの代理とする）
-TARGET_PHASE = OddsPhase.JUST_BEFORE
+TARGET_PHASE = OddsPhase.T0
 
 
 def snapshots_to_phase_table(

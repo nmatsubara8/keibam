@@ -41,7 +41,10 @@ _VALID_PHASES = (
     OddsPhase.PREV_DAY,
     OddsPhase.HOURS_BEFORE,
     OddsPhase.THIRTY_MIN,
-    OddsPhase.JUST_BEFORE,
+    OddsPhase.T10,
+    OddsPhase.T5,
+    OddsPhase.T0,
+    OddsPhase.JUST_BEFORE,  # 旧名（後方互換）
 )
 
 
@@ -128,6 +131,31 @@ def build_race_post_times(
             out.append((race_id, base.replace(hour=int(hh), minute=int(mm))))
         except ValueError:
             logger.warning("発走時刻を解釈できません: race_id=%s time=%r", race_id, time_str)
+    return out
+
+
+def select_checkpoint_races(
+    pairs: Sequence[tuple[str, dt.datetime]],
+    now: dt.datetime,
+) -> list[tuple[str, dt.datetime, str]]:
+    """発走までの残分がチェックポイント（30/10/5/1 分前 ± 許容幅）にあるレースを選ぶ。
+
+    Returns
+    -------
+    list[(race_id, post_time, phase)] : 該当チェックポイントのフェーズ付き。
+    無駄な全レース取得を避け、タイマー実行（cron */2 分等）のたびに
+    「いま取るべきレース」だけを返す純粋関数。
+    """
+    from src.constants._odds_dynamics import CHECKPOINT_MINUTES
+    from src.constants._odds_dynamics import CHECKPOINT_TOLERANCE_MIN
+
+    out: list[tuple[str, dt.datetime, str]] = []
+    for race_id, post in pairs:
+        mtp = (post - now).total_seconds() / 60
+        for phase, minutes in CHECKPOINT_MINUTES.items():
+            if abs(mtp - minutes) <= CHECKPOINT_TOLERANCE_MIN:
+                out.append((race_id, post, phase))
+                break
     return out
 
 
