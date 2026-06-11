@@ -16,6 +16,32 @@ def _re_first_int(text: str, default: str = "0") -> str:
     m = re.search(r"\d+", text or "")
     return m.group() if m else default
 
+
+# netkeiba が bot 検知・レート制限時に返す空ページ
+# （例: "<html><head></head><body></body></html>" ≒ 39 bytes）を判定する。
+_BLOCKED_BODY_RE = re.compile(r"<body[^>]*>\s*</body>", re.IGNORECASE)
+
+
+def is_blocked_html(html) -> bool:
+    """空/ブロックされた HTML かどうかを判定する。
+
+    bot 検知時の空ページ（body 空・極端に短い）を「取得失敗」として扱い、
+    39 バイト空ファイルの保存や古い temp の再処理を防ぐ。
+    """
+    if html is None:
+        return True
+    if isinstance(html, bytes):
+        try:
+            html = html.decode("utf-8", errors="ignore")
+        except Exception:
+            return True
+    text = html.strip()
+    if len(text) < 200:  # 正常な netkeiba ページは数万バイト
+        return True
+    if _BLOCKED_BODY_RE.search(text):  # body が空
+        return True
+    return False
+
 from src.constants._master import Master
 
 NaN = float("nan")
@@ -91,6 +117,16 @@ def process_pkl_file(self, process_function):
     process_functionを入れ替えながら汎用的に使う共通モジュール
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
     """
+    # 前回実行の temp CSV が残っていると、今回のスクレイプが空でも古いデータを
+    # 再処理してしまう（ブロック時に1年分の古い race_id が蘇る等）。実行前に消す。
+    temp_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+    if os.path.exists(temp_path):
+        try:
+            os.remove(temp_path)
+            logger.debug("古い temp を削除: %s", temp_path)
+        except OSError as e:
+            logger.warning("temp 削除に失敗: %s (%s)", temp_path, e)
+
     if self.alias == "kaisai_date_list":
         # yyyy-mmの形式でfrom_とto_を指定すると、間のレース開催日一覧yyyy-mm-ddが返ってくる関数。
         # to_の月は含まないので注意。
@@ -205,6 +241,9 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
     url = str(self.from_location) + "?" + ref_id
     # print(f"url:{url}")
     soup = get_soup(url, driver, waiting_time)
+    # 空/ブロックページなら「0件」と誤認せず明示的に失敗させる（レート制限の検知）。
+    if is_blocked_html(str(soup)):
+        raise ValueError(f"blocked/empty calendar page: {url}（レート制限の可能性）")
     calendar_table = soup.find("table", class_="Calendar_Table")
     if calendar_table is None:
         logger.warning("Calendar_Table が見つかりません: %s", url)
@@ -281,6 +320,9 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
     try:
         # RaceList_Box の描画完了を待ってから HTML を取得
         html = driver.fetch_sync(url, wait_selector=".RaceList_Box")
+        # 空/ブロックページなら明示的に失敗させる（レート制限の検知）。
+        if is_blocked_html(html):
+            raise ValueError(f"blocked/empty race_list page: {url}（レート制限の可能性）")
         soup = BeautifulSoup(html, "lxml")
         box = soup.find(class_="RaceList_Box")
         a_list = box.find_all("a") if box is not None else []
@@ -312,6 +354,10 @@ def scrape_html(self, ref_id, driver, waiting_time):
     """
     url = str(self.from_location) + str(ref_id)
     html_str = driver.fetch_sync(url)
+    # 空/ブロックページ（39バイト等）は保存しない。ValueError を投げると
+    # process_bin_file 側でスキップされ、39バイト空 bin の量産を防ぐ。
+    if is_blocked_html(html_str):
+        raise ValueError(f"blocked/empty response for {ref_id} (len={len(html_str or '')})")
     return html_str.encode("utf-8")
 
 
