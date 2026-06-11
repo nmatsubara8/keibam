@@ -102,6 +102,13 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("race_id", "captured_at", "bet_type", "combo"),
         index_col=None,
     ),
+    # Phase 2: FeatureEngineering 出力（前処理済み特徴量）の永続化。
+    # featured_data の index は race_id、馬番は通常列として存在する。
+    "featured_data": TableSpec(
+        table_name="featured_data",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
 }
 
 
@@ -115,6 +122,7 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_HORSE_INFO_PATH: "raw_horse_info",
     LocalPaths.RAW_PEDS_PATH: "raw_peds",
     LocalPaths.RAW_ODDS_SNAPSHOT_PATH: "raw_odds_snapshots",
+    LocalPaths.FEATURED_DATA_PATH: "featured_data",
 }
 
 

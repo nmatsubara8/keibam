@@ -147,6 +147,11 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = _Builder().build(cfg_ing)
         featured_data.to_pickle(featured_path)
         logger.info("[retrain] featured_data.pkl を生成しました shape=%s", featured_data.shape)
+        try:
+            from src.storage import RawDataRepo
+            RawDataRepo().upsert("featured_data", featured_data)
+        except Exception as db_err:
+            logger.warning("[retrain] featured_data DB upsert failed (non-fatal): %s", db_err)
     else:
         featured_data = pd.read_pickle(featured_path)
 

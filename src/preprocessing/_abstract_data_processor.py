@@ -1,12 +1,37 @@
+from __future__ import annotations
+
 from abc import ABCMeta
 from abc import abstractmethod
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
+if TYPE_CHECKING:
+    from src.storage._repo import RawDataRepo
+
 
 class AbstractDataProcessor(metaclass=ABCMeta):
-    def __init__(self, filepath: str):
-        self.__raw_data = pd.read_pickle(filepath)
+    def __init__(
+        self,
+        filepath: str | None = None,
+        *,
+        repo: "RawDataRepo | None" = None,
+        alias: str | None = None,
+    ) -> None:
+        """raw データを読み込む。
+
+        Parameters
+        ----------
+        filepath : pickle ファイルパス（従来通り）。
+        repo : RawDataRepo インスタンス（DB 直読み時）。alias と合わせて指定する。
+        alias : TABLE_SPECS のキー（例 "featured_data"）。repo と合わせて指定する。
+        """
+        if filepath is not None:
+            self.__raw_data = pd.read_pickle(filepath)
+        elif repo is not None and alias is not None:
+            self.__raw_data = repo.read(alias)
+        else:
+            raise ValueError("filepath か (repo と alias) のどちらかを指定してください")
         self.__preprocessed_data = self._preprocess()
 
     @abstractmethod

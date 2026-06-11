@@ -208,6 +208,12 @@ class IngestJob:
         try:
             featured = self._builder.build(self._cfg)
             save_raw(featured, self._cfg.featured_data_path)
+            # Phase 2: featured_data も DB に冪等 upsert（失敗は非致命的）
+            try:
+                from src.storage import RawDataRepo
+                RawDataRepo().upsert("featured_data", featured)
+            except Exception as db_err:
+                logger.warning("[ingest] featured_data DB upsert failed (non-fatal): %s", db_err)
         except Exception as e:
             logger.warning("[ingest] featured_data build failed (non-fatal): %s", e)
 
