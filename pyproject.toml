@@ -105,4 +105,5 @@ files = [
     "app/_formatters.py",
     "app/_prediction_service.py",
     "app/_model_eval.py",
+    "app/_tuning_job.py",
 ]

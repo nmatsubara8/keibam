@@ -31,6 +31,10 @@ from app._model_compare import cumulative_profit
 from app._model_compare import recent_race_slice
 from app._model_compare import simulate_model
 from app._model_eval import load_featured_data
+from app._tuning_job import refresh_job_status
+from app._tuning_job import start_tuning_job
+from app._tuning_job import stop_tuning_job
+from app._tuning_job import tail_log
 from src.training._tuning_history import load_tuning_history
 from src.training._tuning_history import tuning_history_path
 
@@ -56,11 +60,62 @@ def _load_model(version: str):
 # Tab 1: ハイパラ探索結果（成績順）と選択
 # ──────────────────────────────────────────────────────────────────
 with tabs[0]:
+    # ──────────────────────────────────────────────────────────────
+    # Optuna 探索の起動 + 状態監視（subprocess デタッチ起動）
+    # ──────────────────────────────────────────────────────────────
+    st.subheader("⚙️ Optuna 探索を起動")
+    job = refresh_job_status("models")
+    running = bool(job and job.get("status") == "running")
+
+    if running:
+        st.warning(
+            f"🟢 探索ジョブ実行中（pid={job.get('pid')} / 開始 {job.get('started_at', '')[:16]}）。"
+            "完了まで時間がかかります（フル探索で約 2 時間）。"
+        )
+        cols = st.columns([1, 1, 4])
+        with cols[0]:
+            if st.button("🔄 状態を更新"):
+                st.rerun()
+        with cols[1]:
+            if st.button("🛑 中止", help="探索プロセスに SIGTERM を送って停止します"):
+                stop_tuning_job("models")
+                st.rerun()
+    else:
+        if job:
+            _icon = {"completed": "✅", "failed": "❌", "cancelled": "⏹️", "unknown": "⚠️"}.get(
+                job.get("status"), "ℹ️"
+            )
+            st.caption(
+                f"{_icon} 前回ジョブ: {job.get('status')} "
+                f"(終了コード {job.get('exit_code')} / {job.get('finished_at', '') or '—'})"
+            )
+        st.caption(
+            "下のボタンで `retrain --with-tuning` をバックグラウンド起動します。"
+            "完了後、探索結果がこのタブに成績順で表示されます。"
+        )
+        ack = st.checkbox("約 2 時間かかること・完了後は再学習が走ることを理解しました")
+        if st.button("🚀 Optuna 探索を起動", type="primary", disabled=not ack):
+            try:
+                started = start_tuning_job("models")
+                st.success(f"探索ジョブを起動しました（pid={started['pid']}）。")
+                st.rerun()
+            except RuntimeError as e:
+                st.error(str(e))
+
+    # 実行ログ（末尾）。実行中・直後の確認用。
+    _log = tail_log("models", n=30)
+    if _log:
+        with st.expander("実行ログ（末尾 30 行）", expanded=running):
+            st.code(_log, language="text")
+
+    st.divider()
+
     history = load_tuning_history(tuning_history_path("models"))
     if not history:
         st.info(
-            "チューニング履歴がありません。`python -m src.pipeline.run_pipeline retrain --with-tuning` "
-            "を実行すると、Optuna の全探索結果が成績順でここに表示されます。"
+            "チューニング履歴がありません。上の「🚀 Optuna 探索を起動」ボタン、または "
+            "`python -m src.pipeline.run_pipeline retrain --with-tuning` を実行すると、"
+            "Optuna の全探索結果が成績順でここに表示されます。"
         )
     else:
         versions = sorted({r["version"] for r in history}, reverse=True)
