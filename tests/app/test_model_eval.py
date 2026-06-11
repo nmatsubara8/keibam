@@ -13,7 +13,9 @@ from app._model_eval import (
     _get_splits,
     _split_by_date,
     compute_calib_curves,
+    compute_confidence_sweep,
     compute_ev_sweep,
+    compute_full_backtest,
     compute_stacking_auc,
     load_featured_data,
 )
@@ -271,3 +273,120 @@ def test_compute_ev_sweep_fallback_for_plain_model():
     df = compute_ev_sweep(_StubModel(), feat, thresholds=[1.0, 1.5])
     assert isinstance(df, pd.DataFrame)
     assert len(df) == 2
+
+
+# ---------------------------------------------------------------------------
+# compute_full_backtest
+# ---------------------------------------------------------------------------
+
+def test_compute_full_backtest_summary_and_per_race():
+    feat = _make_featured(n_races=20, horses_per_race=6)
+    out = compute_full_backtest(_StubModel(), feat, ev_threshold=1.0)
+
+    assert set(out.keys()) == {"summary", "per_race"}
+    summary, per_race = out["summary"], out["per_race"]
+    # summary は summarize_returns 由来の主要キーを持つ
+    for key in ("return_rate", "profit", "n_bets", "n_races"):
+        assert key in summary
+    # per_race の必須列
+    for col in ("race_id", "n_bets", "bet_amount", "return_amount",
+                "hit_or_not", "profit", "cumulative_profit"):
+        assert col in per_race.columns
+
+
+def test_compute_full_backtest_cumulative_profit_is_cumsum():
+    feat = _make_featured(n_races=25, horses_per_race=5)
+    per_race = compute_full_backtest(_StubModel(), feat, ev_threshold=1.0)["per_race"]
+    assert not per_race.empty
+    expected = per_race["profit"].cumsum().to_numpy()
+    np.testing.assert_allclose(per_race["cumulative_profit"].to_numpy(), expected)
+
+
+def test_compute_full_backtest_bet_amount_and_payout():
+    feat = _make_featured(n_races=20, horses_per_race=6)
+    per_race = compute_full_backtest(_StubModel(), feat, ev_threshold=1.0)["per_race"]
+    # 1 馬券 = 1.0 単位、profit = return_amount - bet_amount
+    assert (per_race["bet_amount"] == per_race["n_bets"].astype(float)).all()
+    np.testing.assert_allclose(
+        per_race["profit"].to_numpy(),
+        (per_race["return_amount"] - per_race["bet_amount"]).to_numpy(),
+    )
+    # hit_or_not は return_amount>0 と一致
+    assert (per_race["hit_or_not"] == (per_race["return_amount"] > 0).astype(int)).all()
+
+
+def test_compute_full_backtest_no_bets_returns_empty():
+    feat = _make_featured(n_races=20, horses_per_race=6)
+    out = compute_full_backtest(_StubModel(), feat, ev_threshold=10_000.0)
+    assert out["summary"] == {}
+    assert out["per_race"].empty
+
+
+def test_compute_full_backtest_predict_failure_returns_empty():
+    class _Boom:
+        def predict_proba(self, x):
+            raise RuntimeError("boom")
+
+    feat = _make_featured(n_races=10, horses_per_race=4)
+    out = compute_full_backtest(_Boom(), feat)
+    assert out["summary"] == {}
+    assert out["per_race"].empty
+
+
+# ---------------------------------------------------------------------------
+# compute_confidence_sweep
+# ---------------------------------------------------------------------------
+
+_SWEEP_COLS = {"threshold", "return_rate", "hit_rate", "profit",
+               "max_drawdown", "sharpe_ratio", "n_bets"}
+
+
+def test_compute_confidence_sweep_columns_and_rows():
+    feat = _make_featured(n_races=20, horses_per_race=6)
+    thresholds = [1.0, 1.5, 2.0]
+    df = compute_confidence_sweep(_StubModel(), feat, thresholds=thresholds)
+    assert _SWEEP_COLS.issubset(df.columns)
+    assert len(df) == len(thresholds)
+
+
+def test_compute_confidence_sweep_n_bets_monotonic_non_increasing():
+    feat = _make_featured(n_races=30, horses_per_race=8)
+    df = compute_confidence_sweep(
+        _StubModel(), feat, thresholds=[1.0, 1.5, 2.0, 2.5, 3.0]
+    )
+    n_bets = df["n_bets"].to_numpy()
+    assert all(n_bets[i] >= n_bets[i + 1] for i in range(len(n_bets) - 1))
+
+
+def test_compute_confidence_sweep_zero_bet_row_is_nan():
+    feat = _make_featured(n_races=20, horses_per_race=6)
+    df = compute_confidence_sweep(_StubModel(), feat, thresholds=[10_000.0])
+    row = df.iloc[0]
+    assert int(row["n_bets"]) == 0
+    assert np.isnan(row["return_rate"])
+    assert np.isnan(row["hit_rate"])
+
+
+def test_compute_confidence_sweep_hit_rate_in_unit_range():
+    feat = _make_featured(n_races=25, horses_per_race=6)
+    df = compute_confidence_sweep(_StubModel(), feat, thresholds=[1.0, 1.5])
+    valid = df.dropna(subset=["hit_rate"])
+    assert ((valid["hit_rate"] >= 0.0) & (valid["hit_rate"] <= 1.0)).all()
+
+
+def test_compute_confidence_sweep_default_thresholds():
+    feat = _make_featured(n_races=15, horses_per_race=5)
+    df = compute_confidence_sweep(_StubModel(), feat)
+    # 既定 thresholds は np.arange(1.0, 2.6, 0.1) = 16 段階
+    assert len(df) == 16
+
+
+def test_compute_confidence_sweep_predict_failure_returns_empty():
+    class _Boom:
+        def predict_proba(self, x):
+            raise RuntimeError("boom")
+
+    feat = _make_featured(n_races=10, horses_per_race=4)
+    df = compute_confidence_sweep(_Boom(), feat, thresholds=[1.0])
+    assert df.empty
+    assert _SWEEP_COLS.issubset(df.columns)

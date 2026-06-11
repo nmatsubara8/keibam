@@ -80,6 +80,17 @@ def load_model_by_version(version: str, models_dir: str = "models"):
     raise FileNotFoundError(f"バージョン '{version}' のモデルが見つかりません: {models_dir}")
 
 
+def load_model_from_path(path: str):
+    """指定した .pickle パスのモデルを読み込む（version 名の曖昧一致を避ける厳密版）。
+
+    UI でユーザーが選んだバージョンを適用する際、`find_model_paths()` が返す
+    実ファイルパスをそのまま渡せば、version 名の部分一致による取り違えが起きない。
+    """
+    from src.training._keiba_ai_factory import KeibaAIFactory
+
+    return KeibaAIFactory.load(path)
+
+
 # ---------------------------------------------------------------------------
 # オッズ スナップショット
 # ---------------------------------------------------------------------------

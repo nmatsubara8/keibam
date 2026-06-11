@@ -15,6 +15,26 @@ from src.pipeline._ingestion import load_raw
 from src.pipeline._ingestion import save_raw
 
 
+@pytest.fixture(autouse=True)
+def _isolate_side_effect_paths(tmp_path, monkeypatch):
+    """IngestJob の副作用パスを tmp に隔離する。
+
+    IngestJob.run は featured 再生成時に `LocalPaths.DB_PATH`（featured_data_meta）と
+    `LocalPaths.FEATURED_DATA_PARQUET_PATH` へ書き込むため、実リポジトリの
+    data/keibam.db / data/raw/featured_data.parquet を汚さないよう差し替える。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.storage._db import _reset_engine_for_testing
+
+    monkeypatch.setattr(LocalPaths, "DB_PATH", str(tmp_path / "test.db"))
+    monkeypatch.setattr(
+        LocalPaths, "FEATURED_DATA_PARQUET_PATH", str(tmp_path / "featured_data.parquet")
+    )
+    _reset_engine_for_testing()
+    yield
+    _reset_engine_for_testing()
+
+
 # ---------------------------------------------------------------------------
 # 純粋ロジック
 # ---------------------------------------------------------------------------

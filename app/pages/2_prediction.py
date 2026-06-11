@@ -12,12 +12,16 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import os
+
 import pandas as pd
 import streamlit as st
 
 from app._betting_history import DEFAULT_HISTORY_PATH
 from app._betting_history import append_history
-from app._data_loader import load_latest_model
+from app._data_loader import find_model_paths
+from app._data_loader import list_model_versions
+from app._data_loader import load_model_from_path
 from app._data_loader import load_operation_config
 from app._formatters import candidates_to_display_df
 from app._prediction_service import run_prediction
@@ -32,8 +36,9 @@ st.title("🎯 予測・EV・推奨馬券")
 # 設定・モデル読込（キャッシュ）
 # ------------------------------------------------------------------
 @st.cache_resource(show_spinner="モデルを読み込み中…")
-def _load_model():
-    return load_latest_model()
+def _load_model(path: str):
+    """選択された .pickle パスのモデルを読み込む（path をキーにキャッシュ）。"""
+    return load_model_from_path(path)
 
 
 @st.cache_data(show_spinner=False)
@@ -42,10 +47,40 @@ def _load_config():
 
 
 op_config = _load_config()
-model = _load_model()
+
+# ------------------------------------------------------------------
+# 適用モデルの選択（既定=最新。再学習で蓄積した複数バージョンから選べる）
+# ------------------------------------------------------------------
+model_paths = find_model_paths()  # 新しい順
+if not model_paths:
+    st.error("モデルが見つかりません。先に `run_pipeline.py --job retrain` を実行してください。")
+    st.stop()
+
+_meta_by_version = {m["version"]: m for m in list_model_versions()}
+
+
+def _model_label(path: str) -> str:
+    version = os.path.basename(path).replace(".pickle", "")
+    meta = _meta_by_version.get(version)
+    if meta and meta.get("auc_test") is not None:
+        return f"{version}（AUC {meta['auc_test']:.4f}）"
+    return version
+
+
+st.sidebar.subheader("適用モデル")
+sel_path = st.sidebar.selectbox(
+    "モデルバージョン",
+    model_paths,
+    index=0,  # 既定は最新
+    format_func=_model_label,
+    help="再学習で蓄積された複数バージョンから予測に使うモデルを選択（既定=最新）",
+)
+st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
+
+model = _load_model(sel_path)
 
 if model is None:
-    st.error("モデルが見つかりません。先に `run_pipeline.py --job retrain` を実行してください。")
+    st.error("モデルの読み込みに失敗しました。")
     st.stop()
 
 # ------------------------------------------------------------------

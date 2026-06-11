@@ -95,6 +95,7 @@ files = [
     "src/constants/_logging_config.py",
     "src/constants/_units.py",
     "src/preparing/_scraper.py",
+    "src/preparing/_rate_limiter.py",
     "src/preparing/_odds_snapshot.py",
     "src/preparing/odds_scheduler.py",
     "src/pipeline/_ingestion.py",
