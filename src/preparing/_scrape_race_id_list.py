@@ -140,8 +140,13 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
 
     # 既存データとマージ（新データ優先・重複除去）
     if existing_df is not None and not existing_df.empty:
-        race_id_col = new_df.columns[-1]
-        old_filtered = existing_df[~existing_df[race_id_col].isin(new_df[race_id_col])]
+        # kaisai_date 列の追加により race_id が最終列とは限らないため名前で解決する
+        race_id_col = "race_id" if "race_id" in new_df.columns else new_df.columns[-1]
+        if race_id_col in existing_df.columns:
+            old_filtered = existing_df[~existing_df[race_id_col].isin(new_df[race_id_col])]
+        else:
+            # 旧スキーマに race_id 列が無い場合は重複除去せず温存する
+            old_filtered = existing_df
         merged = pd.concat([old_filtered, new_df], ignore_index=True)
         merged.to_pickle(save_path)
         new_df = merged
