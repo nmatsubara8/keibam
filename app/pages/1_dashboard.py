@@ -158,6 +158,30 @@ st.caption("CLI からは `python -m src.pipeline.run_pipeline doctor` で同じ
 st.divider()
 
 # ------------------------------------------------------------------
+# ジョブ実行履歴（execution_log）
+# ------------------------------------------------------------------
+st.subheader("🧾 ジョブ実行履歴")
+from app._data_loader import load_execution_log
+
+_execs = load_execution_log(limit=20)
+if _execs:
+    _exec_rows = [
+        {
+            "ジョブ": e.get("job"),
+            "状態": "✅" if e.get("status") == "ok" else "❌",
+            "開始": (e.get("started_at") or "")[:19],
+            "所要(s)": round(e["duration_sec"], 1) if e.get("duration_sec") is not None else None,
+            "メッセージ": (e.get("message") or "")[:80],
+        }
+        for e in _execs
+    ]
+    st.dataframe(pd.DataFrame(_exec_rows), use_container_width=True, hide_index=True)
+else:
+    st.info("実行記録がありません（ingest/retrain/doctor を CLI/cron で実行すると記録されます）。")
+
+st.divider()
+
+# ------------------------------------------------------------------
 # 次締切カウントダウン（スケジュールデータがある場合）
 # ------------------------------------------------------------------
 st.subheader("⏱️ 次締切")

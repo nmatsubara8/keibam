@@ -245,3 +245,13 @@ def load_freshness_status() -> dict:
         }
     except Exception as e:  # noqa: BLE001
         return {"level": "ERROR", "checks": [{"name": "doctor", "level": "ERROR", "detail": str(e)}]}
+
+
+def load_execution_log(limit: int = 20) -> list[dict]:
+    """cron/CLI ジョブの実行記録を新しい順で返す（execution_log）。"""
+    try:
+        from src.storage import load_executions
+
+        return load_executions(limit=limit)
+    except Exception:  # noqa: BLE001
+        return []

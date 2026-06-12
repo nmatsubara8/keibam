@@ -141,6 +141,9 @@ def alias_to_pickle_path(alias: str) -> Optional[str]:
 
 FEATURED_META_TABLE = "featured_data_meta"
 
+# Phase 3: cron/CLI ジョブの実行記録テーブル名（固定スキーマ、TABLE_SPECS 外）。
+EXECUTION_LOG_TABLE = "execution_log"
+
 
 # ---------------------------------------------------------------------------
 # エンジン管理（シングルトン）
@@ -233,6 +236,22 @@ def _create_featured_meta_table(engine: Engine) -> None:
         """))
 
 
+def _create_execution_log_table(engine: Engine) -> None:
+    """Phase 3: execution_log テーブルを作成する（固定スキーマ）。"""
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS "{EXECUTION_LOG_TABLE}" (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                job          TEXT NOT NULL,
+                status       TEXT NOT NULL,
+                started_at   TIMESTAMP,
+                finished_at  TIMESTAMP,
+                duration_sec REAL,
+                message      TEXT
+            )
+        """))
+
+
 def _create_tables(engine: Engine) -> None:
     """全テーブルを作成する。既存テーブルの PK 列が現在の仕様と合わない場合は DROP して再作成する。
 
@@ -274,6 +293,7 @@ def _create_tables(engine: Engine) -> None:
 
     # Phase 2: featured_data_meta テーブル（固定スキーマ、別関数に委譲）
     _create_featured_meta_table(engine)
+    _create_execution_log_table(engine)
 
 
 def ensure_columns(engine: Engine, table_name: str, columns: list[str]) -> None:
