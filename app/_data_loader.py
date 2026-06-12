@@ -224,3 +224,24 @@ def load_db_stats() -> dict:
         db_size_mb = os.path.getsize(LocalPaths.DB_PATH) / (1024 * 1024)
 
     return {"table_counts": counts, "db_size_mb": db_size_mb}
+
+
+def load_freshness_status() -> dict:
+    """システム健全性（データ/モデル/DB/ディスク鮮度）の点検結果を返す。
+
+    src.pipeline._doctor の純粋ロジックを再利用する（app→pipeline は順方向で合法）。
+
+    Returns
+    -------
+    {"level": "OK"|"WARN"|"ERROR", "checks": [{"name","level","detail"}, ...]}
+    """
+    try:
+        from src.pipeline._doctor import run_doctor
+
+        results, level = run_doctor()
+        return {
+            "level": level,
+            "checks": [{"name": r.name, "level": r.level, "detail": r.detail} for r in results],
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"level": "ERROR", "checks": [{"name": "doctor", "level": "ERROR", "detail": str(e)}]}

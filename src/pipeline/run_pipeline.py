@@ -439,7 +439,49 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
     eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
 
+    # doctor サブコマンド（健全性点検）
+    doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
+    doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
+    doctor_p.add_argument("--strict", action="store_true", help="WARN でも非0終了する")
+    doctor_p.add_argument(
+        "--prune-models",
+        type=int,
+        default=None,
+        metavar="KEEP",
+        help="モデルを新しい順に KEEP 世代残して古い世代を削除する",
+    )
+
     return parser.parse_args(argv)
+
+
+def _doctor(args: argparse.Namespace) -> None:
+    """健全性点検を実行し、ERROR（または --strict 時 WARN）で非0終了する。"""
+    import json
+    import sys
+
+    from src.pipeline._doctor import ERROR, WARN, run_doctor
+
+    if getattr(args, "prune_models", None) is not None:
+        from src.pipeline._model_retention import prune_models
+
+        deleted = prune_models("models", args.prune_models, dry_run=False)
+        logger.info("[doctor] prune-models keep=%d 削除 %d 世代: %s",
+                    args.prune_models, len(deleted), deleted)
+
+    results, level = run_doctor()
+    if args.json:
+        print(json.dumps(
+            {"level": level, "checks": [r.__dict__ for r in results]},
+            ensure_ascii=False, indent=2,
+        ))
+    else:
+        for r in results:
+            icon = {"OK": "✅", "WARN": "⚠️", "ERROR": "❌"}.get(r.level, "•")
+            print(f"{icon} [{r.level}] {r.name}: {r.detail}")
+        print(f"\n総合: {level}")
+
+    if level == ERROR or (args.strict and level == WARN):
+        sys.exit(1)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -453,6 +495,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         _evaluate_odds_dynamics(args)
     elif args.job == "retrain":
         _retrain(args)
+    elif args.job == "doctor":
+        _doctor(args)
 
 
 if __name__ == "__main__":
