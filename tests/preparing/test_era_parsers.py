@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from src.constants._master import Master
+from src.preparing.modules import create_raw_race_info
 from src.preparing.modules import create_raw_race_results
 from src.preparing.modules import create_raw_race_return
 
@@ -97,6 +98,30 @@ _1975_RACE_HTML = """
 </table>
 </body></html>
 """
+
+
+# netkeiba に実体のない空ページの再現（race_name 空・日付 1970-01-01・情報なし）。
+# 例: 200808020204 / 200808020804 はこの形でクラッシュしていた。
+_EMPTY_RACE_HTML = """
+<html><body>
+<div class="data_intro">
+<p>\n\n\n\xa0/\xa0\n天候 : \xa0/\xa0\n\xa0\xa0/\xa0\n\n\n\n\n　特集\n\n</p>
+<p>1970年01月01日  \xa0\xa0</p>
+</div>
+</body></html>
+"""
+
+
+def test_create_raw_race_info_empty_page_skipped(tmp_path):
+    """空ページは UnboundLocalError ではなく ValueError でクリーンにスキップされる。"""
+    path = os.path.join(tmp_path / "x", "200808020204.bin")
+    os.makedirs(os.path.dirname(path))
+    with open(path, "wb") as f:
+        f.write(_EMPTY_RACE_HTML.encode("utf-8"))
+
+    # 呼び出し側は ValueError を捕捉して「中止/欠番レース」としてスキップする。
+    with pytest.raises(ValueError, match="empty race page"):
+        create_raw_race_info(path)
 
 
 def test_create_raw_race_results_1970s_era(tmp_path):
