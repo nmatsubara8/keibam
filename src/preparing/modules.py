@@ -862,6 +862,13 @@ def create_raw_race_info(target_bin_file_path):
         # print(f"text2:{text2}")
         race_id = str(re.findall(r"\d+", os.path.basename(target_bin_file_path))[0])
         # print(f"race_id :{race_id}")
+        # netkeiba に実体のない空ページ（race_name 空・日付 1970-01-01 等）は
+        # 中止/欠番レースと同様にクリーンにスキップする。各種パース（天候など）の
+        # 前に判定し、空ページに対する無意味な警告や place_id 未確定クラッシュを防ぐ。
+        race_date = text2.split(" ")[0]
+        race_name = text2.split(" ")[1]
+        if not race_name.strip():
+            raise ValueError(f"empty race page (cancelled/invalid?): {target_bin_file_path}")
         # テキスト情報を解析してDataFrameに変換
         race_distance = _re_first_int(text1.split("/")[0])
         weather = text1.split("/")[1].split(":")[1].strip()
@@ -876,13 +883,6 @@ def create_raw_race_info(target_bin_file_path):
         start_time = text1.split("/")[-1].split(":")[1:3]
         start_time = ":".join(start_time).strip().split("\n\n")[0]
 
-        race_date = text2.split(" ")[0]
-        race_name = text2.split(" ")[1]
-        # netkeiba に実体のない空ページ（race_name 空・日付 1970-01-01 等）は
-        # 中止/欠番レースと同様にクリーンにスキップする（後段の place_id 等が
-        # 未確定のまま UnboundLocalError でクラッシュするのを防ぐ）。
-        if not race_name.strip():
-            raise ValueError(f"empty race page (cancelled/invalid?): {target_bin_file_path}")
         dart = dart_checker(text1)
         # print(f"dart:{dart}")
         # print(f"count:{count_ground_state(text1)}")
