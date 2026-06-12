@@ -878,6 +878,11 @@ def create_raw_race_info(target_bin_file_path):
 
         race_date = text2.split(" ")[0]
         race_name = text2.split(" ")[1]
+        # netkeiba に実体のない空ページ（race_name 空・日付 1970-01-01 等）は
+        # 中止/欠番レースと同様にクリーンにスキップする（後段の place_id 等が
+        # 未確定のまま UnboundLocalError でクラッシュするのを防ぐ）。
+        if not race_name.strip():
+            raise ValueError(f"empty race page (cancelled/invalid?): {target_bin_file_path}")
         dart = dart_checker(text1)
         # print(f"dart:{dart}")
         # print(f"count:{count_ground_state(text1)}")
@@ -895,11 +900,17 @@ def create_raw_race_info(target_bin_file_path):
         race_round_count = _re_first_int(race_name.split("回")[0])  # 開催回数
 
         # 開催場所を取得
-        # place_id = None
+        # 未知の開催場所（海外・地方の表記揺れ等）でも UnboundLocalError で
+        # クラッシュせず DataFrame 構築まで到達できるよう NaN で初期化する
+        # （ground_state と同じ防御パターン）。未知時のみ警告を残す。
+        place_id = NaN
+        place_name = NaN
         for key, value in Master.PLACE_DICT.items():
             if key in race_name:
                 place_id = value
                 place_name = key
+        if place_name is NaN:
+            logger.warning("unknown place definition appeared:%s", race_id)
         # 未知の馬場状態でも DataFrame 構築（後段 768-769 行）まで到達できるよう、
         # スクレイプ生値をそのまま使うフォールバックを置く（既存は NameError でクラッシュ）。
         ground_state1 = NaN
