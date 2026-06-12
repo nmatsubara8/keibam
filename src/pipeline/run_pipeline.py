@@ -484,19 +484,71 @@ def _doctor(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def _finish_log(job: str, status: str, started_at: str, start_perf: float, message: str) -> None:
+    """ジョブ実行を execution_log に記録する（非致命）。"""
+    import datetime as dt
+    import time
+
+    try:
+        from src.storage import record_execution
+
+        record_execution(
+            job, status,
+            started_at=started_at,
+            finished_at=dt.datetime.now().isoformat(timespec="seconds"),
+            duration_sec=time.perf_counter() - start_perf,
+            message=message,
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[run] execution_log 記録失敗 (non-fatal): %s", e)
+
+
+def _notify_failure(job: str, message: str) -> None:
+    """ジョブ失敗を通知する（NOTIFY_SLACK_WEBHOOK があれば Slack、無ければ no-op）。"""
+    try:
+        from src.operation._notifier import create_notifier
+
+        create_notifier().notify(f"keibam {job} 失敗", message, level="error")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[run] 失敗通知に失敗 (non-fatal): %s", e)
+
+
+def _run_job(job: str, handler, args: argparse.Namespace) -> None:
+    """ハンドラを計測・記録付きで実行する（成否を execution_log に記録、失敗時は通知）。"""
+    import datetime as dt
+    import time
+
+    started_at = dt.datetime.now().isoformat(timespec="seconds")
+    start_perf = time.perf_counter()
+    try:
+        handler(args)
+    except SystemExit as e:  # doctor --strict 等の意図的終了
+        ok = e.code in (0, None)
+        _finish_log(job, "ok" if ok else "failed", started_at, start_perf, f"exit={e.code}")
+        raise
+    except Exception as e:
+        message = f"{type(e).__name__}: {e}"
+        _finish_log(job, "failed", started_at, start_perf, message)
+        _notify_failure(job, message)
+        raise
+    else:
+        _finish_log(job, "ok", started_at, start_perf, "")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     from src.constants._logging_config import setup_logging
 
     setup_logging()
     args = _parse_args(argv)
-    if args.job == "ingest":
-        _ingest(args)
-    elif args.job == "evaluate-odds-dynamics":
-        _evaluate_odds_dynamics(args)
-    elif args.job == "retrain":
-        _retrain(args)
-    elif args.job == "doctor":
-        _doctor(args)
+    handlers = {
+        "ingest": _ingest,
+        "evaluate-odds-dynamics": _evaluate_odds_dynamics,
+        "retrain": _retrain,
+        "doctor": _doctor,
+    }
+    handler = handlers.get(args.job)
+    if handler is not None:
+        _run_job(args.job, handler, args)
 
 
 if __name__ == "__main__":

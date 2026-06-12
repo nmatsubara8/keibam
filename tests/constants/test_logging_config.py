@@ -39,3 +39,25 @@ class TestSetupLogging:
         n2 = len(logging.getLogger().handlers)
         # force=True なので重複追加されない（StreamHandler 1 個に保たれる）
         assert n1 == n2
+
+
+class TestRotation:
+    def test_rotating_handler_when_max_bytes(self, tmp_path):
+        from logging.handlers import RotatingFileHandler
+
+        logfile = str(tmp_path / "logs" / "rot.log")
+        setup_logging(logfile=logfile, max_bytes=1024, backup_count=3)
+        handlers = logging.getLogger().handlers
+        assert any(isinstance(h, RotatingFileHandler) for h in handlers)
+        setup_logging()  # 後続テストへの影響を避ける
+
+    def test_plain_file_handler_when_no_max_bytes(self, tmp_path):
+        from logging.handlers import RotatingFileHandler
+
+        logfile = str(tmp_path / "logs" / "plain.log")
+        setup_logging(logfile=logfile)  # 既定 max_bytes=0
+        handlers = logging.getLogger().handlers
+        file_handlers = [h for h in handlers if isinstance(h, logging.FileHandler)]
+        assert file_handlers
+        assert not any(isinstance(h, RotatingFileHandler) for h in file_handlers)
+        setup_logging()
