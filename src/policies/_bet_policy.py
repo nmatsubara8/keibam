@@ -1,3 +1,4 @@
+import math
 from abc import ABCMeta
 from abc import abstractmethod
 from itertools import combinations
@@ -210,7 +211,12 @@ class ExpectedValueBetPolicy:
         return bet_dict
 
     def _select_for_race(self, race_id, race_df: pd.DataFrame) -> list:
-        win_probs = dict(zip(race_df[ResultsCols.UMABAN], race_df[PROB], strict=False))
+        # 確率の健全性ガード: NaN/<=0 は Harville 正規化を汚染するため win_probs から除外する
+        win_probs = {
+            u: float(p)
+            for u, p in zip(race_df[ResultsCols.UMABAN], race_df[PROB], strict=False)
+            if pd.notna(p) and p > 0
+        }
         # 低確率帯のノイズを足切り（KB 7.3）
         eligible = [u for u, p in win_probs.items() if p >= self._risk.MIN_WIN_PROB]
 
@@ -224,6 +230,9 @@ class ExpectedValueBetPolicy:
             for combo in generator(eligible, size):
                 prob = harville.combo_probability(bet_type, win_probs, combo)
                 odds = self._odds_provider.get_odds(race_id, bet_type, combo)
+                # オッズ健全性ガード: NaN / <=0 / inf の異常オッズは EV 計算せずスキップ
+                if not (math.isfinite(odds) and odds > 0):
+                    continue
                 ev = prob * odds
                 # 期待値が閾値超〜上限以内のもののみ採用（上限で超高倍率を除外。§7）
                 if threshold < ev <= self._ev_max:

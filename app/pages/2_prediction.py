@@ -149,6 +149,21 @@ if st.button("🛒 発注カートへ追加"):
     st.success(f"{len(new_orders)} 件をカートに追加しました（発注ページで確認・編集できます）。")
 
 # ------------------------------------------------------------------
+# 損失ストップ（kill switch）: 当日実現損失が上限超なら記録/発注を停止
+# ------------------------------------------------------------------
+from app._betting_history import load_history
+from src.operation._risk_guard import evaluate_kill_switch
+
+_guard = evaluate_kill_switch(load_history(DEFAULT_HISTORY_PATH), op_config)
+if _guard.blocked:
+    st.error(
+        f"🛑 取引停止中: {_guard.reason}"
+        f"（当日損失 ¥{_guard.daily_loss:,.0f} / 上限 ¥{_guard.limit:,.0f}）。"
+        "本日の記録・発注は停止されています。"
+    )
+    st.stop()
+
+# ------------------------------------------------------------------
 # Advisory モード: 承認ボタン
 # ------------------------------------------------------------------
 if op_config.operation_mode == ADVISORY:

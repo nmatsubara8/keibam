@@ -7,9 +7,11 @@ UI の「実行ボタン」から呼ばれる境界。運用モードにより�
 
 from __future__ import annotations
 
+import datetime as dt
 from abc import ABC
 from abc import abstractmethod
 from typing import Callable
+from typing import Optional
 
 from src.operation._config import ADVISORY
 from src.operation._config import FULL_AUTO
@@ -19,7 +21,9 @@ from src.operation._config import SEMI_AUTO
 Recorder = Callable[[dict], None]
 
 
-def _to_record(candidate, status: str) -> dict:
+def _to_record(candidate, status: str, *, now: Optional[Callable[[], dt.datetime]] = None) -> dict:
+    # created_at は損失ストップ（日次集計）が記録日を判定するために付与する。
+    created_at = (now or dt.datetime.now)().isoformat(timespec="seconds")
     return {
         "race_id": candidate.race_id,
         "bet_type": candidate.bet_type,
@@ -30,6 +34,7 @@ def _to_record(candidate, status: str) -> dict:
         "confidence": candidate.confidence,
         "stake": candidate.stake,
         "status": status,
+        "created_at": created_at,
     }
 
 

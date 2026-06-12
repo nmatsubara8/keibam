@@ -10,3 +10,8 @@ bankroll: 100000.0
 kelly_fraction_ratio: 0.5   # フラクショナル・ケリー係数（0<r<=1）
 per_bet_cap_ratio: 0.05     # 1馬券あたり上限（bankroll比）
 max_daily_ratio: 1.0        # 1日総投資上限（bankroll比）
+
+# 安全装置（損失ストップ / kill switch）
+kill_switch_enabled: true   # 当日実現損失が上限超で推奨/記録を停止する
+max_daily_loss_ratio: 0.3   # 当日実現損失が bankroll*0.3 を超えたら停止
+initial_bankroll: 100000.0  # 実効 bankroll の基準（= initial + 累積純損益）
