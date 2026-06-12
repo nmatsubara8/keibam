@@ -59,6 +59,32 @@ if status.get("n_featured_rows"):
 mode_color = {"advisory": "🟢", "semi_auto": "🟡", "full_auto": "🔴"}.get(status["operation_mode"], "⚪")
 st.info(f"{mode_color} 運用モード: **{status['operation_mode']}**")
 
+# ------------------------------------------------------------------
+# 安全装置（損失ストップ）と実効 bankroll
+# ------------------------------------------------------------------
+from app._betting_history import load_history
+from app._data_loader import load_operation_config
+from src.operation._risk_guard import effective_bankroll
+from src.operation._risk_guard import evaluate_kill_switch
+
+_op = load_operation_config()
+_history = load_history()
+_guard = evaluate_kill_switch(_history, _op)
+_eff_bankroll = effective_bankroll(_history, _op.initial_bankroll)
+
+s1, s2, s3 = st.columns(3)
+if _guard.blocked:
+    s1.error("🛑 取引停止")
+else:
+    s1.success("🟢 取引可能")
+s2.metric("当日実現損失", f"¥{_guard.daily_loss:,.0f}", help=f"上限 ¥{_guard.limit:,.0f}")
+s3.metric(
+    "実効 bankroll",
+    f"¥{_eff_bankroll:,.0f}",
+    delta=f"{_eff_bankroll - _op.initial_bankroll:+,.0f}",
+    help="初期資金 + 確定済みの累積純損益",
+)
+
 st.divider()
 
 # ------------------------------------------------------------------

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC
 from abc import abstractmethod
 from typing import Mapping
@@ -16,6 +17,8 @@ from typing import Sequence
 
 from src.constants._bet_types import BetType
 from src.policies import _harville as harville
+
+logger = logging.getLogger(__name__)
 
 
 class AbstractOddsProvider(ABC):
@@ -106,6 +109,10 @@ class PredictedOddsProvider(AbstractOddsProvider):
         combo = list(combo)
         preds = self._race_predictions(race_id)
         if not preds:
+            logger.debug(
+                "[PredictedOdds] race=%s bet=%s combo=%s: 予測なし→現在オッズへ fallback",
+                race_id, bet_type, combo,
+            )
             return self._fallback.get_odds(race_id, bet_type, combo)
 
         if bet_type == BetType.TANSHO:
