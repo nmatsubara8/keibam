@@ -267,12 +267,20 @@ class DataLoader:
         if existing is not None and isinstance(existing, pd.DataFrame) and not existing.empty:
             # 既存 pkl 側の "Unnamed: N" ゴミ列も除去してから突き合わせる
             existing = existing.loc[:, ~existing.columns.astype(str).str.match(r"^Unnamed")]
-            # マージキーは行の所属単位（レース系: race_id / 馬系: horse_id）。
-            # 旧実装の columns[-1]（owner_id 等）では同一馬主の既存行まで落ちていた。
-            key_col = next((k for k in ("race_id", "horse_id") if k in new_df.columns), None)
+            # マージキーは行の所属単位（レース系: race_id / 馬系: horse_id /
+            # 開催日リスト: kaisai_data|kaisai_date）。旧実装の columns[-1]
+            # （owner_id 等）では同一馬主の既存行まで落ちていた。
+            key_col = next(
+                (k for k in ("race_id", "horse_id", "kaisai_data", "kaisai_date")
+                 if k in new_df.columns),
+                None,
+            )
             if key_col is not None and key_col in existing.columns:
                 old_only = existing[~existing[key_col].isin(new_df[key_col])]
                 new_df = pd.concat([old_only, new_df], ignore_index=True)
+                # 過去の単純追記で蓄積した重複（同一キー）も含めてここで一掃する。
+                # 新データ優先のため後勝ち（keep="last"）。
+                new_df = new_df.drop_duplicates(subset=[key_col], keep="last").reset_index(drop=True)
             else:
                 # キー不明でも既存データは捨てない（重複の可能性より喪失の方が重い）
                 logger.warning(
