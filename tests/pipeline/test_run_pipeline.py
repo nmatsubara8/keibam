@@ -103,3 +103,23 @@ def test_subcommand_required():
 def test_unknown_subcommand_errors():
     with pytest.raises(SystemExit):
         _parse_args(["frobnicate"])
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+
+class TestDoctorArgs:
+    def test_defaults(self):
+        args = _parse_args(["doctor"])
+        assert args.job == "doctor"
+        assert args.json is False
+        assert args.strict is False
+        assert args.prune_models is None
+
+    def test_flags(self):
+        args = _parse_args(["doctor", "--json", "--strict", "--prune-models", "5"])
+        assert args.json is True
+        assert args.strict is True
+        assert args.prune_models == 5

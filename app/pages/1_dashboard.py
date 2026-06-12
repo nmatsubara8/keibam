@@ -135,6 +135,29 @@ else:
 st.divider()
 
 # ------------------------------------------------------------------
+# システム健全性（鮮度・モデル・DB・ディスク）
+# ------------------------------------------------------------------
+st.subheader("🩺 システム健全性")
+from app._data_loader import load_freshness_status
+
+_fresh = load_freshness_status()
+_overall_icon = {"OK": "✅", "WARN": "⚠️", "ERROR": "❌"}.get(_fresh["level"], "•")
+if _fresh["level"] == "OK":
+    st.success(f"{_overall_icon} 総合: OK")
+elif _fresh["level"] == "WARN":
+    st.warning(f"{_overall_icon} 総合: WARN（古いデータ/モデルがあります）")
+else:
+    st.error(f"{_overall_icon} 総合: ERROR（要対応）")
+_check_rows = [
+    {"項目": c["name"], "状態": c["level"], "詳細": c["detail"]}
+    for c in _fresh["checks"]
+]
+st.dataframe(pd.DataFrame(_check_rows), use_container_width=True, hide_index=True)
+st.caption("CLI からは `python -m src.pipeline.run_pipeline doctor` で同じ点検ができます。")
+
+st.divider()
+
+# ------------------------------------------------------------------
 # 次締切カウントダウン（スケジュールデータがある場合）
 # ------------------------------------------------------------------
 st.subheader("⏱️ 次締切")
