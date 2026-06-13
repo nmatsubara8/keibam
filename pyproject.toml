@@ -91,6 +91,7 @@ files = [
     "src/simulation/_plot.py",
     "src/simulation/_popularity_baseline.py",
     "src/training/_sample_weights.py",
+    "src/training/_leakage_check.py",
     "src/constants/_odds_phases.py",
     "src/constants/_logging_config.py",
     "src/constants/_units.py",
