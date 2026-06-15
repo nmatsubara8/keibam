@@ -265,6 +265,13 @@ def process_pkl_file(self, process_function):
                 self.save_temp_file(self.alias)
 
     if filetype != "bin":
+        self_path = os.path.join(self.to_temp_location, self.temp_save_file_name)
+        if not os.path.exists(self_path):
+            driver.close_sync()
+            raise RuntimeError(
+                f"temp CSV が存在しません: {self_path}\n"
+                "全リクエストがブロックされたか、データが 0 件の可能性があります。"
+            )
         storing_process(self)
 
     # ループ全体で使い回したブラウザを終了する。

@@ -184,13 +184,27 @@ def main() -> None:
     logger.info("取得対象: %s (%d か月分)", span, len(periods))
 
     failed: list[str] = []
+    consecutive_failures = 0
+    max_consecutive = 3  # 連続失敗がこの回数に達したらレート制限と判断して中断
     for year, month in periods:
         ok = fetch_one_month(year, month)
         if not ok:
             failed.append(f"{year:04d}-{month:02d}")
+            consecutive_failures += 1
             if args.stop_on_error:
                 logger.error("--stop-on-error が指定されているため停止します")
                 break
+            if consecutive_failures >= max_consecutive:
+                logger.error(
+                    "連続 %d か月の取得失敗。レート制限の可能性が高いため中断します。"
+                    "しばらく待ってから再試行してください: python scripts/fetch_history.py --from %s --to %s",
+                    consecutive_failures,
+                    failed[-consecutive_failures],
+                    f"{year:04d}-{month:02d}",
+                )
+                break
+        else:
+            consecutive_failures = 0  # 成功したらリセット
 
     logger.info("=" * 60)
     if failed:
