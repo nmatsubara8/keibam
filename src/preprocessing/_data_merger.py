@@ -79,10 +79,10 @@ class DataMerger:
         self._results = convert_column_types(self._results, dict_)
 
     def _merge_horse_results(self):
-        """日付ごとに horse_results をスライスしてマージする。
+        """日付ごとに horse_results / results をスライスしてマージする。
 
-        メモリ節約のため _separate_by_date を廃止し、1ループに統合。
-        各日付の処理が終わったら中間データを即座に破棄する。
+        全ての「date < target_date」フィルタを searchsorted に統一し、
+        ループごとの全件コピーを排除してメモリを節約する。
         """
         import numpy as np
 
@@ -95,11 +95,23 @@ class DataMerger:
         else:
             hr_with_sire = self._horse_results.copy()
 
-        # 日付ソート済み配列を一度だけ作成（searchsorted で O(log N) スライス）
+        # horse_results / hr_with_sire を日付ソート済みで保持
         hr_sorted = self._horse_results.sort_values("date").reset_index()
         hr_dates = hr_sorted["date"].values
         hrs_sorted = hr_with_sire.sort_values("date").reset_index()
         hrs_dates = hrs_sorted["date"].values
+
+        # results も日付ソート済みで保持（_add_jockey_trainer_stats 用）
+        res_sorted = self._results.sort_values("date").reset_index(drop=True)
+        res_dates = res_sorted["date"].values
+
+        # jockey/trainer 用の集計列を事前計算（コピーは1回だけ）
+        rank_col = "着順"
+        n_horses_col = "n_horses"
+        has_rank = rank_col in res_sorted.columns and n_horses_col in res_sorted.columns
+        if has_rank:
+            res_sorted["_is_win"] = (res_sorted[rank_col] == 1).astype("float32")
+            res_sorted["_rel_rank"] = (res_sorted[rank_col] / res_sorted[n_horses_col]).astype("float32")
 
         logger.info("merging horse_results")
         output_list: list = []
@@ -107,19 +119,18 @@ class DataMerger:
         for date, df_by_date in tqdm(self._results.groupby("date")):
             horse_id_list = df_by_date["horse_id"].unique()
 
-            # searchsorted で date 未満の行を O(log N) で特定してスライス
+            # searchsorted で date 未満の行を O(log N) で特定
             cut = int(np.searchsorted(hr_dates, date, side="left"))
-            if cut > 0:
-                past_hr = hr_sorted.iloc[:cut].set_index("horse_id")
-                horse_results = past_hr[past_hr.index.isin(horse_id_list)]
-            else:
-                horse_results = hr_sorted.iloc[:0].set_index("horse_id")
+            past_hr = hr_sorted.iloc[:cut].set_index("horse_id") if cut > 0 else hr_sorted.iloc[:0].set_index("horse_id")
+            horse_results = past_hr[past_hr.index.isin(horse_id_list)]
 
             cut2 = int(np.searchsorted(hrs_dates, date, side="left"))
-            self._separated_hr_with_sire_dict[date] = (
-                hrs_sorted.iloc[:cut2].set_index("horse_id") if cut2 > 0
-                else hrs_sorted.iloc[:0].set_index("horse_id")
-            )
+            past_hrs = hrs_sorted.iloc[:cut2].set_index("horse_id") if cut2 > 0 else hrs_sorted.iloc[:0].set_index("horse_id")
+            self._separated_hr_with_sire_dict[date] = past_hrs
+
+            # results の過去分スライス（jockey/trainer 統計用）
+            cut_r = int(np.searchsorted(res_dates, date, side="left"))
+            past_res = res_sorted.iloc[:cut_r] if cut_r > 0 else res_sorted.iloc[:0]
 
             results = df_by_date.copy()
 
@@ -129,17 +140,52 @@ class DataMerger:
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
             results = results.merge(latest, left_on="horse_id", right_index=True, how="left")
 
-            results = self._add_jockey_trainer_stats(results, date)
+            results = self._add_jockey_trainer_stats_fast(results, past_res, has_rank)
             results = self._add_pace_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
             output_list.append(results)
-
-            # 使い終わった sire dict エントリを即破棄してメモリを解放
             del self._separated_hr_with_sire_dict[date]
 
         self._merged_data = pd.concat(output_list, ignore_index=True)
+
+    def _add_jockey_trainer_stats_fast(
+        self, results: pd.DataFrame, past_res: pd.DataFrame, has_rank: bool
+    ) -> pd.DataFrame:
+        """事前スライス済み past_res を使って騎手・調教師集計特徴量を追加する。"""
+        if "jockey_id" not in past_res.columns or past_res.empty:
+            return results
+
+        if not has_rank or "_is_win" not in past_res.columns:
+            return results
+
+        # Jockey stats
+        jockey_recent = (
+            past_res.sort_values("date", ascending=False)
+            .groupby("jockey_id")
+            .head(JOCKEY_RECENT_N)
+        )
+        jockey_stats = jockey_recent.groupby("jockey_id").agg(
+            jockey_win_rate=("_is_win", "mean"),
+            jockey_avg_rank=("_rel_rank", "mean"),
+        )
+        results = results.merge(jockey_stats, left_on="jockey_id", right_index=True, how="left")
+
+        if "trainer_id" not in past_res.columns:
+            return results
+
+        trainer_recent = (
+            past_res.sort_values("date", ascending=False)
+            .groupby("trainer_id")
+            .head(JOCKEY_RECENT_N)
+        )
+        trainer_stats = trainer_recent.groupby("trainer_id").agg(
+            trainer_win_rate=("_is_win", "mean"),
+            trainer_avg_rank=("_rel_rank", "mean"),
+        )
+        results = results.merge(trainer_stats, left_on="trainer_id", right_index=True, how="left")
+        return results
 
     # ──────────────────────────────────────────
     # §2c: Jockey / trainer aggregate features
