@@ -101,17 +101,8 @@ class DataMerger:
         hrs_sorted = hr_with_sire.sort_values("date").reset_index()
         hrs_dates = hrs_sorted["date"].values
 
-        # results も日付ソート済みで保持（_add_jockey_trainer_stats 用）
-        res_sorted = self._results.sort_values("date").reset_index(drop=True)
-        res_dates = res_sorted["date"].values
-
-        # jockey/trainer 用の集計列を事前計算（コピーは1回だけ）
-        rank_col = "着順"
-        n_horses_col = "n_horses"
-        has_rank = rank_col in res_sorted.columns and n_horses_col in res_sorted.columns
-        if has_rank:
-            res_sorted["_is_win"] = (res_sorted[rank_col] == 1).astype("float32")
-            res_sorted["_rel_rank"] = (res_sorted[rank_col] / res_sorted[n_horses_col]).astype("float32")
+        # 騎手・調教師統計をループ外で一括事前計算（ループ内の全件コピーを排除）
+        jockey_stats, trainer_stats = self._precompute_jockey_trainer_stats()
 
         logger.info("merging horse_results")
         output_list: list = []
@@ -119,18 +110,15 @@ class DataMerger:
         for date, df_by_date in tqdm(self._results.groupby("date")):
             horse_id_list = df_by_date["horse_id"].unique()
 
-            # searchsorted で date 未満の行を O(log N) で特定
             cut = int(np.searchsorted(hr_dates, date, side="left"))
             past_hr = hr_sorted.iloc[:cut].set_index("horse_id") if cut > 0 else hr_sorted.iloc[:0].set_index("horse_id")
             horse_results = past_hr[past_hr.index.isin(horse_id_list)]
 
             cut2 = int(np.searchsorted(hrs_dates, date, side="left"))
-            past_hrs = hrs_sorted.iloc[:cut2].set_index("horse_id") if cut2 > 0 else hrs_sorted.iloc[:0].set_index("horse_id")
-            self._separated_hr_with_sire_dict[date] = past_hrs
-
-            # results の過去分スライス（jockey/trainer 統計用）
-            cut_r = int(np.searchsorted(res_dates, date, side="left"))
-            past_res = res_sorted.iloc[:cut_r] if cut_r > 0 else res_sorted.iloc[:0]
+            self._separated_hr_with_sire_dict[date] = (
+                hrs_sorted.iloc[:cut2].set_index("horse_id") if cut2 > 0
+                else hrs_sorted.iloc[:0].set_index("horse_id")
+            )
 
             results = df_by_date.copy()
 
@@ -140,7 +128,14 @@ class DataMerger:
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
             results = results.merge(latest, left_on="horse_id", right_index=True, how="left")
 
-            results = self._add_jockey_trainer_stats_fast(results, past_res, has_rank)
+            # 事前計算済み統計を race_id で merge
+            if not jockey_stats.empty and "race_id" in results.columns:
+                j = jockey_stats[jockey_stats["race_id"].isin(df_by_date["race_id"])].drop(columns="jockey_id")
+                results = results.merge(j, on="race_id", how="left")
+            if not trainer_stats.empty and "race_id" in results.columns:
+                t = trainer_stats[trainer_stats["race_id"].isin(df_by_date["race_id"])].drop(columns="trainer_id")
+                results = results.merge(t, on="race_id", how="left")
+
             results = self._add_pace_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
@@ -150,42 +145,55 @@ class DataMerger:
 
         self._merged_data = pd.concat(output_list, ignore_index=True)
 
-    def _add_jockey_trainer_stats_fast(
-        self, results: pd.DataFrame, past_res: pd.DataFrame, has_rank: bool
-    ) -> pd.DataFrame:
-        """事前スライス済み past_res を使って騎手・調教師集計特徴量を追加する。"""
-        if "jockey_id" not in past_res.columns or past_res.empty:
-            return results
+    def _precompute_jockey_trainer_stats(self):
+        """騎手・調教師統計をレース単位で事前計算して DataFrame で返す。
 
-        if not has_rank or "_is_win" not in past_res.columns:
-            return results
+        各レースに対して「そのレース直前の直近 JOCKEY_RECENT_N レースの成績」を
+        rolling で計算し、race_id をキーにして results に merge できる形で返す。
+        ループ内での全件コピーを完全に排除する。
+        """
+        rank_col = "着順"
+        n_horses_col = "n_horses"
+        has_rank = rank_col in self._results.columns and n_horses_col in self._results.columns
+        has_jockey = "jockey_id" in self._results.columns
+        has_trainer = "trainer_id" in self._results.columns
 
-        # Jockey stats
-        jockey_recent = (
-            past_res.sort_values("date", ascending=False)
-            .groupby("jockey_id")
-            .head(JOCKEY_RECENT_N)
-        )
-        jockey_stats = jockey_recent.groupby("jockey_id").agg(
-            jockey_win_rate=("_is_win", "mean"),
-            jockey_avg_rank=("_rel_rank", "mean"),
-        )
-        results = results.merge(jockey_stats, left_on="jockey_id", right_index=True, how="left")
+        if not has_rank or not has_jockey:
+            return pd.DataFrame(), pd.DataFrame()
 
-        if "trainer_id" not in past_res.columns:
-            return results
+        res = self._results[["race_id", "date", "jockey_id", rank_col, n_horses_col]
+                            + (["trainer_id"] if has_trainer else [])].copy()
+        res["_is_win"] = (res[rank_col] == 1).astype("float32")
+        res["_rel_rank"] = (res[rank_col] / res[n_horses_col]).astype("float32")
 
-        trainer_recent = (
-            past_res.sort_values("date", ascending=False)
-            .groupby("trainer_id")
-            .head(JOCKEY_RECENT_N)
+        # jockey 別に (jockey_id, date) でソートして rolling(JOCKEY_RECENT_N)
+        # shift(1) で自レースを除外（リークなし）
+        res_j = res.sort_values(["jockey_id", "date"]).copy()
+        res_j["jockey_win_rate"] = (
+            res_j.groupby("jockey_id")["_is_win"]
+            .transform(lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean())
         )
-        trainer_stats = trainer_recent.groupby("trainer_id").agg(
-            trainer_win_rate=("_is_win", "mean"),
-            trainer_avg_rank=("_rel_rank", "mean"),
+        res_j["jockey_avg_rank"] = (
+            res_j.groupby("jockey_id")["_rel_rank"]
+            .transform(lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean())
         )
-        results = results.merge(trainer_stats, left_on="trainer_id", right_index=True, how="left")
-        return results
+        jockey_stats = res_j[["race_id", "jockey_id", "jockey_win_rate", "jockey_avg_rank"]]
+
+        if not has_trainer:
+            return jockey_stats, pd.DataFrame()
+
+        res_t = res.sort_values(["trainer_id", "date"]).copy()
+        res_t["trainer_win_rate"] = (
+            res_t.groupby("trainer_id")["_is_win"]
+            .transform(lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean())
+        )
+        res_t["trainer_avg_rank"] = (
+            res_t.groupby("trainer_id")["_rel_rank"]
+            .transform(lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean())
+        )
+        trainer_stats = res_t[["race_id", "trainer_id", "trainer_win_rate", "trainer_avg_rank"]]
+
+        return jockey_stats, trainer_stats
 
     # ──────────────────────────────────────────
     # §2c: Jockey / trainer aggregate features
