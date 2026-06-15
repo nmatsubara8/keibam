@@ -78,60 +78,68 @@ class DataMerger:
         dict_ = dict_selector("_results")
         self._results = convert_column_types(self._results, dict_)
 
-    def _separate_by_date(self):
+    def _merge_horse_results(self):
+        """日付ごとに horse_results をスライスしてマージする。
+
+        メモリ節約のため _separate_by_date を廃止し、1ループに統合。
+        各日付の処理が終わったら中間データを即座に破棄する。
+        """
+        import numpy as np
+
         logger.info("separating horse results by date")
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
-        # Pre-join horse_results with sire id (peds_0) for §2j sire stats.
         if "peds_0" in self._peds.columns:
             hr_with_sire = self._horse_results.join(self._peds[["peds_0"]], how="left")
         else:
             hr_with_sire = self._horse_results.copy()
 
-        for date, df_by_date in tqdm(self._results.groupby("date")):
-            self._separated_results_dict[date] = df_by_date
-            horse_id_list = df_by_date["horse_id"].unique()  # noqa: F841  pandas query の @horse_id_list で参照
-            # Past horse results (only horses racing on this date)
-            self._separated_horse_results_dict[date] = self._horse_results.query(
-                "date < @date"
-            ).query("horse_id in @horse_id_list")
-            # Past horse results with sire info (all horses, for §2j aggregation by sire)
-            self._separated_hr_with_sire_dict[date] = hr_with_sire.query("date < @date")
+        # 日付ソート済み配列を一度だけ作成（searchsorted で O(log N) スライス）
+        hr_sorted = self._horse_results.sort_values("date").reset_index()
+        hr_dates = hr_sorted["date"].values
+        hrs_sorted = hr_with_sire.sort_values("date").reset_index()
+        hrs_dates = hrs_sorted["date"].values
 
-    def _merge_horse_results(self):
-        self._separate_by_date()
         logger.info("merging horse_results")
-        output_results_dict: dict = {}
+        output_list: list = []
 
-        for date in tqdm(self._separated_results_dict):
-            results = self._separated_results_dict[date].copy()
-            horse_results = self._separated_horse_results_dict[date].copy()
+        for date, df_by_date in tqdm(self._results.groupby("date")):
+            horse_id_list = df_by_date["horse_id"].unique()
 
-            # ── §2i: Multi-window × multi-stat aggregation ────────────
-            # None は全レース集計（ウィンドウなし）
+            # searchsorted で date 未満の行を O(log N) で特定してスライス
+            cut = int(np.searchsorted(hr_dates, date, side="left"))
+            if cut > 0:
+                past_hr = hr_sorted.iloc[:cut].set_index("horse_id")
+                horse_results = past_hr[past_hr.index.isin(horse_id_list)]
+            else:
+                horse_results = hr_sorted.iloc[:0].set_index("horse_id")
+
+            cut2 = int(np.searchsorted(hrs_dates, date, side="left"))
+            self._separated_hr_with_sire_dict[date] = (
+                hrs_sorted.iloc[:cut2].set_index("horse_id") if cut2 > 0
+                else hrs_sorted.iloc[:0].set_index("horse_id")
+            )
+
+            results = df_by_date.copy()
+
             for n_races in [*N_RACES_LIST, None]:
                 results = self._merge_aggregates(results, horse_results, n_races)
 
-            # Latest race date (for interval feature in FeatureEngineering)
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
             results = results.merge(latest, left_on="horse_id", right_index=True, how="left")
 
-            # ── §2c: Jockey / trainer stats ────────────────────────────
             results = self._add_jockey_trainer_stats(results, date)
-
-            # ── §2d: Pace / leg type stats ─────────────────────────────
             results = self._add_pace_stats(results, horse_results)
-
-            # ── §2e: Course condition stats ────────────────────────────
             results = self._add_course_condition_stats(results, horse_results)
-
-            # ── §2j: Sire stats ────────────────────────────────────────
             results = self._add_sire_stats(results, date)
 
-            output_results_dict[date] = results
+            output_list.append(results)
 
-        self._merged_data = pd.concat([output_results_dict[d] for d in output_results_dict])
+            # 使い終わった sire dict エントリを即破棄してメモリを解放
+            del self._separated_hr_with_sire_dict[date]
+
+        self._merged_data = pd.concat(output_list, ignore_index=True)
 
     # ──────────────────────────────────────────
     # §2c: Jockey / trainer aggregate features
