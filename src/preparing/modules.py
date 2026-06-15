@@ -244,7 +244,6 @@ def process_pkl_file(self, process_function):
                 continue
 
             consecutive_blocks = 0  # 成功したらリセット
-            time.sleep(delay)  # サーバ負荷軽減の待機（環境変数で調整可能）
             batch_data.append(return_data)
             processed_files += 1
             pbar.update(1)  # 処理済みのファイル数を1増やす
@@ -328,6 +327,13 @@ def get_kaisai_date_list(self, ref_id, driver, waiting_time):
 
 
 ################################# Done ####################################
+def _polite_delay():
+    """リクエスト前に KEIBA_SCRAPE_DELAY 秒待機する（ポライトネス制御）。"""
+    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+    if delay > 0:
+        time.sleep(delay)
+
+
 def get_soup(url, driver, waiting_time=None):
     """URL の HTML を取得して BeautifulSoup を返す（Playwright 同期ブリッジ）。
 
@@ -336,6 +342,7 @@ def get_soup(url, driver, waiting_time=None):
     """
     from bs4 import BeautifulSoup
 
+    _polite_delay()
     html = driver.fetch_sync(url)
     soup = BeautifulSoup(html, "lxml")
     return soup
@@ -383,6 +390,7 @@ def scrape_race_id_list(self, ref_id, driver, waiting_time=None):
     df = pd.DataFrame({"kaisai_date": [], "race_id": []})
     try:
         # RaceList_Box の描画完了を待ってから HTML を取得
+        _polite_delay()
         html = driver.fetch_sync(url, wait_selector=".RaceList_Box")
         # 空/ブロックページなら明示的に失敗させる（レート制限の検知）。
         if is_blocked_html(html):
@@ -417,6 +425,7 @@ def scrape_html(self, ref_id, driver, waiting_time):
     domcontentloaded で十分。戻り値は bin ファイル書き込み用に UTF-8 bytes。
     """
     url = str(self.from_location) + str(ref_id)
+    _polite_delay()
     html_str = driver.fetch_sync(url)
     # 空/ブロックページ（39バイト等）は保存しない。ValueError を投げると
     # process_bin_file 側でスキップされ、39バイト空 bin の量産を防ぐ。
