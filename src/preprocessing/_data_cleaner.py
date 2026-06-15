@@ -1,3 +1,6 @@
+import pandas as pd
+
+
 def convert_to_datetime(date_str, time_str):
     # 日付と時刻を結合して datetime オブジェクトに変換
     datetime_str = date_str.split()[0] + " " + time_str
@@ -49,7 +52,7 @@ def convert_column_types(df, col_types):
     converted_df = df.copy()
     for column, (from_data_type, to_data_type, width, padding) in col_types.items():
         if from_data_type == "float" and to_data_type == "int":
-            converted_df[column] = converted_df[column].fillna(0).astype(to_data_type)
+            converted_df[column] = pd.to_numeric(converted_df[column], errors="coerce").fillna(0).astype("int64")
         elif to_data_type == "str" and padding:
             if from_data_type == "float":
                 converted_df[column] = (
