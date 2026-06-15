@@ -36,6 +36,7 @@ class HorseResultsProcessor(AbstractDataProcessor):
         df[Cols.PRIZE] = df[Cols.PRIZE].fillna(0)
 
         # 1着の着差を0にする（xが0より小さい場合は、0、xが0以上の場合、xを返す）
+        df[Cols.RANK_DIFF] = pd.to_numeric(df[Cols.RANK_DIFF], errors="coerce").fillna(0)
         df[Cols.RANK_DIFF] = df[Cols.RANK_DIFF].map(lambda x: 0 if x < 0 else x)
 
         # レース展開データ
