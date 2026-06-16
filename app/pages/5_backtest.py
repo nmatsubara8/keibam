@@ -16,6 +16,7 @@ import streamlit as st
 
 from app._data_loader import list_model_versions
 from app._data_loader import load_model_by_version
+from app._model_eval import _build_return_table_df
 from app._model_eval import compute_confidence_sweep
 from app._model_eval import compute_full_backtest
 from app._model_eval import load_featured_data
@@ -136,6 +137,7 @@ with tabs[0]:
 
             # ── 賭け明細（掛け目・実着順） ─────────────────────────
             per_bet = result.get("per_bet", pd.DataFrame())
+            rp = result.get("return_processor")
             if not per_bet.empty:
                 st.subheader("賭け明細（掛け目・実着順）")
                 st.caption(
@@ -157,23 +159,44 @@ with tabs[0]:
                     detail_view["予測勝率"] = detail_view["予測勝率"] * 100
                 # Pandas Styler はセル数上限（26万）があり全件（数十万行）で例外に
                 # なるため、セル数制限のない column_config で数値フォーマットする。
+                col_cfg: dict = {
+                    "予測勝率": st.column_config.NumberColumn(format="%.1f%%"),
+                    "単勝オッズ": st.column_config.NumberColumn(format="%.1f"),
+                    "EV": st.column_config.NumberColumn(format="%.2f"),
+                    "払戻": st.column_config.NumberColumn(format="%.1f"),
+                    "損益": st.column_config.NumberColumn(format="%+.1f"),
+                    "複勝払戻": st.column_config.NumberColumn(format="%.1f"),
+                }
                 st.dataframe(
                     detail_view,
                     use_container_width=True,
                     hide_index=True,
-                    column_config={
-                        "予測勝率": st.column_config.NumberColumn(format="%.1f%%"),
-                        "単勝オッズ": st.column_config.NumberColumn(format="%.1f"),
-                        "EV": st.column_config.NumberColumn(format="%.2f"),
-                        "払戻": st.column_config.NumberColumn(format="%.1f"),
-                        "損益": st.column_config.NumberColumn(format="%+.1f"),
-                    },
+                    column_config=col_cfg,
                 )
                 bet_csv = per_bet.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
                     "📥 賭け明細 CSV ダウンロード", bet_csv,
                     file_name="backtest_per_bet.csv", mime="text/csv",
                 )
+
+                # ── 払戻テーブル（全馬券種） ────────────────────────
+                if rp is not None and race_filter != "（全件）":
+                    with st.expander("🎰 このレースの払戻テーブル（全馬券種）"):
+                        rt_df = _build_return_table_df(rp, race_filter)
+                        if rt_df.empty:
+                            st.info("払戻データが見つかりませんでした。")
+                        else:
+                            st.dataframe(
+                                rt_df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "払戻(円)": st.column_config.NumberColumn(format="%,d"),
+                                },
+                            )
+                elif rp is None:
+                    st.caption("💡 払戻テーブル（複勝・馬連等）を表示するには return_tables データが必要です。"
+                               " race_id を絞り込むと全馬券種払戻テーブルを表示できます。")
 
 # ──────────────────────────────────────────────────────────────────
 # Tab 2: 確信度スイープ

@@ -236,6 +236,70 @@ def compute_ev_sweep(
 # フルシミュレーション（AI 推奨通りに購入した場合の通算成績）
 # ---------------------------------------------------------------------------
 
+def _load_return_processor():
+    """ReturnProcessor を pkl → DB フォールバックで読み込む。失敗時は None。"""
+    try:
+        from src.preprocessing._return_processor import ReturnProcessor
+        return ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+    except Exception:
+        return None
+
+
+def _fukusho_payout(rp, race_id, umaban: int) -> float:
+    """指定レース・馬番の複勝払戻を返す。的中なし or データなしは 0.0。"""
+    try:
+        from src.constants._bet_types import BetType
+        table = rp.preprocessed_data[BetType.FUKUSHO]
+        if race_id not in table.index:
+            return 0.0
+        row = table.loc[race_id]
+        # win_X は文字列のまま（ReturnProcessor で win_transform=None）
+        # 複数行ある場合は Series（loc で複数行マッチ）→ 最初の行を使う
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        n_cols = sum(1 for c in row.index if c.startswith("win_"))
+        for i in range(n_cols):
+            win_val = row.get(f"win_{i}", 0)
+            if win_val == 0:
+                continue
+            s = str(win_val).strip()
+            if " " in s:
+                s = s.split()[0]
+            try:
+                if int(s) == int(umaban):
+                    return float(row.get(f"return_{i}", 0)) / 100.0
+            except (ValueError, TypeError):
+                continue
+    except Exception:
+        pass
+    return 0.0
+
+
+def _build_return_table_df(rp, race_id) -> pd.DataFrame:
+    """指定レースの全馬券種払戻を整理した DataFrame を返す。"""
+    try:
+        from src.constants._bet_types import BetType
+        from src.preprocessing._return_processor import _LABEL
+        rows = []
+        for bet_type, label in _LABEL.items():
+            table = rp.preprocessed_data[bet_type]
+            if race_id not in table.index:
+                continue
+            t = table.loc[race_id]
+            if isinstance(t, pd.DataFrame):
+                t = t.iloc[0]
+            n_cols = sum(1 for c in t.index if c.startswith("win_"))
+            for i in range(n_cols):
+                win_val = t.get(f"win_{i}", 0)
+                ret_val = t.get(f"return_{i}", 0)
+                if win_val == 0 or ret_val == 0:
+                    continue
+                rows.append({"馬券種": label, "的中": str(win_val), "払戻(円)": int(ret_val)})
+        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["馬券種", "的中", "払戻(円)"])
+    except Exception:
+        return pd.DataFrame(columns=["馬券種", "的中", "払戻(円)"])
+
+
 def compute_full_backtest(
     model,
     featured_data: pd.DataFrame,
@@ -252,6 +316,8 @@ def compute_full_backtest(
                                 #   sharpe_ratio, max_drawdown, total_bet_amount
       "per_race": pd.DataFrame, # race_id, n_bets, bet_amount, return_amount,
                                 #   hit_or_not, cumulative_profit
+      "per_bet": pd.DataFrame,  # 掛け目明細（馬番・単勝・複勝・EV・着順 etc.）
+      "return_processor": ReturnProcessor | None,  # 払戻テーブル参照用
     }
     """
     splits = _get_splits(featured_data, test_size, valid_size)
@@ -263,7 +329,7 @@ def compute_full_backtest(
         eff = getattr(model, "effective_model", model)
         prob_win = np.asarray(eff.predict_proba(X_test_model.values))[:, 1]
     except Exception:
-        return {"summary": {}, "per_race": pd.DataFrame()}
+        return {"summary": {}, "per_race": pd.DataFrame(), "per_bet": pd.DataFrame(), "return_processor": None}
 
     odds_arr = np.asarray(X_test[ResultsCols.TANSHO_ODDS], dtype=float)
     ev_arr = prob_win * odds_arr
@@ -283,6 +349,9 @@ def compute_full_backtest(
         np.asarray(rank_actual) if rank_actual is not None else np.full(len(race_ids), None)
     )
 
+    # 複勝払戻のために ReturnProcessor を遅延ロード
+    rp = _load_return_processor()
+
     per_race_dict: dict = {}
     per_bet_rows: list = []
     for race_id, umaban, prob, ev, odds, win, actual_rank in zip(
@@ -291,12 +360,13 @@ def compute_full_backtest(
         if ev <= ev_threshold:
             continue
         payout = float(odds * win)
+        fukusho_ret = _fukusho_payout(rp, race_id, umaban) if rp is not None else None
         if race_id not in per_race_dict:
             per_race_dict[race_id] = {"n_bets": 0, "bet_amount": 0.0, "return_amount": 0.0}
         per_race_dict[race_id]["n_bets"] += 1
         per_race_dict[race_id]["bet_amount"] += 1.0
         per_race_dict[race_id]["return_amount"] += payout
-        per_bet_rows.append({
+        row: dict = {
             "race_id": race_id,
             "馬番": umaban,
             "予測勝率": float(prob),
@@ -306,10 +376,14 @@ def compute_full_backtest(
             "的中": int(win),
             "払戻": payout,
             "損益": payout - 1.0,
-        })
+        }
+        if fukusho_ret is not None:
+            row["複勝払戻"] = fukusho_ret
+            row["複勝的中"] = int(fukusho_ret > 0)
+        per_bet_rows.append(row)
 
     if not per_race_dict:
-        return {"summary": {}, "per_race": pd.DataFrame(), "per_bet": pd.DataFrame()}
+        return {"summary": {}, "per_race": pd.DataFrame(), "per_bet": pd.DataFrame(), "return_processor": rp}
 
     per_race_df = pd.DataFrame.from_dict(per_race_dict, orient="index")
     per_race_df.index.name = "race_id"
@@ -323,7 +397,7 @@ def compute_full_backtest(
 
     per_bet_df = pd.DataFrame(per_bet_rows)
 
-    return {"summary": summary, "per_race": per_race_df, "per_bet": per_bet_df}
+    return {"summary": summary, "per_race": per_race_df, "per_bet": per_bet_df, "return_processor": rp}
 
 
 # ---------------------------------------------------------------------------
