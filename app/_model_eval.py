@@ -73,6 +73,8 @@ def _get_splits(
         "X_test": X_test,
         "X_test_model": X_test_model,
         "y_test": y_test,
+        # 賭け明細用: 実着順（着順）。X_test からは除外しているため別途保持する。
+        "rank_actual": test[ResultsCols.RANK] if ResultsCols.RANK in test.columns else None,
     }
 
 
@@ -270,8 +272,22 @@ def compute_full_backtest(
     # race_id はインデックスに格納されている
     race_ids = X_test.index.to_numpy()
 
+    # 掛け目・実着順の明細用（無い場合は None 埋め）
+    umaban_arr = (
+        np.asarray(X_test[ResultsCols.UMABAN])
+        if ResultsCols.UMABAN in X_test.columns
+        else np.full(len(race_ids), None)
+    )
+    rank_actual = splits.get("rank_actual")
+    rank_arr = (
+        np.asarray(rank_actual) if rank_actual is not None else np.full(len(race_ids), None)
+    )
+
     per_race_dict: dict = {}
-    for race_id, ev, odds, win in zip(race_ids, ev_arr, odds_arr, wins, strict=False):
+    per_bet_rows: list = []
+    for race_id, umaban, prob, ev, odds, win, actual_rank in zip(
+        race_ids, umaban_arr, prob_win, ev_arr, odds_arr, wins, rank_arr, strict=False
+    ):
         if ev <= ev_threshold:
             continue
         payout = float(odds * win)
@@ -280,9 +296,20 @@ def compute_full_backtest(
         per_race_dict[race_id]["n_bets"] += 1
         per_race_dict[race_id]["bet_amount"] += 1.0
         per_race_dict[race_id]["return_amount"] += payout
+        per_bet_rows.append({
+            "race_id": race_id,
+            "馬番": umaban,
+            "予測勝率": float(prob),
+            "単勝オッズ": float(odds),
+            "EV": float(ev),
+            "着順": actual_rank,
+            "的中": int(win),
+            "払戻": payout,
+            "損益": payout - 1.0,
+        })
 
     if not per_race_dict:
-        return {"summary": {}, "per_race": pd.DataFrame()}
+        return {"summary": {}, "per_race": pd.DataFrame(), "per_bet": pd.DataFrame()}
 
     per_race_df = pd.DataFrame.from_dict(per_race_dict, orient="index")
     per_race_df.index.name = "race_id"
@@ -294,7 +321,9 @@ def compute_full_backtest(
     from src.simulation._metrics import summarize_returns
     summary = summarize_returns(per_race_df.set_index("race_id"))
 
-    return {"summary": summary, "per_race": per_race_df}
+    per_bet_df = pd.DataFrame(per_bet_rows)
+
+    return {"summary": summary, "per_race": per_race_df, "per_bet": per_bet_df}
 
 
 # ---------------------------------------------------------------------------

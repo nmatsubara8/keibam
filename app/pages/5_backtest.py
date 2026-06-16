@@ -134,6 +134,36 @@ with tabs[0]:
             csv = per_race[display_cols].to_csv(index=False).encode("utf-8-sig")
             st.download_button("📥 CSV ダウンロード", csv, file_name="backtest_per_race.csv", mime="text/csv")
 
+            # ── 賭け明細（掛け目・実着順） ─────────────────────────
+            per_bet = result.get("per_bet", pd.DataFrame())
+            if not per_bet.empty:
+                st.subheader("賭け明細（掛け目・実着順）")
+                st.caption(
+                    "EV 閾値を超えて実際に賭けた 1 頭ごとの明細です。"
+                    " race_id で絞り込むと、そのレースの掛け目（馬番）と実着順を照会できます。"
+                )
+                race_filter = st.selectbox(
+                    "race_id で絞り込み",
+                    ["（全件）"] + per_bet["race_id"].astype(str).unique().tolist(),
+                    key="bet_detail_race",
+                )
+                detail = per_bet
+                if race_filter != "（全件）":
+                    detail = per_bet[per_bet["race_id"].astype(str) == race_filter]
+                st.dataframe(
+                    detail.style.format({
+                        "予測勝率": "{:.1%}", "単勝オッズ": "{:.1f}",
+                        "EV": "{:.2f}", "払戻": "{:.1f}", "損益": "{:+.1f}",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                bet_csv = per_bet.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    "📥 賭け明細 CSV ダウンロード", bet_csv,
+                    file_name="backtest_per_bet.csv", mime="text/csv",
+                )
+
 # ──────────────────────────────────────────────────────────────────
 # Tab 2: 確信度スイープ
 # ──────────────────────────────────────────────────────────────────
