@@ -107,8 +107,11 @@ with tabs[0]:
             # ── 累積損益グラフ ─────────────────────────────────────
             if not per_race.empty and "cumulative_profit" in per_race.columns:
                 st.subheader("累積損益推移")
-                chart_df = per_race[["cumulative_profit"]].rename(
-                    columns={"cumulative_profit": "累積損益 (円)"}
+                # race_id をインデックスにすることで、グラフのツールチップと
+                # テーブルの race_id が対応して照会しやすくなる
+                chart_df = (
+                    per_race.set_index("race_id")[["cumulative_profit"]]
+                    .rename(columns={"cumulative_profit": "累積損益 (円)"})
                 )
                 st.line_chart(chart_df, use_container_width=True)
 
