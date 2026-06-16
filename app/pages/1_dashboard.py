@@ -102,16 +102,31 @@ raw_files = {
     "特徴量データ": lp.FEATURED_DATA_PATH,
     "オッズスナップ": lp.RAW_ODDS_SNAPSHOT_PATH,
 }
+# pkl が無い場合は DB の行数でフォールバック判定する（pkl 廃止後も
+# DB に取込済みデータがあれば収集済みとみなす）。
+from src.storage._db import PICKLE_PATH_TO_ALIAS
+
+_db_stats = load_db_stats()
+_db_counts = _db_stats.get("table_counts", {})
+
 status_rows = []
 for label, path in raw_files.items():
     exists = os.path.exists(path)
-    mtime = (
-        dt.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
-        if exists
-        else "—"
-    )
-    size_mb = f"{os.path.getsize(path) / 1e6:.1f} MB" if exists else "—"
-    status_rows.append({"データ": label, "状態": "✅" if exists else "❌", "最終更新": mtime, "サイズ": size_mb})
+    if exists:
+        mtime = dt.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+        size_mb = f"{os.path.getsize(path) / 1e6:.1f} MB"
+        status_rows.append({"データ": label, "状態": "✅", "最終更新": mtime, "サイズ": size_mb})
+        continue
+
+    # pkl 不在: DB にデータがあれば ✅（DB 由来）とする
+    alias = PICKLE_PATH_TO_ALIAS.get(path)
+    db_rows = _db_counts.get(alias, -1) if alias else -1
+    if db_rows > 0:
+        status_rows.append(
+            {"データ": label, "状態": "✅ (DB)", "最終更新": "—", "サイズ": f"{db_rows:,} 行"}
+        )
+    else:
+        status_rows.append({"データ": label, "状態": "❌", "最終更新": "—", "サイズ": "—"})
 
 st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
 
@@ -121,7 +136,7 @@ st.divider()
 # DB 統計（Phase 2）
 # ------------------------------------------------------------------
 st.subheader("🗄️ データベース統計")
-db_stats = load_db_stats()
+db_stats = _db_stats
 if db_stats["table_counts"]:
     db_rows = [
         {"テーブル": alias, "行数": cnt if cnt >= 0 else "エラー"}
