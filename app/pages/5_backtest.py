@@ -150,13 +150,24 @@ with tabs[0]:
                 detail = per_bet
                 if race_filter != "（全件）":
                     detail = per_bet[per_bet["race_id"].astype(str) == race_filter]
+                # 表示用コピー: 予測勝率を % 表示にするため 100 倍する（per_bet 自体は
+                # CSV 用に 0〜1 のまま保持）。
+                detail_view = detail.copy()
+                if "予測勝率" in detail_view.columns:
+                    detail_view["予測勝率"] = detail_view["予測勝率"] * 100
+                # Pandas Styler はセル数上限（26万）があり全件（数十万行）で例外に
+                # なるため、セル数制限のない column_config で数値フォーマットする。
                 st.dataframe(
-                    detail.style.format({
-                        "予測勝率": "{:.1%}", "単勝オッズ": "{:.1f}",
-                        "EV": "{:.2f}", "払戻": "{:.1f}", "損益": "{:+.1f}",
-                    }),
+                    detail_view,
                     use_container_width=True,
                     hide_index=True,
+                    column_config={
+                        "予測勝率": st.column_config.NumberColumn(format="%.1f%%"),
+                        "単勝オッズ": st.column_config.NumberColumn(format="%.1f"),
+                        "EV": st.column_config.NumberColumn(format="%.2f"),
+                        "払戻": st.column_config.NumberColumn(format="%.1f"),
+                        "損益": st.column_config.NumberColumn(format="%+.1f"),
+                    },
                 )
                 bet_csv = per_bet.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
