@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 def plot_single_threshold(df, N_SAMPLES, label=" "):  # noqa: N803
     import matplotlib.pyplot as plt
 
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
+
     if df is None or len(df) == 0 or "return_rate" not in df.columns:
         # 賭けが一度も成立しなかった等で集計結果が空のケース。
         # KeyError でクラッシュさせず、原因が分かるメッセージを出す。
@@ -79,6 +82,9 @@ def plot_calibration(
     matplotlib.figure.Figure
     """
     import matplotlib.pyplot as plt
+
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
 
     y_true = np.asarray(y_true, dtype=float)
     prob_pre = np.clip(np.asarray(prob_pre, dtype=float), 0.0, 1.0)
@@ -158,6 +164,9 @@ def plot_ev_threshold_sweep(
     """
     import matplotlib.pyplot as plt
 
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
+
     fig, axes = plt.subplots(2, 1, figsize=(7, 7), dpi=100, sharex=True)
 
     ax1 = axes[0]
@@ -208,6 +217,9 @@ def plot_confidence_sweep(
     optimal_threshold : 推奨閾値（赤破線で表示）
     """
     import matplotlib.pyplot as plt
+
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     fig.suptitle("確信度（EV 閾値）スイープ", fontsize=14)
@@ -275,6 +287,9 @@ def plot_odds_prediction_accuracy(
     """
     import matplotlib.pyplot as plt
 
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
+
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
     mask = (y_true > 0) & (y_pred > 0) & (y_true <= max_display_odds) & (y_pred <= max_display_odds)
@@ -332,6 +347,9 @@ def plot_stacking_contribution(
     matplotlib.figure.Figure
     """
     import matplotlib.pyplot as plt
+
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
     from sklearn.metrics import roc_auc_score
 
     y_true = np.asarray(y_true, dtype=float)
@@ -388,6 +406,9 @@ def plot_ev_weight_curve(
     ev_range : 描画する EV の範囲。
     """
     import matplotlib.pyplot as plt
+
+    from src.simulation._mpl_japanese import setup_japanese_font
+    setup_japanese_font()
 
     from src.constants._bet_thresholds import TrainingWeights
 
