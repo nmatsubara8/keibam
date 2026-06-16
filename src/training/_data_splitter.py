@@ -24,10 +24,10 @@ class DataSplitter:
         # PreparedFeatures または plain DataFrame を受け付ける
         from src.preprocessing._prepared_features import PreparedFeatures
         if isinstance(featured_data, PreparedFeatures):
-            self.__featured_data = featured_data.gbdt
+            self.__featured_data = self.__downcast_floats(featured_data.gbdt)
             self.__nn_raw: pd.DataFrame | None = featured_data.nn
         else:
-            self.__featured_data = featured_data
+            self.__featured_data = self.__downcast_floats(featured_data)
             self.__nn_raw = None
 
         # スタッキング用
@@ -48,9 +48,11 @@ class DataSplitter:
     def train_valid_test_split(self, test_size, valid_size):
         """
         訓練データとテストデータに分ける。さらに訓練データをoptuna用の訓練データと検証データに分ける。
-        """
-        import optuna.integration.lightgbm as lgb_o
 
+        メモリ最適化のため、lgb Dataset / X_train / X_test 等の重い materialization は
+        ここでは行わず、各プロパティへの初回アクセス時に遅延生成する。これにより
+        スタッキング経路（with_tuning=False）では lgb_train_optuna 等を一切作らずに済む。
+        """
         self.__train_data, self.__test_data = self.__split_by_date(self.__featured_data, test_size=test_size)
         self.__train_data_optuna, self.__valid_data_optuna = self.__split_by_date(
             self.__train_data, test_size=valid_size
@@ -63,20 +65,13 @@ class DataSplitter:
             len(self.__test_data),
         )
 
-        self.__lgb_train_optuna = lgb_o.Dataset(
-            self.__train_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-            self.__train_data_optuna["rank"],
-        )
-        self.__lgb_valid_optuna = lgb_o.Dataset(
-            self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-            self.__valid_data_optuna["rank"],
-        )
-        # 説明変数と目的変数に分ける。開催はエラーなるので一度drop。
-        self.__X_train = self.__train_data.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
-        self.__y_train = self.__train_data["rank"]
-        self.__X_test = self.__test_data.drop(_DROP_FOR_TEST, axis=1, errors="ignore")
-        self.__y_test = self.__test_data["rank"]
-        logger.info("X_test size: %d", len(self.__X_test))
+        # 遅延生成キャッシュ（None = 未生成）
+        self.__lgb_train_optuna = None
+        self.__lgb_valid_optuna = None
+        self.__X_train = None
+        self.__y_train = None
+        self.__X_test = None
+        self.__y_test = None
 
         # NN ストリーム: PreparedFeatures が渡された場合のみ実行
         if self.__nn_raw is not None:
@@ -90,6 +85,21 @@ class DataSplitter:
             self.__nn_test = self.__nn_scaler.transform(self.__nn_raw.loc[test_ids])
             self.__nn_optuna_train = self.__nn_scaler.transform(self.__nn_raw.loc[optuna_ids])
             self.__nn_valid = self.__nn_scaler.transform(self.__nn_raw.loc[valid_ids])
+
+    @staticmethod
+    def __downcast_floats(df):
+        """float64 列を float32 にダウンキャストしてメモリを約半減させる。
+
+        LightGBM は内部でビニングするため float32 精度で十分。int / bool /
+        category / str（horse_id 等）には影響を与えない。元 DataFrame は
+        書き換えず、変換が必要な場合のみコピーを返す。
+        """
+        float_cols = df.select_dtypes(include=["float64"]).columns
+        if len(float_cols) == 0:
+            return df
+        df = df.copy()
+        df[float_cols] = df[float_cols].astype("float32")
+        return df
 
     def __make_nn_scaler(self):
         """nn_raw の category/numeric 列を自動検出して NnFeatureScaler を生成する。"""
@@ -133,52 +143,78 @@ class DataSplitter:
 
     @property
     def lgb_train_optuna(self):
+        if self.__lgb_train_optuna is None:
+            import optuna.integration.lightgbm as lgb_o
+
+            self.__lgb_train_optuna = lgb_o.Dataset(
+                self.__train_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
+                self.__train_data_optuna["rank"],
+            )
         return self.__lgb_train_optuna
 
     @property
     def lgb_valid_optuna(self):
+        if self.__lgb_valid_optuna is None:
+            import optuna.integration.lightgbm as lgb_o
+
+            self.__lgb_valid_optuna = lgb_o.Dataset(
+                self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
+                self.__valid_data_optuna["rank"],
+            )
         return self.__lgb_valid_optuna
 
     @property
     def X_train(self):
+        if self.__X_train is None:
+            self.__X_train = self.__train_data.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
         return self.__X_train
 
     @property
     def y_train(self):
+        if self.__y_train is None:
+            self.__y_train = self.__train_data["rank"]
         return self.__y_train
 
     @property
     def X_test(self):
+        if self.__X_test is None:
+            self.__X_test = self.__test_data.drop(_DROP_FOR_TEST, axis=1, errors="ignore")
         return pd.DataFrame(self.__X_test)
 
     @property
     def y_test(self):
+        if self.__y_test is None:
+            self.__y_test = self.__test_data["rank"]
         return pd.Series(self.__y_test)
 
     # ------------------------------------------------------------------
     # スタッキング用 3-way 分割
     # ------------------------------------------------------------------
 
-    def make_stacking_splits(self, meta_ratio: float = 0.3) -> None:
+    def make_stacking_splits(self, meta_ratio: float = 0.3, build_optuna_datasets: bool = True) -> None:
         """train_data_optuna を base_train / meta_train に分割し lgb Optuna データを再生成する。
 
         calib_holdout は valid_data_optuna をそのまま使用。
         base_train 内の 80/20 split で Optuna ハイパラ探索用データを再構築する。
-        """
-        import optuna.integration.lightgbm as lgb_o
 
+        build_optuna_datasets=False の場合は lgb Optuna Dataset の生成を省略する
+        （チューニングを行わないスタッキング学習ではメモリ節約のため不要）。
+        """
         self.__base_train, self.__meta_train = self.__split_by_date(
             self.__train_data_optuna, test_size=meta_ratio
         )
-        base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
-        self.__lgb_train_optuna = lgb_o.Dataset(
-            base_opt_train.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-            base_opt_train["rank"],
-        )
-        self.__lgb_valid_optuna = lgb_o.Dataset(
-            base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-            base_opt_valid["rank"],
-        )
+        if build_optuna_datasets:
+            import optuna.integration.lightgbm as lgb_o
+
+            base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
+            self.__lgb_train_optuna = lgb_o.Dataset(
+                base_opt_train.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
+                base_opt_train["rank"],
+            )
+            self.__lgb_valid_optuna = lgb_o.Dataset(
+                base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
+                base_opt_valid["rank"],
+            )
         logger.info(
             "stacking sizes: base_train=%d meta_train=%d calib_holdout=%d",
             len(self.__base_train),

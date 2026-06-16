@@ -56,7 +56,7 @@ class KeibaAI:
         from ._calibrated_model import CalibratedModel
         from ._stacking_model import StackingModel
 
-        self.__datasets.make_stacking_splits(meta_ratio=meta_ratio)
+        self.__datasets.make_stacking_splits(meta_ratio=meta_ratio, build_optuna_datasets=with_tuning)
         if with_tuning:
             self.__model_wrapper.tune_hyper_params(self.__datasets)
 
