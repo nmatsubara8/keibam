@@ -46,8 +46,28 @@ def check_file(
     err_age_h: Optional[float] = None,
     required: bool = True,
 ) -> CheckResult:
-    """ファイルの存在と鮮度（mtime からの経過時間）を点検する。"""
+    """ファイルの存在と鮮度（mtime からの経過時間）を点検する。
+
+    pkl が存在しない場合は DB の行数でフォールバック判定する。
+    """
     if not os.path.exists(path):
+        # DB にデータがあれば OK 扱い
+        try:
+            from src.storage._db import PICKLE_PATH_TO_ALIAS, get_engine
+            from sqlalchemy import text as _text
+
+            alias = PICKLE_PATH_TO_ALIAS.get(path)
+            if alias:
+                with get_engine().connect() as _conn:
+                    from src.storage import TABLE_SPECS
+                    spec = TABLE_SPECS.get(alias)
+                    if spec:
+                        row = _conn.execute(_text(f'SELECT COUNT(*) FROM "{spec.table_name}"')).fetchone()
+                        n = int(row[0]) if row else 0
+                        if n > 0:
+                            return CheckResult(name, OK, f"DB に {n:,} 行（pkl なし）")
+        except Exception:
+            pass
         level = ERROR if required else WARN
         return CheckResult(name, level, f"見つかりません: {path}")
     age = _age_hours(path, now)
