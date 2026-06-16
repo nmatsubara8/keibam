@@ -33,13 +33,26 @@ class KeibaAIFactory:
         """
         日付やバージョン、パラメータ、データなどを保存。
         保存先はmodels/(yyyymmdd)/(version_name).pickle。
+
+        学習に使った DataSplitter は featured_data 全体（数十万行）を抱えており、
+        そのまま dill.dump するとモデル 1 個で数百 MB になり、読込時に OOM の
+        原因となる。推論に必要なのは effective_model / feature_names_ /
+        peds_processor / nn_scaler のみなので、保存中だけ __datasets を切り離す。
         """
         yyyymmdd = datetime.date.today().strftime("%Y%m%d")
         # ディレクトリ作成
         os.makedirs(os.path.join("models", yyyymmdd), exist_ok=True)
         filepath_pickle = os.path.join("models", yyyymmdd, "{}.pickle".format(version_name))
-        with open(filepath_pickle, mode="wb") as f:
-            dill.dump(keibaAI, f)
+
+        # 保存中だけ重い datasets を退避（dump 後に復元）
+        datasets_attr = "_KeibaAI__datasets"
+        saved_datasets = getattr(keibaAI, datasets_attr, None)
+        try:
+            setattr(keibaAI, datasets_attr, None)
+            with open(filepath_pickle, mode="wb") as f:
+                dill.dump(keibaAI, f)
+        finally:
+            setattr(keibaAI, datasets_attr, saved_datasets)
 
     @staticmethod
     def load(filepath: str) -> KeibaAI:
