@@ -42,11 +42,13 @@ class KeibaAI:
         """
         self.__model_wrapper.set_params(params)
 
-    def train_with_tuning(self):
+    def train_with_tuning(self, tuning_config=None):
         """
         optunaでのチューニング後、訓練させる。
+
+        tuning_config で探索範囲・回数を制御できる（None なら LightGBMTuner）。
         """
-        self.__model_wrapper.tune_hyper_params(self.__datasets)
+        self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
         self.__model_wrapper.train(self.__datasets)
 
     def train_without_tuning(self):
@@ -55,7 +57,7 @@ class KeibaAI:
         """
         self.__model_wrapper.train(self.__datasets)
 
-    def train_with_stacking(self, meta_ratio: float = 0.3, with_tuning: bool = True) -> None:
+    def train_with_stacking(self, meta_ratio: float = 0.3, with_tuning: bool = True, tuning_config=None) -> None:
         """スタッキング+Isotonic 較正の Layer1 パイプラインを実行する。
 
         1. make_stacking_splits で base_train / meta_train / calib_holdout に分割
@@ -77,7 +79,7 @@ class KeibaAI:
 
         self.__datasets.make_stacking_splits(meta_ratio=meta_ratio, build_optuna_datasets=with_tuning)
         if with_tuning:
-            self.__model_wrapper.tune_hyper_params(self.__datasets)
+            self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
 
         x_base = self.__datasets.X_base_train.values
         y_base = self.__datasets.y_base_train.values

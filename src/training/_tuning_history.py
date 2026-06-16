@@ -41,7 +41,11 @@ def trials_to_records(study, version: str, top_n: int = 50) -> list[dict]:
     for t in study.trials:
         if t.value is None:
             continue
+        # LightGBMTuner は system_attrs に、手書き Optuna 探索は user_attrs に
+        # 完全パラメータを記録する（_model_wrapper.__tune_custom 参照）。
         raw = t.system_attrs.get(_LGBM_PARAMS_ATTR)
+        if raw is None:
+            raw = getattr(t, "user_attrs", {}).get(_LGBM_PARAMS_ATTR)
         if raw is None:
             continue
         params = json.loads(raw) if isinstance(raw, str) else dict(raw)

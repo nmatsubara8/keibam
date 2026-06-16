@@ -137,6 +137,7 @@ class RetrainJob:
         with_tuning: bool = False,
         lgb_params: dict | None = None,
         params_rank: int | None = None,
+        tuning_config=None,
     ) -> dict:
         """featured_data で全再学習し、バージョン付きモデルを保存する。
 
@@ -149,6 +150,7 @@ class RetrainJob:
         lgb_params : 指定時はこのパラメータを LightGBM に注入して学習する
             （保存済みチューニング履歴から選んだもの。with_tuning とは排他）。
         params_rank : lgb_params の出所 rank（メタデータ記録用）。
+        tuning_config : TuningConfig（探索範囲・回数の制御）。None なら LightGBMTuner。
 
         Returns
         -------
@@ -166,10 +168,14 @@ class RetrainJob:
                 ai.set_lgb_params(lgb_params)
 
         if self._cfg.use_stacking:
-            ai.train_with_stacking(meta_ratio=self._cfg.meta_ratio, with_tuning=with_tuning)
+            ai.train_with_stacking(
+                meta_ratio=self._cfg.meta_ratio,
+                with_tuning=with_tuning,
+                tuning_config=tuning_config,
+            )
         else:
             if with_tuning:
-                ai.train_with_tuning()
+                ai.train_with_tuning(tuning_config=tuning_config)
             else:
                 ai.train_without_tuning()
 

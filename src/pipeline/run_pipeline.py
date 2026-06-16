@@ -350,6 +350,14 @@ def _retrain(args: argparse.Namespace) -> None:
             selected.get("version"), params_rank,
         )
 
+    # 手書き Optuna 探索の設定（--tuning-config / --n-trials / --tuning-timeout）。
+    # いずれかが指定された場合は method="optuna" の探索（範囲・回数を制御）を使う。
+    tuning_config = _build_tuning_config(args)
+    if tuning_config is not None and not args.with_tuning:
+        # 探索設定を渡すなら自動的に探索を有効化する（指定漏れ防止）
+        args.with_tuning = True
+        logger.info("[retrain] 探索設定が指定されたため --with-tuning を有効化します")
+
     job = RetrainJob(KeibaAIFactory, cfg)
     result = job.run(
         featured_data,
@@ -357,8 +365,42 @@ def _retrain(args: argparse.Namespace) -> None:
         with_tuning=args.with_tuning,
         lgb_params=lgb_params,
         params_rank=params_rank,
+        tuning_config=tuning_config,
     )
     logger.info("[retrain] %s", result)
+
+
+def _build_tuning_config(args: argparse.Namespace):
+    """CLI 引数から TuningConfig を構築する（未指定なら None=LightGBMTuner）。"""
+    config_path = getattr(args, "tuning_config", None)
+    n_trials = getattr(args, "n_trials", None)
+    timeout = getattr(args, "tuning_timeout", None)
+
+    if config_path is None and n_trials is None and timeout is None:
+        return None
+
+    from src.training._tuning_config import METHOD_OPTUNA
+    from src.training._tuning_config import TuningConfig
+    from src.training._tuning_config import load_tuning_config
+
+    if config_path is not None:
+        cfg = load_tuning_config(config_path)
+    else:
+        cfg = TuningConfig(method=METHOD_OPTUNA)
+
+    # CLI の --n-trials / --tuning-timeout は設定ファイルより優先する
+    overrides: dict = {"method": METHOD_OPTUNA}
+    if n_trials is not None:
+        overrides["n_trials"] = n_trials
+    if timeout is not None:
+        overrides["timeout"] = timeout
+    import dataclasses
+    cfg = dataclasses.replace(cfg, **overrides)
+    logger.info(
+        "[retrain] 探索設定: method=%s n_trials=%d timeout=%s",
+        cfg.method, cfg.n_trials, cfg.timeout,
+    )
+    return cfg
 
 
 def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
@@ -433,6 +475,26 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--use-selected-params",
         action="store_true",
         help="UI（モデルラボ）で選択・保存したパラメータ（models/selected_params.json）で学習する",
+    )
+    # 手書き Optuna 探索（探索範囲・回数を制御）。いずれか指定で method="optuna" に切替。
+    retrain_p.add_argument(
+        "--n-trials",
+        type=int,
+        default=None,
+        help="手書き Optuna 探索の試行回数（指定すると探索範囲を制御する optuna 方式に切替）",
+    )
+    retrain_p.add_argument(
+        "--tuning-timeout",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="手書き Optuna 探索の打ち切り秒数（任意）",
+    )
+    retrain_p.add_argument(
+        "--tuning-config",
+        default=None,
+        metavar="PATH",
+        help="探索範囲・回数を定義した JSON 設定ファイル（src/training/_tuning_config.py 参照）",
     )
 
     # evaluate-odds-dynamics サブコマンド

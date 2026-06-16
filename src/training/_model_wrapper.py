@@ -29,13 +29,26 @@ class ModelWrapper:
         )
         self.__feature_importance = None
 
-    def tune_hyper_params(self, datasets: DataSplitter, study=None):
-        """
-        optunaによるチューニングを実行。
+    def tune_hyper_params(self, datasets: DataSplitter, study=None, tuning_config=None):
+        """optunaによるチューニングを実行。
+
+        tuning_config が None または method="lightgbm_tuner" の場合は従来どおり
+        LightGBMTuner（自動段階探索・範囲/回数は固定）を使う。method="optuna" の
+        場合は手書き Optuna で探索範囲（search_space）・試行回数（n_trials）・
+        打ち切り（timeout）を制御する。
 
         study を明示的に生成して渡すことで、終了後に全 trial（パラメータと成績）を
         回収できる（`last_study_` に保持。RetrainJob が tuning_history.json へ保存する）。
         """
+        from ._tuning_config import TuningConfig
+
+        cfg = tuning_config if tuning_config is not None else TuningConfig()
+        if cfg.is_custom:
+            return self.__tune_custom(datasets, cfg, study)
+        return self.__tune_lightgbm_tuner(datasets, study)
+
+    def __tune_lightgbm_tuner(self, datasets: DataSplitter, study=None):
+        """LightGBMTuner の自動段階探索（探索種類・範囲・回数はライブラリ固定）。"""
         import optuna  # noqa: PLC0415
 
         if study is None:
@@ -59,6 +72,51 @@ class ModelWrapper:
         tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
 
         self.__lgb_model.set_params(**tunedParams)
+        return study
+
+    def __tune_custom(self, datasets: DataSplitter, cfg, study=None):
+        """手書き Optuna 探索（search_space / n_trials / timeout を設定で制御）。"""
+        import json  # noqa: PLC0415
+
+        import optuna  # noqa: PLC0415
+
+        # tuning_history.json が読む system_attrs と同じキー（完全パラメータの記録先）
+        from ._tuning_history import _LGBM_PARAMS_ATTR
+
+        if study is None:
+            study = optuna.create_study(
+                direction="minimize",
+                sampler=optuna.samplers.TPESampler(seed=cfg.seed),
+            )
+        self.last_study_ = study
+
+        train_set = datasets.lgb_train_optuna
+        valid_set = datasets.lgb_valid_optuna
+
+        def objective(trial):
+            params = cfg.suggest_params(trial)
+            # 再学習時にそのまま使えるよう、完全パラメータを user_attr に記録する
+            # （trials_to_records が system_attrs / user_attrs の両方を参照する）。
+            trial.set_user_attr(_LGBM_PARAMS_ATTR, json.dumps(params))
+            booster = lgb.train(
+                params,
+                train_set,
+                valid_sets=[valid_set],
+                num_boost_round=cfg.num_boost_round,
+                callbacks=[lgb.early_stopping(cfg.early_stopping_rounds, verbose=False)],
+            )
+            return booster.best_score["valid_0"]["binary_logloss"]
+
+        logger.info(
+            "[tune] 手書き Optuna 探索: n_trials=%d timeout=%s 探索対象=%s",
+            cfg.n_trials, cfg.timeout, list(cfg.search_space.keys()),
+        )
+        study.optimize(objective, n_trials=cfg.n_trials, timeout=cfg.timeout)
+
+        best = dict(study.best_trial.params)
+        best.setdefault("objective", "binary")
+        self.__lgb_model.set_params(**best)
+        logger.info("[tune] best binary_logloss=%.5f params=%s", study.best_value, best)
         return study
 
     @property

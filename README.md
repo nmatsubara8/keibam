@@ -176,8 +176,16 @@ SQLite 冪等 upsert → 未知の馬の馬ページ/血統の差分取得 → �
 # 通常の再学習（スタッキング + 較正、約 3 分）
 python -m src.pipeline.run_pipeline retrain
 
-# Optuna ハイパラ探索つき（全 trial が成績順で models/tuning_history.json に保存される）
+# Optuna ハイパラ探索つき（LightGBMTuner の自動段階探索。探索範囲・回数は固定）
 python -m src.pipeline.run_pipeline retrain --with-tuning
+
+# 探索範囲・試行回数を制御する手書き Optuna 探索（method="optuna"）
+#   --n-trials を付けると optuna 方式に切替（--with-tuning は自動で有効化）
+python -m src.pipeline.run_pipeline retrain --n-trials 100
+#   打ち切り秒数を指定
+python -m src.pipeline.run_pipeline retrain --n-trials 200 --tuning-timeout 1800
+#   探索範囲を JSON 設定ファイルで指定（例: configs/tuning_config.example.json）
+python -m src.pipeline.run_pipeline retrain --tuning-config configs/tuning_config.example.json
 
 # 保存済み探索結果から任意の rank のパラメータで学習
 python -m src.pipeline.run_pipeline retrain --params-rank 2
