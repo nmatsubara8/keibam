@@ -23,6 +23,13 @@ _TANSHO_HTML = """
 </table></body></html>
 """
 
+_UMAREN_HTML = """
+<html><body><table>
+<tr><td id="odds-4-0102" class="Odds">12.3</td></tr>
+<tr><td id="odds-4-0103" class="Odds">45.6</td></tr>
+</table></body></html>
+"""
+
 
 class _StubScraper:
     """fetch_sync / fetch を記録するスタブ AbstractScraper。"""
@@ -92,13 +99,23 @@ class TestCapture:
         snaps = scraper.capture("r1", BetType.TANSHO, post, captured)
         assert all(s.minutes_to_post == 5 for s in snaps)
 
-    def test_capture_non_tansho_empty_phase_a(self):
-        """連系は Phase A では空（パーサ未実装）。"""
+    @_bs4_required
+    def test_capture_non_tansho_no_ids_returns_empty(self):
+        """連系: id 属性が無い HTML からは何も取れない（フォールバックは単勝・複勝のみ）。"""
         stub = _StubScraper(_TANSHO_HTML)
         scraper = OddsSnapshotScraper(scraper=stub)
         post = dt.datetime(2024, 1, 1, 15, 40)
         snaps = scraper.capture("r1", BetType.UMAREN, post)
         assert snaps == []
+
+    @_bs4_required
+    def test_capture_umaren_produces_combo_snapshots(self):
+        stub = _StubScraper(_UMAREN_HTML)
+        scraper = OddsSnapshotScraper(scraper=stub)
+        post = dt.datetime(2024, 1, 1, 15, 40)
+        captured = dt.datetime(2024, 1, 1, 15, 35)
+        snaps = scraper.capture("r1", BetType.UMAREN, post, captured)
+        assert {(s.combo, s.odds) for s in snaps} == {((1, 2), 12.3), ((1, 3), 45.6)}
 
 
 class TestDefaultScraperLazy:

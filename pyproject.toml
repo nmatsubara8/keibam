@@ -4,17 +4,16 @@ indent-width = 4
 exclude = ["**/*.ipynb"]
 #target-version = "py311"
 
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
 ignore = [
     "G004", # `logging-f-string` : loggingでf-stringを使いたいので無視する
-    "PD901", #すでに`df`という変数をいろんなところで使っているため
     "PD002", #すでにpandasで`inplace=True`はいろんなところで使っているため
     "RUF001", # 全角記号など`ambiguous unicode character`も使いたいため
     "RUF002",# 全角記号など`ambiguous unicode character`も使いたいため
     "RUF003",# 全角記号など`ambiguous unicode character`も使いたいため
     "PLC1901", # compare-to-empty-string : `if a == "`のように空文字列で直接比較したいときがあるため
     "PLR2004", # magic-value-comparison: listのサイズで判定するときがよくあるため
-    "ANN101", # missing-type-self: 引数selfには型ヒントは付けていないため
-    "ANN102", # missing-type-cls: 引数clsには型ヒントは付けていないため
     "ANN002", # missing-type-args
     "ANN003", # missing-type-kwargs
     "ERA", # : 役立つこともあるが、コメントアウトしていないコードも警告されるので無視する
@@ -47,10 +46,6 @@ ignore = [
     "PT", # flake8-pytest-style
 ]
 
-[tool.ruff.lint]
-select = ["E", "F", "W", "B"]
-ignore = []
-
 fixable = ["ALL"]
 
 [tool.ruff.lint.per-file-ignores]
@@ -62,7 +57,7 @@ fixable = ["ALL"]
 [tool.ruff.lint.mccabe]
 max-complexity = 5
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 force-single-line = true
 
 [tool.ruff.format]
@@ -96,17 +91,22 @@ files = [
     "src/simulation/_plot.py",
     "src/simulation/_popularity_baseline.py",
     "src/training/_sample_weights.py",
+    "src/training/_leakage_check.py",
     "src/constants/_odds_phases.py",
     "src/constants/_logging_config.py",
     "src/constants/_units.py",
     "src/preparing/_scraper.py",
+    "src/preparing/_rate_limiter.py",
     "src/preparing/_odds_snapshot.py",
     "src/preparing/odds_scheduler.py",
     "src/pipeline/_ingestion.py",
     "src/pipeline/_retrain.py",
+    "src/pipeline/_doctor.py",
+    "src/pipeline/_model_retention.py",
     "src/storage",
     "app/_betting_history.py",
     "app/_formatters.py",
     "app/_prediction_service.py",
     "app/_model_eval.py",
+    "app/_tuning_job.py",
 ]

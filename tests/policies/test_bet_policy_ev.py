@@ -124,3 +124,38 @@ def test_judge_empty_when_no_candidates():
     table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
     policy = ExpectedValueBetPolicy(_FixedOddsProvider(1.0), thresholds={BetType.TANSHO: 1.0})
     assert policy.judge(table) == {}
+
+
+class _BadOddsProvider(AbstractOddsProvider):
+    """異常オッズ（NaN/0/inf）を返すスタブ。"""
+
+    def __init__(self, odds: float) -> None:
+        self._odds = odds
+
+    def get_odds(self, race_id, bet_type, combo) -> float:
+        return self._odds
+
+
+def test_nan_probability_excluded():
+    # prob=NaN の馬は eligible から除外され候補に出ない
+    table = _prob_table("r1", [(1, 0.5), (2, float("nan"))])
+    policy = ExpectedValueBetPolicy(_FixedOddsProvider(4.0), thresholds={BetType.TANSHO: 1.0})
+    selected = policy.select(table)
+    umabans = {c.combo[0] for c in selected}
+    assert 2 not in umabans
+    assert 1 in umabans
+
+
+def test_nonpositive_probability_excluded():
+    table = _prob_table("r1", [(1, 0.5), (2, 0.0), (3, -0.1)])
+    policy = ExpectedValueBetPolicy(_FixedOddsProvider(4.0), thresholds={BetType.TANSHO: 1.0})
+    umabans = {c.combo[0] for c in policy.select(table)}
+    assert umabans == {1}
+
+
+def test_abnormal_odds_skipped():
+    # オッズが 0 / inf / NaN の馬券は EV 計算されず採用されない
+    table = _prob_table("r1", [(1, 0.5), (2, 0.5)])
+    for bad in (0.0, float("inf"), float("nan")):
+        policy = ExpectedValueBetPolicy(_BadOddsProvider(bad), thresholds={BetType.TANSHO: 1.0})
+        assert policy.select(table) == []

@@ -23,10 +23,21 @@ class OperationConfig:
     kelly_fraction_ratio: float = 0.5
     per_bet_cap_ratio: float = 0.05
     max_daily_ratio: float = 1.0
+    # オッズ力学モデルの予測確定オッズで EV を計算する（odds_watch の最新予測を使用。
+    # 予測が無いレース/馬は現在オッズへ自動フォールバック）
+    use_predicted_odds: bool = False
+    # 安全装置（損失ストップ / kill switch）
+    kill_switch_enabled: bool = True       # 当日実現損失が上限超で推奨/記録を停止
+    max_daily_loss_ratio: float = 0.3      # 当日実現損失が bankroll*この比率を超えたら停止
+    initial_bankroll: float = 100000.0     # 実効 bankroll の基準（= initial + 累積純益）
 
     def __post_init__(self) -> None:
         if self.operation_mode not in VALID_MODES:
             raise ValueError(f"operation_mode は {VALID_MODES} のいずれか: {self.operation_mode}")
+        if not (0.0 < self.max_daily_loss_ratio <= 1.0):
+            raise ValueError(
+                f"max_daily_loss_ratio は 0 < r <= 1: {self.max_daily_loss_ratio}"
+            )
 
     @classmethod
     def from_dict(cls, data: dict) -> "OperationConfig":

@@ -67,7 +67,11 @@ class ResultsProcessor(AbstractDataProcessor):
         """
         カラム抽出
         """
-        df = raw.copy()[
+        df = raw.copy()
+        # race_id がインデックスにあり列にない場合（pickle 再保存後の状態）は列に復元する
+        if "race_id" not in df.columns and df.index.name == "race_id":
+            df = df.reset_index()
+        df = df[
             [
                 "race_id",
                 Cols.RANK,  # 着順 (actual finishing position; used for jockey/trainer/sire stats)

@@ -48,8 +48,42 @@ c2.metric("AUC (test)", f"{status['model_auc']:.4f}" if status["model_auc"] else
 c3.metric("スナップショット", f"{status['n_snapshots']:,} 件")
 c4.metric("最終取込", status["last_ingest"] or "未実行")
 
+# Phase 2: 特徴量データの統計
+if status.get("n_featured_rows"):
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("特徴量 行数", f"{status['n_featured_rows']:,}")
+    c6.metric("特徴量 列数", f"{status['n_featured_cols']:,}")
+    c7.metric("最古 race_id", status.get("featured_min_race_id") or "—")
+    c8.metric("最新 race_id", status.get("featured_max_race_id") or "—")
+
 mode_color = {"advisory": "🟢", "semi_auto": "🟡", "full_auto": "🔴"}.get(status["operation_mode"], "⚪")
 st.info(f"{mode_color} 運用モード: **{status['operation_mode']}**")
+
+# ------------------------------------------------------------------
+# 安全装置（損失ストップ）と実効 bankroll
+# ------------------------------------------------------------------
+from app._betting_history import load_history
+from app._data_loader import load_operation_config
+from src.operation._risk_guard import effective_bankroll
+from src.operation._risk_guard import evaluate_kill_switch
+
+_op = load_operation_config()
+_history = load_history()
+_guard = evaluate_kill_switch(_history, _op)
+_eff_bankroll = effective_bankroll(_history, _op.initial_bankroll)
+
+s1, s2, s3 = st.columns(3)
+if _guard.blocked:
+    s1.error("🛑 取引停止")
+else:
+    s1.success("🟢 取引可能")
+s2.metric("当日実現損失", f"¥{_guard.daily_loss:,.0f}", help=f"上限 ¥{_guard.limit:,.0f}")
+s3.metric(
+    "実効 bankroll",
+    f"¥{_eff_bankroll:,.0f}",
+    delta=f"{_eff_bankroll - _op.initial_bankroll:+,.0f}",
+    help="初期資金 + 確定済みの累積純損益",
+)
 
 st.divider()
 
@@ -97,6 +131,53 @@ if db_stats["table_counts"]:
     st.caption(f"DB ファイルサイズ: {db_stats['db_size_mb']:.1f} MB  ({LocalPaths.DB_PATH})")
 else:
     st.info("DB が未初期化です。取込実行後に統計が表示されます。")
+
+st.divider()
+
+# ------------------------------------------------------------------
+# システム健全性（鮮度・モデル・DB・ディスク）
+# ------------------------------------------------------------------
+st.subheader("🩺 システム健全性")
+from app._data_loader import load_freshness_status
+
+_fresh = load_freshness_status()
+_overall_icon = {"OK": "✅", "WARN": "⚠️", "ERROR": "❌"}.get(_fresh["level"], "•")
+if _fresh["level"] == "OK":
+    st.success(f"{_overall_icon} 総合: OK")
+elif _fresh["level"] == "WARN":
+    st.warning(f"{_overall_icon} 総合: WARN（古いデータ/モデルがあります）")
+else:
+    st.error(f"{_overall_icon} 総合: ERROR（要対応）")
+_check_rows = [
+    {"項目": c["name"], "状態": c["level"], "詳細": c["detail"]}
+    for c in _fresh["checks"]
+]
+st.dataframe(pd.DataFrame(_check_rows), use_container_width=True, hide_index=True)
+st.caption("CLI からは `python -m src.pipeline.run_pipeline doctor` で同じ点検ができます。")
+
+st.divider()
+
+# ------------------------------------------------------------------
+# ジョブ実行履歴（execution_log）
+# ------------------------------------------------------------------
+st.subheader("🧾 ジョブ実行履歴")
+from app._data_loader import load_execution_log
+
+_execs = load_execution_log(limit=20)
+if _execs:
+    _exec_rows = [
+        {
+            "ジョブ": e.get("job"),
+            "状態": "✅" if e.get("status") == "ok" else "❌",
+            "開始": (e.get("started_at") or "")[:19],
+            "所要(s)": round(e["duration_sec"], 1) if e.get("duration_sec") is not None else None,
+            "メッセージ": (e.get("message") or "")[:80],
+        }
+        for e in _execs
+    ]
+    st.dataframe(pd.DataFrame(_exec_rows), use_container_width=True, hide_index=True)
+else:
+    st.info("実行記録がありません（ingest/retrain/doctor を CLI/cron で実行すると記録されます）。")
 
 st.divider()
 

@@ -144,7 +144,7 @@ class DataSplitter:
     @property
     def lgb_train_optuna(self):
         if self.__lgb_train_optuna is None:
-            import optuna.integration.lightgbm as lgb_o
+            from src.training._lgb_optuna import lgb_o
 
             self.__lgb_train_optuna = lgb_o.Dataset(
                 self.__train_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
@@ -155,7 +155,7 @@ class DataSplitter:
     @property
     def lgb_valid_optuna(self):
         if self.__lgb_valid_optuna is None:
-            import optuna.integration.lightgbm as lgb_o
+            from src.training._lgb_optuna import lgb_o
 
             self.__lgb_valid_optuna = lgb_o.Dataset(
                 self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
@@ -204,7 +204,7 @@ class DataSplitter:
             self.__train_data_optuna, test_size=meta_ratio
         )
         if build_optuna_datasets:
-            import optuna.integration.lightgbm as lgb_o
+            from src.training._lgb_optuna import lgb_o
 
             base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
             self.__lgb_train_optuna = lgb_o.Dataset(

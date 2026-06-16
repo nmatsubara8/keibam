@@ -51,12 +51,14 @@ def dict_selector(dict_name):
 def convert_column_types(df, col_types):
     converted_df = df.copy()
     for column, (from_data_type, to_data_type, width, padding) in col_types.items():
+        if column not in converted_df.columns:
+            continue
         if from_data_type == "float" and to_data_type == "int":
             converted_df[column] = pd.to_numeric(converted_df[column], errors="coerce").fillna(0).astype("int64")
         elif to_data_type == "str" and padding:
             if from_data_type == "float":
                 converted_df[column] = (
-                    converted_df[column].astype(float).astype(str).str.split(".").str[0].str.zfill(width)
+                    converted_df[column].fillna(0).astype(float).astype(int).astype(str).str.zfill(width)
                 )
             else:
                 converted_df[column] = converted_df[column].astype(str).str.zfill(width)

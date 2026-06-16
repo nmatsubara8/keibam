@@ -1,38 +1,51 @@
 from __future__ import annotations
 
+import logging
+import os
 from abc import ABCMeta
 from abc import abstractmethod
-from typing import TYPE_CHECKING
 
 import pandas as pd
 
-if TYPE_CHECKING:
-    from src.storage._repo import RawDataRepo
+logger = logging.getLogger(__name__)
 
 
 class AbstractDataProcessor(metaclass=ABCMeta):
-    def __init__(
-        self,
-        filepath: str | None = None,
-        *,
-        repo: "RawDataRepo | None" = None,
-        alias: str | None = None,
-    ) -> None:
-        """raw データを読み込む。
-
-        Parameters
-        ----------
-        filepath : pickle ファイルパス（従来通り）。
-        repo : RawDataRepo インスタンス（DB 直読み時）。alias と合わせて指定する。
-        alias : TABLE_SPECS のキー（例 "featured_data"）。repo と合わせて指定する。
-        """
-        if filepath is not None:
-            self.__raw_data = pd.read_pickle(filepath)
-        elif repo is not None and alias is not None:
-            self.__raw_data = repo.read(alias)
-        else:
-            raise ValueError("filepath か (repo と alias) のどちらかを指定してください")
+    def __init__(self, filepath: str):
+        self.__raw_data = self._load_raw(filepath)
         self.__preprocessed_data = self._preprocess()
+
+    @staticmethod
+    def _load_raw(filepath: str) -> pd.DataFrame:
+        """pickle を読む。存在しない場合は DB からリストアしてキャッシュを再生成する。"""
+        try:
+            return pd.read_pickle(filepath)
+        except FileNotFoundError:
+            pass
+
+        from src.storage._db import PICKLE_PATH_TO_ALIAS
+        from src.storage._repo import RawDataRepo
+
+        alias = PICKLE_PATH_TO_ALIAS.get(filepath)
+        if alias is None:
+            raise FileNotFoundError(
+                f"pickle が見つからず、DB alias も不明です: {filepath}"
+            )
+
+        logger.warning(
+            "[AbstractDataProcessor] %s が見つかりません。DB(%s) からリストアします。",
+            filepath, alias,
+        )
+        df = RawDataRepo().read(alias)
+        if df.empty:
+            raise FileNotFoundError(
+                f"pickle {filepath} がなく DB({alias}) にもデータがありません"
+            )
+
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+        df.to_pickle(filepath)
+        logger.info("[AbstractDataProcessor] %s を DB から再生成しました (shape=%s)", filepath, df.shape)
+        return df
 
     @abstractmethod
     def _preprocess(self):

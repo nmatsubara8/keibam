@@ -64,8 +64,25 @@ def run_prediction(
     # 1. 較正勝率 + 現在オッズのテーブル
     table = ExpectedValueScorePolicy.calc(model, X)
 
-    # 2. オッズ供給（歴史推定）
-    provider = HistoricalOddsProvider.from_score_table(table, ResultsCols.UMABAN, CURRENT_ODDS)
+    # 2. オッズ供給。既定は現在オッズ（歴史推定）。use_predicted_odds=True かつ
+    #    odds_watch の最新予測（オッズ力学アンサンブル）が存在する場合は、
+    #    予測確定オッズで EV を計算する（予測の無い馬は現在オッズへフォールバック）。
+    from src.policies._odds_provider import AbstractOddsProvider
+
+    provider: AbstractOddsProvider = HistoricalOddsProvider.from_score_table(
+        table, ResultsCols.UMABAN, CURRENT_ODDS
+    )
+    if getattr(op_config, "use_predicted_odds", False):
+        try:
+            from src.pipeline.odds_watch import latest_final_odds_lookup
+            from src.pipeline.odds_watch import load_predictions
+            from src.policies._odds_provider import PredictedOddsProvider
+
+            lookup = latest_final_odds_lookup(load_predictions())
+            if lookup:
+                provider = PredictedOddsProvider(lookup, fallback=provider)
+        except Exception:  # noqa: BLE001 — 予測読込失敗時は現在オッズで継続
+            pass
 
     # 3. EV 選定
     policy = ExpectedValueBetPolicy(provider, thresholds=thresholds)

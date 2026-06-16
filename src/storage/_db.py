@@ -98,16 +98,17 @@ TABLE_SPECS: dict[str, TableSpec] = {
     "raw_odds_snapshots": TableSpec(
         table_name="raw_odds_snapshots",
         # OddsSnapshot dataclass の (race_id, captured_at, bet_type, combo) で一意。
-        # combo は "3-7-11" のような文字列で保存する想定（Phase 2 で実装）。
+        # combo は "3-7-11" のような文字列、captured_at は ISO8601 文字列で保存する
+        # （odds_scheduler.persist → snapshots_to_records が変換して upsert する）。
         primary_key=("race_id", "captured_at", "bet_type", "combo"),
         index_col=None,
     ),
-    # Phase 2: FeatureEngineering 出力（前処理済み特徴量）の永続化。
-    # featured_data の index は race_id、馬番は通常列として存在する。
-    "featured_data": TableSpec(
-        table_name="featured_data",
-        primary_key=("race_id", "馬番"),
-        index_col="race_id",
+    "raw_odds_predictions": TableSpec(
+        table_name="raw_odds_predictions",
+        # オッズ力学モデルのチェックポイント別予測（odds_watch が upsert する）。
+        # 同一チェックポイントの再計算は checkpoint キーが同じため IGNORE され冪等。
+        primary_key=("race_id", "checkpoint", "model", "umaban"),
+        index_col=None,
     ),
 }
 
@@ -122,7 +123,7 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_HORSE_INFO_PATH: "raw_horse_info",
     LocalPaths.RAW_PEDS_PATH: "raw_peds",
     LocalPaths.RAW_ODDS_SNAPSHOT_PATH: "raw_odds_snapshots",
-    LocalPaths.FEATURED_DATA_PATH: "featured_data",
+    LocalPaths.RAW_ODDS_PREDICTIONS_PATH: "raw_odds_predictions",
 }
 
 
@@ -132,6 +133,16 @@ def alias_to_pickle_path(alias: str) -> Optional[str]:
         if a == alias:
             return path
     return None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: featured_data メタ情報テーブル名（固定スキーマ、TABLE_SPECS 外）
+# ---------------------------------------------------------------------------
+
+FEATURED_META_TABLE = "featured_data_meta"
+
+# Phase 3: cron/CLI ジョブの実行記録テーブル名（固定スキーマ、TABLE_SPECS 外）。
+EXECUTION_LOG_TABLE = "execution_log"
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +219,39 @@ def _reset_engine_for_testing() -> None:
 # こうすることで「Phase 1 は raw のまま全列を持つ」要件と SQLite の現実的制約を両立する。
 
 
+def _create_featured_meta_table(engine: Engine) -> None:
+    """Phase 2: featured_data_meta テーブルを作成する（固定スキーマ）。"""
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS "{FEATURED_META_TABLE}" (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                n_rows      INTEGER NOT NULL,
+                n_cols      INTEGER NOT NULL,
+                min_race_id TEXT,
+                max_race_id TEXT,
+                parquet_path TEXT,
+                schema_json TEXT
+            )
+        """))
+
+
+def _create_execution_log_table(engine: Engine) -> None:
+    """Phase 3: execution_log テーブルを作成する（固定スキーマ）。"""
+    with engine.begin() as conn:
+        conn.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS "{EXECUTION_LOG_TABLE}" (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                job          TEXT NOT NULL,
+                status       TEXT NOT NULL,
+                started_at   TIMESTAMP,
+                finished_at  TIMESTAMP,
+                duration_sec REAL,
+                message      TEXT
+            )
+        """))
+
+
 def _create_tables(engine: Engine) -> None:
     """全テーブルを作成する。既存テーブルの PK 列が現在の仕様と合わない場合は DROP して再作成する。
 
@@ -246,6 +290,10 @@ def _create_tables(engine: Engine) -> None:
             cols_sql = ",\n  ".join(cols)
             sql = f'CREATE TABLE IF NOT EXISTS "{spec.table_name}" (\n  {cols_sql},\n  {pk_sql}\n)'
             conn.execute(text(sql))
+
+    # Phase 2: featured_data_meta テーブル（固定スキーマ、別関数に委譲）
+    _create_featured_meta_table(engine)
+    _create_execution_log_table(engine)
 
 
 def ensure_columns(engine: Engine, table_name: str, columns: list[str]) -> None:

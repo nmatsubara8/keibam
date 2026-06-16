@@ -10,6 +10,9 @@ data/**/*.csv
 data/**/**/*.bin
 data/**/*.pkl
 data/*.pkl
+# Phase 2: Parquet バックアップも容量が大きいため除外
+data/**/*.parquet
+data/*.parquet
 # Phase 1: SQLite raw データベース（WAL/SHM 含む）は容量・差分追跡の理由から除外
 data/keibam.db
 data/keibam.db-wal
@@ -156,3 +159,7 @@ dmypy.json
 # スクレイピング一時ファイル（ディレクトリ構造は .gitkeep で保持）
 data/tmp/**
 !data/tmp/**/.gitkeep
+
+# cron ログ（構造は .gitkeep で保持）
+logs/*.log
+!logs/.gitkeep

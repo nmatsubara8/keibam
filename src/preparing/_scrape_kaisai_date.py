@@ -1,5 +1,5 @@
-def scrape_kaisai_date(from_date: str = None, to_date: str = None, skip: bool = False,
-                       from_: str = None, to_: str = None):
+def scrape_kaisai_date(from_date: str | None = None, to_date: str | None = None, skip: bool = False,
+                       from_: str | None = None, to_: str | None = None):
     """指定期間の開催日リストを取得して返す。
 
     Playwright でスクレイピングし、pkl に保存後、DataFrame を返す。

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import re
 from typing import Iterable
 from typing import Sequence
 
@@ -32,6 +33,26 @@ ODDS_PAGE_TYPE = {
     BetType.SANRENPUKU: "b7",
     BetType.SANRENTAN: "b8",
 }
+
+# オッズセルの id 属性 `odds-<type>-<馬番列>` の type コード（馬券種 → N）。
+# ページの type=bN とは異なり、単勝(1)・複勝(2)は b1 ページ内で別コードを持つ。
+ODDS_ID_TYPE = {
+    BetType.TANSHO: "1",
+    BetType.FUKUSHO: "2",
+    BetType.UMAREN: "4",
+    BetType.WIDE: "5",
+    BetType.UMATAN: "6",
+    BetType.SANRENPUKU: "7",
+    BetType.SANRENTAN: "8",
+}
+
+# 馬券種ごとの id 抽出パターン（パース時の再コンパイルを避けるため事前コンパイル）
+_ODDS_ID_RE = {
+    bet_type: re.compile(rf"^odds-{code}-(\d+)$") for bet_type, code in ODDS_ID_TYPE.items()
+}
+
+# オッズ値（"12.3" / レンジ "1.5 - 2.0"）の数値部分
+_ODDS_VALUE_RE = re.compile(r"\d+(?:\.\d+)?")
 
 _ODDS_BASE_URL = "https://race.netkeiba.com/odds/index.html"
 
@@ -110,6 +131,30 @@ def snapshots_from_rows(
     return out
 
 
+def combo_to_str(combo: Sequence[int]) -> str:
+    """combo タプルを DB 保存用の文字列（例 ``"3-7-11"``）へ変換する（純粋関数）。"""
+    return "-".join(str(int(x)) for x in combo)
+
+
+def snapshots_to_records(snapshots: Sequence[OddsSnapshot]) -> list[dict]:
+    """OddsSnapshot 群を `raw_odds_snapshots` テーブルの行 dict へ変換する（純粋関数）。
+
+    combo は文字列、captured_at は ISO8601 文字列にして SQLite に保存できる形にする。
+    """
+    return [
+        {
+            "race_id": s.race_id,
+            "bet_type": s.bet_type,
+            "combo": combo_to_str(s.combo),
+            "odds": s.odds,
+            "captured_at": s.captured_at.isoformat(),
+            "minutes_to_post": s.minutes_to_post,
+            "phase": s.phase,
+        }
+        for s in snapshots
+    ]
+
+
 def _dedup_key(s: OddsSnapshot) -> tuple:
     """冪等な蓄積のための一意キー（同一レース・馬券・組合せ・フェーズは 1 件）。"""
     return (s.race_id, s.bet_type, s.combo, s.phase)
@@ -161,6 +206,60 @@ def parse_win_odds_html(html: str) -> list[tuple[tuple[int, ...], float]]:
     return rows
 
 
+def parse_odds_value(text: str) -> float | None:
+    """オッズセルのテキストからオッズ値を取り出す（純粋関数）。
+
+    ワイド・複勝は ``"1.5 - 2.0"`` のようなレンジ表記になるため、保守的に
+    最小値（下限）を採用する（期待値計算で過大評価しないため）。
+    数値が取れない（"---" 等の未確定表示）場合は None。
+    """
+    nums = _ODDS_VALUE_RE.findall(text)
+    if not nums:
+        return None
+    return float(nums[0])
+
+
+def _split_combo_digits(digits: str) -> tuple[int, ...] | None:
+    """id 末尾の馬番列（2 桁ずつ連結、例 ``"010203"``）を馬番タプルに分解する（純粋関数）。"""
+    if not digits or len(digits) % 2 != 0:
+        return None
+    combo = tuple(int(digits[i : i + 2]) for i in range(0, len(digits), 2))
+    if any(n <= 0 for n in combo):
+        return None
+    return combo
+
+
+def parse_combo_odds_html(html: str, bet_type: str) -> list[tuple[tuple[int, ...], float]]:
+    """オッズページの HTML から指定馬券種の (combo, odds) 行を抽出する（bs4 遅延 import）。
+
+    netkeiba のオッズセルは ``id="odds-<type>-<馬番列>"``（例: 馬連 ``odds-4-0102``、
+    三連単 ``odds-8-010203``）を持つため、id ベースで全馬券種を一様にパースできる。
+    馬番列は 2 桁ずつの連結で、順序付き馬券（馬単・三連単）は並び順を保持する。
+    同一 combo が複数回現れた場合（一覧と人気順表示の重複等）は最初の値を採用する。
+    失敗時・未確定（"---"）の行はスキップする。
+    """
+    from bs4 import BeautifulSoup  # 遅延 import
+
+    id_re = _ODDS_ID_RE.get(bet_type)
+    if id_re is None:
+        raise ValueError(f"未対応の馬券種です: {bet_type}")
+
+    soup = BeautifulSoup(html, "lxml")
+    seen: dict[tuple[int, ...], float] = {}
+    for el in soup.find_all(id=id_re):
+        m = id_re.match(str(el.get("id")))
+        if m is None:
+            continue
+        combo = _split_combo_digits(m.group(1))
+        if combo is None or combo in seen:
+            continue
+        odds = parse_odds_value(el.get_text(strip=True))
+        if odds is None:
+            continue
+        seen[combo] = odds
+    return list(seen.items())
+
+
 class OddsSnapshotScraper:
     """段階オッズ取得アダプタ（Playwright `AbstractScraper` を DI）。
 
@@ -202,12 +301,14 @@ class OddsSnapshotScraper:
     def capture(
         self, race_id: str, bet_type: str, post_time: dt.datetime, captured_at: dt.datetime | None = None
     ) -> list[OddsSnapshot]:
-        """1 レース・1 馬券種のオッズを取得して OddsSnapshot 群に整形する。"""
+        """1 レース・1 馬券種のオッズを取得して OddsSnapshot 群に整形する。
+
+        まず id ベースの汎用パーサ（全馬券種対応）を試し、id 属性が無い旧 DOM の
+        単勝・複勝ページではクラスベースの `parse_win_odds_html` にフォールバックする。
+        """
         captured_at = captured_at or dt.datetime.now()
         html = self.fetch_html(race_id, bet_type)
-        if bet_type in (BetType.TANSHO, BetType.FUKUSHO):
+        rows = parse_combo_odds_html(html, bet_type)
+        if not rows and bet_type in (BetType.TANSHO, BetType.FUKUSHO):
             rows = parse_win_odds_html(html)
-        else:
-            # 連系の汎用パーサは段階的に拡充（Phase B）。当面は単勝で蓄積を開始する。
-            rows = []
         return snapshots_from_rows(race_id, bet_type, rows, post_time, captured_at)

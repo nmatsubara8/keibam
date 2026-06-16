@@ -332,3 +332,71 @@ def test_shutuba_table_processor_no_rank_column():
 def test_shutuba_table_processor_date_is_datetime():
     rp = _make_processor(ShutubaTableProcessor, _make_shutuba_raw())
     assert pd.api.types.is_datetime64_any_dtype(rp.preprocessed_data["date"])
+
+
+# ──────────────────────────────────────────────────────
+# AbstractDataProcessor DB フォールバック
+# ──────────────────────────────────────────────────────
+
+
+def test_db_fallback_restores_pickle(tmp_path):
+    """pickle が存在しない場合に DB から DataFrame を読んで pickle を再生成する。"""
+    import unittest.mock
+
+    from src.constants._local_paths import LocalPaths
+    from src.preprocessing._abstract_data_processor import AbstractDataProcessor
+    from src.storage._db import PICKLE_PATH_TO_ALIAS
+
+    # LocalPaths.RAW_RESULTS_PATH を tmp_path 内のパスにリダイレクトして
+    # PICKLE_PATH_TO_ALIAS のキーと一致させる。
+    fake_pkl = str(tmp_path / "results.pkl")
+    raw = _make_results_raw()
+
+    # PICKLE_PATH_TO_ALIAS にフェイクパスを登録して alias を解決できるようにする
+    with (
+        unittest.mock.patch.dict(PICKLE_PATH_TO_ALIAS, {fake_pkl: "raw_results"}),
+        unittest.mock.patch(
+            "src.storage._repo.RawDataRepo"
+        ) as MockRepo,
+    ):
+        mock_instance = MockRepo.return_value
+        mock_instance.read.return_value = raw
+
+        rp = ResultsProcessor(fake_pkl)
+
+    # DB.read が呼ばれたこと
+    mock_instance.read.assert_called_once_with("raw_results")
+    # pickle が再生成されたこと
+    assert (tmp_path / "results.pkl").exists()
+    # Processor が正常に前処理できたこと
+    assert rp.preprocessed_data.index.name == "race_id"
+
+
+def test_db_fallback_raises_when_alias_unknown(tmp_path):
+    """PICKLE_PATH_TO_ALIAS に存在しないパスなら FileNotFoundError を再 raise する。"""
+    from src.preprocessing._abstract_data_processor import AbstractDataProcessor
+
+    with pytest.raises(FileNotFoundError, match="alias も不明"):
+        AbstractDataProcessor._load_raw(str(tmp_path / "nonexistent_unknown.pkl"))
+
+
+def test_db_fallback_raises_when_db_empty(tmp_path):
+    """DB にもデータがない場合は FileNotFoundError（DB empty メッセージ付き）を raise する。"""
+    import unittest.mock
+
+    import pandas as pd
+
+    from src.storage._db import PICKLE_PATH_TO_ALIAS
+
+    fake_pkl = str(tmp_path / "results.pkl")
+
+    with (
+        unittest.mock.patch.dict(PICKLE_PATH_TO_ALIAS, {fake_pkl: "raw_results"}),
+        unittest.mock.patch(
+            "src.storage._repo.RawDataRepo"
+        ) as MockRepo,
+    ):
+        MockRepo.return_value.read.return_value = pd.DataFrame()
+
+        with pytest.raises(FileNotFoundError, match="DB"):
+            ResultsProcessor(fake_pkl)

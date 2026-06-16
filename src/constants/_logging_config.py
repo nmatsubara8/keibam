@@ -19,18 +19,36 @@ from typing import Optional
 _DEFAULT_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
-def setup_logging(logfile: Optional[str] = None, level: int = logging.INFO) -> None:
+def setup_logging(
+    logfile: Optional[str] = None,
+    level: int = logging.INFO,
+    *,
+    max_bytes: int = 0,
+    backup_count: int = 0,
+) -> None:
     """ルートロガーを StreamHandler（＋任意で FileHandler）で構成する。
 
     Parameters
     ----------
     logfile : 指定するとファイルにも出力する（親ディレクトリは自動作成）。
     level : ログレベル（既定 INFO）。
+    max_bytes : >0 のとき RotatingFileHandler を使い、このサイズでローテーションする
+        （長期運用でのログ無制限増長を防ぐ）。0（既定）なら従来の FileHandler。
+    backup_count : ローテーション世代数（max_bytes>0 時のみ有効）。
     """
     handlers: list[logging.Handler] = [logging.StreamHandler()]
     if logfile:
         log_dir = os.path.dirname(logfile)
         if log_dir:
             os.makedirs(log_dir, exist_ok=True)
-        handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
+        if max_bytes > 0:
+            from logging.handlers import RotatingFileHandler
+
+            handlers.append(
+                RotatingFileHandler(
+                    logfile, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+                )
+            )
+        else:
+            handlers.append(logging.FileHandler(logfile, encoding="utf-8"))
     logging.basicConfig(level=level, format=_DEFAULT_FORMAT, handlers=handlers, force=True)

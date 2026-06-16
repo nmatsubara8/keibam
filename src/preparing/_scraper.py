@@ -17,12 +17,19 @@ Playwright 採用理由（KB shards 22-24 / batch001 / 00context）:
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
 from abc import ABC
 from abc import abstractmethod
 from typing import TYPE_CHECKING
 from typing import Callable
 from typing import Literal
 from typing import Sequence
+
+from src.preparing._rate_limiter import get_hourly_limiter
+from src.preparing._rate_limiter import polite_interval
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser
@@ -94,7 +101,8 @@ class AbstractScraper(ABC):
                 break
             pages.append(html)
             if rate_limit_sec > 0:
-                await asyncio.sleep(rate_limit_sec)
+                # 最低 1 秒 + ランダム揺らぎ（netkeiba 自主規制）
+                await asyncio.sleep(polite_interval(rate_limit_sec))
         return pages
 
     # ------------------------------------------------------------------
@@ -171,6 +179,10 @@ class PlaywrightScraper(AbstractScraper):
     timeout_ms : ページ遷移・要素待機のタイムアウト（ミリ秒）。
     rate_limit_sec : fetch_many の各取得間に挟むスリープ秒（負荷軽減）。
     click_delay_ms : クリック時の待機（KB batch001「クリック待機 delay」）。
+    ignore_https_errors : TLS 検証をスキップする。TLS を中間検査するプロキシ配下の
+        実行環境（CI・クラウドサンドボックス等）で Chromium がプロキシ CA を信頼できず
+        ERR_CERT_AUTHORITY_INVALID になる場合のみ使う。None（既定）は環境変数
+        ``KEIBAM_IGNORE_HTTPS_ERRORS=1`` が設定されている場合のみ有効。
     """
 
     def __init__(
@@ -180,12 +192,16 @@ class PlaywrightScraper(AbstractScraper):
         rate_limit_sec: float = 1.0,
         click_delay_ms: int = 100,
         selector_timeout_ms: int = 3000,
+        ignore_https_errors: bool | None = None,
     ) -> None:
         self._headless = headless
         self._timeout_ms = timeout_ms
         self._rate_limit_sec = rate_limit_sec
         self._click_delay_ms = click_delay_ms
         self._selector_timeout_ms = selector_timeout_ms
+        if ignore_https_errors is None:
+            ignore_https_errors = os.environ.get("KEIBAM_IGNORE_HTTPS_ERRORS", "") == "1"
+        self._ignore_https_errors = ignore_https_errors
         self._playwright: "Playwright | None" = None
         self._browser: "Browser | None" = None
 
@@ -232,6 +248,17 @@ class PlaywrightScraper(AbstractScraper):
         wait_selector: str | None = None,
         wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded",
     ) -> str:
+        # netkeiba 自主規制: 1 時間あたりリクエスト数の上限（プロセス共有の
+        # スライディングウィンドウ）。全リクエストがこの fetch を通るため、
+        # ここが上限制御の単一チョークポイントになる。
+        limiter = get_hourly_limiter()
+        while (wait := limiter.try_acquire()) > 0:
+            logger.warning(
+                "[rate-limit] 1時間あたり上限 %d 件に到達。%.0f 秒待機します",
+                limiter.max_per_hour, wait,
+            )
+            await asyncio.sleep(wait)
+
         own_lifecycle = self._browser is None
         if own_lifecycle:
             await self._start()
@@ -239,7 +266,10 @@ class PlaywrightScraper(AbstractScraper):
             assert self._browser is not None  # _start() で必ず設定済み（型ナローイング）
             # netkeiba は UA で bot 判定し中身の異なるページを返すことがあるため、
             # 実ブラウザ相当の User-Agent を設定する。
-            page = await self._browser.new_page(user_agent=_DEFAULT_USER_AGENT)
+            page = await self._browser.new_page(
+                user_agent=_DEFAULT_USER_AGENT,
+                ignore_https_errors=self._ignore_https_errors,
+            )
             try:
                 await page.goto(url, wait_until=wait_until, timeout=self._timeout_ms)
                 if wait_selector is not None:
@@ -279,7 +309,8 @@ class PlaywrightScraper(AbstractScraper):
                     await self.fetch(url, wait_selector=wait_selector, wait_until=wait_until)
                 )
                 if self._rate_limit_sec > 0 and i < len(urls) - 1:
-                    await asyncio.sleep(self._rate_limit_sec)
+                    # 最低 1 秒 + ランダム揺らぎ（netkeiba 自主規制）
+                    await asyncio.sleep(polite_interval(self._rate_limit_sec))
             return results
         finally:
             if own_lifecycle:
