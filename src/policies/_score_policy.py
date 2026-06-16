@@ -12,8 +12,11 @@ _SCORE = "score"
 PROB = "prob"
 CURRENT_ODDS = "current_odds"
 
-# predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ）
-_DROP_FOR_PREDICT = [ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK]
+# predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ・ID）。
+# 学習時の _DROP_FOR_TRAIN（rank/date/horse_id/単勝/着順）と列数を揃える必要がある。
+# horse_id を除外し損ねると特徴量が 1 列多くなり LightGBM が
+# "number of features ... is not the same as ... training data" で失敗する。
+_DROP_FOR_PREDICT = ["horse_id", ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK]
 
 # score_policy が参照する非特徴量列（枠番・馬番 + 除外列）。モデルの特徴量ではないが
 # 推論時に X へ残す必要がある列の単一の定義元（KeibaAI.calc_score が参照する）。

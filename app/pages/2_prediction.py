@@ -46,6 +46,17 @@ def _load_config():
     return load_operation_config()
 
 
+@st.cache_resource(show_spinner="特徴量データを読み込み中…")
+def _load_featured(path: str):
+    """特徴量 pickle を1回だけ読み込み再利用する。
+
+    毎リラン（selectbox 変更等）で 800MB 超の pickle を読み直すと
+    メモリを使い果たして OOM (Killed) するため、cache_resource で
+    プロセス内に1コピーだけ保持する。
+    """
+    return pd.read_pickle(path)
+
+
 op_config = _load_config()
 
 # ------------------------------------------------------------------
@@ -90,7 +101,7 @@ st.subheader("レース選択")
 
 featured_path = LocalPaths.FEATURED_DATA_PATH
 try:
-    featured_df = pd.read_pickle(featured_path)
+    featured_df = _load_featured(featured_path)
     available_races = sorted(featured_df.index.unique().tolist(), reverse=True)
 except FileNotFoundError:
     st.error("特徴量データが見つかりません。先に ingestion を実行してください。")
