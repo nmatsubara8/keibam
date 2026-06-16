@@ -98,6 +98,10 @@ class ModelWrapper:
     def feature_importance(self):
         return self.__feature_importance
 
+    @feature_importance.setter
+    def feature_importance(self, df):
+        self.__feature_importance = df
+
     @property
     def lgb_model(self):
         return self.__lgb_model

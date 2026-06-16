@@ -129,6 +129,17 @@ class KeibaAI:
         )
         self.feature_names_ = list(self.__datasets.X_base_train.columns)
 
+        # base LightGBM の特徴量重要度を ModelWrapper に反映（特徴量重要度ページ用）
+        try:
+            fi_vals = lgb_base.feature_importances_
+            fi_cols = self.__datasets.X_base_train.columns
+            self.__model_wrapper.feature_importance = (
+                pd.DataFrame({"features": fi_cols, "importance": fi_vals})
+                .sort_values("importance", ascending=False)
+            )
+        except Exception:
+            pass  # 重要度取得失敗は致命的でないため無視
+
     def __compute_base_ev_weights(self, x_base, y_base):
         """base_train でブートストラップ LightGBM を学習し EV境界重みを返す。
 
@@ -172,7 +183,10 @@ class KeibaAI:
         self.__model_wrapper.set_params(params)
 
     def feature_importance(self, num_features=20):
-        return self.__model_wrapper.feature_importance[:num_features]
+        fi = self.__model_wrapper.feature_importance
+        if fi is None:
+            return None
+        return fi[:num_features]
 
     def decide_action(self, score_table: pd.DataFrame, bet_policy: AbstractBetPolicy, **params) -> dict:
         """
