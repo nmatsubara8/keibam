@@ -46,7 +46,15 @@ def list_model_versions(models_dir: str = "models") -> list[dict]:
 
 
 def find_model_paths(models_dir: str = "models") -> list[str]:
-    """models/ 配下の .pickle ファイル一覧を新しい順で返す。"""
+    """models/ 配下の KeibaAI モデル pickle 一覧を新しい順で返す。
+
+    retrain が生成するモデルはバージョン名 `YYYYMMDD_<prefix>`（既定 prefix=keibam）
+    で `*_keibam.pickle` として保存される。一方 models/ には旧フォーマットの
+    pickle（basemodel_*.pickle / tansho.pickle / fukusho.pickle 等の馬券ポリシーや
+    旧 DataFrame）が混在しており、これらは KeibaAI ではないため予測ページで
+    `'DataFrame' object has no attribute 'effective_model'` を引き起こす。
+    そのため正規モデルの命名規則（`_keibam.pickle` 接尾辞）に一致するもののみ返す。
+    """
     paths = []
     if not os.path.isdir(models_dir):
         return []
@@ -55,7 +63,7 @@ def find_model_paths(models_dir: str = "models") -> list[str]:
         if not os.path.isdir(full):
             continue
         for fname in sorted(os.listdir(full), reverse=True):
-            if fname.endswith(".pickle"):
+            if fname.endswith("_keibam.pickle"):
                 paths.append(os.path.join(full, fname))
     return paths
 
