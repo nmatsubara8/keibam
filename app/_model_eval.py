@@ -19,7 +19,8 @@ import pandas as pd
 from src.constants._local_paths import LocalPaths
 from src.constants._results_cols import ResultsCols
 
-_DROP_FOR_TRAIN = ["rank", "date", ResultsCols.TANSHO_ODDS]
+# training/_data_splitter.py の _DROP_FOR_TRAIN と一致させる
+_DROP_FOR_TRAIN = ["rank", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
 
 
 # ---------------------------------------------------------------------------
@@ -56,15 +57,15 @@ def _get_splits(
     train, test = _split_by_date(featured_data, test_size)
     train_opt, calib = _split_by_date(train, valid_size)
 
-    X_calib = calib.drop(_DROP_FOR_TRAIN, axis=1)
+    X_calib = calib.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
     y_calib = calib["rank"]
 
-    # X_test: TANSHO_ODDS は残す（EV 計算で使う）
-    X_test = test.drop(["rank", "date"], axis=1)
+    # X_test: TANSHO_ODDS は残す（EV 計算で使う）、horse_id と RANK は除外
+    X_test = test.drop(["rank", "date", "horse_id", ResultsCols.RANK], axis=1, errors="ignore")
     y_test = test["rank"]
 
-    # モデル入力用: TANSHO_ODDS を除いた X_test
-    X_test_model = test.drop(_DROP_FOR_TRAIN, axis=1)
+    # モデル入力用: _DROP_FOR_TRAIN を全部除いた X_test（学習時と同一列構成）
+    X_test_model = test.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
 
     return {
         "X_calib": X_calib,
