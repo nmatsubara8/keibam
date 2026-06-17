@@ -34,14 +34,9 @@ class DataSplitter:
         self.__base_train: pd.DataFrame | None = None
         self.__meta_train: pd.DataFrame | None = None
 
-        # NN ストリーム（PreparedFeatures が渡された場合のみ有効）
+        # NN ストリーム（PreparedFeatures が渡された場合のみ有効）。
+        # 各 split は遅延 transform で導出するため scaler のみ保持する。
         self.__nn_scaler = None
-        self.__nn_train: pd.DataFrame | None = None
-        self.__nn_test: pd.DataFrame | None = None
-        self.__nn_optuna_train: pd.DataFrame | None = None
-        self.__nn_valid: pd.DataFrame | None = None
-        self.__nn_base_train: pd.DataFrame | None = None
-        self.__nn_meta_train: pd.DataFrame | None = None
 
         self.train_valid_test_split(test_size, valid_size)
 
@@ -73,18 +68,15 @@ class DataSplitter:
         self.__X_test = None
         self.__y_test = None
 
-        # NN ストリーム: PreparedFeatures が渡された場合のみ実行
+        # NN ストリーム: PreparedFeatures が渡された場合のみ scaler を fit する。
+        # 各 split の変換結果は保持せず、property 側で遅延 transform する（メモリ節約）。
+        # stream-aware StackingModel は NN 入力を gbdt DataFrame から内部導出するため、
+        # NN 専用 split を恒久的に持つ必要がない（数百万行分のコピーを回避）。
         if self.__nn_raw is not None:
             self.__nn_scaler = self.__make_nn_scaler()
             train_ids = self.__train_data.index.unique()
-            test_ids = self.__test_data.index.unique()
-            optuna_ids = self.__train_data_optuna.index.unique()
-            valid_ids = self.__valid_data_optuna.index.unique()
-            # 訓練データのみで fit（リーク防止）
-            self.__nn_train = self.__nn_scaler.fit_transform(self.__nn_raw.loc[train_ids])
-            self.__nn_test = self.__nn_scaler.transform(self.__nn_raw.loc[test_ids])
-            self.__nn_optuna_train = self.__nn_scaler.transform(self.__nn_raw.loc[optuna_ids])
-            self.__nn_valid = self.__nn_scaler.transform(self.__nn_raw.loc[valid_ids])
+            # 訓練データのみで fit（リーク防止）。戻り値は破棄してメモリを解放。
+            self.__nn_scaler.fit_transform(self.__nn_raw.loc[train_ids])
 
     @staticmethod
     def __downcast_floats(df):
@@ -222,14 +214,7 @@ class DataSplitter:
             len(self.__valid_data_optuna),
         )
 
-        # NN ストリーム（PreparedFeatures が渡された場合のみ）
-        if self.__nn_raw is not None and self.__nn_scaler is not None:
-            self.__nn_base_train = self.__nn_scaler.transform(
-                self.__nn_raw.loc[self.__base_train.index.unique()]
-            )
-            self.__nn_meta_train = self.__nn_scaler.transform(
-                self.__nn_raw.loc[self.__meta_train.index.unique()]
-            )
+        # NN 専用 split は遅延 transform（property 側）で導出するため、ここでは保持しない。
 
     @property
     def base_train_data(self) -> pd.DataFrame:
@@ -292,25 +277,36 @@ class DataSplitter:
         return cards
 
     @property
+    def has_nn_stream(self) -> bool:
+        """NN ストリーム（2系統特徴量）が利用可能か。NN 入力導出の軽量ゲート。"""
+        return self.__nn_raw is not None and self.__nn_scaler is not None
+
+    def __nn_slice(self, df) -> "pd.DataFrame | None":
+        """指定 split の NN ストリームを遅延 transform して返す（恒久保持しない）。"""
+        if not self.has_nn_stream:
+            return None
+        return self.__nn_scaler.transform(self.__nn_raw.loc[df.index.unique()])
+
+    @property
     def X_nn_train(self) -> "pd.DataFrame | None":
-        return self.__nn_train
+        return self.__nn_slice(self.__train_data)
 
     @property
     def X_nn_test(self) -> "pd.DataFrame | None":
-        return self.__nn_test
+        return self.__nn_slice(self.__test_data)
 
     @property
     def X_nn_base_train(self) -> "pd.DataFrame | None":
-        if self.__nn_train is not None and self.__nn_base_train is None:
+        if self.has_nn_stream and self.__base_train is None:
             raise RuntimeError("make_stacking_splits() を先に呼んでください。")
-        return self.__nn_base_train
+        return self.__nn_slice(self.__base_train) if self.__base_train is not None else None
 
     @property
     def X_nn_meta_train(self) -> "pd.DataFrame | None":
-        if self.__nn_train is not None and self.__nn_meta_train is None:
+        if self.has_nn_stream and self.__meta_train is None:
             raise RuntimeError("make_stacking_splits() を先に呼んでください。")
-        return self.__nn_meta_train
+        return self.__nn_slice(self.__meta_train) if self.__meta_train is not None else None
 
     @property
     def X_nn_calib(self) -> "pd.DataFrame | None":
-        return self.__nn_valid
+        return self.__nn_slice(self.__valid_data_optuna)

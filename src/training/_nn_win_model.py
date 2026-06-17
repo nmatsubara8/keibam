@@ -57,6 +57,7 @@ class NnWinModel:
         patience: int = 10,
         min_delta: float = 1e-4,
         val_ratio: float = 0.2,
+        max_train_rows: int | None = None,
     ) -> None:
         self._cat_cards = categorical_cardinalities or {}
         self._n_numeric = n_numeric
@@ -70,6 +71,8 @@ class NnWinModel:
         self._patience = patience
         self._min_delta = min_delta
         self._val_ratio = val_ratio
+        # メモリ・学習時間の上限。学習行数がこれを超えたら（時系列順を保って）部分標本化する。
+        self._max_train_rows = max_train_rows
         self._net: Any = None
 
     def _build_net(self) -> "Any":  # type: ignore[return]
@@ -129,12 +132,21 @@ class NnWinModel:
         import torch
         from torch import nn
 
-        x_full = torch.as_tensor(np.asarray(x, dtype=np.float32))
-        y_full = torch.as_tensor(self._binarize_targets(y).astype(np.float32))
-        if sample_weight is not None:
-            w_full = torch.as_tensor(np.asarray(sample_weight, dtype=np.float32))
-        else:
-            w_full = None
+        x_arr = np.asarray(x, dtype=np.float32)
+        y_arr = self._binarize_targets(y).astype(np.float32)
+        w_arr = np.asarray(sample_weight, dtype=np.float32) if sample_weight is not None else None
+
+        # メモリ上限: 学習行数を時系列順を保って部分標本化（早期 val split の整合のため sort）
+        if self._max_train_rows is not None and len(x_arr) > self._max_train_rows:
+            rng = np.random.default_rng(self._seed)
+            idx = np.sort(rng.choice(len(x_arr), self._max_train_rows, replace=False))
+            x_arr, y_arr = x_arr[idx], y_arr[idx]
+            if w_arr is not None:
+                w_arr = w_arr[idx]
+
+        x_full = torch.as_tensor(x_arr)
+        y_full = torch.as_tensor(y_arr)
+        w_full = torch.as_tensor(w_arr) if w_arr is not None else None
 
         # Early Stopping 用の内部検証ホールドアウト分割（時系列順は呼び出し側で担保済み）
         n = len(x_full)

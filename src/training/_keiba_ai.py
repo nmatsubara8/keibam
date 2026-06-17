@@ -140,7 +140,7 @@ class KeibaAI:
         # NN base（Phase 2）: entity+numeric を専用ストリームとして消費する。
         # entity/numeric 列は gbdt DataFrame 内に共存するため、StackingModel が
         # nn_scaler で内部導出する（推論時も gbdt 1 枚から再構成でき契約は不変）。
-        if "nn" in bm_cfg.models and self.__datasets.X_nn_base_train is not None:
+        if "nn" in bm_cfg.models and self.__datasets.has_nn_stream:
             try:
                 from ._nn_win_model import NnWinModel
 
@@ -148,7 +148,7 @@ class KeibaAI:
                 scaler = self.__datasets.nn_scaler
                 nn_kwargs = {
                     k: v for k, v in dict(bm_cfg.nn_params).items()
-                    if k in ("hidden_dims", "epochs", "lr", "batch_size")
+                    if k in ("hidden_dims", "epochs", "lr", "batch_size", "max_train_rows")
                 }
                 base_models.append(
                     NnWinModel(
