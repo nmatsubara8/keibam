@@ -106,7 +106,10 @@ class NnWinModel:
             def forward(self, x):
                 parts = []
                 for k, ci in enumerate(self.cat_idx):
-                    parts.append(self.embs[k](x[:, ci].long()))
+                    # 学習/推論でカテゴリ集合がずれてコードが Embedding サイズを超える/
+                    # 負になる場合に備え、有効範囲 [0, num_embeddings-1] にクランプする。
+                    idx = x[:, ci].long().clamp_(0, self.embs[k].num_embeddings - 1)
+                    parts.append(self.embs[k](idx))
                 if self.num_idx:
                     parts.append(x[:, self.num_idx])
                 h = torch.cat(parts, dim=1) if parts else x
