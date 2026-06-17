@@ -61,10 +61,19 @@ class NnWinModel:
         min_delta: float = 1e-4,
         val_ratio: float = 0.2,
         max_train_rows: int | None = None,
+        arch: str = "mlp",
+        dropout: float = 0.2,
+        conv_channels=(32, 64),
+        kernel_size: int = 3,
     ) -> None:
         self._cat_cards = categorical_cardinalities or {}
         self._n_numeric = n_numeric
         self._hidden_dims = tuple(hidden_dims)
+        # アーキテクチャ種別: "mlp"（既定）/ "cnn"（Embedding+数値ベクトルを 1D 系列とみなす Conv1d）
+        self._arch = arch
+        self._dropout = dropout
+        self._conv_channels = tuple(conv_channels)
+        self._kernel_size = kernel_size
         self._epochs = epochs
         self._lr = lr
         self._batch_size = batch_size
@@ -89,22 +98,30 @@ class NnWinModel:
         )
         emb_out = sum(_embedding_dim(self._cat_cards[i]) for i in cat_indices)
         in_dim = emb_out + self._n_numeric
+        num_idx = [i for i in range(in_dim_total(self._cat_cards, self._n_numeric)) if i not in cat_indices]
 
-        # アーキテクチャ: Linear → BatchNorm1d → ReLU → Dropout（KB shard-21）
-        layers: list = []
-        prev = in_dim
-        for h in self._hidden_dims:
-            layers += [nn.Linear(prev, h), nn.BatchNorm1d(h), nn.ReLU(), nn.Dropout(0.2)]
-            prev = h
-        layers += [nn.Linear(prev, 1)]
+        if self._arch == "cnn":
+            head = _build_cnn_head(in_dim, self._conv_channels, self._kernel_size, self._dropout)
+        else:
+            # MLP: Linear → BatchNorm1d → ReLU → Dropout（KB shard-21）
+            layers: list = []
+            prev = in_dim
+            for h in self._hidden_dims:
+                layers += [nn.Linear(prev, h), nn.BatchNorm1d(h), nn.ReLU(), nn.Dropout(self._dropout)]
+                prev = h
+            layers += [nn.Linear(prev, 1)]
+            head = nn.Sequential(*layers)
+
+        is_cnn = self._arch == "cnn"
 
         class _Net(nn.Module):
-            def __init__(self, embs, mlp, cat_idx, num_idx):
+            def __init__(self, embs, head, cat_idx, num_idx, is_cnn):
                 super().__init__()
                 self.embs = embs
-                self.mlp = nn.Sequential(*mlp)
+                self.head = head
                 self.cat_idx = cat_idx
                 self.num_idx = num_idx
+                self.is_cnn = is_cnn
 
             def forward(self, x):
                 parts = []
@@ -116,10 +133,12 @@ class NnWinModel:
                 if self.num_idx:
                     parts.append(x[:, self.num_idx])
                 h = torch.cat(parts, dim=1) if parts else x
-                return self.mlp(h).squeeze(-1)
+                if self.is_cnn:
+                    # 結合特徴ベクトルを 1ch の 1D 系列 (B, 1, in_dim) として畳み込む
+                    h = h.unsqueeze(1)
+                return self.head(h).squeeze(-1)
 
-        num_idx = [i for i in range(in_dim_total(self._cat_cards, self._n_numeric)) if i not in cat_indices]
-        return _Net(embeddings, layers, cat_indices, num_idx)
+        return _Net(embeddings, head, cat_indices, num_idx, is_cnn)
 
     def _binarize_targets(self, y: np.ndarray) -> np.ndarray:
         """rank_threshold で y を二値化する。
@@ -269,6 +288,31 @@ class NnWinModel:
         # 万一 NaN が出ても meta 学習器（NaN 不可）を壊さないよう 0.5 に丸める
         p = np.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
         return np.column_stack([1.0 - p, p])
+
+
+def _build_cnn_head(in_dim: int, conv_channels: tuple, kernel_size: int, dropout: float):
+    """結合特徴ベクトル (B, 1, in_dim) を畳み込む 1D-CNN ヘッドを構築する。
+
+    Conv1d(→ch) → BatchNorm1d → ReLU → Dropout を conv_channels 個積み、
+    AdaptiveMaxPool1d で系列長を 1 に潰してから Linear(→1) で logit を出す。
+    入力長 in_dim に依存しない構造（pad='same' 相当 + Adaptive pooling）にして
+    特徴数の変化に頑健にする。
+    """
+    from torch import nn
+
+    pad = kernel_size // 2
+    convs: list = []
+    prev_ch = 1
+    for ch in conv_channels:
+        convs += [
+            nn.Conv1d(prev_ch, ch, kernel_size=kernel_size, padding=pad),
+            nn.BatchNorm1d(ch),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        ]
+        prev_ch = ch
+    convs += [nn.AdaptiveMaxPool1d(1), nn.Flatten(), nn.Linear(prev_ch, 1)]
+    return nn.Sequential(*convs)
 
 
 def _embedding_dim(cardinality: int) -> int:

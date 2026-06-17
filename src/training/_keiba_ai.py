@@ -148,7 +148,10 @@ class KeibaAI:
                 scaler = self.__datasets.nn_scaler
                 nn_kwargs = {
                     k: v for k, v in dict(bm_cfg.nn_params).items()
-                    if k in ("hidden_dims", "epochs", "lr", "batch_size", "max_train_rows")
+                    if k in (
+                        "hidden_dims", "epochs", "lr", "batch_size", "max_train_rows",
+                        "arch", "dropout", "conv_channels", "kernel_size",
+                    )
                 }
                 base_models.append(
                     NnWinModel(
