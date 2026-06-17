@@ -171,12 +171,14 @@ class KeibaAI:
 
         # base LightGBM の特徴量重要度を ModelWrapper に反映（特徴量重要度ページ用）
         try:
-            fi_vals = lgb_base.feature_importances_
-            fi_cols = self.__datasets.X_base_train.columns
-            self.__model_wrapper.feature_importance = (
-                pd.DataFrame({"features": fi_cols, "importance": fi_vals})
-                .sort_values("importance", ascending=False)
-            )
+            lgb_spec = next((s for s in specs if s.name == "LightGBM"), None)
+            if lgb_spec is not None:
+                fi_vals = lgb_spec.model.feature_importances_
+                fi_cols = self.__datasets.X_base_train.columns
+                self.__model_wrapper.feature_importance = (
+                    pd.DataFrame({"features": fi_cols, "importance": fi_vals})
+                    .sort_values("importance", ascending=False)
+                )
         except Exception:
             pass  # 重要度取得失敗は致命的でないため無視
 
