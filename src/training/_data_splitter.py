@@ -25,7 +25,8 @@ class DataSplitter:
         from src.preprocessing._prepared_features import PreparedFeatures
         if isinstance(featured_data, PreparedFeatures):
             self.__featured_data = self.__downcast_floats(featured_data.gbdt)
-            self.__nn_raw: pd.DataFrame | None = featured_data.nn
+            # nn_raw も float32 にダウンキャストしてメモリを約半減（NN は float32 で十分）
+            self.__nn_raw: pd.DataFrame | None = self.__downcast_floats(featured_data.nn)
         else:
             self.__featured_data = self.__downcast_floats(featured_data)
             self.__nn_raw = None
