@@ -65,6 +65,7 @@ class NnWinModel:
         dropout: float = 0.2,
         conv_channels=(32, 64),
         kernel_size: int = 3,
+        pre_norm: str | None = None,
     ) -> None:
         self._cat_cards = categorical_cardinalities or {}
         self._n_numeric = n_numeric
@@ -74,6 +75,8 @@ class NnWinModel:
         self._dropout = dropout
         self._conv_channels = tuple(conv_channels)
         self._kernel_size = kernel_size
+        # concat 後の結合ベクトルに適用する正規化: "layer_norm" / "batch_norm" / None（既定）
+        self._pre_norm = pre_norm
         self._epochs = epochs
         self._lr = lr
         self._batch_size = batch_size
@@ -100,6 +103,14 @@ class NnWinModel:
         in_dim = emb_out + self._n_numeric
         num_idx = [i for i in range(in_dim_total(self._cat_cards, self._n_numeric)) if i not in cat_indices]
 
+        # concat 後の正規化層（Embedding スケールと数値スケールの不揃いを補正）
+        if self._pre_norm == "layer_norm":
+            norm_layer: "nn.Module | None" = nn.LayerNorm(in_dim)
+        elif self._pre_norm == "batch_norm":
+            norm_layer = nn.BatchNorm1d(in_dim)
+        else:
+            norm_layer = None
+
         if self._arch == "cnn":
             head = _build_cnn_head(in_dim, self._conv_channels, self._kernel_size, self._dropout)
         else:
@@ -115,9 +126,10 @@ class NnWinModel:
         is_cnn = self._arch == "cnn"
 
         class _Net(nn.Module):
-            def __init__(self, embs, head, cat_idx, num_idx, is_cnn):
+            def __init__(self, embs, norm, head, cat_idx, num_idx, is_cnn):
                 super().__init__()
                 self.embs = embs
+                self.norm = norm  # None または LayerNorm/BatchNorm1d
                 self.head = head
                 self.cat_idx = cat_idx
                 self.num_idx = num_idx
@@ -133,12 +145,15 @@ class NnWinModel:
                 if self.num_idx:
                     parts.append(x[:, self.num_idx])
                 h = torch.cat(parts, dim=1) if parts else x
+                # concat 直後に正規化（Embedding 出力と標準化済み数値のスケール差を補正）
+                if self.norm is not None:
+                    h = self.norm(h)
                 if self.is_cnn:
                     # 結合特徴ベクトルを 1ch の 1D 系列 (B, 1, in_dim) として畳み込む
                     h = h.unsqueeze(1)
                 return self.head(h).squeeze(-1)
 
-        return _Net(embeddings, head, cat_indices, num_idx, is_cnn)
+        return _Net(embeddings, norm_layer, head, cat_indices, num_idx, is_cnn)
 
     def _binarize_targets(self, y: np.ndarray) -> np.ndarray:
         """rank_threshold で y を二値化する。

@@ -150,7 +150,7 @@ class KeibaAI:
                     k: v for k, v in dict(bm_cfg.nn_params).items()
                     if k in (
                         "hidden_dims", "epochs", "lr", "batch_size", "max_train_rows",
-                        "arch", "dropout", "conv_channels", "kernel_size",
+                        "arch", "dropout", "conv_channels", "kernel_size", "pre_norm",
                     )
                 }
                 base_models.append(
