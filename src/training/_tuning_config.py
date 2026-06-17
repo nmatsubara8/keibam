@@ -11,26 +11,42 @@
 - ``"optuna"``: 手書き Optuna。`search_space` で各パラメータの探索範囲を、`n_trials` で
   試行回数を、`timeout` で打ち切り秒数を指定できる。
 
+## search_space の値の形式
+
+各パラメータの値は以下の 3 形式で指定する:
+
+- **数値範囲** ``[low, high]``: low/high が数値（int/float）のとき数値探索。
+  `_INT_PARAMS` に含まれれば整数、`_LOG_SCALE_PARAMS` に含まれれば対数スケール。
+- **カテゴリカル** ``["a", "b", "c"]``: 値が文字列のとき categorical 探索。
+  3 要素以上でなくてもよい（``["gbdt", "dart"]`` 可）。
+
 ## 設定ファイル（JSON）
 
 `load_tuning_config(path)` で以下の形式の JSON を読み込める::
 
     {
       "method": "optuna",
-      "n_trials": 100,
-      "timeout": null,
-      "num_boost_round": 1000,
-      "early_stopping_rounds": 50,
+      "n_trials": 300,
+      "timeout": 7200,
+      "num_boost_round": 2000,
+      "early_stopping_rounds": 100,
       "seed": 100,
       "search_space": {
-        "num_leaves":        [8, 256],
-        "learning_rate":     [0.01, 0.3],
+        "num_leaves":        [8, 512],
+        "max_depth":         [-1, 16],
+        "learning_rate":     [0.005, 0.5],
+        "n_estimators":      [100, 3000],
         "lambda_l1":         [1e-8, 10.0],
         "lambda_l2":         [1e-8, 10.0],
-        "feature_fraction":  [0.4, 1.0],
-        "bagging_fraction":  [0.4, 1.0],
-        "bagging_freq":      [1, 7],
-        "min_child_samples": [5, 100]
+        "feature_fraction":  [0.3, 1.0],
+        "bagging_fraction":  [0.3, 1.0],
+        "bagging_freq":      [1, 10],
+        "min_child_samples": [5, 300],
+        "min_child_weight":  [1e-5, 100.0],
+        "min_split_gain":    [0.0, 1.0],
+        "path_smooth":       [0.0, 10.0],
+        "extra_trees":       ["true", "false"],
+        "boosting_type":     ["gbdt", "dart"]
       }
     }
 """
@@ -50,21 +66,47 @@ METHOD_LIGHTGBM_TUNER = "lightgbm_tuner"
 METHOD_OPTUNA = "optuna"
 
 # log スケールで探索するパラメータ（下限 0 を渡せないため log=True）
-_LOG_SCALE_PARAMS = {"learning_rate", "lambda_l1", "lambda_l2"}
+_LOG_SCALE_PARAMS = {"learning_rate", "lambda_l1", "lambda_l2", "min_child_weight"}
 # 整数で探索するパラメータ
-_INT_PARAMS = {"num_leaves", "bagging_freq", "min_child_samples"}
+_INT_PARAMS = {"num_leaves", "max_depth", "bagging_freq", "min_child_samples", "n_estimators"}
+# bool として扱うカテゴリカルパラメータ（"true"/"false" 文字列 → bool に変換）
+_BOOL_PARAMS = {"extra_trees"}
 
-# 手書き Optuna の既定探索範囲（[low, high]）。LightGBM の代表的な範囲。
-DEFAULT_SEARCH_SPACE: dict[str, list[float]] = {
-    "num_leaves": [8, 256],
-    "learning_rate": [0.01, 0.3],
-    "lambda_l1": [1e-8, 10.0],
-    "lambda_l2": [1e-8, 10.0],
-    "feature_fraction": [0.4, 1.0],
-    "bagging_fraction": [0.4, 1.0],
-    "bagging_freq": [1, 7],
+# 手書き Optuna の既定探索範囲（基本 8 種のみ。configs/tuning_config.max.json が全種）
+DEFAULT_SEARCH_SPACE: dict[str, list] = {
+    "num_leaves":        [8, 256],
+    "learning_rate":     [0.01, 0.3],
+    "lambda_l1":         [1e-8, 10.0],
+    "lambda_l2":         [1e-8, 10.0],
+    "feature_fraction":  [0.4, 1.0],
+    "bagging_fraction":  [0.4, 1.0],
+    "bagging_freq":      [1, 7],
     "min_child_samples": [5, 100],
 }
+
+# 「全パラメータ探索」設定（configs/tuning_config.max.json と同内容）
+MAX_SEARCH_SPACE: dict[str, list] = {
+    "boosting_type":     ["gbdt", "dart"],
+    "num_leaves":        [8, 512],
+    "max_depth":         [-1, 16],
+    "learning_rate":     [0.005, 0.5],
+    "n_estimators":      [100, 3000],
+    "lambda_l1":         [1e-8, 10.0],
+    "lambda_l2":         [1e-8, 10.0],
+    "feature_fraction":  [0.3, 1.0],
+    "bagging_fraction":  [0.3, 1.0],
+    "bagging_freq":      [1, 10],
+    "min_child_samples": [5, 300],
+    "min_child_weight":  [1e-5, 100.0],
+    "min_split_gain":    [0.0, 1.0],
+    "path_smooth":       [0.0, 10.0],
+    "extra_trees":       ["true", "false"],
+}
+
+
+def _is_categorical(bounds: list) -> bool:
+    """bounds が文字列リストならカテゴリカル探索と見なす。"""
+    return bool(bounds) and isinstance(bounds[0], str)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -80,7 +122,7 @@ class TuningConfig:
     num_boost_round: int = 1000
     early_stopping_rounds: int = 50
     seed: int = 100
-    search_space: dict[str, list[float]] = dataclasses.field(
+    search_space: dict[str, list] = dataclasses.field(
         default_factory=lambda: {k: list(v) for k, v in DEFAULT_SEARCH_SPACE.items()}
     )
 
@@ -97,13 +139,24 @@ class TuningConfig:
             "verbose": -1,
         }
         for name, bounds in self.search_space.items():
-            low, high = bounds[0], bounds[1]
-            if name in _INT_PARAMS:
-                params[name] = trial.suggest_int(name, int(low), int(high))
+            if _is_categorical(bounds):
+                raw = trial.suggest_categorical(name, bounds)
+                # "true"/"false" → bool 変換
+                if name in _BOOL_PARAMS:
+                    params[name] = raw.lower() == "true"
+                else:
+                    params[name] = raw
+            elif name in _INT_PARAMS:
+                params[name] = trial.suggest_int(name, int(bounds[0]), int(bounds[1]))
             elif name in _LOG_SCALE_PARAMS:
-                params[name] = trial.suggest_float(name, float(low), float(high), log=True)
+                params[name] = trial.suggest_float(name, float(bounds[0]), float(bounds[1]), log=True)
             else:
-                params[name] = trial.suggest_float(name, float(low), float(high))
+                params[name] = trial.suggest_float(name, float(bounds[0]), float(bounds[1]))
+
+        # dart は early_stopping が機能しないため num_boost_round を固定に
+        if params.get("boosting_type") == "dart":
+            params["num_boost_round"] = self.num_boost_round
+
         return params
 
     def to_dict(self) -> dict[str, Any]:
@@ -138,3 +191,4 @@ def from_dict(raw: dict[str, Any]) -> TuningConfig:
         seed=int(raw.get("seed", 100)),
         search_space=search_space,
     )
+

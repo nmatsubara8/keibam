@@ -1,4 +1,5 @@
 {
+  "_comment": "標準的な探索設定（8 パラメータ・100 試行）。まずこちらで十分。",
   "method": "optuna",
   "n_trials": 100,
   "timeout": null,

@@ -6,15 +6,17 @@ import types
 import pytest
 
 from src.training._tuning_config import DEFAULT_SEARCH_SPACE
+from src.training._tuning_config import MAX_SEARCH_SPACE
 from src.training._tuning_config import METHOD_LIGHTGBM_TUNER
 from src.training._tuning_config import METHOD_OPTUNA
 from src.training._tuning_config import TuningConfig
+from src.training._tuning_config import _is_categorical
 from src.training._tuning_config import from_dict
 from src.training._tuning_config import load_tuning_config
 
 
 class _FakeTrial:
-    """suggest_* を記録するダックタイプ。指定範囲の下限を返す。"""
+    """suggest_* を記録するダックタイプ。指定範囲の下限 / 最初の選択肢を返す。"""
 
     def __init__(self):
         self.calls = {}
@@ -26,6 +28,10 @@ class _FakeTrial:
     def suggest_float(self, name, low, high, log=False):
         self.calls[name] = ("float", low, high, log)
         return low
+
+    def suggest_categorical(self, name, choices):
+        self.calls[name] = ("categorical", choices)
+        return choices[0]
 
 
 class TestTuningConfigDefaults:
@@ -92,6 +98,46 @@ class TestFromDict:
         assert cfg.num_boost_round == 100
 
 
+class TestCategoricalParams:
+    def test_boosting_type_uses_suggest_categorical(self):
+        cfg = TuningConfig(
+            method=METHOD_OPTUNA,
+            search_space={"boosting_type": ["gbdt", "dart"]},
+        )
+        trial = _FakeTrial()
+        params = cfg.suggest_params(trial)
+        assert trial.calls["boosting_type"] == ("categorical", ["gbdt", "dart"])
+        assert params["boosting_type"] == "gbdt"
+
+    def test_extra_trees_converted_to_bool(self):
+        cfg = TuningConfig(
+            method=METHOD_OPTUNA,
+            search_space={"extra_trees": ["true", "false"]},
+        )
+        trial = _FakeTrial()
+        params = cfg.suggest_params(trial)
+        assert params["extra_trees"] is True  # "true" → bool
+
+    def test_is_categorical_helper(self):
+        assert _is_categorical(["gbdt", "dart"])
+        assert not _is_categorical([8, 256])
+        assert not _is_categorical([0.01, 0.3])
+
+    def test_max_search_space_has_all_categories(self):
+        categorical_keys = {k for k, v in MAX_SEARCH_SPACE.items() if _is_categorical(v)}
+        assert "boosting_type" in categorical_keys
+        assert "extra_trees" in categorical_keys
+
+    def test_dart_sets_num_boost_round_in_params(self):
+        cfg = TuningConfig(
+            method=METHOD_OPTUNA,
+            num_boost_round=500,
+            search_space={"boosting_type": ["dart"]},
+        )
+        params = cfg.suggest_params(_FakeTrial())
+        assert params.get("num_boost_round") == 500
+
+
 class TestLoadTuningConfig:
     def test_roundtrip(self, tmp_path):
         p = tmp_path / "tuning.json"
@@ -103,6 +149,19 @@ class TestLoadTuningConfig:
     def test_missing_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             load_tuning_config(str(tmp_path / "nope.json"))
+
+    def test_example_config_loads(self):
+        cfg = load_tuning_config("configs/tuning_config.example.json")
+        assert cfg.n_trials == 100
+        assert cfg.is_custom
+        assert "num_leaves" in cfg.search_space
+
+    def test_max_config_loads(self):
+        cfg = load_tuning_config("configs/tuning_config.max.json")
+        assert cfg.n_trials == 300
+        assert "boosting_type" in cfg.search_space
+        assert _is_categorical(cfg.search_space["boosting_type"])
+        assert cfg.timeout == 7200
 
 
 class TestTuneHyperParamsDispatch:

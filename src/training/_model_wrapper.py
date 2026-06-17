@@ -95,17 +95,25 @@ class ModelWrapper:
 
         def objective(trial):
             params = cfg.suggest_params(trial)
+            # min_child_samples を複数 trial で変化させると feature_pre_filter=true
+            # （既定）が競合してエラーになるため、動的変更を許可する。
+            params["feature_pre_filter"] = False
             # 再学習時にそのまま使えるよう、完全パラメータを user_attr に記録する
             # （trials_to_records が system_attrs / user_attrs の両方を参照する）。
             trial.set_user_attr(_LGBM_PARAMS_ATTR, json.dumps(params))
+            # dart は early_stopping 非対応なので固定ラウンド数で学習する
+            num_boost_round = params.pop("num_boost_round", cfg.num_boost_round)
+            is_dart = params.get("boosting_type") == "dart"
+            callbacks = [] if is_dart else [lgb.early_stopping(cfg.early_stopping_rounds, verbose=False)]
             booster = lgb.train(
                 params,
                 train_set,
                 valid_sets=[valid_set],
-                num_boost_round=cfg.num_boost_round,
-                callbacks=[lgb.early_stopping(cfg.early_stopping_rounds, verbose=False)],
+                num_boost_round=num_boost_round,
+                callbacks=callbacks,
             )
-            return booster.best_score["valid_0"]["binary_logloss"]
+            score_key = "valid_0" if not is_dart else list(booster.best_score.keys())[0]
+            return booster.best_score[score_key]["binary_logloss"]
 
         logger.info(
             "[tune] 手書き Optuna 探索: n_trials=%d timeout=%s 探索対象=%s",

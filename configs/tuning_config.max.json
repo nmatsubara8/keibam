@@ -1,0 +1,26 @@
+{
+  "_comment": "全パラメータ最大探索設定（15 パラメータ・300 試行・2 時間打ち切り）。boosting_type=dart も含む。",
+  "method": "optuna",
+  "n_trials": 300,
+  "timeout": 7200,
+  "num_boost_round": 2000,
+  "early_stopping_rounds": 100,
+  "seed": 100,
+  "search_space": {
+    "boosting_type":     ["gbdt", "dart"],
+    "num_leaves":        [8, 512],
+    "max_depth":         [-1, 16],
+    "learning_rate":     [0.005, 0.5],
+    "n_estimators":      [100, 3000],
+    "lambda_l1":         [1e-8, 10.0],
+    "lambda_l2":         [1e-8, 10.0],
+    "feature_fraction":  [0.3, 1.0],
+    "bagging_fraction":  [0.3, 1.0],
+    "bagging_freq":      [1, 10],
+    "min_child_samples": [5, 300],
+    "min_child_weight":  [1e-5, 100.0],
+    "min_split_gain":    [0.0, 1.0],
+    "path_smooth":       [0.0, 10.0],
+    "extra_trees":       ["true", "false"]
+  }
+}
