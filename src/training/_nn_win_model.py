@@ -224,9 +224,12 @@ class NnWinModel:
         import torch
 
         self._net.eval()  # BatchNorm/Dropout を評価モードに（KB shard-38）
+        x_in = np.nan_to_num(np.asarray(x, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
         with torch.no_grad():
-            logits = self._net(torch.as_tensor(np.asarray(x, dtype=np.float32)))
+            logits = self._net(torch.as_tensor(x_in))
             p = torch.sigmoid(logits).numpy()
+        # 万一 NaN が出ても meta 学習器（NaN 不可）を壊さないよう 0.5 に丸める
+        p = np.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
         return np.column_stack([1.0 - p, p])
 
 

@@ -74,7 +74,9 @@ class StackingModel:
                 cols.append((col.cat.codes.to_numpy() + 1).astype(np.float32))
             else:
                 cols.append(np.asarray(col, dtype=np.float32))
-        return np.column_stack(cols)
+        # NN は NaN を扱えない（§2 由来の欠損や定数列の標準化で NaN が出る）ため、
+        # 標準化後の平均に相当する 0 で補完する。entity コードは NaN を含まない。
+        return np.nan_to_num(np.column_stack(cols), nan=0.0, posinf=0.0, neginf=0.0)
 
     def fit(self, x_base, y_base, x_meta, y_meta, base_sample_weights=None) -> "StackingModel":
         """base 学習器を base_train で学習し、meta_train の OOF 予測で meta 学習器を学習。
