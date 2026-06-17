@@ -145,7 +145,9 @@ def compute_stacking_auc(
         return None
 
     splits = _get_splits(featured_data, test_size, valid_size)
-    X_test_model = splits["X_test_model"].values
+    # stream-aware StackingModel は NN ストリーム導出に列名（DataFrame）を要求するため
+    # .values ではなく DataFrame をそのまま渡す（gbdt 側は内部で .values 化される）。
+    X_test_model = splits["X_test_model"]
     y_test = np.asarray(splits["y_test"]).astype(float)
 
     try:
