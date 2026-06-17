@@ -281,6 +281,17 @@ class DataSplitter:
         return self.__nn_scaler
 
     @property
+    def nn_categorical_cardinalities(self):
+        """NN Entity Embedding 用 {nn入力列index: カーディナリティ}。未知バケット用に +1。"""
+        if self.__nn_raw is None or self.__nn_scaler is None:
+            return None
+        cards = {}
+        for i, col in enumerate(self.__nn_scaler.entity_cols):
+            if col in self.__nn_raw.columns and str(self.__nn_raw[col].dtype) == "category":
+                cards[i] = int(len(self.__nn_raw[col].cat.categories)) + 1
+        return cards
+
+    @property
     def X_nn_train(self) -> "pd.DataFrame | None":
         return self.__nn_train
 

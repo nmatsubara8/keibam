@@ -135,36 +135,54 @@ class KeibaAI:
         self.base_model_names_ = [s.name for s in specs]
         base_models: list[Any] = [s.model for s in specs]
         base_sample_weights = [ev_weights if s.weight == "ev" else None for s in specs]
+        base_streams = [s.stream for s in specs]
 
-        # NN base（Phase 2）: gbdt ストリームとは別に NN ストリームが必要なため、
-        # bm_cfg に "nn" が含まれない場合のみ既存の NnWinModel フォールバックを実行する。
-        if "nn" not in bm_cfg.models and self.__datasets.X_nn_base_train is not None:
+        # NN base（Phase 2）: entity+numeric を専用ストリームとして消費する。
+        # entity/numeric 列は gbdt DataFrame 内に共存するため、StackingModel が
+        # nn_scaler で内部導出する（推論時も gbdt 1 枚から再構成でき契約は不変）。
+        if "nn" in bm_cfg.models and self.__datasets.X_nn_base_train is not None:
             try:
                 from ._nn_win_model import NnWinModel
 
-                nn_stream = self.__datasets.X_nn_base_train
+                cards = self.__datasets.nn_categorical_cardinalities or {}
+                scaler = self.__datasets.nn_scaler
+                nn_kwargs = {
+                    k: v for k, v in dict(bm_cfg.nn_params).items()
+                    if k in ("hidden_dims", "epochs", "lr", "batch_size")
+                }
                 base_models.append(
                     NnWinModel(
-                        n_numeric=nn_stream.shape[1],
+                        categorical_cardinalities=cards,
+                        n_numeric=len(scaler.numeric_cols),
                         pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                        **nn_kwargs,
                     )
                 )
                 base_sample_weights.append(None)
+                base_streams.append("nn")
                 self.base_model_names_.append("NN")
-            except Exception:
-                pass
+            except Exception as _e:
+                import logging as _l
 
-        stacking = StackingModel(base_models, LogisticRegression(max_iter=1000, random_state=100))
+                _l.getLogger(__name__).warning("NN base 構築失敗のためスキップ: %s", _e)
+
+        stacking = StackingModel(
+            base_models,
+            LogisticRegression(max_iter=1000, random_state=100),
+            base_streams=base_streams,
+            nn_scaler=self.__datasets.nn_scaler,
+            nn_cat_cardinalities=self.__datasets.nn_categorical_cardinalities,
+        )
         stacking.fit(
-            x_base,
+            self.__datasets.X_base_train,
             y_base,
-            self.__datasets.X_meta_train.values,
+            self.__datasets.X_meta_train,
             self.__datasets.y_meta_train.values,
             base_sample_weights=base_sample_weights,
         )
         self._calibrated_model = CalibratedModel.fit(
             stacking,
-            self.__datasets.X_calib.values,
+            self.__datasets.X_calib,
             self.__datasets.y_calib.values,
         )
         self.feature_names_ = list(self.__datasets.X_base_train.columns)
