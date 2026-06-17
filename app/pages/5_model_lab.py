@@ -217,11 +217,13 @@ with tabs[1]:
 
         summaries: dict[str, dict] = {}
         profits: dict[str, pd.Series] = {}
+        diags: dict[str, dict] = {}
         progress = st.progress(0.0)
         for i, version in enumerate(sel_versions):
             try:
                 ai = _load_model(version)
-                summary, per_race = simulate_model(ai, featured_slice, bet_label, threshold)
+                summary, per_race, diag = simulate_model(ai, featured_slice, bet_label, threshold)
+                diags[version] = diag
                 if summary:
                     summaries[version] = summary
                     profits[version] = cumulative_profit(per_race)
@@ -231,7 +233,19 @@ with tabs[1]:
         progress.empty()
 
         if not summaries:
-            st.warning("条件に合致する馬券がありませんでした（閾値を下げてみてください）")
+            # 結果が空の理由を診断情報から区別して案内する。
+            matched = max((d.get("n_matched_races", 0) for d in diags.values()), default=0)
+            covered = max((d.get("n_covered_races", 0) for d in diags.values()), default=0)
+            if matched == 0:
+                st.warning("条件に合致する馬券がありませんでした（スコア閾値を下げてみてください）")
+            elif covered == 0:
+                st.warning(
+                    f"閾値を超えて賭けた {matched} レースすべてに払戻データがありません。"
+                    f"`{bet_label}` の払戻テーブル（return_tables）が未取得の可能性があります。"
+                    " ingest で払戻データを取得するか、別の馬券種・期間をお試しください。"
+                )
+            else:
+                st.warning("有効な集計結果が得られませんでした（払戻データを確認してください）。")
         else:
             st.subheader("📊 比較結果")
             comp = comparison_table(summaries)

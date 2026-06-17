@@ -47,21 +47,25 @@ def simulate_model(
     featured_slice: pd.DataFrame,
     bet_label: str,
     threshold: float,
-) -> tuple[dict, pd.DataFrame]:
+) -> tuple[dict, pd.DataFrame, dict]:
     """1 モデルのバックテストを実行する。
 
     Returns
     -------
-    (summary, per_race) :
+    (summary, per_race, diag) :
         summary  — 回収率・的中率・シャープレシオ・最大DD 等（summarize_returns 出力）。
         per_race — レース毎の bet_amount / return_amount / hit_or_not。
+        diag     — 診断情報（n_matched_races: 閾値を超えて賭けたレース数,
+                   n_covered_races: そのうち払戻テーブルにデータがあったレース数）。
+                   結果が空のとき「閾値が高い」のか「払戻データ欠損」かを区別する。
     """
     import src.policies as policies
+    from src.constants._bet_types import BetType
     from src.policies._score_policy import StdScorePolicy
     from src.preprocessing._return_processor import ReturnProcessor
     from src.simulation._simulator import Simulator
 
-    policy_cls_name, _action_key = BET_POLICY_CHOICES[bet_label]
+    policy_cls_name, action_key = BET_POLICY_CHOICES[bet_label]
     policy_cls = getattr(policies, policy_cls_name)
 
     score_table = ai.calc_score(featured_slice, StdScorePolicy)
@@ -70,10 +74,27 @@ def simulate_model(
     # int64 のため、payout 照合キーを int に正規化する（race_id は常に数値）。
     actions = {int(race_id): bets for race_id, bets in actions.items()}
 
-    simulator = Simulator(ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH))
+    return_processor = ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+
+    # 診断: 閾値を超えて賭けたレースのうち、払戻テーブルに存在する割合を測る。
+    # action_key を該当 BetType にマップして、その馬券種の払戻テーブルで照合する。
+    _action_to_bet_type = {
+        "tansho": BetType.TANSHO, "fukusho": BetType.FUKUSHO,
+        "umaren": BetType.UMAREN, "wide": BetType.WIDE, "sanrenpuku": BetType.SANRENPUKU,
+    }
+    bet_type = _action_to_bet_type.get(action_key, BetType.TANSHO)
+    payout_index = set(int(x) for x in return_processor.preprocessed_data[bet_type].index)
+    matched_ids = set(actions.keys())
+    covered_ids = matched_ids & payout_index
+    diag = {
+        "n_matched_races": len(matched_ids),
+        "n_covered_races": len(covered_ids),
+    }
+
+    simulator = Simulator(return_processor)
     per_race = simulator.calc_returns_per_race(actions)
     summary = simulator.calc_returns(actions)
-    return summary, per_race
+    return summary, per_race, diag
 
 
 def cumulative_profit(per_race: pd.DataFrame) -> pd.Series:

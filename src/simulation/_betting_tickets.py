@@ -54,6 +54,12 @@ class _BettingStrategy(ABC):
         n_bets = len(keys)
         if n_bets == 0:
             return 0, 0, 0
+        if race_id not in self._table.index:
+            # 払戻テーブルに該当レースが無い（return_tables 未取得・対象外）場合は
+            # 払戻を評価できないため「賭けなかった」扱い（0,0,0）にして集計から除外する。
+            # （.loc[race_id] が KeyError を投げてシミュレーション全体が落ちるのを防ぐ）
+            logger.debug("betting_tickets: race_id=%s が払戻テーブルに無いためスキップ", race_id)
+            return 0, 0, 0
         bet_amount = n_bets * amount
         return_amount = self._sum_returns(race_id, keys, amount)
         return n_bets, bet_amount, return_amount

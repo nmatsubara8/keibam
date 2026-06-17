@@ -50,6 +50,12 @@ class TestTansho:
         n, bet, ret = self._bt().bet_tansho(1, [3], 100)
         assert (n, bet, ret) == (1, 100, 0)
 
+    def test_race_not_in_payout_table_returns_zero(self):
+        # 払戻テーブルに無い race_id（return_tables 未取得）は KeyError で落ちず
+        # (0, 0, 0) を返して集計から除外される。
+        n, bet, ret = self._bt().bet_tansho(999, [5], 100)
+        assert (n, bet, ret) == (0, 0, 0)
+
     def test_multi_horse_partial_hit(self):
         n, bet, ret = self._bt().bet_tansho(1, [3, 5, 7], 100)
         assert n == 3
