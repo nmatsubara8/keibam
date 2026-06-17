@@ -163,3 +163,4 @@ data/tmp/**
 # cron ログ（構造は .gitkeep で保持）
 logs/*.log
 !logs/.gitkeep
+.claude/
