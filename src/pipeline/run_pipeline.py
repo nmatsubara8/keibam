@@ -370,6 +370,17 @@ def _retrain(args: argparse.Namespace) -> None:
         args.with_tuning = True
         logger.info("[retrain] 探索設定が指定されたため --with-tuning を有効化します")
 
+    base_models_config = _build_base_models_config(args)
+
+    # NN base を使う場合は 2 系統（gbdt+nn）の PreparedFeatures を構成する。
+    # entity/numeric 列は gbdt 内に共存するため列選択のみで導出でき、キャッシュ済み
+    # featured_data からも特徴量エンジニアリング再実行なしで NN ストリームを作れる。
+    if base_models_config is not None and "nn" in base_models_config.models:
+        from src.preprocessing._prepared_features import prepared_from_gbdt
+
+        featured_data = prepared_from_gbdt(featured_data)
+        logger.info("[retrain] NN base 用に 2 系統 PreparedFeatures を構成しました")
+
     job = RetrainJob(KeibaAIFactory, cfg)
     result = job.run(
         featured_data,
@@ -378,7 +389,7 @@ def _retrain(args: argparse.Namespace) -> None:
         lgb_params=lgb_params,
         params_rank=params_rank,
         tuning_config=tuning_config,
-        base_models_config=_build_base_models_config(args),
+        base_models_config=base_models_config,
     )
     logger.info("[retrain] %s", result)
 

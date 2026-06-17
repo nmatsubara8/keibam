@@ -115,7 +115,9 @@ def build_base_models(
             except ImportError:
                 logger.warning("catboost 未導入のためスキップ")
         elif m == "nn":
-            logger.info("NN base は Phase 2 で実装予定のためスキップ")
+            # NN base は専用ストリーム（nn_scaler/cardinalities）が必要なため
+            # train_with_stacking 側で構築する（ここでは何もしない）。
+            logger.debug("NN base は train_with_stacking で構築されます")
 
     if not specs:
         raise RuntimeError("有効な base 学習器が 1 つもありません。")

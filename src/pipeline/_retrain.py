@@ -198,7 +198,7 @@ class RetrainJob:
         meta: dict[str, Any] = {
             "version": vname,
             "trained_at": dt.datetime.now().isoformat(),
-            "n_races": int(len(featured_data.index.unique())),
+            "n_races": int(len((featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data).index.unique())),
             "use_stacking": self._cfg.use_stacking,
             "base_models": list(ai.base_model_names_) if hasattr(ai, "base_model_names_") else ["LightGBM"],
             **metrics,
