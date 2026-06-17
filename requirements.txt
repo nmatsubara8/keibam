@@ -22,3 +22,5 @@ html5lib
 pyarrow
 chardet
 sqlalchemy>=2.0
+xgboost
+catboost

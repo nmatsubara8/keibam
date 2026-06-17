@@ -263,6 +263,18 @@ def _ingest(args: argparse.Namespace) -> None:
     logger.info("[ingest] %s", result)
 
 
+def _build_base_models_config(args):
+    """args から BaseModelsConfig を組み立てる（指定なければ None）。"""
+    from src.training._base_models_config import BaseModelsConfig, from_dict, load_base_models_config
+
+    if hasattr(args, "base_models_config") and args.base_models_config:
+        return load_base_models_config(args.base_models_config)
+    if hasattr(args, "base_models") and args.base_models:
+        models = tuple(m.strip() for m in args.base_models.split(","))
+        return from_dict({"models": list(models)})
+    return None
+
+
 def _retrain(args: argparse.Namespace) -> None:
     """再学習ジョブを実行する（optuna が with_tuning=True 時に必要）。"""
     import pandas as pd
@@ -366,6 +378,7 @@ def _retrain(args: argparse.Namespace) -> None:
         lgb_params=lgb_params,
         params_rank=params_rank,
         tuning_config=tuning_config,
+        base_models_config=_build_base_models_config(args),
     )
     logger.info("[retrain] %s", result)
 
@@ -495,6 +508,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="PATH",
         help="探索範囲・回数を定義した JSON 設定ファイル（src/training/_tuning_config.py 参照）",
+    )
+    retrain_p.add_argument(
+        "--base-models",
+        type=str,
+        default=None,
+        help="カンマ区切りの base 学習器リスト (例: lightgbm,xgboost,catboost)",
+    )
+    retrain_p.add_argument(
+        "--base-models-config",
+        type=str,
+        default=None,
+        help="BaseModelsConfig JSON ファイルパス",
     )
 
     # evaluate-odds-dynamics サブコマンド

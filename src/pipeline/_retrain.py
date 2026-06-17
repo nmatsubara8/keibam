@@ -138,6 +138,7 @@ class RetrainJob:
         lgb_params: dict | None = None,
         params_rank: int | None = None,
         tuning_config=None,
+        base_models_config=None,
     ) -> dict:
         """featured_data で全再学習し、バージョン付きモデルを保存する。
 
@@ -172,6 +173,7 @@ class RetrainJob:
                 meta_ratio=self._cfg.meta_ratio,
                 with_tuning=with_tuning,
                 tuning_config=tuning_config,
+                base_models_config=base_models_config,
             )
         else:
             if with_tuning:
@@ -198,6 +200,7 @@ class RetrainJob:
             "trained_at": dt.datetime.now().isoformat(),
             "n_races": int(len(featured_data.index.unique())),
             "use_stacking": self._cfg.use_stacking,
+            "base_models": list(ai.base_model_names_) if hasattr(ai, "base_model_names_") else ["LightGBM"],
             **metrics,
         }
         if lgb_params:

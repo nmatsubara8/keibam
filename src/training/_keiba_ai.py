@@ -57,7 +57,7 @@ class KeibaAI:
         """
         self.__model_wrapper.train(self.__datasets)
 
-    def train_with_stacking(self, meta_ratio: float = 0.3, with_tuning: bool = True, tuning_config=None) -> None:
+    def train_with_stacking(self, meta_ratio=0.3, with_tuning=True, tuning_config=None, base_models_config=None):
         """スタッキング+Isotonic 較正の Layer1 パイプラインを実行する。
 
         1. make_stacking_splits で base_train / meta_train / calib_holdout に分割
@@ -69,12 +69,16 @@ class KeibaAI:
         5. meta_train で meta 特徴量を生成し LogisticRegression meta 学習器を学習
         6. calib_holdout で Isotonic 較正し self._calibrated_model に保存
         """
-        import lightgbm as lgb
         from sklearn.linear_model import LogisticRegression
+
+        import dataclasses
 
         from src.constants._bet_thresholds import TrainingWeights
 
+        from ._base_model_factory import build_base_models
+        from ._base_models_config import BaseModelsConfig
         from ._calibrated_model import CalibratedModel
+        from ._multi_model_tuner import tune_model
         from ._stacking_model import StackingModel
 
         self.__datasets.make_stacking_splits(meta_ratio=meta_ratio, build_optuna_datasets=with_tuning)
@@ -87,21 +91,54 @@ class KeibaAI:
         # §2: ブートストラップ予測 → EV境界 sigmoid 重み（レース内正規化）
         ev_weights = self.__compute_base_ev_weights(x_base, y_base)
 
-        # base①: LightGBM（scale_pos_weight でクラス不均衡補正、EV 重みは sample_weight）
+        bm_cfg = base_models_config or BaseModelsConfig()
+
         params = dict(self.__model_wrapper.params)
         params.setdefault("scale_pos_weight", TrainingWeights.SCALE_POS_WEIGHT)
-        lgb_base = lgb.LGBMClassifier(**params)
-        base_models: list[Any] = [lgb_base]
-        base_sample_weights = [ev_weights]
 
-        # base②: NN（Entity Embedding）。専用 NN ストリーム（PreparedFeatures 経由で
-        # 標準化済み）が利用可能な場合**のみ**追加する。
-        # gbdt ストリーム（One-Hot/カテゴリ混在・§2g/§2i の NaN を含む生特徴量）を
-        # NN にそのまま渡すと、Entity Embedding が効かず数値スケールも未調整で学習が
-        # 破綻するため、2系統が揃うまで NN base は無効化する（LightGBM 単独で動作）。
-        # NOTE: NN へ X_nn_base_train を実際に供給するには StackingModel が base ごとに
-        #       異なる入力を受け取れるよう拡張する必要がある（2系統スタッキング完成は後続）。
-        if self.__datasets.X_nn_base_train is not None:
+        # XGB/CatBoost の per-model Optuna チューニング
+        extra_tuned = {}
+        if bm_cfg.tune_per_model:
+            n = len(x_base)
+            split = int(n * 0.8)
+            x_bt, y_bt = x_base[:split], y_base[:split]
+            x_bv, y_bv = x_base[split:], y_base[split:]
+            for mname in bm_cfg.models:
+                if mname in ("xgboost", "catboost"):
+                    space = (
+                        bm_cfg.xgboost_search_space
+                        if mname == "xgboost"
+                        else bm_cfg.catboost_search_space
+                    )
+                    best = tune_model(
+                        mname, x_bt, y_bt, x_bv, y_bv, space,
+                        n_trials=bm_cfg.n_trials,
+                        timeout=bm_cfg.timeout,
+                        scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                    )
+                    extra_tuned[mname] = best
+
+        if extra_tuned:
+            kw = {}
+            if "xgboost" in extra_tuned:
+                merged = dict(bm_cfg.xgboost_params)
+                merged.update(extra_tuned["xgboost"])
+                kw["xgboost_params"] = merged
+            if "catboost" in extra_tuned:
+                merged = dict(bm_cfg.catboost_params)
+                merged.update(extra_tuned["catboost"])
+                kw["catboost_params"] = merged
+            if kw:
+                bm_cfg = dataclasses.replace(bm_cfg, **kw)
+
+        specs = build_base_models(bm_cfg, params, TrainingWeights.SCALE_POS_WEIGHT)
+        self.base_model_names_ = [s.name for s in specs]
+        base_models: list[Any] = [s.model for s in specs]
+        base_sample_weights = [ev_weights if s.weight == "ev" else None for s in specs]
+
+        # NN base（Phase 2）: gbdt ストリームとは別に NN ストリームが必要なため、
+        # bm_cfg に "nn" が含まれない場合のみ既存の NnWinModel フォールバックを実行する。
+        if "nn" not in bm_cfg.models and self.__datasets.X_nn_base_train is not None:
             try:
                 from ._nn_win_model import NnWinModel
 
@@ -112,9 +149,10 @@ class KeibaAI:
                         pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
                     )
                 )
-                base_sample_weights.append(None)  # NN は pos_weight で補正、EV 重みは未適用
+                base_sample_weights.append(None)
+                self.base_model_names_.append("NN")
             except Exception:
-                pass  # torch 未インストールの場合は LightGBM のみで動作
+                pass
 
         stacking = StackingModel(base_models, LogisticRegression(max_iter=1000, random_state=100))
         stacking.fit(

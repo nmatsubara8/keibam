@@ -154,14 +154,22 @@ def compute_stacking_auc(
     except Exception:
         return None
 
-    base_names = []
-    for m in stacking._base_models:
-        name = type(m).__name__
-        if "LGBM" in name or "LightGBM" in name:
-            name = "LightGBM"
-        elif "NN" in name or "Nn" in name:
-            name = "NN"
-        base_names.append(name)
+    ai_base_names = getattr(model, "base_model_names_", None)
+    if ai_base_names and len(ai_base_names) == len(base_probs):
+        base_names = list(ai_base_names)
+    else:
+        base_names = []
+        for m in stacking._base_models:
+            name = type(m).__name__
+            if "LGBM" in name or "LightGBM" in name:
+                name = "LightGBM"
+            elif "NN" in name or "Nn" in name:
+                name = "NN"
+            elif "XGB" in name or "XGBoost" in name:
+                name = "XGBoost"
+            elif "CatBoost" in name:
+                name = "CatBoost"
+            base_names.append(name)
 
     return {
         "y_true": y_test,
