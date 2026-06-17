@@ -1,0 +1,6 @@
+{
+  "models": ["lightgbm", "xgboost", "nn"],
+  "tune_per_model": false,
+  "n_trials": 50,
+  "nn_params": {"hidden_dims": [128], "epochs": 15, "lr": 0.001, "batch_size": 512, "max_train_rows": 120000}
+}
