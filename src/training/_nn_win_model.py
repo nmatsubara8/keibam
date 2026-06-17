@@ -20,9 +20,12 @@ KB 追加（§2）:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 
 class NnWinModel:
@@ -177,12 +180,25 @@ class NnWinModel:
 
         best_val = float("inf")
         best_state = None
+        best_epoch = -1
         epochs_no_improve = 0
         n_tr = len(x_tr)
+        _log.info(
+            "[NN] fit 開始: train=%d val=%d epochs=%d batch=%d lr=%g",
+            n_tr,
+            len(x_val) if x_val is not None else 0,
+            self._epochs,
+            self._batch_size,
+            self._lr,
+        )
 
-        for _ in range(self._epochs):
+        epoch_run = 0
+        for epoch in range(self._epochs):
+            epoch_run = epoch + 1
             self._net.train()  # BatchNorm/Dropout を学習モードに（KB shard-38）
             perm = torch.randperm(n_tr)
+            train_loss_sum = 0.0
+            train_batches = 0
             for start in range(0, n_tr, self._batch_size):
                 idx = perm[start : start + self._batch_size]
                 # BatchNorm1d は batch サイズ 1 だと分散計算で失敗するためスキップ
@@ -195,7 +211,10 @@ class NnWinModel:
                     loss = (loss * w_tr[idx]).mean()
                 loss.backward()
                 opt.step()
+                train_loss_sum += float(loss)
+                train_batches += 1
             scheduler.step()
+            train_loss = train_loss_sum / max(train_batches, 1)
 
             # Early Stopping 判定（検証ホールドアウトがある場合のみ）
             if x_val is not None and len(x_val) > 1:
@@ -204,18 +223,37 @@ class NnWinModel:
                     val_logits = self._net(x_val)
                     val_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pw)
                     val_loss = float(val_loss_fn(val_logits, y_val))
-                if best_val - val_loss > self._min_delta:
+                improved = best_val - val_loss > self._min_delta
+                _log.info(
+                    "[NN] epoch %d/%d train_loss=%.4f val_loss=%.4f%s",
+                    epoch_run,
+                    self._epochs,
+                    train_loss,
+                    val_loss,
+                    " *" if improved else "",
+                )
+                if improved:
                     best_val = val_loss
                     best_state = {k: v.clone() for k, v in self._net.state_dict().items()}
+                    best_epoch = epoch_run
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self._patience:
+                        _log.info("[NN] Early Stopping（patience=%d）", self._patience)
                         break
+            else:
+                _log.info("[NN] epoch %d/%d train_loss=%.4f", epoch_run, self._epochs, train_loss)
 
         # ベスト状態を復元（早期打ち切り時の過学習回避）
         if best_state is not None:
             self._net.load_state_dict(best_state)
+        _log.info(
+            "[NN] fit 完了: 実行 %d epoch / best epoch=%d best_val_loss=%.4f",
+            epoch_run,
+            best_epoch,
+            best_val,
+        )
         return self
 
     def predict_proba(self, x) -> np.ndarray:
