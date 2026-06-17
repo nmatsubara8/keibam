@@ -105,7 +105,7 @@ def compute_calib_curves(
         return None
 
     splits = _get_splits(featured_data, test_size, valid_size)
-    X_calib = splits["X_calib"].values
+    X_calib = splits["X_calib"]  # DataFrame のまま渡す（NN ストリームは列名で抽出）
     y_calib = np.asarray(splits["y_calib"]).astype(float)
 
     try:
