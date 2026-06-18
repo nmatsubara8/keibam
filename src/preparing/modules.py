@@ -229,6 +229,13 @@ def process_pkl_file(self, process_function):
                 process_function, self, ref_id, driver, waiting_time,
                 max_retry=max_retry, backoff=backoff,
             )
+            # netkeiba 自主規制: リクエスト間隔（最低 1 秒 + ランダム揺らぎ）。
+            # 単一 fetch 経路（race/horse/ped の bin 取得）は PlaywrightScraper.fetch が
+            # 1 時間上限のみで間隔待機を持たないため、取得ループ側で 1 件ごとに挟む。
+            # delay<=0（テスト等の明示無効化）のときは polite_interval が 0 を返す。
+            interval = polite_interval(delay)
+            if interval > 0:
+                time.sleep(interval)
             if return_data is None:
                 # 取得失敗（通常エラー or ブロックでリトライ尽き）
                 if blocked:
