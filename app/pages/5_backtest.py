@@ -16,6 +16,10 @@ import streamlit as st
 
 from app._data_loader import list_model_versions
 from app._data_loader import load_model_by_version
+from app._model_compare import BET_POLICY_CHOICES
+from app._model_compare import cumulative_profit
+from app._model_compare import recent_race_slice
+from app._model_compare import simulate_model
 from app._model_eval import _build_return_table_df
 from app._model_eval import compute_confidence_sweep
 from app._model_eval import compute_full_backtest
@@ -57,7 +61,7 @@ if featured is None:
     st.warning(f"`{LocalPaths.FEATURED_DATA_PATH}` が見つかりません。先に取込・特徴量生成を実行してください。")
     st.stop()
 
-tabs = st.tabs(["🎯 フルシミュレーション", "📈 確信度スイープ"])
+tabs = st.tabs(["🎯 フルシミュレーション", "📈 確信度スイープ", "🎰 券種別バックテスト"])
 
 # ──────────────────────────────────────────────────────────────────
 # Tab 1: フルシミュレーション
@@ -244,3 +248,97 @@ with tabs[1]:
 
             csv = sdf.to_csv(index=False).encode("utf-8-sig")
             st.download_button("📥 CSV ダウンロード", csv, file_name="confidence_sweep.csv", mime="text/csv")
+
+# ──────────────────────────────────────────────────────────────────
+# Tab 3: 券種別バックテスト（単勝以外も照会）
+# ──────────────────────────────────────────────────────────────────
+with tabs[2]:
+    st.subheader("単勝以外も含む券種別の通算成績")
+    st.caption(
+        "テストセット（直近 20%）で、レース内標準化スコア（偏差値的な相対評価）が"
+        " 閾値を超えた馬に各券種で 1 点ずつ賭けた場合の成績です。"
+        " BOX 馬券は閾値超えの馬の全組合せを購入します。実払戻テーブルで清算します"
+        "（回収率・的中率は賭け金額に依存しません。損益は 1 点=1 円換算）。"
+    )
+
+    col_v, col_b, col_t = st.columns([2, 2, 2])
+    with col_v:
+        sel_ver_bt = st.selectbox("モデルバージョン", version_options, key="bbt_version")
+    with col_b:
+        bet_label = st.selectbox("馬券種", list(BET_POLICY_CHOICES.keys()), key="bbt_bet")
+    with col_t:
+        bt_th = st.slider(
+            "スコア閾値（レース内標準化）", min_value=-0.5, max_value=3.0,
+            value=1.0, step=0.1, key="bbt_threshold",
+            help="レース内で標準化したスコアの閾値。低いほど対象馬が増え、BOX の組合せ数も増えます。",
+        )
+
+    if st.button("券種別シミュレーション実行", key="run_bet_backtest"):
+        with st.spinner("計算中…"):
+            mdl = _load_model(sel_ver_bt)
+            if mdl is None:
+                st.error("モデルを読み込めませんでした。")
+            else:
+                featured_slice = recent_race_slice(featured, test_frac=0.2)
+                summary, per_race, diag = simulate_model(mdl, featured_slice, bet_label, bt_th)
+                st.session_state["bbt_result"] = {
+                    "summary": summary, "per_race": per_race, "diag": diag, "bet_label": bet_label,
+                }
+
+    if "bbt_result" in st.session_state:
+        res = st.session_state["bbt_result"]
+        summary = res["summary"]
+        per_race = res["per_race"]
+        diag = res["diag"]
+
+        # 診断: 賭け成立レース数と払戻テーブルでカバーされたレース数
+        st.caption(
+            f"閾値超えで賭けたレース: {diag.get('n_matched_races', 0)} / "
+            f"うち払戻テーブルあり: {diag.get('n_covered_races', 0)}"
+        )
+
+        if not summary:
+            if diag.get("n_matched_races", 0) == 0:
+                st.warning("この閾値では賭けが一件も成立しませんでした。閾値を下げてください。")
+            else:
+                st.warning(
+                    f"`{res['bet_label']}` の払戻テーブル（return_tables）が未取得の可能性があります。"
+                    " ingest で払戻データを取得するか、別の券種・期間をお試しください。"
+                )
+        else:
+            c1, c2, c3, c4 = st.columns(4)
+            rr = summary.get("return_rate", 0.0)
+            c1.metric("回収率", f"{rr * 100:.1f}%", delta=f"{(rr - 1) * 100:.1f}%")
+            c2.metric("的中率", f"{summary.get('hit_rate', 0) * 100:.1f}%")
+            c3.metric("総損益", f"¥{summary.get('profit', 0):,.0f}")
+            c4.metric("賭け枚数", f"{summary.get('n_bets', 0):,} 枚")
+
+            c5, c6, c7 = st.columns(3)
+            c5.metric("対象レース数", f"{summary.get('n_races', 0):,}")
+            c6.metric("シャープレシオ", f"{summary.get('sharpe_ratio', 0):.3f}")
+            c7.metric("最大ドローダウン", f"¥{summary.get('max_drawdown', 0):,.0f}")
+
+            curve = cumulative_profit(per_race)
+            if not curve.empty:
+                st.subheader("累積損益推移")
+                st.line_chart(
+                    curve.rename("累積損益 (円)").to_frame(), use_container_width=True
+                )
+
+            if not per_race.empty:
+                st.subheader("レース別成績")
+                disp = per_race.copy()
+                disp.index.name = "race_id"
+                st.dataframe(
+                    disp.rename(columns={
+                        "n_bets": "賭け枚数", "bet_amount": "投資額",
+                        "return_amount": "払戻額", "hit_or_not": "的中",
+                    }),
+                    use_container_width=True,
+                )
+                csv = per_race.to_csv().encode("utf-8-sig")
+                st.download_button(
+                    "📥 CSV ダウンロード", csv,
+                    file_name=f"backtest_{BET_POLICY_CHOICES[res['bet_label']][1]}.csv",
+                    mime="text/csv",
+                )

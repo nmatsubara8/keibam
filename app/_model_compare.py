@@ -16,12 +16,18 @@ from src.constants._local_paths import LocalPaths
 logger = logging.getLogger(__name__)
 
 # UI で選択できる馬券種 → (BetPolicy クラス名, Simulator の action キー)
+# 全 8 券種に対応（枠連・馬単・三連単を含む）。枠連 BOX は score_table の
+# wakuban_flag 列で枠単位に集約するため、StdScorePolicy 等 _calc 由来の
+# score_table（wakuban_flag を含む）が必要。
 BET_POLICY_CHOICES = {
     "単勝": ("BetPolicyTansho", "tansho"),
     "複勝": ("BetPolicyFukusho", "fukusho"),
+    "枠連BOX": ("BetPolicyWakurenBox", "wakuren"),
     "馬連BOX": ("BetPolicyUmarenBox", "umaren"),
+    "馬単BOX": ("BetPolicyUmatanBox", "umatan"),
     "ワイドBOX": ("BetPolicyWideBox", "wide"),
     "三連複BOX": ("BetPolicySanrenpukuBox", "sanrenpuku"),
+    "三連単BOX": ("BetPolicySanrentanBox", "sanrentan"),
 }
 
 
@@ -47,8 +53,14 @@ def simulate_model(
     featured_slice: pd.DataFrame,
     bet_label: str,
     threshold: float,
+    return_processor=None,
 ) -> tuple[dict, pd.DataFrame, dict]:
     """1 モデルのバックテストを実行する。
+
+    Parameters
+    ----------
+    return_processor : 払戻テーブル供給（DI）。None なら LocalPaths から読み込む
+        （テスト時は合成払戻テーブルを注入できる）。
 
     Returns
     -------
@@ -74,13 +86,15 @@ def simulate_model(
     # int64 のため、payout 照合キーを int に正規化する（race_id は常に数値）。
     actions = {int(race_id): bets for race_id, bets in actions.items()}
 
-    return_processor = ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+    if return_processor is None:
+        return_processor = ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
 
     # 診断: 閾値を超えて賭けたレースのうち、払戻テーブルに存在する割合を測る。
     # action_key を該当 BetType にマップして、その馬券種の払戻テーブルで照合する。
     _action_to_bet_type = {
         "tansho": BetType.TANSHO, "fukusho": BetType.FUKUSHO,
-        "umaren": BetType.UMAREN, "wide": BetType.WIDE, "sanrenpuku": BetType.SANRENPUKU,
+        "wakuren": BetType.WAKUREN, "umaren": BetType.UMAREN, "umatan": BetType.UMATAN,
+        "wide": BetType.WIDE, "sanrenpuku": BetType.SANRENPUKU, "sanrentan": BetType.SANRENTAN,
     }
     bet_type = _action_to_bet_type.get(action_key, BetType.TANSHO)
     payout_index = set(int(x) for x in return_processor.preprocessed_data[bet_type].index)
