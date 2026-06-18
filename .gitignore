@@ -164,3 +164,6 @@ data/tmp/**
 logs/*.log
 !logs/.gitkeep
 .claude/
+
+# CatBoost 学習時の作業ディレクトリ
+catboost_info/
