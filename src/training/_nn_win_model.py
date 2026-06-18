@@ -245,7 +245,7 @@ class NnWinModel:
                     loss = (loss * w_tr[idx]).mean()
                 loss.backward()
                 opt.step()
-                train_loss_sum += float(loss)
+                train_loss_sum += float(loss.detach())
                 train_batches += 1
             scheduler.step()
             train_loss = train_loss_sum / max(train_batches, 1)
