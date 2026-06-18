@@ -139,6 +139,33 @@ def combo_to_str(combo: Sequence[int]) -> str:
     return "-".join(str(int(x)) for x in combo)
 
 
+def build_final_odds_lookup(
+    snapshots: Sequence[OddsSnapshot], bet_types: Sequence[str] | None = None
+) -> dict[tuple[str, str, str], float]:
+    """スナップショット群から確定オッズ lookup を構築する（純粋関数）。
+
+    キーは ``(race_id, bet_type, combo_key)``、値は最新 captured_at のオッズ。
+    combo_key は `canonical_combo`（順不同は昇順正規化）で EV 選定時の combo と一致させる。
+    fetch-final-odds で取得した実績オッズを `StoredFinalOddsProvider` に渡す用途。
+
+    bet_types を指定すると当該券種だけに絞る。
+    """
+    from src.constants._bet_types import combo_key
+
+    allow = set(bet_types) if bet_types is not None else None
+    best: dict[tuple[str, str, str], tuple[dt.datetime, float]] = {}
+    for s in snapshots:
+        if allow is not None and s.bet_type not in allow:
+            continue
+        if s.odds is None or float(s.odds) <= 0:
+            continue
+        key = (str(s.race_id), s.bet_type, combo_key(s.bet_type, s.combo))
+        prev = best.get(key)
+        if prev is None or s.captured_at >= prev[0]:
+            best[key] = (s.captured_at, float(s.odds))
+    return {k: v[1] for k, v in best.items()}
+
+
 def snapshots_to_records(snapshots: Sequence[OddsSnapshot]) -> list[dict]:
     """OddsSnapshot 群を `raw_odds_snapshots` テーブルの行 dict へ変換する（純粋関数）。
 

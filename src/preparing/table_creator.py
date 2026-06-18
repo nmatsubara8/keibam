@@ -47,6 +47,9 @@ class TableCreator(DataLoader):
             skip,
         )
         self.target_data = []
+        # 増分処理用: 指定時はこの id（race_id/horse_id）の bin だけを処理する
+        # （process_bin_file が getattr で参照）。None は全件処理（従来挙動）。
+        self.only_ids: list[str] | None = None
 
     def create_race_results_table(self):
         """

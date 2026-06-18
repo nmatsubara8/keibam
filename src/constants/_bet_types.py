@@ -37,3 +37,19 @@ COMBO_SIZE = {
 # 順序を区別する馬券種（順列で生成する）。それ以外は順不同（組合せ）。
 # WAKUREN は順序なし（枠の昇順比較）なので含めない。
 ORDERED = {BetType.UMATAN, BetType.SANRENTAN}
+
+
+def canonical_combo(bet_type: str, combo) -> tuple:
+    """組合せを照合用の正準タプルに正規化する。
+
+    順不同券種（馬連/ワイド/三連複/枠連）は馬番（枠番）を昇順に並べ替え、
+    順序券種（馬単/三連単）は順序を保持する。オッズ実績の lookup キーと
+    EV 選定時の combo を一致させるための単一の正規化規則。
+    """
+    nums = tuple(int(x) for x in combo)
+    return nums if bet_type in ORDERED else tuple(sorted(nums))
+
+
+def combo_key(bet_type: str, combo) -> str:
+    """canonical_combo を ``"3-7-11"`` 形式の文字列キーにする（DB/lookup 共通表現）。"""
+    return "-".join(str(x) for x in canonical_combo(bet_type, combo))

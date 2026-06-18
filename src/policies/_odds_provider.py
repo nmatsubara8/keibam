@@ -76,6 +76,40 @@ class HistoricalOddsProvider(AbstractOddsProvider):
         return (1.0 - self._takeout) / prob
 
 
+class StoredFinalOddsProvider(AbstractOddsProvider):
+    """取得済みの確定オッズ実績（fetch-final-odds → odds_snapshots）を供給する。
+
+    過去レースの連系確定オッズが取得できている組合せは**実績値**を返し、無い組合せは
+    fallback（通常は単勝オッズから Harville 推定する HistoricalOddsProvider）へ委譲する。
+    実績の有無を区別したいので、実績ヒット時は実値・ミス時は推定値という意味になる。
+
+    Parameters
+    ----------
+    final_odds_lookup : {(race_id, bet_type, combo_key): odds}
+        `build_final_odds_lookup` の出力。combo_key は `canonical_combo` 正規化済み。
+    fallback : 実績が無い組合せに使う供給（Harville 推定等）。
+    """
+
+    def __init__(self, final_odds_lookup: Mapping, fallback: AbstractOddsProvider) -> None:
+        self._lookup = dict(final_odds_lookup)
+        self._fallback = fallback
+
+    def has_actual(self, race_id, bet_type: str, combo: Sequence[int]) -> bool:
+        """指定組合せの実績オッズが取得済みか。"""
+        from src.constants._bet_types import combo_key
+
+        return (str(race_id), bet_type, combo_key(bet_type, combo)) in self._lookup
+
+    def get_odds(self, race_id, bet_type: str, combo: Sequence[int]) -> float:
+        from src.constants._bet_types import combo_key
+
+        key = (str(race_id), bet_type, combo_key(bet_type, combo))
+        odds = self._lookup.get(key)
+        if odds is not None and odds > 0:
+            return float(odds)
+        return self._fallback.get_odds(race_id, bet_type, combo)
+
+
 class PredictedOddsProvider(AbstractOddsProvider):
     """オッズ力学モデルの「予測確定オッズ」を供給する（Layer2 → EV 連携）。
 
