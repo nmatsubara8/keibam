@@ -89,6 +89,35 @@ def test_run_request_delay_sleeps_between_requests(tmp_path, monkeypatch):
     assert all(s >= 1.0 for s in sleeps)
 
 
+class _EmptyForSomeScraper:
+    """指定レースは空（確定オッズ未配信を模擬）、他は 1 件返すスタブ。"""
+
+    def __init__(self, empty_races):
+        self._empty = set(empty_races)
+
+    def capture(self, race_id, bet_type, post_time, captured_at):
+        if race_id in self._empty:
+            return []
+        return [make_snapshot(race_id, bet_type, [1], 2.0, post_time, captured_at)]
+
+
+def test_run_reports_empty_races(tmp_path, caplog):
+    """0 件のレースを集計し警告ログに出す（取得可否の可視化）。"""
+    import logging
+
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    scraper = _EmptyForSomeScraper(empty_races={"r2", "r4"})
+    with caplog.at_level(logging.WARNING, logger="src.preparing.odds_scheduler"):
+        merged = odds_scheduler.run(
+            ["r1", "r2", "r3", "r4"], post, [BetType.TANSHO], scraper,
+            path=path, persist_every=2,
+        )
+    # r1, r3 のみ収集
+    assert {s.race_id for s in merged} == {"r1", "r3"}
+    assert any("0 件" in r.message for r in caplog.records)
+
+
 def test_run_persist_every_writes_incrementally(tmp_path):
     """persist_every>0 で途中保存され、中断しても取得済みが残る（resume 安全）。"""
     path = os.path.join(tmp_path, "odds.pkl")

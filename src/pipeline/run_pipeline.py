@@ -496,12 +496,16 @@ def _race_ids_from_results() -> list[str]:
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import existing_race_ids, load_raw
 
+    from src.storage._repo import _to_db_str
+
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
     if res.empty:
         return []
     if "race_id" in res.columns and res.index.name != "race_id":
         res = res.set_index("race_id")
-    return sorted(str(r) for r in existing_race_ids(res))
+    # race_id は int64/float64 由来があり得るため正準文字列化（"...0.0" を防ぐ）
+    ids = {s for r in existing_race_ids(res) if (s := _to_db_str(r))}
+    return sorted(ids)
 
 
 def _fetch_final_odds(args: argparse.Namespace) -> None:

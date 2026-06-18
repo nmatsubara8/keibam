@@ -120,22 +120,38 @@ def run(
     collected: list[OddsSnapshot] = []
     first = True
     total = len(race_ids)
+    empty_races: list[str] = []
+    batch_added = 0
     for i, race_id in enumerate(race_ids, 1):
+        race_count = 0
         for bet_type in bet_types:
             if not first and request_delay > 0:
                 time.sleep(polite_interval(request_delay))
             first = False
             try:
-                collected.extend(scraper.capture(race_id, bet_type, post_time, captured_at))
+                snaps = scraper.capture(race_id, bet_type, post_time, captured_at)
+                collected.extend(snaps)
+                race_count += len(snaps)
             except Exception as e:  # 1 レースの失敗で全体を止めない（リジューム前提）
                 logger.warning("capture failed race_id=%s bet_type=%s: %s", race_id, bet_type, e)
+        batch_added += race_count
+        if race_count == 0:
+            empty_races.append(str(race_id))
         if persist_every and i % persist_every == 0:
             merged = persist(collected, path)
             logger.info(
-                "[odds capture] 進捗 %d/%d レース完了（snapshots 累計 %d 件）", i, total, len(merged)
+                "[odds capture] 進捗 %d/%d レース完了（本バッチ +%d 件 / 累計 %d 件）",
+                i, total, batch_added, len(merged),
             )
             collected = []
-    return persist(collected, path)
+            batch_added = 0
+    final = persist(collected, path)
+    if empty_races and persist_every:
+        logger.warning(
+            "[odds capture] %d/%d レースが 0 件（確定オッズ未配信 or 描画失敗の可能性）。例: %s",
+            len(empty_races), total, empty_races[:5],
+        )
+    return final
 
 
 def build_race_post_times(

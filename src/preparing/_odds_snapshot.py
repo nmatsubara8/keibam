@@ -299,18 +299,34 @@ class OddsSnapshotScraper:
     Parameters
     ----------
     scraper : AbstractScraper 実装。None の場合は PlaywrightScraper を遅延生成する。
-    odds_table_selector : JS 描画完了を待つ CSS セレクタ（既定はオッズテーブル）。
+    odds_table_selector : JS 描画完了を待つ CSS セレクタ（既定はオッズセル id）。
+
+    Notes
+    -----
+    連系（馬連〜三連単）のオッズページは組合せ数が多く JS 描画に時間がかかるため、
+    既定 PlaywrightScraper の短いセレクタ待ち（3 秒）では描画前に空 HTML を返し
+    パース 0 件になりやすい。本アダプタは待機セレクタを実オッズセル
+    （``[id^=odds-]``）にし、タイムアウトを延長する（環境変数で調整可）:
+        KEIBA_ODDS_TIMEOUT_MS           ページ遷移タイムアウト（既定 45000）
+        KEIBA_ODDS_SELECTOR_TIMEOUT_MS  オッズセル描画待ち（既定 15000）
     """
 
-    def __init__(self, scraper=None, odds_table_selector: str = ".RaceOdds_HorseList, .Odds") -> None:
+    def __init__(
+        self, scraper=None, odds_table_selector: str = "[id^=odds-], .RaceOdds_HorseList, .Odds"
+    ) -> None:
         self._scraper = scraper
         self._odds_table_selector = odds_table_selector
 
     def _ensure_scraper(self):
         if self._scraper is None:
+            import os
+
             from src.preparing._scraper import PlaywrightScraper
 
-            self._scraper = PlaywrightScraper()
+            self._scraper = PlaywrightScraper(
+                timeout_ms=int(os.environ.get("KEIBA_ODDS_TIMEOUT_MS", "45000")),
+                selector_timeout_ms=int(os.environ.get("KEIBA_ODDS_SELECTOR_TIMEOUT_MS", "15000")),
+            )
         return self._scraper
 
     def fetch_html(self, race_id: str, bet_type: str) -> str:

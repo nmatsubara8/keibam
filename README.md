@@ -267,6 +267,11 @@ python -m src.pipeline.run_pipeline fetch-final-odds --from-results --years 2010
 > 注: `--post-date` は **その 1 日分**、`--from-results` は **取込済みの全 race_id** が対象。
 > 全 8 券種 × 数千レースは大規模スクレイプ（ポライトネスで ~2 秒/件 + 1000 件/時上限）に
 > なるため、`--years`/`--limit` で小分けし、resume（取得済みスキップ）で複数回に分けて実行する。
+> 5 レースごとに途中保存し「本バッチ +N 件 / 累計 M 件」を表示、0 件のレースは末尾に集計警告。
+>
+> 連系（馬連〜三連単）は組合せが多く JS 描画が重いため、描画待ちを延長できる:
+> `KEIBA_ODDS_SELECTOR_TIMEOUT_MS`（既定 15000）/ `KEIBA_ODDS_TIMEOUT_MS`（既定 45000）。
+> 取得 0 件が多いときはこれらを増やすと改善することがある。
 
 `data/raw/odds_snapshots.pkl` + `raw_odds_snapshots` に phase=t0（確定）として永続化される。
 リクエスト間隔は `KEIBA_SCRAPE_DELAY`（既定 1 秒+揺らぎ）で自主規制する。

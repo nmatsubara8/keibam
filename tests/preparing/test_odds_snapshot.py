@@ -24,6 +24,24 @@ def test_build_odds_url_unknown_bet_type_raises():
         build_odds_url("r1", "unknown")
 
 
+def test_scraper_uses_env_timeouts(monkeypatch):
+    """既定スクレイパは長めのタイムアウト（重い連系ページの描画待ち）を使う。"""
+    from src.preparing._odds_snapshot import OddsSnapshotScraper
+
+    monkeypatch.setenv("KEIBA_ODDS_SELECTOR_TIMEOUT_MS", "15000")
+    monkeypatch.setenv("KEIBA_ODDS_TIMEOUT_MS", "45000")
+    inner = OddsSnapshotScraper()._ensure_scraper()
+    assert inner._selector_timeout_ms == 15000
+    assert inner._timeout_ms == 45000
+
+
+def test_scraper_default_waits_for_odds_cells():
+    """既定の待機セレクタが実オッズセル（id^=odds-）を含む。"""
+    from src.preparing._odds_snapshot import OddsSnapshotScraper
+
+    assert "odds-" in OddsSnapshotScraper()._odds_table_selector
+
+
 def test_build_odds_url_wakuren_maps_to_b3():
     """枠連が b3 ページにマップされる（カバレッジ拡大）。"""
     url = build_odds_url("202401010101", BetType.WAKUREN)
