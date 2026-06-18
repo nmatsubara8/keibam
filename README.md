@@ -192,7 +192,23 @@ python -m src.pipeline.run_pipeline retrain --params-rank 2
 
 # UI（モデルラボ）で選択・保存したパラメータで学習
 python -m src.pipeline.run_pipeline retrain --use-selected-params
+
+# マルチ GBDT スタッキング（LightGBM + XGBoost + CatBoost + NN を base に）
+python -m src.pipeline.run_pipeline retrain --use-stacking \
+    --base-models-config configs/base_models_nn.example.json
 ```
+
+**base 学習器・meta 学習器の構成（`--base-models-config <JSON>`）**
+
+`configs/base_models_*.json` で base 学習器の種類と meta 学習器を切り替える:
+
+- `models`: `lightgbm` / `xgboost` / `catboost` / `nn` の組み合わせ
+- `meta_model`: スタッキング 2 段目の学習器
+  - `"logistic"`（既定）— LogisticRegression。線形結合で堅牢
+  - `"lightgbm"` — 浅い GBDT meta。base が多様なとき非線形な組み合わせを学習し改善し得る
+    （例: `configs/base_models_nn_gbdt_meta.json`）。meta 特徴量は base 予測確率の
+    数列のみと低次元のため、既定は `num_leaves=3` の極浅構成で過学習を抑える。
+    `meta_params` で上書き可能
 
 ### 4-3. ダッシュボード（Streamlit UI）
 

@@ -66,16 +66,16 @@ class KeibaAI:
            §2 EV境界 sigmoid 重み（§2h レース内正規化）を算出
         4. StackingModel (LightGBM + NN) を base_train で学習。LightGBM base には
            EV 重み、NN base には pos_weight（class imbalance 補正）を適用
-        5. meta_train で meta 特徴量を生成し LogisticRegression meta 学習器を学習
+        5. meta_train で meta 特徴量を生成し meta 学習器を学習
+           （base_models_config.meta_model="logistic"=LogisticRegression /
+           "lightgbm"=浅い GBDT meta。build_meta_model で構築）
         6. calib_holdout で Isotonic 較正し self._calibrated_model に保存
         """
-        from sklearn.linear_model import LogisticRegression
-
         import dataclasses
 
         from src.constants._bet_thresholds import TrainingWeights
 
-        from ._base_model_factory import build_base_models
+        from ._base_model_factory import build_base_models, build_meta_model
         from ._base_models_config import BaseModelsConfig
         from ._calibrated_model import CalibratedModel
         from ._multi_model_tuner import tune_model, tune_nn
@@ -199,9 +199,10 @@ class KeibaAI:
 
                 _l.getLogger(__name__).warning("NN base 構築失敗のためスキップ: %s", _e)
 
+        meta_model = build_meta_model(bm_cfg, scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT)
         stacking = StackingModel(
             base_models,
-            LogisticRegression(max_iter=1000, random_state=100),
+            meta_model,
             base_streams=base_streams,
             nn_scaler=self.__datasets.nn_scaler,
             nn_cat_cardinalities=self.__datasets.nn_categorical_cardinalities,

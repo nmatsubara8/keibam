@@ -122,3 +122,43 @@ def build_base_models(
     if not specs:
         raise RuntimeError("有効な base 学習器が 1 つもありません。")
     return specs
+
+
+def build_meta_model(cfg, scale_pos_weight: float | None = None):
+    """BaseModelsConfig から meta 学習器（スタッキング 2 段目）を構築する。
+
+    meta 特徴量は base 予測確率の数列のみと低次元なので、GBDT meta は浅い既定で
+    過学習を抑える。cfg.meta_params は選択 meta_model の既定値に上書きマージされる。
+
+    Parameters
+    ----------
+    cfg : BaseModelsConfig
+    scale_pos_weight : クラス不均衡補正係数。指定時は meta にも適用する
+        （ユーザーが meta_params で明示済みなら上書きしない）。
+
+    Returns
+    -------
+    sklearn 互換の分類器（fit(X, y) / predict_proba(X)[:, 1]）。
+    """
+    from ._base_models_config import DEFAULT_META_LGB_PARAMS
+
+    meta = getattr(cfg, "meta_model", "logistic")
+    user_params = dict(getattr(cfg, "meta_params", None) or {})
+
+    if meta == "logistic":
+        from sklearn.linear_model import LogisticRegression
+
+        params: dict[str, Any] = {"max_iter": 1000, "random_state": 100}
+        params.update(user_params)
+        return LogisticRegression(**params)
+
+    if meta == "lightgbm":
+        import lightgbm as lgb
+
+        params = dict(DEFAULT_META_LGB_PARAMS)
+        if scale_pos_weight is not None:
+            params.setdefault("scale_pos_weight", scale_pos_weight)
+        params.update(user_params)
+        return lgb.LGBMClassifier(**params)
+
+    raise ValueError(f"未対応の meta_model: {meta!r}")

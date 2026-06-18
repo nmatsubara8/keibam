@@ -91,6 +91,7 @@ def main() -> int:
     cfg = load_base_models_config(config_path)
     print(f"=== config: {config_path} ===")
     print(f"  models = {cfg.models}")
+    print(f"  meta_model = {cfg.meta_model}")
     print(f"  tune_per_model = {cfg.tune_per_model}")
     print(f"  nn_params = {cfg.nn_params}")
     print()
@@ -120,7 +121,7 @@ def main() -> int:
     y = res["y_true"]
     print("=== テストセット AUC（モデルラボ『スタッキング寄与』と同一計算）===")
     base_aucs = {}
-    for name, probs in zip(res["base_names"], res["base_probs"]):
+    for name, probs in zip(res["base_names"], res["base_probs"], strict=False):
         auc = roc_auc_score(y, probs)
         base_aucs[name] = auc
         print(f"  base  {name:<10} AUC = {auc:.4f}")

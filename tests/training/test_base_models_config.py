@@ -38,3 +38,29 @@ def test_load_json_roundtrip():
 def test_unknown_key_ignored():
     cfg = from_dict({"models": ["lightgbm"], "unknown_future_key": "value"})
     assert cfg.models == ("lightgbm",)
+
+
+def test_default_meta_model_is_logistic():
+    cfg = BaseModelsConfig()
+    assert cfg.meta_model == "logistic"
+    assert cfg.meta_params == {}
+
+
+def test_from_dict_meta_model_lightgbm():
+    cfg = from_dict({"models": ["lightgbm", "xgboost"], "meta_model": "lightgbm"})
+    assert cfg.meta_model == "lightgbm"
+
+
+def test_from_dict_meta_model_case_insensitive():
+    cfg = from_dict({"meta_model": "LightGBM"})
+    assert cfg.meta_model == "lightgbm"
+
+
+def test_from_dict_meta_params_passthrough():
+    cfg = from_dict({"meta_model": "lightgbm", "meta_params": {"num_leaves": 15}})
+    assert cfg.meta_params == {"num_leaves": 15}
+
+
+def test_from_dict_invalid_meta_model_raises():
+    with pytest.raises(ValueError, match="meta_model"):
+        from_dict({"meta_model": "xgboost"})

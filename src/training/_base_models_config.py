@@ -40,6 +40,22 @@ DEFAULT_NN_PARAMS = {
     "lr": 1e-3,
     "batch_size": 256,
 }
+# meta 学習器（スタッキングの 2 段目）。meta 特徴量は base 予測確率の
+# 3〜4 列のみと低次元なので、過学習を避けるため浅い GBDT を既定とする。
+SUPPORTED_META_MODELS = ("logistic", "lightgbm")
+DEFAULT_META_LGB_PARAMS = {
+    "objective": "binary",
+    "n_estimators": 100,
+    "learning_rate": 0.05,
+    "num_leaves": 3,  # 高相関・低次元な meta 特徴量では過学習を避け極浅に保つ
+    "max_depth": 3,
+    "min_child_samples": 50,
+    "subsample": 0.8,
+    "colsample_bytree": 1.0,
+    "reg_lambda": 5.0,
+    "random_state": 100,
+    "verbose": -1,
+}
 DEFAULT_XGB_SEARCH_SPACE = {
     "n_estimators": [100, 2000],
     "learning_rate": [0.005, 0.3],
@@ -94,6 +110,10 @@ class BaseModelsConfig:
     nn_tune_trials: int = 12
     nn_tune_epochs: int = 15
     nn_tune_max_rows: int | None = 120000
+    # meta 学習器（"logistic"=従来の LogisticRegression / "lightgbm"=浅い GBDT meta）。
+    # meta_params は選択した meta_model の既定パラメータに上書きマージされる。
+    meta_model: str = "logistic"
+    meta_params: dict = field(default_factory=dict)
 
     def to_dict(self):
         return dataclasses.asdict(self)
@@ -106,6 +126,14 @@ def from_dict(raw: dict) -> BaseModelsConfig:
 
     if "models" in filtered:
         filtered["models"] = tuple(filtered["models"])
+
+    if "meta_model" in filtered:
+        meta = str(filtered["meta_model"]).lower()
+        if meta not in SUPPORTED_META_MODELS:
+            raise ValueError(
+                f"未対応の meta_model: {filtered['meta_model']!r}（対応: {SUPPORTED_META_MODELS}）"
+            )
+        filtered["meta_model"] = meta
 
     # dict フィールドはデフォルトとマージ（指定キーで上書き）
     for key, default in (
