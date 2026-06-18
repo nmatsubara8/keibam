@@ -43,12 +43,12 @@ def _objective(trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_
         params["tree_method"] = "hist"
         params["seed"] = 100
         params["scale_pos_weight"] = scale_pos_weight
+        params["early_stopping_rounds"] = 50  # XGBoost>=2.0 は __init__ で指定
 
         model = xgb.XGBClassifier(**params)
         model.fit(
             x_tr, y_tr,
             eval_set=[(x_val, y_val)],
-            early_stopping_rounds=50,
             verbose=False,
         )
         preds = model.predict_proba(x_val)[:, 1]
