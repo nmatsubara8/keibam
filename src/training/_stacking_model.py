@@ -24,6 +24,30 @@ import numpy as np
 import pandas as pd
 
 
+def derive_nn_input(nn_scaler, x) -> np.ndarray:
+    """gbdt DataFrame から NN ストリーム入力（float 配列）を導出する。
+
+    entity 列は整数コード（未知/-1 → 0 にシフト）、numeric 列は標準化済み値。
+    列順は nn_scaler.feature_names と一致させ、NaN/inf は 0 で補完する。
+    StackingModel と Optuna チューナーで共用する。
+    """
+    if not isinstance(x, pd.DataFrame):
+        raise ValueError("nn ストリームには DataFrame 入力が必要です（列名で抽出するため）")
+    if nn_scaler is None:
+        raise ValueError("nn ストリームには nn_scaler が必要です。")
+    nn_df = nn_scaler.transform(x).reindex(columns=nn_scaler.feature_names)
+    cols = []
+    entity = set(nn_scaler.entity_cols)
+    for c in nn_scaler.feature_names:
+        col = nn_df[c]
+        if c in entity and isinstance(col.dtype, pd.CategoricalDtype):
+            # 未知/欠損（-1）を 0（未知バケット）へシフト
+            cols.append((col.cat.codes.to_numpy() + 1).astype(np.float32))
+        else:
+            cols.append(np.asarray(col, dtype=np.float32))
+    return np.nan_to_num(np.column_stack(cols), nan=0.0, posinf=0.0, neginf=0.0)
+
+
 class StackingModel:
     """base 学習器群 + meta 学習器によるスタッキング。
 
@@ -60,23 +84,8 @@ class StackingModel:
         if stream == "gbdt":
             return x.values if isinstance(x, pd.DataFrame) else x
         # stream == "nn": gbdt DataFrame から entity+numeric 列を抽出して数値配列化する
-        if not isinstance(x, pd.DataFrame):
-            raise ValueError("nn ストリームには DataFrame 入力が必要です（列名で抽出するため）")
-        if self._nn_scaler is None:
-            raise ValueError("nn ストリームには nn_scaler が必要です。")
-        nn_df = self._nn_scaler.transform(x).reindex(columns=self._nn_scaler.feature_names)
-        cols = []
-        entity = set(self._nn_scaler.entity_cols)
-        for c in self._nn_scaler.feature_names:
-            col = nn_df[c]
-            if c in entity and isinstance(col.dtype, pd.CategoricalDtype):
-                # 未知/欠損（-1）を 0（未知バケット）へシフト
-                cols.append((col.cat.codes.to_numpy() + 1).astype(np.float32))
-            else:
-                cols.append(np.asarray(col, dtype=np.float32))
-        # NN は NaN を扱えない（§2 由来の欠損や定数列の標準化で NaN が出る）ため、
-        # 標準化後の平均に相当する 0 で補完する。entity コードは NaN を含まない。
-        return np.nan_to_num(np.column_stack(cols), nan=0.0, posinf=0.0, neginf=0.0)
+        # （NN は NaN を扱えないため derive_nn_input 内で 0 補完する）。
+        return derive_nn_input(self._nn_scaler, x)
 
     def fit(self, x_base, y_base, x_meta, y_meta, base_sample_weights=None) -> "StackingModel":
         """base 学習器を base_train で学習し、meta_train の OOF 予測で meta 学習器を学習。

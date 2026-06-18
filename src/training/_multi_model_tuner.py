@@ -82,6 +82,102 @@ def _objective(trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_
     return log_loss(y_val, preds)
 
 
+def _suggest_nn_params(trial, search_space: dict) -> dict:
+    """NN の構造・学習パラメータを 1 trial 分サンプリングする。
+
+    search_space のキー（範囲指定）:
+      lr [lo, hi] (log), dropout [lo, hi], batch_size [候補...],
+      arch [候補...], pre_norm [候補...],
+      n_layers [lo, hi], layer_width [候補...],   # mlp 用
+      n_conv [lo, hi], conv_width [候補...], kernel_size [候補...]  # cnn 用
+    """
+    ss = search_space
+    arch = trial.suggest_categorical("arch", ss.get("arch", ["mlp", "cnn"]))
+    params: dict = {
+        "arch": arch,
+        "lr": trial.suggest_float("lr", *ss.get("lr", [1e-4, 5e-3]), log=True),
+        "dropout": trial.suggest_float("dropout", *ss.get("dropout", [0.1, 0.5])),
+        "batch_size": trial.suggest_categorical("batch_size", ss.get("batch_size", [256, 512])),
+        "pre_norm": trial.suggest_categorical("pre_norm", ss.get("pre_norm", ["layer_norm", "none"])),
+    }
+    if params["pre_norm"] == "none":
+        params["pre_norm"] = None
+    if arch == "cnn":
+        n_conv = trial.suggest_int("n_conv", *ss.get("n_conv", [1, 3]))
+        width = trial.suggest_categorical("conv_width", ss.get("conv_width", [16, 32, 64]))
+        # 段階的にチャネルを増やす（width, 2*width, ...）
+        params["conv_channels"] = [width * (2**i) for i in range(n_conv)]
+        params["kernel_size"] = trial.suggest_categorical("kernel_size", ss.get("kernel_size", [3, 5]))
+    else:
+        n_layers = trial.suggest_int("n_layers", *ss.get("n_layers", [1, 3]))
+        width = trial.suggest_categorical("layer_width", ss.get("layer_width", [64, 128, 256]))
+        # 段階的に幅を絞る（width, width/2, ...、最小 32）
+        params["hidden_dims"] = [max(32, width // (2**i)) for i in range(n_layers)]
+    return params
+
+
+def tune_nn(
+    x_tr,
+    y_tr,
+    x_val,
+    y_val,
+    search_space: dict,
+    categorical_cardinalities: dict,
+    n_numeric: int,
+    n_trials: int = 25,
+    timeout: float | None = None,
+    seed: int = 100,
+    scale_pos_weight: float = 1.0,
+    epochs: int = 15,
+    max_train_rows: int | None = 120000,
+) -> dict:
+    """NnWinModel の最良構造・学習パラメータを Optuna で探索して返す（AUC 最大化）。
+
+    x_tr/x_val は NN ストリーム形式（derive_nn_input 済みの float 配列）。
+    各 trial は短め epochs・部分標本で素早く評価し、検証 AUC を最大化する。
+
+    Returns
+    -------
+    dict : best な nn_params（arch, lr, dropout, hidden_dims/conv_channels 等）
+    """
+    import optuna
+    from sklearn.metrics import roc_auc_score
+
+    from ._nn_win_model import NnWinModel
+
+    def objective(trial):
+        params = _suggest_nn_params(trial, search_space)
+        model = NnWinModel(
+            categorical_cardinalities=categorical_cardinalities,
+            n_numeric=n_numeric,
+            pos_weight=scale_pos_weight,
+            epochs=epochs,
+            max_train_rows=max_train_rows,
+            seed=seed,
+            **params,
+        )
+        try:
+            model.fit(x_tr, y_tr)
+            preds = model.predict_proba(x_val)[:, 1]
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[tune_nn] trial 失敗のため pruned: %s", e)
+            raise optuna.TrialPruned() from e
+        auc = roc_auc_score(y_val, preds)
+        # 構造を user_attr に保存（hidden_dims/conv_channels は suggest 名と別管理のため）
+        trial.set_user_attr("nn_params", params)
+        return auc
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    sampler = optuna.samplers.TPESampler(seed=seed)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    study.optimize(objective, n_trials=n_trials, timeout=timeout)
+    best = study.best_trial.user_attrs.get("nn_params", {})
+    logger.info(
+        "[tune_nn] best_auc=%.4f params=%s", study.best_value, best,
+    )
+    return best
+
+
 def tune_model(
     model_name: str,
     x_tr,

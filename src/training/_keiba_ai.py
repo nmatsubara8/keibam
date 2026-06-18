@@ -78,8 +78,8 @@ class KeibaAI:
         from ._base_model_factory import build_base_models
         from ._base_models_config import BaseModelsConfig
         from ._calibrated_model import CalibratedModel
-        from ._multi_model_tuner import tune_model
-        from ._stacking_model import StackingModel
+        from ._multi_model_tuner import tune_model, tune_nn
+        from ._stacking_model import StackingModel, derive_nn_input
 
         self.__datasets.make_stacking_splits(meta_ratio=meta_ratio, build_optuna_datasets=with_tuning)
         if with_tuning:
@@ -117,6 +117,36 @@ class KeibaAI:
                         scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
                     )
                     extra_tuned[mname] = best
+
+        # NN の per-model Optuna 探索（構造・学習率・正規化を最適化）
+        if bm_cfg.tune_per_model and "nn" in bm_cfg.models and self.__datasets.has_nn_stream:
+            try:
+                scaler = self.__datasets.nn_scaler
+                cards = self.__datasets.nn_categorical_cardinalities or {}
+                # NN ストリーム形式（derive 済み float 配列）を base_train から導出し 80/20 分割
+                nn_arr = derive_nn_input(scaler, self.__datasets.X_base_train)
+                nsplit = int(len(nn_arr) * 0.8)
+                best_nn = tune_nn(
+                    nn_arr[:nsplit], y_base[:nsplit],
+                    nn_arr[nsplit:], y_base[nsplit:],
+                    bm_cfg.nn_search_space,
+                    categorical_cardinalities=cards,
+                    n_numeric=len(scaler.numeric_cols),
+                    n_trials=bm_cfg.nn_tune_trials,
+                    timeout=bm_cfg.timeout,
+                    scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                    epochs=bm_cfg.nn_tune_epochs,
+                    max_train_rows=bm_cfg.nn_tune_max_rows,
+                )
+                if best_nn:
+                    # 探索した構造を nn_params に反映（epochs/batch 等の既存設定は残す）
+                    merged_nn = dict(bm_cfg.nn_params)
+                    merged_nn.update(best_nn)
+                    bm_cfg = dataclasses.replace(bm_cfg, nn_params=merged_nn)
+            except Exception as _e:
+                import logging as _l
+
+                _l.getLogger(__name__).warning("NN チューニング失敗のためスキップ: %s", _e)
 
         if extra_tuned:
             kw = {}
