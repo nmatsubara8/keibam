@@ -467,14 +467,36 @@ scrape_html_ped = scrape_html
 
 
 ################################# Done ####################################
+def _filter_target_bins(bin_files, only_ids):
+    """処理対象の bin を only_ids（race_id / horse_id の集合）に絞り込む（純粋関数）。
+
+    only_ids が None のときは全件返す（従来挙動）。bin ファイル名は ``<id>.bin``
+    （processing_id=ref_id で保存）なので拡張子を除いた stem を id と突き合わせる。
+    増分取込（新規レース・新規馬のみ）で全 HTML コーパスの再パースを避けるために使う。
+    """
+    if only_ids is None:
+        return bin_files
+    only = {str(i) for i in only_ids}
+    return [f for f in bin_files if os.path.splitext(os.path.basename(f))[0] in only]
+
+
 def process_bin_file(self, process_function):
     """
     binファイルを受け取って、テーブルに変換する関数。
     process_functionを入れ替えながら汎用的に使う共通モジュール
     対象ファイルや処理のバッチサイズなどを読み取り、セットの上、処理する
+
+    self.only_ids（任意）が設定されている場合は、その id（race_id / horse_id）の
+    bin だけを処理する（増分取込で全コーパス再パースを避ける）。
     """
 
-    target_bin_files = sorted(self.get_file_list(self.from_local_location))
+    all_bin_files = sorted(self.get_file_list(self.from_local_location))
+    target_bin_files = _filter_target_bins(all_bin_files, getattr(self, "only_ids", None))
+    if getattr(self, "only_ids", None) is not None:
+        logger.info(
+            "増分処理: %s を %d 件に絞り込み（ディレクトリ全 %d 件中）",
+            self.alias, len(target_bin_files), len(all_bin_files),
+        )
     total_batches = (len(target_bin_files) + self.batch_size - 1) // self.batch_size  # バッチ数の計算
     total_files = len(target_bin_files)  # 処理対象の全データ数
     logger.info("# of input files: %s", total_files)

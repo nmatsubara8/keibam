@@ -85,10 +85,12 @@ def _scrape_new_race_data(race_ids: list) -> list:
     logger.info("[ingest] 新規レース %d 件の HTML を取得します", len(new_ids))
     race_id_df = pd.DataFrame({"race_id": [str(r) for r in new_ids]})
     scrape_html_race(race_id_df, skip=True)
-    # skip=False で bin からテーブルを再構築（既存 pkl へは新データ優先でマージされる）
-    get_rawdata_results(skip=False)
-    get_rawdata_info(skip=False)
-    get_rawdata_return(skip=False)
+    # only_ids=new_ids で新規レースの bin だけを再パースする（全 HTML コーパスの
+    # 再パースを回避）。transfer_temp_file が data/raw の正本へ race_id キーで
+    # マージするため既存全件は保持される。
+    get_rawdata_results(skip=False, only_ids=new_ids)
+    get_rawdata_info(skip=False, only_ids=new_ids)
+    get_rawdata_return(skip=False, only_ids=new_ids)
     return new_ids
 
 
@@ -128,10 +130,11 @@ def _scrape_new_horse_data() -> int:
     logger.info("[ingest] 未取得の馬 %d 頭の HTML（馬ページ・血統）を取得します", len(missing))
     scrape_html_horse_with_master(missing, skip=True)
     scrape_html_ped(missing, skip=True)
-    # skip=False で bin からテーブルを再構築（既存 pkl へは horse_id キーでマージされる）
-    get_rawdata_horse_results(skip=False)
-    get_rawdata_horse_info(skip=False)
-    get_rawdata_peds(skip=False)
+    # only_ids=missing で新規馬の bin だけを再パースする（全馬 HTML の再パースを回避）。
+    # transfer_temp_file が data/raw の正本へ horse_id キーでマージするため既存は保持される。
+    get_rawdata_horse_results(skip=False, only_ids=missing)
+    get_rawdata_horse_info(skip=False, only_ids=missing)
+    get_rawdata_peds(skip=False, only_ids=missing)
 
     # Phase 1: 更新された馬系 pickle を DB へ冪等 upsert（保険、non-fatal）
     try:
