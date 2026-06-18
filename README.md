@@ -247,6 +247,23 @@ python -m src.pipeline.odds_watch --once --source jravan
 予測は `data/raw/odds_predictions.pkl` + SQLite `raw_odds_predictions` に保存され、
 「📈 オッズ推移」ページの照会マトリクスに表示される。
 
+#### 過去レースの最終確定オッズ取得（全券種）
+
+払戻データ（的中組合せの確定配当）は `ingest` でレース結果ページから全 8 券種を取得済み。
+これに加えて、確定後の netkeiba オッズページから**全組合せの最終確定オッズ**を取得できる:
+
+```bash
+# 開催日を指定して当日全レースの確定オッズ（単複/枠連/馬連/馬単/ワイド/三連複/三連単）を取得
+python -m src.pipeline.run_pipeline fetch-final-odds --post-date 20240106
+# 個別レース・券種を絞る場合
+python -m src.pipeline.run_pipeline fetch-final-odds --race-id 202406010101 --bet-types umaren sanrentan
+```
+
+`data/raw/odds_snapshots.pkl` + `raw_odds_snapshots` に phase=t0（確定）として永続化される。
+リクエスト間隔は `KEIBA_SCRAPE_DELAY`（既定 1 秒+揺らぎ）で自主規制する。
+> 注: netkeiba が過去レースの確定オッズページを配信しているか・連系パーサの実 DOM は
+> 環境により未検証。まず 1〜2 レースで取得件数を確認してから一括実行を推奨。
+
 ```bash
 # スナップショット蓄積後（目安 4〜8 週）: モデル比較評価 + 重力統計・アンサンブル重みの更新
 python -m src.pipeline.run_pipeline evaluate-odds-dynamics

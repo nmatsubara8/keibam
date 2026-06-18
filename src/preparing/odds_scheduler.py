@@ -25,6 +25,7 @@ import datetime as dt
 import logging
 import os
 import pickle
+import time
 from typing import Sequence
 
 from src.constants._bet_types import BetType
@@ -34,6 +35,7 @@ from src.constants._odds_phases import OddsPhase
 from src.preparing._odds_snapshot import OddsSnapshot
 from src.preparing._odds_snapshot import OddsSnapshotScraper
 from src.preparing._odds_snapshot import merge_snapshots
+from src.preparing._rate_limiter import polite_interval
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +103,22 @@ def run(
     scraper: OddsSnapshotScraper,
     path: str = LocalPaths.RAW_ODDS_SNAPSHOT_PATH,
     captured_at: dt.datetime | None = None,
+    request_delay: float = 0.0,
 ) -> list[OddsSnapshot]:
-    """指定レース・馬券種のオッズを取得し冪等追記する（DI で scraper を受け取る）。"""
+    """指定レース・馬券種のオッズを取得し冪等追記する（DI で scraper を受け取る）。
+
+    request_delay>0 のときは各リクエスト間に polite_interval（最低 1 秒+揺らぎ）の
+    間隔を挟む（過去レースの大量取得向け。単一 fetch 経路は時間上限のみで間隔を
+    持たないため）。既定 0.0 はライブ取得（odds_watch）の従来挙動を保持する。
+    """
     captured_at = captured_at or dt.datetime.now()
     collected: list[OddsSnapshot] = []
+    first = True
     for race_id in race_ids:
         for bet_type in bet_types:
+            if not first and request_delay > 0:
+                time.sleep(polite_interval(request_delay))
+            first = False
             try:
                 collected.extend(scraper.capture(race_id, bet_type, post_time, captured_at))
             except Exception as e:  # 1 レースの失敗で全体を止めない（リジューム前提）

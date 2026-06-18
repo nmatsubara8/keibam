@@ -23,10 +23,11 @@ from src.constants._odds_phases import classify_phase
 
 
 # netkeiba オッズページの type コード（馬券種 → ?type=bN）。
-# 単勝・複勝は同一ページ(b1)に同居する。
+# 単勝・複勝は同一ページ(b1)に同居する。枠連は b3。
 ODDS_PAGE_TYPE = {
     BetType.TANSHO: "b1",
     BetType.FUKUSHO: "b1",
+    BetType.WAKUREN: "b3",
     BetType.UMAREN: "b4",
     BetType.WIDE: "b5",
     BetType.UMATAN: "b6",
@@ -36,9 +37,11 @@ ODDS_PAGE_TYPE = {
 
 # オッズセルの id 属性 `odds-<type>-<馬番列>` の type コード（馬券種 → N）。
 # ページの type=bN とは異なり、単勝(1)・複勝(2)は b1 ページ内で別コードを持つ。
+# 枠連(3) は馬番ではなく枠番の組合せを表す（払戻側も枠単位）。
 ODDS_ID_TYPE = {
     BetType.TANSHO: "1",
     BetType.FUKUSHO: "2",
+    BetType.WAKUREN: "3",
     BetType.UMAREN: "4",
     BetType.WIDE: "5",
     BetType.UMATAN: "6",

@@ -24,6 +24,23 @@ def test_build_odds_url_unknown_bet_type_raises():
         build_odds_url("r1", "unknown")
 
 
+def test_build_odds_url_wakuren_maps_to_b3():
+    """枠連が b3 ページにマップされる（カバレッジ拡大）。"""
+    url = build_odds_url("202401010101", BetType.WAKUREN)
+    assert "type=b3" in url
+
+
+def test_all_seven_bet_types_have_odds_page():
+    """単複/枠連/馬連/馬単/ワイド/三連複/三連単の全券種でオッズ URL を構築できる。"""
+    from src.preparing._odds_snapshot import ODDS_ID_TYPE
+    from src.preparing._odds_snapshot import ODDS_PAGE_TYPE
+
+    for bt in (BetType.TANSHO, BetType.FUKUSHO, BetType.WAKUREN, BetType.UMAREN,
+               BetType.UMATAN, BetType.WIDE, BetType.SANRENPUKU, BetType.SANRENTAN):
+        assert bt in ODDS_PAGE_TYPE and bt in ODDS_ID_TYPE
+        assert build_odds_url("202401010101", bt).startswith("https://race.netkeiba.com/odds/")
+
+
 def test_compute_minutes_to_post_positive_and_negative():
     post = dt.datetime(2024, 1, 1, 15, 40)
     assert compute_minutes_to_post(post, dt.datetime(2024, 1, 1, 15, 10)) == 30

@@ -63,6 +63,42 @@ def test_run_collects_multiple_races(tmp_path):
     assert {s.race_id for s in merged} == {"r1", "r2"}
 
 
+def test_run_captures_all_bet_types(tmp_path):
+    """fetch-final-odds 相当: 複数券種すべてで capture が呼ばれる。"""
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    bet_types = [BetType.TANSHO, BetType.UMAREN, BetType.SANRENTAN]
+    merged = odds_scheduler.run(["r1"], post, bet_types, _StubScraper(), path=path)
+    assert {s.bet_type for s in merged} == set(bet_types)
+
+
+def test_run_request_delay_sleeps_between_requests(tmp_path, monkeypatch):
+    """request_delay>0 でリクエスト間に間隔待機が入る（過去レース大量取得向け）。"""
+    sleeps: list[float] = []
+    monkeypatch.setattr(odds_scheduler.time, "sleep", lambda s: sleeps.append(s))
+    # 揺らぎ 0 で決定的に
+    monkeypatch.setenv("KEIBA_SCRAPE_JITTER_MAX", "0")
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    # 2 レース × 2 券種 = 4 リクエスト → 先頭以外の 3 回 sleep
+    odds_scheduler.run(
+        ["r1", "r2"], post, [BetType.TANSHO, BetType.UMAREN], _StubScraper(),
+        path=path, request_delay=1.0,
+    )
+    assert len(sleeps) == 3
+    assert all(s >= 1.0 for s in sleeps)
+
+
+def test_run_request_delay_zero_no_sleep(tmp_path, monkeypatch):
+    """既定 request_delay=0 はライブ取得の従来挙動（待機なし）を保持する。"""
+    sleeps: list[float] = []
+    monkeypatch.setattr(odds_scheduler.time, "sleep", lambda s: sleeps.append(s))
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    odds_scheduler.run(["r1", "r2"], post, [BetType.TANSHO], _StubScraper(), path=path)
+    assert sleeps == []
+
+
 def test_run_continues_after_capture_failure(tmp_path):
     path = os.path.join(tmp_path, "odds.pkl")
     post = dt.datetime(2024, 1, 1, 15, 40)

@@ -472,6 +472,49 @@ def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
                     name, metrics["kl_mean"], metrics["share_mae"], metrics["odds_mape"])
 
 
+def _fetch_final_odds(args: argparse.Namespace) -> None:
+    """過去レースの最終確定オッズを全券種で取得・永続化する。
+
+    確定後の netkeiba オッズページ（race.netkeiba.com/odds/）を券種別に取得し、
+    OddsSnapshot として `data/raw/odds_snapshots.pkl` + `raw_odds_snapshots` に
+    冪等永続化する。post_time=now（取得=確定後）なので phase は t0（確定オッズの代理）。
+    バルク取得のためリクエスト間隔（KEIBA_SCRAPE_DELAY、既定 1 秒+揺らぎ）を挟む。
+    """
+    import datetime as dt
+
+    from src.constants._bet_types import BetType
+    from src.preparing import odds_scheduler
+    from src.preparing._odds_snapshot import OddsSnapshotScraper
+
+    # OddsCapturer が対応する全 8 券種（payout 側と揃える）
+    default_bet_types = [
+        BetType.TANSHO, BetType.FUKUSHO, BetType.WAKUREN, BetType.UMAREN,
+        BetType.UMATAN, BetType.WIDE, BetType.SANRENPUKU, BetType.SANRENTAN,
+    ]
+
+    if getattr(args, "post_date", None):
+        race_ids = [str(r) for r in _resolve_race_ids(args.post_date)]
+    else:
+        race_ids = [str(r) for r in args.race_ids]
+    if not race_ids:
+        logger.warning("[fetch-final-odds] 対象レースがありません")
+        return
+
+    bet_types = list(args.bet_types) if getattr(args, "bet_types", None) else default_bet_types
+    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+    scraper = OddsSnapshotScraper()
+    now = dt.datetime.now()
+    logger.info(
+        "[fetch-final-odds] %d レース × %d 券種の確定オッズを取得します（間隔 ~%.1f 秒）",
+        len(race_ids), len(bet_types), max(delay, 1.0),
+    )
+    merged = odds_scheduler.run(
+        race_ids, post_time=now, bet_types=bet_types, scraper=scraper,
+        captured_at=now, request_delay=delay,
+    )
+    logger.info("[fetch-final-odds] 永続化済みスナップショット累計 %d 件", len(merged))
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="継続学習パイプライン")
     sub = parser.add_subparsers(dest="job", required=True)
@@ -545,6 +588,21 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # evaluate-odds-dynamics サブコマンド
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
     eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
+
+    # fetch-final-odds サブコマンド（過去レースの最終確定オッズを全券種で取得）
+    fo_p = sub.add_parser(
+        "fetch-final-odds",
+        help="過去レースの最終確定オッズを全券種（単複/枠連/馬連/馬単/ワイド/三連複/三連単）で取得・永続化",
+    )
+    fo_group = fo_p.add_mutually_exclusive_group(required=True)
+    fo_group.add_argument("--race-id", dest="race_ids", nargs="+", type=int, help="対象 race_id（個別指定）")
+    fo_group.add_argument(
+        "--post-date", dest="post_date", metavar="YYYYMMDD", help="開催日を指定して当日の全レースを対象"
+    )
+    fo_p.add_argument(
+        "--bet-types", dest="bet_types", nargs="+", default=None,
+        help="対象券種（省略時は全 8 券種）。例: tansho umaren sanrentan",
+    )
 
     # doctor サブコマンド（健全性点検）
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
@@ -650,6 +708,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     handlers = {
         "ingest": _ingest,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
+        "fetch-final-odds": _fetch_final_odds,
         "retrain": _retrain,
         "doctor": _doctor,
     }
