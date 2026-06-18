@@ -52,7 +52,7 @@ DEFAULT_XGB_SEARCH_SPACE = {
     "reg_lambda": [1e-8, 10.0],
 }
 DEFAULT_NN_SEARCH_SPACE = {
-    "arch": ["mlp", "cnn"],
+    "arch": ["mlp"],
     "lr": [1e-4, 5e-3],
     "dropout": [0.1, 0.5],
     "batch_size": [256, 512],
@@ -91,7 +91,7 @@ class BaseModelsConfig:
     catboost_search_space: dict = field(default_factory=lambda: dict(DEFAULT_CATBOOST_SEARCH_SPACE))
     nn_search_space: dict = field(default_factory=lambda: dict(DEFAULT_NN_SEARCH_SPACE))
     # NN チューニング専用設定（1 trial の学習を軽くして探索回数を稼ぐ）
-    nn_tune_trials: int = 25
+    nn_tune_trials: int = 12
     nn_tune_epochs: int = 15
     nn_tune_max_rows: int | None = 120000
 

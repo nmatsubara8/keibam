@@ -2,8 +2,9 @@
   "models": ["lightgbm", "xgboost", "catboost", "nn"],
   "tune_per_model": true,
   "n_trials": 50,
-  "nn_tune_trials": 25,
+  "nn_tune_trials": 12,
   "nn_tune_epochs": 15,
   "nn_tune_max_rows": 120000,
-  "nn_params": {"epochs": 80, "batch_size": 256, "max_train_rows": 200000}
+  "nn_search_space": {"arch": ["mlp"]},
+  "nn_params": {"epochs": 80, "batch_size": 512, "max_train_rows": 200000}
 }
