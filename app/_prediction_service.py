@@ -45,6 +45,7 @@ def run_prediction(
     X: pd.DataFrame,
     op_config: OperationConfig,
     thresholds: dict | None = None,
+    bet_type_params: dict | None = None,
 ) -> list[BetCandidate]:
     """EV 選定 → 確信度付与 → ケリー配分の全パイプラインを実行する。
 
@@ -54,6 +55,8 @@ def run_prediction(
     X : 対象レースの特徴量 DataFrame（race_id インデックス、TANSHO_ODDS 含む）。
     op_config : 資金・ケリー設定。
     thresholds : 馬券種 → EV 閾値（省略時は BetThresholds の既定値）。
+    bet_type_params : 券種別最適化パラメータ {券種: BetTypeParams}（省略可）。
+        指定券種は温度・確率較正・EV 閾値/上限を上書きする（Phase 2 最適化結果の反映）。
 
     Returns
     -------
@@ -84,8 +87,8 @@ def run_prediction(
         except Exception:  # noqa: BLE001 — 予測読込失敗時は現在オッズで継続
             pass
 
-    # 3. EV 選定
-    policy = ExpectedValueBetPolicy(provider, thresholds=thresholds)
+    # 3. EV 選定（券種別最適化パラメータがあれば温度・較正・閾値を反映）
+    policy = ExpectedValueBetPolicy(provider, thresholds=thresholds, bet_type_params=bet_type_params)
     candidates = policy.select(table[[ResultsCols.UMABAN, PROB]])
 
     if not candidates:

@@ -119,7 +119,14 @@ X = featured_df.loc[[race_id]]
 # ------------------------------------------------------------------
 with st.spinner("予測中…"):
     try:
-        candidates = run_prediction(model.effective_model, X, op_config)
+        # モデルラボで保存した券種別最適化パラメータがあれば EV 選定に反映する。
+        from src.policies._bet_type_params import bet_type_params_path
+        from src.policies._bet_type_params import latest_bet_type_params
+
+        bt_params = latest_bet_type_params(bet_type_params_path("models")) or None
+        candidates = run_prediction(
+            model.effective_model, X, op_config, bet_type_params=bt_params
+        )
     except Exception as e:
         st.error(f"予測エラー: {e}")
         st.stop()

@@ -10,6 +10,7 @@ from src.constants._bet_thresholds import RiskLimits
 from src.constants._bet_types import COMBO_SIZE
 from src.constants._bet_types import ORDERED
 from src.constants._results_cols import ResultsCols
+from src.policies import _bet_type_params as bet_type_params
 from src.policies import _harville as harville
 from src.policies._bet_candidate import BetCandidate
 from src.policies._odds_provider import AbstractOddsProvider
@@ -176,12 +177,17 @@ class ExpectedValueBetPolicy:
         bet_types=None,
         risk_limits: RiskLimits = _DEFAULT_RISK_LIMITS,
         ev_max: float = float("inf"),
+        bet_type_params=None,
     ) -> None:
         self._odds_provider = odds_provider
         self._thresholds = thresholds
         self._bet_types = list(bet_types) if bet_types is not None else list(thresholds.keys())
         self._risk = risk_limits
         self._ev_max = ev_max
+        # 券種別最適化パラメータ（DI）。{券種: BetTypeParams}。指定券種は temperature /
+        # prob_scale / ev_threshold / ev_max を上書きする。未指定券種は従来挙動
+        # （thresholds[券種] と ev_max、温度・較正なし）を完全に保持する。
+        self._bet_type_params = dict(bet_type_params) if bet_type_params else {}
 
     def select(self, prob_table: pd.DataFrame) -> list:
         """較正勝率テーブルから BetCandidate のリストを返す。
@@ -226,16 +232,27 @@ class ExpectedValueBetPolicy:
             if len(eligible) < size:
                 continue
             generator = permutations if bet_type in ORDERED else combinations
-            threshold = self._thresholds[bet_type]
+            # 券種別パラメータがあれば EV 閾値・上限・温度・較正を上書きする。
+            bt_params = self._bet_type_params.get(bet_type)
+            if bt_params is not None:
+                threshold = bt_params.ev_threshold
+                ev_max = bt_params.ev_max
+                bt_win_probs = bet_type_params.apply_temperature(win_probs, bt_params.temperature)
+                prob_scale = bt_params.prob_scale
+            else:
+                threshold = self._thresholds[bet_type]
+                ev_max = self._ev_max
+                bt_win_probs = win_probs
+                prob_scale = 1.0
             for combo in generator(eligible, size):
-                prob = harville.combo_probability(bet_type, win_probs, combo)
+                prob = harville.combo_probability(bet_type, bt_win_probs, combo) * prob_scale
                 odds = self._odds_provider.get_odds(race_id, bet_type, combo)
                 # オッズ健全性ガード: NaN / <=0 / inf の異常オッズは EV 計算せずスキップ
                 if not (math.isfinite(odds) and odds > 0):
                     continue
                 ev = prob * odds
                 # 期待値が閾値超〜上限以内のもののみ採用（上限で超高倍率を除外。§7）
-                if threshold < ev <= self._ev_max:
+                if threshold < ev <= ev_max:
                     race_candidates.append(
                         BetCandidate(
                             race_id=race_id,
