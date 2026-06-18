@@ -257,7 +257,16 @@ python -m src.pipeline.odds_watch --once --source jravan
 python -m src.pipeline.run_pipeline fetch-final-odds --post-date 20240106
 # 個別レース・券種を絞る場合
 python -m src.pipeline.run_pipeline fetch-final-odds --race-id 202406010101 --bet-types umaren sanrentan
+
+# 取込済み（results.pkl）の過去全レースをバックフィル（resume 対応・取得済みは自動スキップ）
+python -m src.pipeline.run_pipeline fetch-final-odds --from-results
+#   年で絞る + 1 回 500 レースに分割（大量取得を小分けに実行。再実行で続きから）
+python -m src.pipeline.run_pipeline fetch-final-odds --from-results --years 2010 2011 --limit 500
 ```
+
+> 注: `--post-date` は **その 1 日分**、`--from-results` は **取込済みの全 race_id** が対象。
+> 全 8 券種 × 数千レースは大規模スクレイプ（ポライトネスで ~2 秒/件 + 1000 件/時上限）に
+> なるため、`--years`/`--limit` で小分けし、resume（取得済みスキップ）で複数回に分けて実行する。
 
 `data/raw/odds_snapshots.pkl` + `raw_odds_snapshots` に phase=t0（確定）として永続化される。
 リクエスト間隔は `KEIBA_SCRAPE_DELAY`（既定 1 秒+揺らぎ）で自主規制する。

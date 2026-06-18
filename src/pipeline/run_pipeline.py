@@ -472,6 +472,38 @@ def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
                     name, metrics["kl_mean"], metrics["share_mae"], metrics["odds_mape"])
 
 
+def _filter_final_odds_race_ids(race_ids, *, done=None, years=None, force=False, limit=None) -> list[str]:
+    """確定オッズ取得の対象 race_id を 年フィルタ・resume・件数上限で絞り込む（純粋関数）。
+
+    - years: race_id 先頭 4 桁が一致するものだけ残す。
+    - done（取得済み集合）: force=False のとき done に含まれる race_id を除外（resume）。
+    - limit: 先頭から limit 件に制限。
+    """
+    out = [str(r) for r in race_ids]
+    if years:
+        yrs = {str(y) for y in years}
+        out = [r for r in out if r[:4] in yrs]
+    if not force and done:
+        done_set = {str(d) for d in done}
+        out = [r for r in out if r not in done_set]
+    if limit:
+        out = out[: int(limit)]
+    return out
+
+
+def _race_ids_from_results() -> list[str]:
+    """取込済みの results.pkl から全 race_id を昇順で返す（確定オッズのバックフィル元）。"""
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import existing_race_ids, load_raw
+
+    res = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    if res.empty:
+        return []
+    if "race_id" in res.columns and res.index.name != "race_id":
+        res = res.set_index("race_id")
+    return sorted(str(r) for r in existing_race_ids(res))
+
+
 def _fetch_final_odds(args: argparse.Namespace) -> None:
     """過去レースの最終確定オッズを全券種で取得・永続化する。
 
@@ -479,10 +511,19 @@ def _fetch_final_odds(args: argparse.Namespace) -> None:
     OddsSnapshot として `data/raw/odds_snapshots.pkl` + `raw_odds_snapshots` に
     冪等永続化する。post_time=now（取得=確定後）なので phase は t0（確定オッズの代理）。
     バルク取得のためリクエスト間隔（KEIBA_SCRAPE_DELAY、既定 1 秒+揺らぎ）を挟む。
+
+    レース選択（いずれか）:
+    - ``--race-id``      個別指定。
+    - ``--post-date``    当日開催の全レース（1 日分）。
+    - ``--from-results`` 取込済み results.pkl の全 race_id（過去全レースのバックフィル）。
+
+    既定では既に取得済み（snapshots にある）レースをスキップして再開可能（resume）。
+    ``--force`` で再取得、``--years`` で年で絞り込み、``--limit`` で 1 回の件数を制限する。
     """
     import datetime as dt
 
     from src.constants._bet_types import BetType
+    from src.constants._local_paths import LocalPaths
     from src.preparing import odds_scheduler
     from src.preparing._odds_snapshot import OddsSnapshotScraper
 
@@ -492,12 +533,32 @@ def _fetch_final_odds(args: argparse.Namespace) -> None:
         BetType.UMATAN, BetType.WIDE, BetType.SANRENPUKU, BetType.SANRENTAN,
     ]
 
-    if getattr(args, "post_date", None):
+    if getattr(args, "from_results", False):
+        race_ids = _race_ids_from_results()
+        logger.info("[fetch-final-odds] results.pkl から %d レースを対象に取得", len(race_ids))
+    elif getattr(args, "post_date", None):
         race_ids = [str(r) for r in _resolve_race_ids(args.post_date)]
     else:
         race_ids = [str(r) for r in args.race_ids]
+
+    force = getattr(args, "force", False)
+    done = (
+        set()
+        if force
+        else {str(s.race_id) for s in odds_scheduler.load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)}
+    )
+    before = len(race_ids)
+    race_ids = _filter_final_odds_race_ids(
+        race_ids, done=done, years=getattr(args, "years", None), force=force,
+        limit=getattr(args, "limit", None),
+    )
+    if before != len(race_ids):
+        logger.info(
+            "[fetch-final-odds] 絞り込み: %d → %d レース（resume/年/上限）", before, len(race_ids)
+        )
+
     if not race_ids:
-        logger.warning("[fetch-final-odds] 対象レースがありません")
+        logger.warning("[fetch-final-odds] 対象レースがありません（全て取得済み or 条件に合致せず）")
         return
 
     bet_types = list(args.bet_types) if getattr(args, "bet_types", None) else default_bet_types
@@ -597,11 +658,27 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     fo_group = fo_p.add_mutually_exclusive_group(required=True)
     fo_group.add_argument("--race-id", dest="race_ids", nargs="+", type=int, help="対象 race_id（個別指定）")
     fo_group.add_argument(
-        "--post-date", dest="post_date", metavar="YYYYMMDD", help="開催日を指定して当日の全レースを対象"
+        "--post-date", dest="post_date", metavar="YYYYMMDD", help="開催日を指定して当日の全レースを対象（1 日分）"
+    )
+    fo_group.add_argument(
+        "--from-results", dest="from_results", action="store_true",
+        help="取込済み results.pkl の全 race_id を対象（過去全レースのバックフィル）",
     )
     fo_p.add_argument(
         "--bet-types", dest="bet_types", nargs="+", default=None,
         help="対象券種（省略時は全 8 券種）。例: tansho umaren sanrentan",
+    )
+    fo_p.add_argument(
+        "--years", dest="years", nargs="+", type=int, default=None,
+        metavar="YYYY", help="race_id の年で絞り込む（例: 2010 2011 … 大量バックフィルの分割用）",
+    )
+    fo_p.add_argument(
+        "--limit", dest="limit", type=int, default=None,
+        help="1 回で取得するレース数の上限（resume で分割実行するため）",
+    )
+    fo_p.add_argument(
+        "--force", dest="force", action="store_true",
+        help="取得済みレースもスキップせず再取得する",
     )
 
     # doctor サブコマンド（健全性点検）

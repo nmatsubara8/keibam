@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.pipeline.run_pipeline import _filter_final_odds_race_ids
 from src.pipeline.run_pipeline import _parse_args
 
 
@@ -123,3 +124,53 @@ class TestDoctorArgs:
         assert args.json is True
         assert args.strict is True
         assert args.prune_models == 5
+
+
+# ---------------------------------------------------------------------------
+# fetch-final-odds
+# ---------------------------------------------------------------------------
+
+
+class TestFetchFinalOddsArgs:
+    def test_from_results_flag(self):
+        args = _parse_args(["fetch-final-odds", "--from-results"])
+        assert args.from_results is True
+        assert args.force is False
+
+    def test_years_limit_force(self):
+        args = _parse_args([
+            "fetch-final-odds", "--from-results",
+            "--years", "2010", "2011", "--limit", "500", "--force",
+        ])
+        assert args.years == [2010, 2011]
+        assert args.limit == 500
+        assert args.force is True
+
+    def test_race_id_and_from_results_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            _parse_args(["fetch-final-odds", "--race-id", "1", "--from-results"])
+
+
+class TestFilterFinalOddsRaceIds:
+    _IDS = ["202006010101", "202006010102", "202406010101", "202406010102"]
+
+    def test_year_filter(self):
+        out = _filter_final_odds_race_ids(self._IDS, years=[2024])
+        assert out == ["202406010101", "202406010102"]
+
+    def test_resume_skips_done(self):
+        out = _filter_final_odds_race_ids(self._IDS, done={"202006010101", "202406010101"})
+        assert out == ["202006010102", "202406010102"]
+
+    def test_force_ignores_done(self):
+        out = _filter_final_odds_race_ids(self._IDS, done={"202006010101"}, force=True)
+        assert out == self._IDS
+
+    def test_limit(self):
+        assert _filter_final_odds_race_ids(self._IDS, limit=2) == self._IDS[:2]
+
+    def test_combined_year_resume_limit(self):
+        out = _filter_final_odds_race_ids(
+            self._IDS, years=[2024], done={"202406010101"}, limit=5
+        )
+        assert out == ["202406010102"]
