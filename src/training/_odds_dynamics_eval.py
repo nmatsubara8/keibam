@@ -35,6 +35,46 @@ def dynamics_eval_path(models_dir: str = "models") -> str:
     return os.path.join(models_dir, DYNAMICS_EVAL_FILENAME)
 
 
+def race_winners(results_df: pd.DataFrame) -> dict[str, str]:
+    """results データから race_id → 勝ち馬の馬番（str）を導出する（純粋関数）。
+
+    勝ち馬 log-loss 指標の算出に使う。race_id・馬番はスナップショット側（str）と
+    一致させるため `_to_db_str` で正準文字列化する（int64/float 由来の差を吸収）。
+
+    Parameters
+    ----------
+    results_df : raw_results 相当。``着順``・``馬番`` 列を持ち、race_id は
+        index でも列でも可。着順が非数値（中止/除外等）の行は無視する。
+
+    Returns
+    -------
+    {race_id_str: umaban_str}。同着（複数 1 着）は最初の馬番を採用する。
+    """
+    from src.constants._results_cols import ResultsCols
+    from src.storage._repo import _to_db_str
+
+    if results_df is None or results_df.empty:
+        return {}
+
+    df = results_df
+    if "race_id" not in df.columns:
+        df = df.reset_index()
+    if "race_id" not in df.columns or ResultsCols.RANK not in df.columns or ResultsCols.UMABAN not in df.columns:
+        return {}
+
+    rank = pd.to_numeric(df[ResultsCols.RANK], errors="coerce")
+    umaban = pd.to_numeric(df[ResultsCols.UMABAN], errors="coerce")
+    winners_df = df[(rank == 1) & umaban.notna()]
+
+    winners: dict[str, str] = {}
+    for race_id, uma in zip(winners_df["race_id"], umaban[winners_df.index], strict=False):
+        rid = _to_db_str(race_id)
+        if rid is None or rid in winners:
+            continue  # 同着は先勝ちを採用
+        winners[rid] = str(int(uma))  # 馬番は常に整数 → 正準 str
+    return winners
+
+
 def split_sequences(sequences: dict, holdout_frac: float = 0.2) -> tuple[dict, dict]:
     """race_id 昇順（≒時系列）で train/test に分割する（純粋関数）。"""
     race_ids = sorted(sequences.keys())

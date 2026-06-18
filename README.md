@@ -251,6 +251,11 @@ python -m src.pipeline.odds_watch --once --source jravan
 python -m src.pipeline.run_pipeline evaluate-odds-dynamics
 ```
 
+評価は KL / シェア MAE / オッズ MAPE に加え、**勝ち馬 log-loss**（results の着順 1 着馬を
+正解とした予測シェアの負対数尤度）も算出し、モデルラボの「オッズ力学モデル」タブに表示する
+（results 未取得時のみ NaN）。結果は `models/odds_dynamics_eval.json` /
+`models/odds_gravity.json`（いずれも実行時生成・gitignore）に保存される。
+
 予測確定オッズを期待値計算に使うには `config.yaml` に `use_predicted_odds: true` を設定する
 （予測が無いレース/馬は現在オッズへ自動フォールバック）。
 

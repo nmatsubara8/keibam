@@ -265,7 +265,7 @@ def _ingest(args: argparse.Namespace) -> None:
 
 def _build_base_models_config(args):
     """args から BaseModelsConfig を組み立てる（指定なければ None）。"""
-    from src.training._base_models_config import BaseModelsConfig, from_dict, load_base_models_config
+    from src.training._base_models_config import from_dict, load_base_models_config
 
     if hasattr(args, "base_models_config") and args.base_models_config:
         return load_base_models_config(args.base_models_config)
@@ -436,9 +436,11 @@ def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
     """
     from src.constants._bet_types import BetType
     from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
     from src.preparing.odds_scheduler import load_snapshots
     from src.training._odds_dynamics_eval import dynamics_eval_path
     from src.training._odds_dynamics_eval import evaluate_dynamics_models
+    from src.training._odds_dynamics_eval import race_winners
     from src.training._odds_dynamics_eval import save_dynamics_eval
     from src.training._odds_feature_builder import snapshots_to_phase_table
     from src.training._odds_gravity import gravity_path
@@ -455,7 +457,11 @@ def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
         logger.warning("[odds-dynamics] 評価には 5 レース以上の系列が必要です（現在 %d）", len(sequences))
         return
 
-    evaluation = evaluate_dynamics_models(sequences, holdout_frac=args.holdout_frac)
+    # 勝ち馬 log-loss 指標のため results から race_id → 勝ち馬番を導出（無ければ NaN のまま）
+    winners = race_winners(load_raw(LocalPaths.RAW_RESULTS_PATH))
+    if not winners:
+        logger.info("[odds-dynamics] 勝ち馬データが未取得のため winner_logloss は NaN になります")
+    evaluation = evaluate_dynamics_models(sequences, holdout_frac=args.holdout_frac, winners=winners)
     save_dynamics_eval(evaluation, dynamics_eval_path("models"))
     save_gravity(evaluation["gravity"], gravity_path("models"))
     for name, metrics in evaluation["results"].items():

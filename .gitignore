@@ -19,6 +19,9 @@ data/keibam.db-wal
 data/keibam.db-shm
 models/**/*.pickle
 *.pickle
+# 実行時生成の評価成果物（環境ごとに再生成。version_history.json のみ追跡）
+models/odds_dynamics_eval.json
+models/odds_gravity.json
 .DS_Store
 playground.ipynb
 
