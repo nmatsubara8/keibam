@@ -104,17 +104,23 @@ def run(
     path: str = LocalPaths.RAW_ODDS_SNAPSHOT_PATH,
     captured_at: dt.datetime | None = None,
     request_delay: float = 0.0,
+    persist_every: int = 0,
 ) -> list[OddsSnapshot]:
     """指定レース・馬券種のオッズを取得し冪等追記する（DI で scraper を受け取る）。
 
     request_delay>0 のときは各リクエスト間に polite_interval（最低 1 秒+揺らぎ）の
     間隔を挟む（過去レースの大量取得向け。単一 fetch 経路は時間上限のみで間隔を
     持たないため）。既定 0.0 はライブ取得（odds_watch）の従来挙動を保持する。
+
+    persist_every>0 のときは N レースごとに途中保存し進捗ログを出す（大量バックフィルで
+    途中中断しても取得済み分を失わない＋生存確認のため）。既定 0 は最後に 1 回だけ保存
+    （ライブ取得の従来挙動）。
     """
     captured_at = captured_at or dt.datetime.now()
     collected: list[OddsSnapshot] = []
     first = True
-    for race_id in race_ids:
+    total = len(race_ids)
+    for i, race_id in enumerate(race_ids, 1):
         for bet_type in bet_types:
             if not first and request_delay > 0:
                 time.sleep(polite_interval(request_delay))
@@ -123,6 +129,12 @@ def run(
                 collected.extend(scraper.capture(race_id, bet_type, post_time, captured_at))
             except Exception as e:  # 1 レースの失敗で全体を止めない（リジューム前提）
                 logger.warning("capture failed race_id=%s bet_type=%s: %s", race_id, bet_type, e)
+        if persist_every and i % persist_every == 0:
+            merged = persist(collected, path)
+            logger.info(
+                "[odds capture] 進捗 %d/%d レース完了（snapshots 累計 %d 件）", i, total, len(merged)
+            )
+            collected = []
     return persist(collected, path)
 
 

@@ -89,6 +89,37 @@ def test_run_request_delay_sleeps_between_requests(tmp_path, monkeypatch):
     assert all(s >= 1.0 for s in sleeps)
 
 
+def test_run_persist_every_writes_incrementally(tmp_path):
+    """persist_every>0 で途中保存され、中断しても取得済みが残る（resume 安全）。"""
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    race_ids = ["r1", "r2", "r3", "r4", "r5"]
+    merged = odds_scheduler.run(
+        race_ids, post, [BetType.TANSHO], _StubScraper(), path=path, persist_every=2,
+    )
+    # 全 5 レースが最終的に保存される
+    assert {s.race_id for s in merged} == set(race_ids)
+    # 途中保存により、再読込でも全件揃う（pkl に書かれている）
+    reloaded = odds_scheduler.load_snapshots(path)
+    assert {s.race_id for s in reloaded} == set(race_ids)
+
+
+def test_run_persist_every_zero_single_write(tmp_path, monkeypatch):
+    """persist_every=0（既定）は最後に 1 回だけ保存（ライブ取得の従来挙動）。"""
+    calls = {"n": 0}
+    real_persist = odds_scheduler.persist
+
+    def _counting_persist(snaps, p):
+        calls["n"] += 1
+        return real_persist(snaps, p)
+
+    monkeypatch.setattr(odds_scheduler, "persist", _counting_persist)
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    odds_scheduler.run(["r1", "r2", "r3"], post, [BetType.TANSHO], _StubScraper(), path=path)
+    assert calls["n"] == 1
+
+
 def test_run_request_delay_zero_no_sleep(tmp_path, monkeypatch):
     """既定 request_delay=0 はライブ取得の従来挙動（待機なし）を保持する。"""
     sleeps: list[float] = []

@@ -565,15 +565,19 @@ def _fetch_final_odds(args: argparse.Namespace) -> None:
     delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
     scraper = OddsSnapshotScraper()
     now = dt.datetime.now()
+    # 進捗・所要見込み（1 リクエスト ~4 秒の実測値で概算）。5 レースごとに途中保存する。
+    n_requests = len(race_ids) * len(bet_types)
+    est_min = n_requests * 4.0 / 60.0
     logger.info(
-        "[fetch-final-odds] %d レース × %d 券種の確定オッズを取得します（間隔 ~%.1f 秒）",
-        len(race_ids), len(bet_types), max(delay, 1.0),
+        "[fetch-final-odds] %d レース × %d 券種 = 約 %d リクエストを取得します"
+        "（間隔 ~%.1f 秒 / 推定 ~%.0f 分 / 5 レースごとに途中保存）",
+        len(race_ids), len(bet_types), n_requests, max(delay, 1.0), est_min,
     )
     merged = odds_scheduler.run(
         race_ids, post_time=now, bet_types=bet_types, scraper=scraper,
-        captured_at=now, request_delay=delay,
+        captured_at=now, request_delay=delay, persist_every=5,
     )
-    logger.info("[fetch-final-odds] 永続化済みスナップショット累計 %d 件", len(merged))
+    logger.info("[fetch-final-odds] 完了。永続化済みスナップショット累計 %d 件", len(merged))
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
