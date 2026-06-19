@@ -148,6 +148,10 @@ def _parse_one_bin(task):
         return None
     if df is None or getattr(df, "empty", True):
         return None
+    # race_id の保持形式はパース関数ごとに異なる（results=列, race_info/return=index）。
+    # 後段で concat(ignore_index=True) しても失わないよう、race_id を必ず列へ正規化する。
+    if "race_id" not in df.columns and df.index.name == "race_id":
+        df = df.reset_index()
     return df
 
 
