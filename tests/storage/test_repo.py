@@ -224,6 +224,24 @@ class TestRangeIndexGuard:
         assert set(out.index.unique()) == {"202401010101"}
 
 
+class TestClear:
+    """clear: テーブル全行削除（破損データ復旧用）。"""
+
+    def test_clear_removes_all_rows(self, tmp_path):
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        repo.upsert("raw_results", _results_df())
+        assert repo.has_rows("raw_results")
+
+        deleted = repo.clear("raw_results")
+        assert deleted == 3
+        assert not repo.has_rows("raw_results")
+
+    def test_clear_unknown_alias_raises(self, tmp_path):
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        with pytest.raises(ValueError, match="unknown alias"):
+            repo.clear("does_not_exist")
+
+
 class TestUnknownAlias:
     def test_upsert_unknown_alias_raises(self, tmp_path):
         repo = RawDataRepo(db_path=str(tmp_path / "test.db"))

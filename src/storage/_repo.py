@@ -266,6 +266,20 @@ class RawDataRepo:
         logger.info("[RawDataRepo] delete_by_index %s: %d rows deleted", alias, deleted)
         return deleted
 
+    def clear(self, alias: str) -> int:
+        """テーブルの全行を削除する（破損データの復旧で正本を作り直す用途）。
+
+        Returns 削除行数。pickle 等の正本から作り直す前提の破壊的操作。
+        """
+        if alias not in TABLE_SPECS:
+            raise ValueError(f"unknown alias: {alias}")
+        spec = TABLE_SPECS[alias]
+        with self._engine.begin() as conn:
+            result = conn.execute(text(f'DELETE FROM "{spec.table_name}"'))
+            deleted = result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0
+        logger.info("[RawDataRepo] clear %s: %d rows deleted", alias, deleted)
+        return deleted
+
     # ------------------------------------------------------------------
     # メタ操作
     # ------------------------------------------------------------------
