@@ -262,14 +262,18 @@ def _execute(force: bool = False, workers: int = 0) -> None:
     if os.path.exists(LocalPaths.DB_PATH) and not os.path.exists(LocalPaths.DB_PATH + ".bak"):
         _backup(LocalPaths.DB_PATH)
 
-    # 並列数の解決: 0=自動（CPU バウンドなので物理コア相当、論理数-2 を上限に）。
+    # 並列数の解決: 0=自動。バッチ再パース専用ツールなので可視論理コアを全部使う。
+    # 注: WSL2 では os.cpu_count() がホストの論理数ではなく WSL に割当てられた数を返す。
+    # ホスト全コアを使うには Windows 側 .wslconfig の processors= を増やす必要がある。
     # 1 を指定すると従来の直列パスにフォールバックする。
     if workers <= 0:
-        workers = max(1, (os.cpu_count() or 4) - 2)
+        workers = max(1, os.cpu_count() or 4)
     use_parallel = workers > 1
     logger.info(
-        "[recover] 再パース方式: %s（workers=%d, CPU=%s）",
+        "[recover] 再パース方式: %s（workers=%d, 可視CPU=%s）"
+        "%s",
         "並列" if use_parallel else "直列", workers, os.cpu_count(),
+        "  ※WSLで全コア使うには .wslconfig の processors を増やす" if (os.cpu_count() or 0) < 16 else "",
     )
 
     results: dict = {}
