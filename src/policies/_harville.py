@@ -71,6 +71,18 @@ def prob_trio(win_probs: Probabilities, horse_a: int, horse_b: int, horse_c: int
     )
 
 
+def prob_wide(win_probs: Probabilities, horse_a: int, horse_b: int) -> float:
+    """ワイド（指定 2 頭が共に 3 着以内）の確率。
+
+    馬連（共に 2 着以内）より緩い条件なので確率は大きい。a, b が共に top3 に入る事象は
+    「top3 の集合が {a, b, c}（c は他馬）」で c について互いに排反に尽くせるため、
+    ``Σ_c prob_trio(a, b, c)`` で厳密に求められる（三連複＝top3 集合の確率の和）。
+    """
+    p = normalize(win_probs)
+    others = [u for u in p if u not in (horse_a, horse_b)]
+    return sum(prob_trio(win_probs, horse_a, horse_b, c) for c in others)
+
+
 def prob_place(win_probs: Probabilities, horse: int, n_places: int = 3) -> float:
     """複勝（指定馬が n_places 着以内に入る）の確率。
 
@@ -96,8 +108,8 @@ def combo_probability(bet_type: str, win_probs: Probabilities, combo: Sequence[i
     if bet_type == BetType.UMATAN:
         return prob_exacta(win_probs, combo[0], combo[1])
     if bet_type == BetType.WIDE:
-        # ワイドは2頭が共に3着以内。馬連確率で保守的に近似する。
-        return prob_quinella(win_probs, combo[0], combo[1])
+        # ワイドは2頭が共に3着以内（馬連より緩い）。Σ_c prob_trio で厳密に求める。
+        return prob_wide(win_probs, combo[0], combo[1])
     if bet_type == BetType.SANRENPUKU:
         return prob_trio(win_probs, combo[0], combo[1], combo[2])
     if bet_type == BetType.SANRENTAN:
