@@ -59,6 +59,7 @@ class DataMerger:
         self._separated_hr_with_sire_dict: dict = {}
 
     def merge(self):
+        self._normalize_join_keys()
         self._merge_race_info()
         logger.debug("merge_infos\n%s", self._results.sort_values(by="race_id").head().T)
 
@@ -72,6 +73,32 @@ class DataMerger:
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
         self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+
+    @staticmethod
+    def _to_id_str(values: pd.Series | pd.Index) -> pd.Series | pd.Index:
+        """ID（horse_id/race_id）を統一フォーマットの文字列へ正規化する。
+
+        DB 復元由来（object 文字列）と pickle 由来（Int64/float64）が混在しても
+        merge キーの dtype が一致するよう、全て文字列化し float の末尾 ``.0`` を除去する。
+        欠損は文字列化で "nan"/"<NA>" 等になり得るが、それらは元々ジョインしないため許容する。
+        """
+        as_str = values.astype(str)
+        return as_str.str.replace(r"\.0$", "", regex=True)
+
+    def _normalize_join_keys(self) -> None:
+        """horse_id / race_id の merge キーをソース横断で文字列に正規化する。
+
+        netkeiba(pickle) と DB 復元データが混在しても join できるよう、
+        DataMerger が参照する全テーブルの horse_id 列・index を文字列へ揃える。
+        """
+        if "horse_id" in self._results.columns:
+            self._results["horse_id"] = self._to_id_str(self._results["horse_id"])
+        if self._horse_results.index.name == "horse_id":
+            self._horse_results.index = self._to_id_str(self._horse_results.index)
+        if self._horse_info.index.name == "horse_id":
+            self._horse_info.index = self._to_id_str(self._horse_info.index)
+        if self._peds.index.name == "horse_id":
+            self._peds.index = self._to_id_str(self._peds.index)
 
     def _merge_race_info(self):
         # race_id インデックスの dtype 不一致（int64/float64 vs str）によるジョイン失敗を防ぐ

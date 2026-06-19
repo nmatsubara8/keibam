@@ -356,3 +356,48 @@ class TestAddSireStats:
         out = m._add_sire_stats(results, pd.Timestamp("2023-05-01"))
         assert "peds_0" not in out.columns
         assert "_sire_key" not in out.columns
+
+
+# ──────────────────────────────────────────
+# _normalize_join_keys: ソース混在時の dtype 整合
+# ──────────────────────────────────────────
+
+class TestNormalizeJoinKeys:
+    """DB 復元(object 文字列) と pickle(Int64/float) 混在でも merge できること。"""
+
+    def test_results_horse_id_normalized_to_str(self):
+        results = pd.DataFrame(
+            {"horse_id": pd.array([1, 2, 3], dtype="Int64")},
+            index=pd.Index(["r1", "r1", "r1"], name="race_id"),
+        )
+        m = _make_merger(results)
+        m._normalize_join_keys()
+        assert m._results["horse_id"].map(type).eq(str).all()
+        assert m._results["horse_id"].tolist() == ["1", "2", "3"]
+
+    def test_float_horse_id_strips_trailing_dot_zero(self):
+        results = pd.DataFrame(
+            {"horse_id": [1.0, 2.0, 3.0]},
+            index=pd.Index(["r1", "r1", "r1"], name="race_id"),
+        )
+        m = _make_merger(results)
+        m._normalize_join_keys()
+        assert m._results["horse_id"].tolist() == ["1", "2", "3"]
+
+    def test_mixed_source_horse_id_indexes_align(self):
+        """results(object str) と peds(Int64 index) を正規化後に merge できる。"""
+        results = pd.DataFrame(
+            {"horse_id": ["1", "2", "3"]},  # DB 復元由来: object str
+            index=pd.Index(["r1", "r1", "r1"], name="race_id"),
+        )
+        peds = pd.DataFrame(
+            {"peds_0": ["sireA", "sireB", "sireA"]},
+            index=pd.Index(pd.array([1, 2, 3], dtype="Int64"), name="horse_id"),  # pickle 由来
+        )
+        m = _make_merger(results, peds)
+        m._normalize_join_keys()
+        # peds index も str に揃い、results.horse_id と同じ dtype で merge 可能
+        merged = m._results.merge(
+            m._peds, left_on="horse_id", right_index=True, how="left"
+        )
+        assert merged["peds_0"].tolist() == ["sireA", "sireB", "sireA"]
