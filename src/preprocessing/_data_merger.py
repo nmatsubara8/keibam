@@ -59,20 +59,27 @@ class DataMerger:
         self._separated_hr_with_sire_dict: dict = {}
 
     def merge(self):
-        self._normalize_join_keys()
-        self._merge_race_info()
-        logger.debug("merge_infos\n%s", self._results.sort_values(by="race_id").head().T)
-
-        self._merge_horse_results()
-        logger.debug("merge_horse\n%s", self._merged_data.sort_values(by="horse_id").head().T)
-
-        self._merge_horse_info()
-        logger.debug("merge_horse_info\n%s", self._merged_data.sort_values(by="horse_id").head().T)
-
-        self._merge_peds()
         import os as _os
-        _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
-        self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+        import time as _time
+
+        def _step(name: str, fn) -> None:
+            t0 = _time.perf_counter()
+            fn()
+            logger.info("[merge] %s: %.1fs", name, _time.perf_counter() - t0)
+
+        self._normalize_join_keys()
+        _step("race_info", self._merge_race_info)
+        _step("horse_results", self._merge_horse_results)
+        _step("horse_info", self._merge_horse_info)
+        _step("peds", self._merge_peds)
+
+        # 旧実装にあった巨大データ(数十万行)の debug CSV ダンプは to_csv だけで数分かかる
+        # ため既定で無効化（純粋なサンドボックス用）。KEIBA_DUMP_MERGE_CSV=1 でのみ書き出す。
+        if _os.environ.get("KEIBA_DUMP_MERGE_CSV") == "1":
+            _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
+            t0 = _time.perf_counter()
+            self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+            logger.info("[merge] debug CSV dump: %.1fs", _time.perf_counter() - t0)
 
     @staticmethod
     def _to_id_str(values: pd.Series | pd.Index) -> pd.Series | pd.Index:
@@ -143,7 +150,11 @@ class DataMerger:
             horse_id_list = df_by_date["horse_id"].unique()
 
             cut = int(np.searchsorted(hr_dates, date, side="left"))
-            past_hr = hr_sorted.iloc[:cut].set_index("horse_id") if cut > 0 else hr_sorted.iloc[:0].set_index("horse_id")
+            past_hr = (
+                hr_sorted.iloc[:cut].set_index("horse_id")
+                if cut > 0
+                else hr_sorted.iloc[:0].set_index("horse_id")
+            )
             horse_results = past_hr[past_hr.index.isin(horse_id_list)]
 
             cut2 = int(np.searchsorted(hrs_dates, date, side="left"))
