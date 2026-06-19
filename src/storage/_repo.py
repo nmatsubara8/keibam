@@ -148,15 +148,30 @@ class RawDataRepo:
         if "ingested_at" in df.columns:
             df = df.drop(columns=["ingested_at"])
 
-        # pandas 3.x は SQLite の文字列列を pyarrow/string 拡張 dtype で返すが、scrape 由来の
-        # raw pickle は object dtype（欠損は NaN）。下流の前処理（_horse_results_processor 等）は
-        # object/str 前提のため、文字列系の拡張 dtype は object へ正規化して挙動を揃える
-        # （数値列はそのまま）。DB 復元 pickle が scrape 版と同じ型で処理されるようにする。
+        # SQLite は全列をテキストで保持するため、DB 復元すると本来数値の列も文字列で返る
+        # （scrape 由来の read_html は数値型）。下流の前処理は scrape 版 pickle の dtype を
+        # 前提にしているため、ここで型を揃える:
+        #   1) pandas 3.x の文字列拡張 dtype（pyarrow/string）は object に正規化。
+        #   2) 全非欠損値が数値化できる列だけ数値型へ復元（"中"/"3-3-2-1" 等の混在列は文字列維持）。
+        # ID 列（race_id / horse_id）と index_col は正準文字列のまま維持する
+        # （数値化すると "202401010101" → 202401010101 となり index 契約が壊れる）。
+        _keep_str = {"race_id", "horse_id"}
+        if spec.index_col is not None:
+            _keep_str.add(spec.index_col)
+        # 数値復元は前処理が算術するレース/馬系 raw のみ。オッズ系（combo="1" 等の
+        # 文字列キーを持つ）は対象外にして文字列のまま保つ。
+        restore_numeric = not alias.startswith("raw_odds")
         for col in df.columns:
             dtype = df[col].dtype
             is_arrow_string = type(dtype).__name__ == "ArrowDtype" and "string" in str(dtype).lower()
             if isinstance(dtype, pd.StringDtype) or is_arrow_string:
                 df[col] = df[col].astype(object)
+            if restore_numeric and df[col].dtype == object and col not in _keep_str:
+                converted = pd.to_numeric(df[col], errors="coerce")
+                # 元の非欠損が全て数値化できた列のみ置換（データ欠損させない）
+                orig_notna = df[col].notna().sum()
+                if orig_notna > 0 and converted.notna().sum() == orig_notna:
+                    df[col] = converted
 
         # auto_row_idx_col で自動付与した row_idx は、return_tables の場合は
         # 「raw DataFrame の元構造」には含まれていなかった列なので、PK の補助情報として

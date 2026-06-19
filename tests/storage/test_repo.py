@@ -66,6 +66,26 @@ class TestUpsertReadRoundtrip:
         assert "馬番" in out.columns
         assert "horse_id" in out.columns
 
+    def test_read_restores_numeric_dtypes(self, tmp_path):
+        """DB(テキスト保持)から読むと数値列は数値型に復元され、ID/混在列は文字列維持。"""
+        import pandas as pd
+
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        df = _results_df().reset_index()
+        df["着順"] = ["1", "中", "2"]  # 非数値混在 → 文字列維持されるべき
+        df = df.set_index("race_id")
+        repo.upsert("raw_results", df)
+
+        out = repo.read("raw_results")
+        # 純粋数値列（馬番）は数値型に復元され、除算等が可能
+        assert pd.api.types.is_numeric_dtype(out["馬番"])
+        assert (out["馬番"] / 2).notna().all()
+        # ID 列・混在列は文字列のまま
+        assert out.index.dtype == object
+        assert set(out.index.unique()) == {"202401010101"}
+        assert out["horse_id"].map(type).eq(str).all()
+        assert out["着順"].map(lambda v: isinstance(v, str)).all()
+
     def test_upsert_inserts_all_rows(self, tmp_path):
         repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
         df = _results_df()
