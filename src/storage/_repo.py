@@ -73,7 +73,20 @@ class RawDataRepo:
                 # race_id は通常列として既にある（RangeIndex の場合）→ RangeIndex は捨てる
                 df_norm = df_norm.reset_index(drop=True)
             else:
-                # race_id が index に name として設定されている可能性 → index を column 化
+                # race_id が「無名の index」として設定されている可能性 → column 化する。
+                # ただし既定 RangeIndex(0,1,2,…) を race_id に昇格させると、行番号が
+                # race_id として保存され全レースが「1レース1行」に化ける（データ破損）。
+                # 実害が出たため、RangeIndex は race_id とみなさず明示的に弾く。
+                if isinstance(df_norm.index, pd.RangeIndex) or (
+                    df_norm.index.name is None
+                    and pd.api.types.is_integer_dtype(df_norm.index)
+                    and df_norm.index.equals(pd.RangeIndex(len(df_norm)))
+                ):
+                    raise ValueError(
+                        f"upsert({alias}): '{spec.index_col}' 列が無く index も既定 RangeIndex です。"
+                        f"行番号を {spec.index_col} に昇格させるとデータが破損するため中断します"
+                        f"（呼び出し側で {spec.index_col} 列を保持してください）。"
+                    )
                 df_norm.index = df_norm.index.rename(spec.index_col)
                 df_norm = df_norm.reset_index()
 

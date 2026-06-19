@@ -198,6 +198,32 @@ class TestAutoMigrate:
         assert migrated == 0
 
 
+class TestRangeIndexGuard:
+    """既定 RangeIndex を race_id に昇格させない（行番号→race_id のデータ破損を防ぐ）。"""
+
+    def test_rangeindex_without_race_id_raises(self, tmp_path):
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        # race_id 列も race_id index も無い（既定 RangeIndex）→ 破損を防ぐため弾く
+        df = pd.DataFrame({"馬番": [1, 2, 3], "horse_id": ["H1", "H2", "H3"]})
+        with pytest.raises(ValueError, match="RangeIndex"):
+            repo.upsert("raw_results", df)
+
+    def test_race_id_column_with_rangeindex_is_ok(self, tmp_path):
+        """正準形式（RangeIndex + race_id 列）は従来どおり通る。"""
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        df = pd.DataFrame(
+            {
+                "馬番": [1, 2, 3],
+                "horse_id": ["H1", "H2", "H3"],
+                "race_id": ["202401010101", "202401010101", "202401010101"],
+            }
+        )  # RangeIndex + race_id 列
+        inserted = repo.upsert("raw_results", df)
+        assert inserted == 3
+        out = repo.read("raw_results")
+        assert set(out.index.unique()) == {"202401010101"}
+
+
 class TestUnknownAlias:
     def test_upsert_unknown_alias_raises(self, tmp_path):
         repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
