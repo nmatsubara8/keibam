@@ -124,6 +124,16 @@ with st.spinner("予測中…"):
         from src.policies._bet_type_params import latest_bet_type_params
 
         bt_params = latest_bet_type_params(bet_type_params_path("models")) or None
+        # 較正済み控除率（calibrate-takeout の出力）があれば連系推定オッズに反映される。
+        from src.policies._takeout_calibration import latest_takeout_map
+        from src.policies._takeout_calibration import takeout_calibration_path
+
+        _calib_takeout = latest_takeout_map(takeout_calibration_path("models"))
+        if _calib_takeout:
+            st.caption(
+                "🎯 較正済み控除率を連系推定オッズに適用中: "
+                + ", ".join(f"{bt}={t:.3f}" for bt, t in _calib_takeout.items())
+            )
         candidates = run_prediction(
             model.effective_model, X, op_config, bet_type_params=bt_params
         )

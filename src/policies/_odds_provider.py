@@ -147,11 +147,19 @@ class PredictedOddsProvider(AbstractOddsProvider):
         self,
         predicted_final_odds: Mapping,
         fallback: AbstractOddsProvider,
-        takeout: float = 0.2,
+        takeout: float | Mapping[str, float] = 0.2,
+        default_takeout: float = 0.2,
     ) -> None:
         self._predicted = dict(predicted_final_odds)
         self._fallback = fallback
         self._takeout = takeout
+        self._default_takeout = default_takeout
+
+    def _takeout_for(self, bet_type: str) -> float:
+        """券種別の控除率を返す（Mapping 指定時は券種別、未登録は既定値）。"""
+        if isinstance(self._takeout, Mapping):
+            return float(self._takeout.get(bet_type, self._default_takeout))
+        return float(self._takeout)
 
     def _race_predictions(self, race_id) -> dict[int, float]:
         return {
@@ -182,4 +190,4 @@ class PredictedOddsProvider(AbstractOddsProvider):
         prob = harville.combo_probability(bet_type, win_probs, combo)
         if prob <= 0:
             return self._fallback.get_odds(race_id, bet_type, combo)
-        return (1.0 - self._takeout) / prob
+        return (1.0 - self._takeout_for(bet_type)) / prob

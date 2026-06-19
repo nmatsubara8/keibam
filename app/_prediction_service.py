@@ -40,12 +40,28 @@ def default_thresholds() -> dict:
     }
 
 
+def _load_live_takeout(takeout):
+    """ライブ選定に使う控除率を決める。
+
+    明示指定があればそれを使う。無ければ較正済みの券種別控除率
+    （models/takeout_calibration.json）を読み込み、未較正なら既定 0.2。
+    """
+    if takeout is not None:
+        return takeout
+    from src.policies._takeout_calibration import latest_takeout_map
+    from src.policies._takeout_calibration import takeout_calibration_path
+
+    calib = latest_takeout_map(takeout_calibration_path("models"))
+    return calib or 0.2
+
+
 def run_prediction(
     model,
     X: pd.DataFrame,
     op_config: OperationConfig,
     thresholds: dict | None = None,
     bet_type_params: dict | None = None,
+    takeout=None,
 ) -> list[BetCandidate]:
     """EV 選定 → 確信度付与 → ケリー配分の全パイプラインを実行する。
 
@@ -57,12 +73,15 @@ def run_prediction(
     thresholds : 馬券種 → EV 閾値（省略時は BetThresholds の既定値）。
     bet_type_params : 券種別最適化パラメータ {券種: BetTypeParams}（省略可）。
         指定券種は温度・確率較正・EV 閾値/上限を上書きする（Phase 2 最適化結果の反映）。
+    takeout : 連系推定オッズの控除率（float または {券種: 控除率}）。省略時は
+        較正済み控除率（calibrate-takeout の出力）を自動読込し、無ければ 0.2。
 
     Returns
     -------
     list[BetCandidate] : stake が設定された配分済み候補（EV 降順）。
     """
     thresholds = thresholds or default_thresholds()
+    takeout = _load_live_takeout(takeout)
 
     # 1. 較正勝率 + 現在オッズのテーブル
     table = ExpectedValueScorePolicy.calc(model, X)
@@ -70,10 +89,11 @@ def run_prediction(
     # 2. オッズ供給。既定は現在オッズ（歴史推定）。use_predicted_odds=True かつ
     #    odds_watch の最新予測（オッズ力学アンサンブル）が存在する場合は、
     #    予測確定オッズで EV を計算する（予測の無い馬は現在オッズへフォールバック）。
+    #    連系の推定オッズは較正済み控除率（takeout）を反映する。
     from src.policies._odds_provider import AbstractOddsProvider
 
     provider: AbstractOddsProvider = HistoricalOddsProvider.from_score_table(
-        table, ResultsCols.UMABAN, CURRENT_ODDS
+        table, ResultsCols.UMABAN, CURRENT_ODDS, takeout=takeout
     )
     if getattr(op_config, "use_predicted_odds", False):
         try:
@@ -83,7 +103,7 @@ def run_prediction(
 
             lookup = latest_final_odds_lookup(load_predictions())
             if lookup:
-                provider = PredictedOddsProvider(lookup, fallback=provider)
+                provider = PredictedOddsProvider(lookup, fallback=provider, takeout=takeout)
         except Exception:  # noqa: BLE001 — 予測読込失敗時は現在オッズで継続
             pass
 

@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from app._prediction_service import default_thresholds
 from app._prediction_service import run_prediction
@@ -79,6 +78,47 @@ def test_run_prediction_confidence_in_range():
     result = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
     for c in result:
         assert 0.0 <= c.confidence <= 1.0
+
+
+class TestLiveTakeout:
+    def test_explicit_takeout_passthrough(self):
+        from app._prediction_service import _load_live_takeout
+
+        assert _load_live_takeout(0.25) == 0.25
+        m = {BetType.UMAREN: 0.3}
+        assert _load_live_takeout(m) is m
+
+    def test_auto_loads_calibration(self, monkeypatch):
+        import app._prediction_service as ps
+        import src.policies._takeout_calibration as tc
+
+        monkeypatch.setattr(tc, "latest_takeout_map", lambda path: {BetType.UMAREN: 0.27})
+        assert ps._load_live_takeout(None) == {BetType.UMAREN: 0.27}
+
+    def test_falls_back_to_default_when_no_calibration(self, monkeypatch):
+        import app._prediction_service as ps
+        import src.policies._takeout_calibration as tc
+
+        monkeypatch.setattr(tc, "latest_takeout_map", lambda path: {})
+        assert ps._load_live_takeout(None) == 0.2
+
+    def test_higher_takeout_lowers_combo_ev(self):
+        """券種別控除率を上げると連系（馬連）の推定オッズ＝EV が下がる。"""
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        thresholds = {BetType.UMAREN: 0.0}  # 全馬連を採用してEVを観測
+
+        def _umaren_ev(takeout):
+            res = run_prediction(
+                model, X, _default_op_config(), thresholds=thresholds, takeout=takeout
+            )
+            evs = [c.expected_value for c in res if c.bet_type == BetType.UMAREN]
+            return max(evs) if evs else None
+
+        low = _umaren_ev({BetType.UMAREN: 0.0})
+        high = _umaren_ev({BetType.UMAREN: 0.5})
+        assert low is not None and high is not None
+        assert high < low
 
 
 def test_default_thresholds_covers_all_bet_types():
