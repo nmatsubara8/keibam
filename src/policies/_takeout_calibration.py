@@ -25,10 +25,12 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 from typing import Mapping
 from typing import Sequence
 
 from src.constants._bet_types import BetType
+from src.constants._bet_types import combo_key
 from src.policies import _harville as harville
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,81 @@ NOMINAL_TAKEOUT: dict[str, float] = {
 DEFAULT_TAKEOUT = 0.2
 MIN_SAMPLES = 20  # この件数未満の券種は公称控除率へフォールバック
 TRIM_FRAC = 0.1  # 集計時に上下から切り捨てる割合（外れ値耐性）
+
+
+def parse_win_combo(win) -> list[int] | None:
+    """払戻テーブルの win セル（int / "1-2" / "1→2" / list）を馬番リストにする。"""
+    if win is None:
+        return None
+    if isinstance(win, (list, tuple)):
+        try:
+            return [int(x) for x in win]
+        except (TypeError, ValueError):
+            return None
+    s = str(win).strip()
+    if not s or s == "0":
+        return None
+    try:
+        return [int(p) for p in re.split(r"[-→]", s) if p != ""]
+    except ValueError:
+        return None
+
+
+def payout_lookup_from_return_processor(return_processor) -> dict:
+    """払戻テーブルから {(race_id, bet_type, combo_key): 確定オッズ} を作る（純粋計算）。
+
+    的中組合せの **払戻金 / 100 = その組合せの確定オッズ**。過去レースの連系確定オッズが
+    オッズページから取得できなくても、払戻データ（ingest 済み・全 8 券種）から
+    「当たった組合せの確定オッズ」は確実に得られる。
+
+    `return_processor` は ``preprocessed_data: {bet_type: DataFrame}`` を持つダックタイプ
+    （src.preprocessing._return_processor.ReturnProcessor）。policies → preprocessing の
+    import を避けるため型は受け取らず属性のみ参照する。
+    """
+    out: dict = {}
+    data = getattr(return_processor, "preprocessed_data", {}) or {}
+    for bet_type, table in data.items():
+        if table is None or getattr(table, "empty", True):
+            continue
+        n_win = sum(1 for c in table.columns if str(c).startswith("win_"))
+        for race_id, row in table.iterrows():
+            for i in range(n_win):
+                combo = parse_win_combo(row.get(f"win_{i}", 0))
+                ret = row.get(f"return_{i}", 0)
+                if not combo or not ret:
+                    continue
+                try:
+                    key = (str(race_id), bet_type, combo_key(bet_type, combo))
+                    out[key] = round(float(ret) / 100.0, 1)
+                except (TypeError, ValueError):
+                    continue
+    return out
+
+
+def tansho_odds_by_race_from_table(table, umaban_col: str, odds_col: str) -> dict:
+    """results/featured テーブルから {race_id: {馬番: 単勝オッズ}} を構築する（純粋計算）。
+
+    snapshots は fetch-final-odds 済みレースに限られるが、results は ingest 済み全レースを
+    カバーするため、較正のサンプル数を最大化できる。race_id は index 前提。
+    """
+    out: dict = {}
+    if table is None or getattr(table, "empty", True):
+        return out
+    if umaban_col not in table.columns or odds_col not in table.columns:
+        return out
+    for race_id, race_df in table.groupby(level=0):
+        race_map: dict = {}
+        for umaban, odds in zip(race_df[umaban_col], race_df[odds_col], strict=False):
+            try:
+                u = int(umaban)
+                o = float(odds)
+            except (TypeError, ValueError):
+                continue
+            if o > 0:
+                race_map[u] = o
+        if len(race_map) >= 2:
+            out[str(race_id)] = race_map
+    return out
 
 
 def _parse_combo_key(combo_str: str) -> list[int]:

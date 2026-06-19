@@ -6,11 +6,28 @@ Harville で推定した連系オッズを組合せ単位で突き合わせる�
 
 from __future__ import annotations
 
-import re
-
 import pandas as pd
 
 from src.constants._bet_types import BetType
+
+# 純粋ビルダーは policies 層に移設（pipeline からも利用できるよう）。
+# app 側は後方互換のため同名で再エクスポートする。
+from src.policies._takeout_calibration import parse_win_combo as _parse_win_combo
+from src.policies._takeout_calibration import (
+    payout_lookup_from_return_processor as final_odds_lookup_from_payouts,
+)
+from src.policies._takeout_calibration import tansho_odds_by_race_from_table
+
+__all__ = [
+    "_parse_win_combo",
+    "final_odds_lookup_from_payouts",
+    "tansho_odds_by_race_from_table",
+    "tansho_odds_by_race",
+    "calibrate_takeouts_from_payouts",
+    "available_combo_targets",
+    "compare_combo_odds",
+    "COMBO_BET_TYPES",
+]
 
 
 # 連系（単勝・複勝以外）の比較対象券種
@@ -35,79 +52,6 @@ def tansho_odds_by_race(snapshots) -> dict:
     out: dict = {}
     for (race_id, umaban), (_, odds) in latest.items():
         out.setdefault(race_id, {})[umaban] = odds
-    return out
-
-
-def _parse_win_combo(win) -> list[int] | None:
-    """払戻テーブルの win セル（int / "1-2" / "1→2" / list）を馬番リストにする。"""
-    if win is None:
-        return None
-    if isinstance(win, (list, tuple)):
-        try:
-            return [int(x) for x in win]
-        except (TypeError, ValueError):
-            return None
-    s = str(win).strip()
-    if not s or s == "0":
-        return None
-    try:
-        return [int(p) for p in re.split(r"[-→]", s) if p != ""]
-    except ValueError:
-        return None
-
-
-def final_odds_lookup_from_payouts(return_processor) -> dict:
-    """払戻テーブルから {(race_id, bet_type, combo_key): 確定オッズ} を作る（純粋計算）。
-
-    的中組合せの **払戻金 / 100 = その組合せの確定オッズ**。過去レースの連系確定オッズが
-    オッズページから取得できなくても、払戻データ（ingest 済み・全 8 券種）から
-    「当たった組合せの確定オッズ」は確実に得られる。`StoredFinalOddsProvider` に渡せる。
-    """
-    from src.constants._bet_types import combo_key
-
-    out: dict = {}
-    data = getattr(return_processor, "preprocessed_data", {}) or {}
-    for bet_type, table in data.items():
-        if table is None or getattr(table, "empty", True):
-            continue
-        n_win = sum(1 for c in table.columns if str(c).startswith("win_"))
-        for race_id, row in table.iterrows():
-            for i in range(n_win):
-                combo = _parse_win_combo(row.get(f"win_{i}", 0))
-                ret = row.get(f"return_{i}", 0)
-                if not combo or not ret:
-                    continue
-                try:
-                    key = (str(race_id), bet_type, combo_key(bet_type, combo))
-                    out[key] = round(float(ret) / 100.0, 1)
-                except (TypeError, ValueError):
-                    continue
-    return out
-
-
-def tansho_odds_by_race_from_table(table, umaban_col: str, odds_col: str) -> dict:
-    """results/featured テーブルから {race_id: {馬番: 単勝オッズ}} を構築する。
-
-    snapshots は fetch-final-odds 済みレースに限られるが、results は ingest 済み全レースを
-    カバーするため、較正のサンプル数を最大化できる。race_id は index 前提。
-    """
-    out: dict = {}
-    if table is None or getattr(table, "empty", True):
-        return out
-    if umaban_col not in table.columns or odds_col not in table.columns:
-        return out
-    for race_id, race_df in table.groupby(level=0):
-        race_map: dict = {}
-        for umaban, odds in zip(race_df[umaban_col], race_df[odds_col], strict=False):
-            try:
-                u = int(umaban)
-                o = float(odds)
-            except (TypeError, ValueError):
-                continue
-            if o > 0:
-                race_map[u] = o
-        if len(race_map) >= 2:
-            out[str(race_id)] = race_map
     return out
 
 

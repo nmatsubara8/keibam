@@ -205,6 +205,19 @@ class TestResolveDataSource:
         assert _resolve_data_source(_A()) == "jravan"
 
 
+class TestCalibrateTakeoutArgs:
+    def test_defaults(self):
+        args = _parse_args(["calibrate-takeout"])
+        assert args.job == "calibrate-takeout"
+        assert args.min_samples == 20
+        assert args.dry_run is False
+
+    def test_flags(self):
+        args = _parse_args(["calibrate-takeout", "--min-samples", "50", "--dry-run"])
+        assert args.min_samples == 50
+        assert args.dry_run is True
+
+
 class TestRebuildFeatured:
     def test_parses(self):
         args = _parse_args(["rebuild-featured"])
@@ -226,3 +239,44 @@ class TestRebuildFeatured:
         rp._rebuild_featured(_parse_args(["rebuild-featured"]))
         assert saved["df"] is featured
         assert saved["phase2"] is True
+
+
+class TestCalibrateTakeoutHandler:
+    def _patch_common(self, monkeypatch):
+        import src.pipeline._ingestion as ing
+        import src.pipeline.run_pipeline as rp
+        import src.policies._takeout_calibration as tc
+        import src.preprocessing._return_processor as rpm
+
+        monkeypatch.setattr(rp.os.path, "exists", lambda p: True)
+        monkeypatch.setattr(ing, "load_raw", lambda path: object())
+        monkeypatch.setattr(rpm.ReturnProcessor, "__init__", lambda self, fp: None)
+        monkeypatch.setattr(tc, "tansho_odds_by_race_from_table", lambda *a, **k: {"r1": {1: 2.0, 2: 4.0}})
+        monkeypatch.setattr(tc, "payout_lookup_from_return_processor", lambda rpobj: {})
+        monkeypatch.setattr(
+            tc, "calibrate_takeout_from_payouts",
+            lambda *a, **k: {"umaren": {"takeout": 0.22, "n": 30, "source": "calibrated"}},
+        )
+        return tc
+
+    def test_saves_calibration(self, monkeypatch):
+        import src.policies._takeout_calibration as tc
+
+        self._patch_common(monkeypatch)
+        saved = {}
+        monkeypatch.setattr(tc, "save_takeout_calibration", lambda calib, path: saved.update(calib=calib, path=path))
+
+        import src.pipeline.run_pipeline as rp
+        rp._calibrate_takeout(_parse_args(["calibrate-takeout"]))
+        assert "umaren" in saved["calib"]
+
+    def test_dry_run_skips_save(self, monkeypatch):
+        import src.policies._takeout_calibration as tc
+
+        self._patch_common(monkeypatch)
+        called = {"saved": False}
+        monkeypatch.setattr(tc, "save_takeout_calibration", lambda *a, **k: called.update(saved=True))
+
+        import src.pipeline.run_pipeline as rp
+        rp._calibrate_takeout(_parse_args(["calibrate-takeout", "--dry-run"]))
+        assert called["saved"] is False

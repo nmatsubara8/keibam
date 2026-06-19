@@ -615,6 +615,68 @@ def _fetch_final_odds(args: argparse.Namespace) -> None:
     logger.info("[fetch-final-odds] 完了。永続化済みスナップショット累計 %d 件", len(merged))
 
 
+def _calibrate_takeout(args: argparse.Namespace) -> None:
+    """払戻実績 × 単勝勝率から券種別の実効控除率を逆算し永続化する。
+
+    的中組の確定オッズ（払戻金/100）と単勝由来の Harville 確率から
+    ``1 - t_eff = 確定オッズ × P_harville(的中組)`` を集計し、券種別の実効控除率を
+    models/takeout_calibration.json に保存する。連系推定オッズ（HistoricalOddsProvider）
+    の控除率に反映され、EV バックテスト/ライブ選定の精度を上げる。
+
+    単勝勝率の元テーブルは ingest 済みの results.pkl（全レースをカバー）。払戻実績も
+    全 8 券種で ingest 済みのため、過去データが多いほどサンプルが増え精度が上がる。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.constants._results_cols import ResultsCols
+    from src.pipeline._ingestion import load_raw
+    from src.preprocessing._return_processor import ReturnProcessor
+    from src.policies._takeout_calibration import calibrate_takeout_from_payouts
+    from src.policies._takeout_calibration import payout_lookup_from_return_processor
+    from src.policies._takeout_calibration import save_takeout_calibration
+    from src.policies._takeout_calibration import takeout_calibration_path
+    from src.policies._takeout_calibration import tansho_odds_by_race_from_table
+
+    if not os.path.exists(LocalPaths.RAW_RESULTS_PATH):
+        logger.warning("[calibrate-takeout] results.pkl がありません。先に ingest してください")
+        return
+    if not os.path.exists(LocalPaths.RAW_RETURN_TABLES_PATH):
+        logger.warning("[calibrate-takeout] return_tables.pkl がありません。先に ingest してください")
+        return
+
+    results = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    tansho_map = tansho_odds_by_race_from_table(
+        results, ResultsCols.UMABAN, ResultsCols.TANSHO_ODDS
+    )
+    if not tansho_map:
+        logger.warning(
+            "[calibrate-takeout] 単勝オッズを results から構築できませんでした"
+            "（列 '%s'/'%s' を確認）", ResultsCols.UMABAN, ResultsCols.TANSHO_ODDS,
+        )
+        return
+
+    rp = ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+    payout_lookup = payout_lookup_from_return_processor(rp)
+    min_samples = int(getattr(args, "min_samples", 20))
+    calib = calibrate_takeout_from_payouts(tansho_map, payout_lookup, min_samples=min_samples)
+
+    logger.info(
+        "[calibrate-takeout] %d レースの単勝 / %d 件の払戻実績から較正",
+        len(tansho_map), len(payout_lookup),
+    )
+    for bt, info in calib.items():
+        logger.info(
+            "[calibrate-takeout] %-11s takeout=%.4f (n=%d, %s)",
+            bt, info["takeout"], info["n"], info["source"],
+        )
+
+    if getattr(args, "dry_run", False):
+        logger.info("[calibrate-takeout] --dry-run 指定のため保存しません")
+        return
+    path = takeout_calibration_path("models")
+    save_takeout_calibration(calib, path)
+    logger.info("[calibrate-takeout] 保存しました → %s", path)
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="継続学習パイプライン")
     sub = parser.add_subparsers(dest="job", required=True)
@@ -731,6 +793,20 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="取得済みレースもスキップせず再取得する",
     )
 
+    # calibrate-takeout サブコマンド（払戻実績から券種別実効控除率を逆算）
+    ct_p = sub.add_parser(
+        "calibrate-takeout",
+        help="払戻実績×単勝勝率から券種別の実効控除率を逆算し models/takeout_calibration.json に保存",
+    )
+    ct_p.add_argument(
+        "--min-samples", dest="min_samples", type=int, default=20,
+        help="較正に必要な券種別の最小サンプル数（未満は JRA 公称控除率へフォールバック）",
+    )
+    ct_p.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="逆算結果をログ表示するのみで保存しない",
+    )
+
     # doctor サブコマンド（健全性点検）
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
@@ -837,6 +913,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "rebuild-featured": _rebuild_featured,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,
+        "calibrate-takeout": _calibrate_takeout,
         "retrain": _retrain,
         "doctor": _doctor,
     }
