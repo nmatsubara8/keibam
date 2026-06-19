@@ -243,16 +243,17 @@ class TestRebuildFeatured:
 
 class TestCalibrateTakeoutHandler:
     def _patch_common(self, monkeypatch):
-        import src.pipeline._ingestion as ing
+        import pandas as pd
+
         import src.pipeline.run_pipeline as rp
         import src.policies._takeout_calibration as tc
-        import src.preprocessing._return_processor as rpm
 
-        monkeypatch.setattr(rp.os.path, "exists", lambda p: True)
-        monkeypatch.setattr(ing, "load_raw", lambda path: object())
-        monkeypatch.setattr(rpm.ReturnProcessor, "__init__", lambda self, fp: None)
+        monkeypatch.setattr(rp, "_auto_migrate_db", lambda: None)
+        results = pd.DataFrame({"馬番": [1, 2], "単勝": [2.0, 4.0]}, index=["r1", "r1"])
+        monkeypatch.setattr(rp, "_load_raw_db_first", lambda alias, path: (results, "db"))
+        monkeypatch.setattr(rp, "_return_processor_db_first", lambda: (object(), "db"))
         monkeypatch.setattr(tc, "tansho_odds_by_race_from_table", lambda *a, **k: {"r1": {1: 2.0, 2: 4.0}})
-        monkeypatch.setattr(tc, "payout_lookup_from_return_processor", lambda rpobj: {})
+        monkeypatch.setattr(tc, "payout_lookup_from_return_processor", lambda rpobj: {("r1", "umaren", "1-2"): 5.0})
         monkeypatch.setattr(
             tc, "calibrate_takeout_from_payouts",
             lambda *a, **k: {"umaren": {"takeout": 0.22, "n": 30, "source": "calibrated"}},
@@ -280,3 +281,45 @@ class TestCalibrateTakeoutHandler:
         import src.pipeline.run_pipeline as rp
         rp._calibrate_takeout(_parse_args(["calibrate-takeout", "--dry-run"]))
         assert called["saved"] is False
+
+
+class TestLoadRawDbFirst:
+    def test_prefers_db_when_rows_present(self, monkeypatch):
+        import pandas as pd
+
+        import src.pipeline.run_pipeline as rp
+        import src.storage as storage
+
+        db_df = pd.DataFrame({"x": [1, 2, 3]})
+
+        class _Repo:
+            def has_rows(self, alias):
+                return True
+
+            def read(self, alias):
+                return db_df
+
+        monkeypatch.setattr(storage, "RawDataRepo", _Repo)
+        df, src = rp._load_raw_db_first("raw_results", "/nonexistent.pkl")
+        assert src == "db"
+        assert len(df) == 3
+
+    def test_falls_back_to_pickle_when_db_empty(self, monkeypatch):
+        import pandas as pd
+
+        import src.pipeline._ingestion as ing
+        import src.pipeline.run_pipeline as rp
+        import src.storage as storage
+
+        class _Repo:
+            def has_rows(self, alias):
+                return False
+
+            def read(self, alias):
+                return pd.DataFrame()
+
+        monkeypatch.setattr(storage, "RawDataRepo", _Repo)
+        monkeypatch.setattr(ing, "load_raw", lambda path: pd.DataFrame({"y": [9]}))
+        df, src = rp._load_raw_db_first("raw_results", "/whatever.pkl")
+        assert src == "pickle"
+        assert df["y"].tolist() == [9]

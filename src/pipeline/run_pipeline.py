@@ -615,6 +615,49 @@ def _fetch_final_odds(args: argparse.Namespace) -> None:
     logger.info("[fetch-final-odds] 完了。永続化済みスナップショット累計 %d 件", len(merged))
 
 
+def _load_raw_db_first(alias: str, pickle_path: str):
+    """raw データを DB 優先で読む（DB が source of truth。stale な pickle を回避）。
+
+    DB（RawDataRepo）に行があれば DB を、無ければ pickle を返す。``(df, source)`` を返す。
+    DB 復元後に pickle が古いまま（merge バグ等で縮小）でも最新データを使えるようにする。
+    """
+    import pandas as pd
+
+    from src.pipeline._ingestion import load_raw
+
+    try:
+        from src.storage import RawDataRepo
+
+        repo = RawDataRepo()
+        if repo.has_rows(alias):
+            df = repo.read(alias)
+            if df is not None and not df.empty:
+                return df, "db"
+    except Exception as e:  # noqa: BLE001 — DB 不可時は pickle にフォールバック
+        logger.warning("[calibrate-takeout] DB(%s) 読込失敗、pickle にフォールバック: %s", alias, e)
+    df = load_raw(pickle_path)
+    return (df if df is not None else pd.DataFrame()), "pickle"
+
+
+def _return_processor_db_first():
+    """ReturnProcessor を DB 優先で構築する（DB にあれば一時 pickle 経由で読む）。"""
+    import tempfile
+
+    from src.constants._local_paths import LocalPaths
+    from src.preprocessing._return_processor import ReturnProcessor
+
+    df, source = _load_raw_db_first("raw_return_tables", LocalPaths.RAW_RETURN_TABLES_PATH)
+    if source == "db" and not df.empty:
+        with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
+            tmp = tf.name
+        try:
+            df.to_pickle(tmp)
+            return ReturnProcessor(tmp), "db"
+        finally:
+            os.unlink(tmp)
+    return ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH), "pickle"
+
+
 def _calibrate_takeout(args: argparse.Namespace) -> None:
     """払戻実績 × 単勝勝率から券種別の実効控除率を逆算し永続化する。
 
@@ -623,27 +666,25 @@ def _calibrate_takeout(args: argparse.Namespace) -> None:
     models/takeout_calibration.json に保存する。連系推定オッズ（HistoricalOddsProvider）
     の控除率に反映され、EV バックテスト/ライブ選定の精度を上げる。
 
-    単勝勝率の元テーブルは ingest 済みの results.pkl（全レースをカバー）。払戻実績も
-    全 8 券種で ingest 済みのため、過去データが多いほどサンプルが増え精度が上がる。
+    単勝勝率・払戻実績はいずれも DB（source of truth）優先で読む。pickle が DB 復元後に
+    古いまま（merge バグで縮小等）でも、最新の全レースで較正できる。
     """
-    from src.constants._local_paths import LocalPaths
     from src.constants._results_cols import ResultsCols
-    from src.pipeline._ingestion import load_raw
-    from src.preprocessing._return_processor import ReturnProcessor
     from src.policies._takeout_calibration import calibrate_takeout_from_payouts
     from src.policies._takeout_calibration import payout_lookup_from_return_processor
     from src.policies._takeout_calibration import save_takeout_calibration
     from src.policies._takeout_calibration import takeout_calibration_path
     from src.policies._takeout_calibration import tansho_odds_by_race_from_table
 
-    if not os.path.exists(LocalPaths.RAW_RESULTS_PATH):
-        logger.warning("[calibrate-takeout] results.pkl がありません。先に ingest してください")
-        return
-    if not os.path.exists(LocalPaths.RAW_RETURN_TABLES_PATH):
-        logger.warning("[calibrate-takeout] return_tables.pkl がありません。先に ingest してください")
-        return
+    # pickle のみ存在し DB が空なら移行（DB を source of truth に揃える）
+    _auto_migrate_db()
 
-    results = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    from src.constants._local_paths import LocalPaths
+
+    results, res_src = _load_raw_db_first("raw_results", LocalPaths.RAW_RESULTS_PATH)
+    if results is None or results.empty:
+        logger.warning("[calibrate-takeout] results が空です。先に ingest してください")
+        return
     tansho_map = tansho_odds_by_race_from_table(
         results, ResultsCols.UMABAN, ResultsCols.TANSHO_ODDS
     )
@@ -654,15 +695,24 @@ def _calibrate_takeout(args: argparse.Namespace) -> None:
         )
         return
 
-    rp = ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+    rp, ret_src = _return_processor_db_first()
     payout_lookup = payout_lookup_from_return_processor(rp)
     min_samples = int(getattr(args, "min_samples", 20))
     calib = calibrate_takeout_from_payouts(tansho_map, payout_lookup, min_samples=min_samples)
 
+    # カバレッジ診断（単勝レースと払戻レースの重なりが較正サンプル数を決める）
+    payout_races = {k[0] for k in payout_lookup}
+    overlap = set(tansho_map) & payout_races
     logger.info(
-        "[calibrate-takeout] %d レースの単勝 / %d 件の払戻実績から較正",
-        len(tansho_map), len(payout_lookup),
+        "[calibrate-takeout] 単勝 %d レース(%s) / 払戻 %d 件・%d レース(%s) / 重なり %d レース",
+        len(tansho_map), res_src, len(payout_lookup), len(payout_races), ret_src, len(overlap),
     )
+    if len(overlap) < min_samples:
+        logger.warning(
+            "[calibrate-takeout] 単勝×払戻の重なりレースが %d 件と少なく、多くの券種が公称値に"
+            "フォールバックします。results（単勝の元）の取得範囲を払戻と揃えてください。",
+            len(overlap),
+        )
     for bt, info in calib.items():
         logger.info(
             "[calibrate-takeout] %-11s takeout=%.4f (n=%d, %s)",
