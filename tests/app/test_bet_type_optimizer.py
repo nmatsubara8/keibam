@@ -82,6 +82,23 @@ def test_backtest_bet_type_places_umaren_bets():
     assert not per_race.empty
 
 
+def test_compare_calibration_backtest_structure():
+    from app._bet_type_optimizer import compare_calibration_backtest
+
+    ai = _FakeAI(_ev_score_table())
+    rp = _return_tables()
+    calibrated = {BetType.UMATAN: 0.28, BetType.SANRENTAN: 0.28}  # 順序系を高め
+    df = compare_calibration_backtest(
+        ai, pd.DataFrame(), rp, calibrated, bet_types=[BetType.UMAREN, BetType.UMATAN],
+    )
+    assert set(df["bet_type"]) == {BetType.UMAREN, BetType.UMATAN}
+    for col in ("n_nominal", "return_nominal", "n_calibrated", "return_calibrated", "delta_return"):
+        assert col in df.columns
+    # 馬連は較正 takeout を渡していない → nominal と同条件で n が一致する
+    umaren = df[df["bet_type"] == BetType.UMAREN].iloc[0]
+    assert umaren["n_nominal"] == umaren["n_calibrated"]
+
+
 def test_optimize_bet_type_returns_best():
     ai = _FakeAI(_ev_score_table())
     rp = _return_tables()

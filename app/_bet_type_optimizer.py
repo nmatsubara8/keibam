@@ -192,3 +192,51 @@ def results_to_frame(optimize_result: dict) -> pd.DataFrame:
     obj = optimize_result.get("objective", "return_rate")
     sort_col = obj if obj in df.columns else "return_rate"
     return df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+
+
+def compare_calibration_backtest(
+    ai,
+    featured_slice: pd.DataFrame,
+    return_processor,
+    calibrated_takeout: Mapping[str, float],
+    *,
+    bet_types=None,
+    params_map: Mapping | None = None,
+    nominal_takeout: float = 0.2,
+) -> pd.DataFrame:
+    """券種ごとに「公称控除率」vs「較正済み控除率」のバックテストを比較する。
+
+    控除率は連系推定オッズ（HistoricalOddsProvider）にのみ効くため、同じ EV 閾値でも
+    選定される買い目が変わる（較正で順序系の推定オッズが下がる→EV 低下→買い目が絞られる）。
+    実払戻での回収率がどう変わるかを A/B 比較する。単勝は実オッズ直returnで控除率の影響を
+    受けないため両者同値になる。
+
+    Returns
+    -------
+    DataFrame[bet_type, n_nominal, return_nominal, hit_nominal,
+              n_calibrated, return_calibrated, hit_calibrated, delta_return]
+    """
+    from src.policies._bet_type_params import OPTIMIZABLE_BET_TYPES
+    from src.policies._bet_type_params import default_params
+
+    targets = list(bet_types) if bet_types is not None else list(OPTIMIZABLE_BET_TYPES)
+    rows = []
+    for bt in targets:
+        params = (params_map or {}).get(bt) or default_params(bt)
+        nom, _ = backtest_bet_type(ai, featured_slice, return_processor, bt, params, nominal_takeout)
+        cal, _ = backtest_bet_type(ai, featured_slice, return_processor, bt, params, calibrated_takeout)
+        r_nom = nom.get("return_rate")
+        r_cal = cal.get("return_rate")
+        rows.append({
+            "bet_type": bt,
+            "n_nominal": nom.get("n_bets", 0),
+            "return_nominal": r_nom,
+            "hit_nominal": nom.get("hit_rate"),
+            "n_calibrated": cal.get("n_bets", 0),
+            "return_calibrated": r_cal,
+            "hit_calibrated": cal.get("hit_rate"),
+            "delta_return": (
+                (r_cal - r_nom) if (r_nom is not None and r_cal is not None) else None
+            ),
+        })
+    return pd.DataFrame(rows)
