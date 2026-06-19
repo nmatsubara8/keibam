@@ -115,9 +115,46 @@ def _rebuild_one(alias_label: str, getter, raw_path: str, temp_glob: str, db_ali
     return df
 
 
-def _execute() -> None:
+def _db_race_id_health(alias: str) -> dict:
+    """DB 上の raw テーブルの race_id 健全性（再実行ガード用）。"""
+    try:
+        from src.storage import RawDataRepo
+
+        repo = RawDataRepo()
+        if repo.has_rows(alias):
+            return _race_id_health(repo.read(alias))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[recover] DB(%s) 健全性チェック失敗: %s", alias, e)
+    return {"rows": 0, "races": 0, "valid12": 0, "bad": 0}
+
+
+def _already_healthy() -> bool:
+    """DB の results/return が既に健全（破損0・十分なレース数）なら True。"""
+    rh = _db_race_id_health("raw_results")
+    th = _db_race_id_health("raw_return_tables")
+    return (
+        rh["bad"] == 0 and rh["races"] > 1000
+        and th["bad"] == 0 and th["races"] > 1000
+    )
+
+
+def _execute(force: bool = False) -> None:
     from src.preparing._get_rawdata import get_rawdata_results
     from src.preparing._get_rawdata import get_rawdata_return
+
+    if not force and _already_healthy():
+        rh = _db_race_id_health("raw_results")
+        th = _db_race_id_health("raw_return_tables")
+        logger.warning(
+            "[recover] DB は既に健全です（results %d レース / return %d レース、破損0）。"
+            "復旧は完了済みのため再実行をスキップします（やり直すなら --force）。",
+            rh["races"], th["races"],
+        )
+        logger.warning(
+            "[recover] results.pkl が消えている場合は .bak から戻すか、"
+            "DB が正本なので calibrate-takeout 等はそのまま実行できます。",
+        )
+        return
 
     n_cache = _count_cached(RACE_HTML_DIR)
     if n_cache == 0:
@@ -157,9 +194,13 @@ def main() -> None:
     setup_logging()
     ap = argparse.ArgumentParser(description="HTML キャッシュから race_id 破損を復旧")
     ap.add_argument("--execute", action="store_true", help="実際に復旧する（既定は調査のみ）")
+    ap.add_argument(
+        "--force", action="store_true",
+        help="DB が既に健全でも強制的に再パース・再構築する",
+    )
     args = ap.parse_args()
     if args.execute:
-        _execute()
+        _execute(force=args.force)
     else:
         _investigate()
 
