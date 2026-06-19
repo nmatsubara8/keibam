@@ -2,10 +2,14 @@
 
 import datetime as dt
 
+import pandas as pd
+
 from app._odds_compare import available_combo_targets
 from app._odds_compare import compare_combo_odds
+from app._odds_compare import final_odds_lookup_from_payouts
 from app._odds_compare import tansho_odds_by_race
 from src.constants._bet_types import BetType
+from src.constants._bet_types import combo_key
 from src.preparing._odds_snapshot import make_snapshot
 
 _POST = dt.datetime(2024, 1, 1, 15, 40)
@@ -65,3 +69,55 @@ def test_compare_without_tansho_harville_is_nan():
 def test_compare_empty_when_no_actuals():
     snaps = [_snap(BetType.TANSHO, (1,), 2.0)]
     assert compare_combo_odds(snaps, "r1", BetType.UMAREN).empty
+
+
+# ---------------------------------------------------------------------------
+# 払戻由来の確定オッズ lookup（過去レースの確実なソース）
+# ---------------------------------------------------------------------------
+
+class _FakeRP:
+    def __init__(self, tables):
+        self.preprocessed_data = tables
+
+
+def test_final_odds_lookup_from_payouts():
+    tables = {
+        # 単勝: win=馬番(int), return=払戻円
+        BetType.TANSHO: pd.DataFrame({"win_0": [1], "return_0": [240]}, index=["r1"]),
+        # 馬連: win=組合せ list, return=円
+        BetType.UMAREN: pd.DataFrame({"win_0": [[1, 2]], "return_0": [1230]}, index=["r1"]),
+        # 三連単: win="1→2→3" 文字列
+        BetType.SANRENTAN: pd.DataFrame({"win_0": ["1→2→3"], "return_0": [45600]}, index=["r1"]),
+    }
+    lookup = final_odds_lookup_from_payouts(_FakeRP(tables))
+    assert lookup[("r1", BetType.TANSHO, combo_key(BetType.TANSHO, [1]))] == 2.4
+    assert lookup[("r1", BetType.UMAREN, "1-2")] == 12.3
+    assert lookup[("r1", BetType.SANRENTAN, "1-2-3")] == 456.0
+
+
+def test_final_odds_lookup_skips_empty_cells():
+    tables = {
+        BetType.UMAREN: pd.DataFrame(
+            {"win_0": [[1, 2]], "return_0": [600], "win_1": [0], "return_1": [0]},
+            index=["r1"],
+        ),
+    }
+    lookup = final_odds_lookup_from_payouts(_FakeRP(tables))
+    assert lookup == {("r1", BetType.UMAREN, "1-2"): 6.0}
+
+
+def test_final_odds_lookup_feeds_stored_provider():
+    """払戻由来 lookup を StoredFinalOddsProvider に渡して照会できる。"""
+    from src.policies._odds_provider import AbstractOddsProvider
+    from src.policies._odds_provider import StoredFinalOddsProvider
+
+    class _FB(AbstractOddsProvider):
+        def get_odds(self, race_id, bet_type, combo):
+            return -1.0
+
+    tables = {BetType.UMAREN: pd.DataFrame({"win_0": [[2, 1]], "return_0": [1230]}, index=["r1"])}
+    lookup = final_odds_lookup_from_payouts(_FakeRP(tables))
+    provider = StoredFinalOddsProvider(lookup, fallback=_FB())
+    # 順不同なので (1,2)/(2,1) どちらでも実績にヒット
+    assert provider.get_odds("r1", BetType.UMAREN, (1, 2)) == 12.3
+    assert provider.get_odds("r1", BetType.UMAREN, (5, 6)) == -1.0  # 非的中→fallback

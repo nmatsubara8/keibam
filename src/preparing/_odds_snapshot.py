@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import logging
+import os
 import re
 from typing import Iterable
 from typing import Sequence
 
 from src.constants._bet_types import BetType
 from src.constants._odds_phases import classify_phase
+
+logger = logging.getLogger(__name__)
 
 
 # netkeiba オッズページの type コード（馬券種 → ?type=bN）。
@@ -357,4 +361,31 @@ class OddsSnapshotScraper:
         rows = parse_combo_odds_html(html, bet_type)
         if not rows and bet_type in (BetType.TANSHO, BetType.FUKUSHO):
             rows = parse_win_odds_html(html)
+        if not rows:
+            self._diagnose_empty(race_id, bet_type, html)
         return snapshots_from_rows(race_id, bet_type, rows, post_time, captured_at)
+
+    @staticmethod
+    def _diagnose_empty(race_id: str, bet_type: str, html: str) -> None:
+        """取得 0 件のとき、生 HTML を解析して原因の切り分け情報を出す。
+
+        KEIBA_ODDS_DEBUG=1 のときのみ動作（通常運用ではノイズを出さない）:
+        - 生 HTML に ``id="odds-"`` セルがあるのにパース 0 件 → パーサ/セレクタ問題。
+        - 無い + 「終了/提供前」等の文言 → ページが確定オッズを配信していない。
+        KEIBA_ODDS_DEBUG_DIR 指定時は HTML をファイルへダンプして目視確認できる。
+        """
+        if os.environ.get("KEIBA_ODDS_DEBUG") not in ("1", "true", "True"):
+            return
+        has_odds_id = 'id="odds-' in html
+        markers = [m for m in ("オッズ", "発売", "確定", "終了", "提供") if m in html]
+        logger.warning(
+            "[odds-debug] race=%s bet=%s 0件: html_len=%d odds_idセル=%s 文言=%s",
+            race_id, bet_type, len(html), has_odds_id, markers,
+        )
+        dump_dir = os.environ.get("KEIBA_ODDS_DEBUG_DIR")
+        if dump_dir:
+            os.makedirs(dump_dir, exist_ok=True)
+            path = os.path.join(dump_dir, f"{race_id}_{bet_type}.html")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html)
+            logger.warning("[odds-debug] HTML をダンプ: %s", path)
