@@ -79,16 +79,21 @@ def _investigate() -> None:
     print(f"  race(.bin)   {_count_cached(RACE_HTML_DIR)} 件  ({RACE_HTML_DIR})")
 
     print("\n■ 現在の正本（results.pkl / return_tables.pkl）の race_id 健全性")
-    for label, path in [
-        ("results", LocalPaths.RAW_RESULTS_PATH),
-        ("return_tables", LocalPaths.RAW_RETURN_TABLES_PATH),
+    # race_info は date 列の供給源（merge の groupby を支える）。少数だと featured が
+    # 数十レースに化けるため、results/return と同様に健全性を確認する。
+    for label, path, alias in [
+        ("results", LocalPaths.RAW_RESULTS_PATH, "raw_results"),
+        ("race_info", LocalPaths.RAW_RACE_INFO_PATH, "raw_race_info"),
+        ("return_tables", LocalPaths.RAW_RETURN_TABLES_PATH, "raw_return_tables"),
     ]:
         df = pd.read_pickle(path) if os.path.exists(path) else pd.DataFrame()
         h = _race_id_health(df)
-        print(f"  {label:<14} 行={h['rows']} レース={h['races']} "
-              f"12桁={h['valid12']} 非12桁(破損)={h['bad']}")
+        dbh = _db_race_id_health(alias)
+        print(f"  {label:<14} pkl行={h['rows']} pklレース={h['races']} 非12桁={h['bad']}"
+              f"  |  DBレース={dbh['races']} DB非12桁={dbh['bad']}")
 
-    print("\n→ 非12桁(破損)が多ければ復旧対象。--execute で HTML から作り直します。")
+    print("\n→ レース数が極端に少ない/非12桁が多いテーブルは復旧対象。--execute で作り直します。")
+    print("   （results/return が健全でも race_info が少数なら featured が数十レースに化けます）")
     print("=" * 72)
 
 
@@ -128,32 +133,40 @@ def _db_race_id_health(alias: str) -> dict:
     return {"rows": 0, "races": 0, "valid12": 0, "bad": 0}
 
 
-def _already_healthy() -> bool:
-    """DB の results/return が既に健全（破損0・十分なレース数）なら True。"""
-    rh = _db_race_id_health("raw_results")
-    th = _db_race_id_health("raw_return_tables")
-    return (
-        rh["bad"] == 0 and rh["races"] > 1000
-        and th["bad"] == 0 and th["races"] > 1000
-    )
+def _table_healthy(alias: str) -> bool:
+    """DB の当該テーブルが健全（race_id 破損0・1000レース超）か。"""
+    h = _db_race_id_health(alias)
+    return h["bad"] == 0 and h["races"] > 1000
 
 
 def _execute(force: bool = False) -> None:
+    from src.preparing._get_rawdata import get_rawdata_info
     from src.preparing._get_rawdata import get_rawdata_results
     from src.preparing._get_rawdata import get_rawdata_return
 
-    if not force and _already_healthy():
-        rh = _db_race_id_health("raw_results")
-        th = _db_race_id_health("raw_return_tables")
-        logger.warning(
-            "[recover] DB は既に健全です（results %d レース / return %d レース、破損0）。"
-            "復旧は完了済みのため再実行をスキップします（やり直すなら --force）。",
-            rh["races"], th["races"],
-        )
-        logger.warning(
-            "[recover] results.pkl が消えている場合は .bak から戻すか、"
-            "DB が正本なので calibrate-takeout 等はそのまま実行できます。",
-        )
+    # data/html/race から再パースできる3テーブル（いずれも race_id をファイル名から付与）。
+    # race_info は merge の groupby("date") を支える「date」列の供給源で、これが古いと
+    # 全レースが少数に化ける（results が大量でも featured が数十レースになる）。
+    targets = [
+        ("results", get_rawdata_results, LocalPaths.RAW_RESULTS_PATH,
+         "data/tmp/race_results*/*", "raw_results"),
+        ("race_info", get_rawdata_info, LocalPaths.RAW_RACE_INFO_PATH,
+         "data/tmp/race_info*/*", "raw_race_info"),
+        ("return_tables", get_rawdata_return, LocalPaths.RAW_RETURN_TABLES_PATH,
+         "data/tmp/race_return*/*", "raw_return_tables"),
+    ]
+
+    # 既に健全なテーブルはスキップ（--force で全再構築）。テーブル単位の冪等性。
+    todo = []
+    for label, getter, path, tmp, alias in targets:
+        if not force and _table_healthy(alias):
+            h = _db_race_id_health(alias)
+            logger.info("[recover] %s は既に健全（%d レース、破損0）→ スキップ", label, h["races"])
+        else:
+            todo.append((label, getter, path, tmp, alias))
+
+    if not todo:
+        logger.warning("[recover] 対象テーブルは全て健全です。再構築不要（やり直すなら --force）。")
         return
 
     n_cache = _count_cached(RACE_HTML_DIR)
@@ -161,30 +174,28 @@ def _execute(force: bool = False) -> None:
         logger.error("[recover] race HTMLキャッシュ(%s)が空です。復旧できません", RACE_HTML_DIR)
         return
     logger.info(
-        "[recover] race HTMLキャッシュ %d 件をローカル再パースします"
-        "（netkeiba 非アクセス。所要は件数に比例し数十分〜の場合あり）", n_cache,
+        "[recover] %d テーブルを race HTMLキャッシュ %d 件からローカル再パースします: %s"
+        "（netkeiba 非アクセス。1テーブルあたり数十分〜の場合あり）",
+        len(todo), n_cache, [t[0] for t in todo],
     )
 
-    # DB ファイルも退避
-    if os.path.exists(LocalPaths.DB_PATH):
+    # DB ファイルも退避（初回のみ）
+    if os.path.exists(LocalPaths.DB_PATH) and not os.path.exists(LocalPaths.DB_PATH + ".bak"):
         _backup(LocalPaths.DB_PATH)
 
-    res = _rebuild_one(
-        "results", get_rawdata_results, LocalPaths.RAW_RESULTS_PATH,
-        "data/tmp/race_results*/*", "raw_results",
-    )
-    ret = _rebuild_one(
-        "return_tables", get_rawdata_return, LocalPaths.RAW_RETURN_TABLES_PATH,
-        "data/tmp/race_return*/*", "raw_return_tables",
-    )
+    results: dict = {}
+    for label, getter, path, tmp, alias in todo:
+        results[label] = _rebuild_one(label, getter, path, tmp, alias)
 
     print("\n" + "=" * 72)
-    rh, th = _race_id_health(res), _race_id_health(ret)
-    ok = rh["bad"] == 0 and rh["races"] > 100 and th["bad"] == 0
-    print(f"results       行={rh['rows']} レース={rh['races']} 非12桁={rh['bad']}")
-    print(f"return_tables 行={th['rows']} レース={th['races']} 非12桁={th['bad']}")
-    print(f"結果: {'✅ 復旧成功（race_id 正常）' if ok else '⚠ 要確認（非12桁が残存 or レース数が少ない）'}")
-    print("次: python -m src.pipeline.run_pipeline calibrate-takeout --dry-run で重なりを確認")
+    all_ok = True
+    for label, df in results.items():
+        h = _race_id_health(df)
+        ok = h["bad"] == 0 and h["races"] > 100
+        all_ok = all_ok and ok
+        print(f"{label:<14} 行={h['rows']} レース={h['races']} 非12桁={h['bad']}")
+    print(f"結果: {'✅ 復旧成功（race_id 正常）' if all_ok else '⚠ 要確認（非12桁残存 or レース数僅少）'}")
+    print("次: rebuild-featured → calibrate-takeout --dry-run で重なりを確認")
     print("=" * 72)
 
 
