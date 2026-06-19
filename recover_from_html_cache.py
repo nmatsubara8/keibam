@@ -120,6 +120,81 @@ def _rebuild_one(alias_label: str, getter, raw_path: str, temp_glob: str, db_ali
     return df
 
 
+# ---------------------------------------------------------------------------
+# 並列再パース（CPU バウンドな HTML 解析をコア数分だけ並列化する）
+# ---------------------------------------------------------------------------
+
+# race ページ HTML から各テーブルを作る「1ファイル→DataFrame」のパース関数名。
+# これらは src.preparing.modules の module-level 関数（path のみ受け取り、race_id を
+# ファイル名から付与する自己完結関数）なので multiprocessing で安全に並列化できる。
+_PARSE_FN = {
+    "raw_results": "create_raw_race_results",
+    "raw_race_info": "create_raw_race_info",
+    "raw_return_tables": "create_raw_race_return",
+}
+
+
+def _parse_one_bin(task):
+    """(parse_fn_name, bin_path) -> DataFrame or None。テーブル無し/例外は欠損(None)。"""
+    parse_fn_name, path = task
+    import src.preparing.modules as _m
+
+    fn = getattr(_m, parse_fn_name)
+    try:
+        df = fn(path)
+    except (ValueError, IndexError):
+        return None
+    except Exception:  # noqa: BLE001 — 壊れた/旧式 HTML は欠損として無視
+        return None
+    if df is None or getattr(df, "empty", True):
+        return None
+    return df
+
+
+def _rebuild_one_parallel(
+    label: str, db_alias: str, raw_path: str, temp_glob: str, workers: int
+) -> "pd.DataFrame":
+    """data/html/race/*.bin を workers 並列でパースし、pkl + DB を作り直す。"""
+    import glob
+    import multiprocessing as mp
+
+    from tqdm.auto import tqdm
+
+    from src.pipeline._ingestion import save_raw
+    from src.storage import RawDataRepo
+
+    parse_fn_name = _PARSE_FN[db_alias]
+    bins = sorted(glob.glob(os.path.join(RACE_HTML_DIR, "*.bin")))
+    _backup(raw_path)
+    _clear_pickle_and_temp(raw_path, temp_glob)
+
+    logger.info(
+        "💾 ローカル並列解析: %s を %d 件のローカル HTML から %d 並列で作成します"
+        "（ネットワーク非アクセス＝ポライトネス対象外）", label, len(bins), workers,
+    )
+    tasks = [(parse_fn_name, p) for p in bins]
+    frames: list = []
+    with mp.Pool(processes=workers) as pool:
+        for df in tqdm(
+            pool.imap_unordered(_parse_one_bin, tasks, chunksize=64),
+            total=len(tasks), desc=f"⚡ {label} 並列解析({workers}並列)", unit="件", leave=True,
+        ):
+            if df is not None:
+                frames.append(df)
+
+    full = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    h = _race_id_health(full)
+    logger.info(
+        "[recover] %s 並列再生成: 行=%d レース=%d 非12桁=%d", label, h["rows"], h["races"], h["bad"],
+    )
+    repo = RawDataRepo()
+    repo.clear(db_alias)
+    if not full.empty:
+        save_raw(full, raw_path)  # pickle 保存 + DB upsert
+    logger.info("[recover] %s: DB(%s) を作り直しました", label, db_alias)
+    return full
+
+
 def _db_race_id_health(alias: str) -> dict:
     """DB 上の raw テーブルの race_id 健全性（再実行ガード用）。"""
     try:
@@ -139,7 +214,7 @@ def _table_healthy(alias: str) -> bool:
     return h["bad"] == 0 and h["races"] > 1000
 
 
-def _execute(force: bool = False) -> None:
+def _execute(force: bool = False, workers: int = 0) -> None:
     from src.preparing._get_rawdata import get_rawdata_info
     from src.preparing._get_rawdata import get_rawdata_results
     from src.preparing._get_rawdata import get_rawdata_return
@@ -183,9 +258,22 @@ def _execute(force: bool = False) -> None:
     if os.path.exists(LocalPaths.DB_PATH) and not os.path.exists(LocalPaths.DB_PATH + ".bak"):
         _backup(LocalPaths.DB_PATH)
 
+    # 並列数の解決: 0=自動（CPU バウンドなので物理コア相当、論理数-2 を上限に）。
+    # 1 を指定すると従来の直列パスにフォールバックする。
+    if workers <= 0:
+        workers = max(1, (os.cpu_count() or 4) - 2)
+    use_parallel = workers > 1
+    logger.info(
+        "[recover] 再パース方式: %s（workers=%d, CPU=%s）",
+        "並列" if use_parallel else "直列", workers, os.cpu_count(),
+    )
+
     results: dict = {}
     for label, getter, path, tmp, alias in todo:
-        results[label] = _rebuild_one(label, getter, path, tmp, alias)
+        if use_parallel:
+            results[label] = _rebuild_one_parallel(label, alias, path, tmp, workers)
+        else:
+            results[label] = _rebuild_one(label, getter, path, tmp, alias)
 
     print("\n" + "=" * 72)
     all_ok = True
@@ -209,9 +297,13 @@ def main() -> None:
         "--force", action="store_true",
         help="DB が既に健全でも強制的に再パース・再構築する",
     )
+    ap.add_argument(
+        "--workers", type=int, default=0,
+        help="並列ワーカー数（0=自動: CPU論理数-2、1=直列フォールバック）",
+    )
     args = ap.parse_args()
     if args.execute:
-        _execute(force=args.force)
+        _execute(force=args.force, workers=args.workers)
     else:
         _investigate()
 
