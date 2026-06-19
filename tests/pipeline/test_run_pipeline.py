@@ -203,3 +203,26 @@ class TestResolveDataSource:
         class _A:
             source = None
         assert _resolve_data_source(_A()) == "jravan"
+
+
+class TestRebuildFeatured:
+    def test_parses(self):
+        args = _parse_args(["rebuild-featured"])
+        assert args.job == "rebuild-featured"
+
+    def test_rebuild_calls_builder_and_saves(self, monkeypatch, tmp_path):
+        """_rebuild_featured は _build_featured_data の結果を save_raw で保存する。"""
+        import pandas as pd
+
+        import src.pipeline._ingestion as ing
+        import src.pipeline.run_pipeline as rp
+
+        featured = pd.DataFrame({"x": [1, 2]}, index=["r1", "r1"])
+        monkeypatch.setattr(rp, "_build_featured_data", lambda cfg: featured)
+        saved = {}
+        monkeypatch.setattr(ing, "save_raw", lambda df, path: saved.setdefault("df", df))
+        monkeypatch.setattr(ing, "_save_featured_phase2", lambda df, cfg: saved.setdefault("phase2", True))
+
+        rp._rebuild_featured(_parse_args(["rebuild-featured"]))
+        assert saved["df"] is featured
+        assert saved["phase2"] is True

@@ -148,6 +148,71 @@ def _scrape_new_horse_data(source=None) -> int:
     return len(missing)
 
 
+def _build_featured_data(config):
+    """raw pickle 群から DataMerger + FeatureEngineering で featured_data を生成する。
+
+    スクレイプ・取得は行わず、現在の data/raw/*.pkl から特徴量を再構築する。
+    ingest（IngestJob 経由）と rebuild-featured で共用する単一の生成ロジック。
+    """
+    from src.preprocessing._data_merger import DataMerger
+    from src.preprocessing._feature_engineering import FeatureEngineering
+    from src.preprocessing._horse_info_processor import HorseInfoProcessor
+    from src.preprocessing._horse_results_processor import HorseResultsProcessor
+    from src.preprocessing._peds_processor import PedsProcessor
+    from src.preprocessing._race_info_processor import RaceInfoProcessor
+    from src.preprocessing._results_processor import ResultsProcessor
+
+    merger = DataMerger(
+        ResultsProcessor(config.raw_results_path),
+        RaceInfoProcessor(config.raw_race_info_path),
+        HorseResultsProcessor(config.raw_horse_results_path),
+        HorseInfoProcessor(config.raw_horse_info_path),
+        PedsProcessor(config.raw_peds_path),
+        target_cols=["着順"],
+        group_cols=["騎手"],
+    )
+    merger.merge()
+    fe = (
+        FeatureEngineering(merger)
+        .add_interval()
+        .add_agedays()
+        .add_interaction_features()  # §2b: before dummification
+        .add_race_level_zscore()     # §2g: after all aggregate features
+        .dumminize_kaisai()
+        .dumminize_sex()
+        .dumminize_weather()
+        .dumminize_race_type()
+        .dumminize_ground_state1()
+        .dumminize_ground_state2()
+        .dumminize_around()
+        .dumminize_race_class()
+        .encode_horse_id()
+        .encode_jockey_id()
+        .encode_trainer_id()
+        .encode_owner_id()
+        .encode_breeder_id()
+    )
+    return fe.featured_data
+
+
+def _rebuild_featured(args: argparse.Namespace) -> None:
+    """raw pickle から featured_data を再生成する（スクレイプ・取得なし）。
+
+    DB から raw pickle を復元した後など、raw は更新済みだが featured が古い場合に使う。
+    """
+    from src.pipeline._ingestion import IngestConfig, _save_featured_phase2, save_raw
+
+    cfg = IngestConfig()
+    featured = _build_featured_data(cfg)
+    save_raw(featured, cfg.featured_data_path)
+    _save_featured_phase2(featured, cfg)
+    n_races = featured.index.nunique() if hasattr(featured, "index") else 0
+    logger.info(
+        "[rebuild-featured] featured_data 再生成完了: %d 行 / %d レース → %s",
+        len(featured), n_races, cfg.featured_data_path,
+    )
+
+
 def _ingest(args: argparse.Namespace) -> None:
     """取込ジョブを実行する（selenium / bs4 が実行時に必要）。"""
     from src.pipeline._ingestion import IngestConfig
@@ -225,45 +290,7 @@ def _ingest(args: argparse.Namespace) -> None:
         """raw pickles から FeatureEngineering を実行する実 adapter。"""
 
         def build(self, config):
-            from src.preprocessing._data_merger import DataMerger
-            from src.preprocessing._feature_engineering import FeatureEngineering
-            from src.preprocessing._horse_info_processor import HorseInfoProcessor
-            from src.preprocessing._horse_results_processor import HorseResultsProcessor
-            from src.preprocessing._peds_processor import PedsProcessor
-            from src.preprocessing._race_info_processor import RaceInfoProcessor
-            from src.preprocessing._results_processor import ResultsProcessor
-
-            merger = DataMerger(
-                ResultsProcessor(config.raw_results_path),
-                RaceInfoProcessor(config.raw_race_info_path),
-                HorseResultsProcessor(config.raw_horse_results_path),
-                HorseInfoProcessor(config.raw_horse_info_path),
-                PedsProcessor(config.raw_peds_path),
-                target_cols=["着順"],
-                group_cols=["騎手"],
-            )
-            merger.merge()
-            fe = (
-                FeatureEngineering(merger)
-                .add_interval()
-                .add_agedays()
-                .add_interaction_features()  # §2b: before dummification
-                .add_race_level_zscore()     # §2g: after all aggregate features
-                .dumminize_kaisai()
-                .dumminize_sex()
-                .dumminize_weather()
-                .dumminize_race_type()
-                .dumminize_ground_state1()
-                .dumminize_ground_state2()
-                .dumminize_around()
-                .dumminize_race_class()
-                .encode_horse_id()
-                .encode_jockey_id()
-                .encode_trainer_id()
-                .encode_owner_id()
-                .encode_breeder_id()
-            )
-            return fe.featured_data
+            return _build_featured_data(config)
 
     job = IngestJob(_ScrapingFetcher(), _FullPipelineBuilder(), cfg)
     result = job.run(args.race_ids)
@@ -663,6 +690,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="BaseModelsConfig JSON ファイルパス",
     )
 
+    # rebuild-featured サブコマンド（raw から featured を再生成。取得なし）
+    sub.add_parser(
+        "rebuild-featured",
+        help="raw pickle から featured_data を再生成する（スクレイプなし。DB 復元後等に使用）",
+    )
+
     # evaluate-odds-dynamics サブコマンド
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
     eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
@@ -801,6 +834,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_args(argv)
     handlers = {
         "ingest": _ingest,
+        "rebuild-featured": _rebuild_featured,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,
         "retrain": _retrain,
