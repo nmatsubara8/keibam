@@ -394,9 +394,20 @@ with tabs[3]:
                 with st.spinner("バックテスト探索中…"):
                     ai = _load_model(sel_ver_bt)
                     featured_slice = recent_race_slice(featured, test_frac)
+                    # 払戻実績から較正済みの券種別控除率があれば連系推定オッズに反映する
+                    from src.policies._takeout_calibration import latest_takeout_map
+                    from src.policies._takeout_calibration import takeout_calibration_path
+                    calib_takeout = latest_takeout_map(takeout_calibration_path())
+                    if calib_takeout:
+                        st.caption(
+                            "較正済み控除率を適用: "
+                            + ", ".join(f"{BET_TYPE_LABELS.get(bt, bt)}={t:.3f}"
+                                        for bt, t in calib_takeout.items())
+                        )
                     params_map, metrics_map, all_results = optimize_all(
                         ai, featured_slice, rp, bet_types=sel_bts,
                         grid=default_grid(), objective=objective, min_bets=int(min_bets),
+                        takeout=calib_takeout or 0.2,
                     )
                     st.session_state["bto_result"] = {
                         "params_map": params_map, "metrics_map": metrics_map,

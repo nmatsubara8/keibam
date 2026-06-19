@@ -12,6 +12,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import pandas as pd
 import streamlit as st
 
 try:
@@ -207,3 +208,58 @@ else:
                 f"（>1 は実績の方が高オッズ＝Harville が過小評価、<1 は逆）。"
                 f" 実績あり {len(cmp_df)} 組 / うち推定比較可 {len(valid)} 組。"
             )
+
+# ------------------------------------------------------------------
+# 控除率の較正（払戻実績 × 単勝勝率 → 券種別 実効控除率）
+# ------------------------------------------------------------------
+st.divider()
+st.subheader("🎯 控除率（takeout）の較正")
+st.caption(
+    "ingest 済み全レースの**払戻実績**（的中組の確定オッズ = 払戻金/100）と単勝勝率から、"
+    "券種別の**実効控除率**を逆算します。`1 - t_eff = 的中組の確定オッズ × P_harville(的中組)` を"
+    "多数レースで集計したもので、実控除率に加えて Harville の系統バイアスも吸収します。"
+    "保存すると EV バックテスト/ライブ選定の連系推定オッズに反映できます。"
+)
+
+if st.button("払戻実績から較正を実行", key="run_takeout_calib"):
+    from app._model_eval import _load_return_processor
+    from app._model_eval import load_featured_data
+    from app._odds_compare import calibrate_takeouts_from_payouts
+    from app._odds_compare import tansho_odds_by_race_from_table
+    from src.constants._results_cols import ResultsCols
+    from src.policies._takeout_calibration import save_takeout_calibration
+    from src.policies._takeout_calibration import takeout_calibration_path
+
+    featured = load_featured_data()
+    rp = _load_return_processor()
+    if featured is None:
+        st.error("featured_data.pkl がありません。ingest を実行してください。")
+    elif rp is None:
+        st.error("払戻テーブル（return_processor）が読み込めません。")
+    else:
+        tansho_map = tansho_odds_by_race_from_table(
+            featured, ResultsCols.UMABAN, ResultsCols.TANSHO_ODDS
+        )
+        with st.spinner("較正中…（払戻実績を集計）"):
+            calib = calibrate_takeouts_from_payouts(rp, tansho_map, min_samples=20)
+        _label_c = {
+            BetType.FUKUSHO: "複勝", BetType.UMAREN: "馬連", BetType.UMATAN: "馬単",
+            BetType.WIDE: "ワイド", BetType.SANRENPUKU: "三連複", BetType.SANRENTAN: "三連単",
+        }
+        calib_df = pd.DataFrame(
+            [
+                {
+                    "馬券種": _label_c.get(bt, bt),
+                    "実効控除率": round(info["takeout"], 4),
+                    "サンプル数": info["n"],
+                    "種別": "較正" if info["source"] == "calibrated" else "公称(不足)",
+                }
+                for bt, info in calib.items()
+            ]
+        )
+        st.dataframe(calib_df, use_container_width=True, hide_index=True)
+        save_takeout_calibration(calib, takeout_calibration_path())
+        st.success(
+            f"保存しました → {takeout_calibration_path()}。"
+            "EV 選定時に latest_takeout_map() で読み込めます。"
+        )

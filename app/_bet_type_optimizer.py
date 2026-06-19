@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import logging
+from typing import Mapping
 
 import pandas as pd
 
@@ -45,7 +46,7 @@ def backtest_bet_type(
     return_processor,
     bet_type: str,
     params,
-    takeout: float = 0.2,
+    takeout: float | Mapping[str, float] = 0.2,
 ) -> tuple[dict, pd.DataFrame]:
     """1 券種・1 パラメータでバックテストし (summary, per_race) を返す。
 
@@ -89,7 +90,7 @@ def optimize_bet_type(
     grid: dict | None = None,
     objective: str = "return_rate",
     min_bets: int = 10,
-    takeout: float = 0.2,
+    takeout: float | Mapping[str, float] = 0.2,
 ) -> dict:
     """1 券種のパラメータをグリッド探索で最適化する。
 
@@ -139,7 +140,7 @@ def optimize_all(
     grid: dict | None = None,
     objective: str = "return_rate",
     min_bets: int = 10,
-    takeout: float = 0.2,
+    takeout: float | Mapping[str, float] = 0.2,
 ) -> tuple[dict, dict, dict]:
     """複数券種をまとめて最適化する。
 

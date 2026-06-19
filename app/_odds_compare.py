@@ -85,6 +85,47 @@ def final_odds_lookup_from_payouts(return_processor) -> dict:
     return out
 
 
+def tansho_odds_by_race_from_table(table, umaban_col: str, odds_col: str) -> dict:
+    """results/featured テーブルから {race_id: {馬番: 単勝オッズ}} を構築する。
+
+    snapshots は fetch-final-odds 済みレースに限られるが、results は ingest 済み全レースを
+    カバーするため、較正のサンプル数を最大化できる。race_id は index 前提。
+    """
+    out: dict = {}
+    if table is None or getattr(table, "empty", True):
+        return out
+    if umaban_col not in table.columns or odds_col not in table.columns:
+        return out
+    for race_id, race_df in table.groupby(level=0):
+        race_map: dict = {}
+        for umaban, odds in zip(race_df[umaban_col], race_df[odds_col], strict=False):
+            try:
+                u = int(umaban)
+                o = float(odds)
+            except (TypeError, ValueError):
+                continue
+            if o > 0:
+                race_map[u] = o
+        if len(race_map) >= 2:
+            out[str(race_id)] = race_map
+    return out
+
+
+def calibrate_takeouts_from_payouts(
+    return_processor, tansho_odds_by_race: dict, *, min_samples: int = 20
+) -> dict:
+    """払戻実績 + 単勝勝率から券種別の実効控除率を逆算する（薄いラッパ）。
+
+    Returns {bet_type: {"takeout", "n", "source"}}。
+    """
+    from src.policies._takeout_calibration import calibrate_takeout_from_payouts
+
+    payout_lookup = final_odds_lookup_from_payouts(return_processor)
+    return calibrate_takeout_from_payouts(
+        tansho_odds_by_race, payout_lookup, min_samples=min_samples
+    )
+
+
 def available_combo_targets(snapshots) -> list[tuple[str, str]]:
     """実績オッズがある (race_id, bet_type) の一覧（連系のみ）を返す。"""
     seen = set()
@@ -95,7 +136,7 @@ def available_combo_targets(snapshots) -> list[tuple[str, str]]:
 
 
 def compare_combo_odds(
-    snapshots, race_id: str, bet_type: str, takeout: float = 0.2
+    snapshots, race_id: str, bet_type: str, takeout=0.2
 ) -> pd.DataFrame:
     """指定レース・券種の「実績オッズ」vs「Harville 推定オッズ」の比較表を返す。
 

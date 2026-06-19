@@ -40,15 +40,36 @@ class HistoricalOddsProvider(AbstractOddsProvider):
     Parameters
     ----------
     tansho_odds_by_race : {race_id: {馬番: 単勝オッズ}}
-    takeout : 控除率（連系の推定オッズに反映）。
+    takeout : 控除率（連系の推定オッズに反映）。``float`` で全券種共通、または
+        ``{bet_type: takeout}`` の Mapping で券種別に指定できる（払戻実績からの較正値。
+        src/policies/_takeout_calibration.py 参照）。Mapping に無い券種は
+        ``default_takeout`` にフォールバックする。
     """
 
-    def __init__(self, tansho_odds_by_race: Mapping, takeout: float = 0.2) -> None:
+    def __init__(
+        self,
+        tansho_odds_by_race: Mapping,
+        takeout: float | Mapping[str, float] = 0.2,
+        default_takeout: float = 0.2,
+    ) -> None:
         self._tansho_odds_by_race = tansho_odds_by_race
         self._takeout = takeout
+        self._default_takeout = default_takeout
+
+    def _takeout_for(self, bet_type: str) -> float:
+        """券種別の控除率を返す（Mapping 指定時は券種別、未登録は既定値）。"""
+        if isinstance(self._takeout, Mapping):
+            return float(self._takeout.get(bet_type, self._default_takeout))
+        return float(self._takeout)
 
     @classmethod
-    def from_score_table(cls, table, umaban_col: str, odds_col: str, takeout: float = 0.2) -> "HistoricalOddsProvider":
+    def from_score_table(
+        cls,
+        table,
+        umaban_col: str,
+        odds_col: str,
+        takeout: float | Mapping[str, float] = 0.2,
+    ) -> "HistoricalOddsProvider":
         """race_id を index に持つテーブルから {race_id: {馬番: 単勝オッズ}} を構築する。"""
         odds_by_race: dict = {}
         for race_id, race_df in table.groupby(level=0):
@@ -73,7 +94,7 @@ class HistoricalOddsProvider(AbstractOddsProvider):
         prob = harville.combo_probability(bet_type, win_probs, combo)
         if prob <= 0:
             return 0.0
-        return (1.0 - self._takeout) / prob
+        return (1.0 - self._takeout_for(bet_type)) / prob
 
 
 class StoredFinalOddsProvider(AbstractOddsProvider):
