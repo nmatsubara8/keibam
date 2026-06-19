@@ -32,10 +32,9 @@ from src.constants._local_paths import LocalPaths
 
 logger = logging.getLogger(__name__)
 
-HTML_DIRS = {
-    "race_results": "data/html/race_results",
-    "race_return": "data/html/race_return",
-}
+# results / return はどちらも race ページHTML（data/html/race/*.bin）を入力に再パースする。
+# data/html/race_results・race_return は「出力」側なので入力件数の指標にはならない。
+RACE_HTML_DIR = "data/html/race"
 
 
 def _count_cached(dir_path: str) -> int:
@@ -76,9 +75,8 @@ def _investigate() -> None:
     print("=" * 72)
     print("HTML キャッシュ復旧 — 現状調査（dry-run）")
     print("=" * 72)
-    print("\n■ HTML キャッシュ件数")
-    for name, d in HTML_DIRS.items():
-        print(f"  {name:<14} {_count_cached(d)} 件  ({d})")
+    print("\n■ race HTML キャッシュ件数（results/return の再パース入力。ローカル読込のみ）")
+    print(f"  race(.bin)   {_count_cached(RACE_HTML_DIR)} 件  ({RACE_HTML_DIR})")
 
     print("\n■ 現在の正本（results.pkl / return_tables.pkl）の race_id 健全性")
     for label, path in [
@@ -121,9 +119,14 @@ def _execute() -> None:
     from src.preparing._get_rawdata import get_rawdata_results
     from src.preparing._get_rawdata import get_rawdata_return
 
-    if _count_cached(HTML_DIRS["race_results"]) == 0:
-        logger.error("[recover] race_results のHTMLキャッシュが空です。復旧できません")
+    n_cache = _count_cached(RACE_HTML_DIR)
+    if n_cache == 0:
+        logger.error("[recover] race HTMLキャッシュ(%s)が空です。復旧できません", RACE_HTML_DIR)
         return
+    logger.info(
+        "[recover] race HTMLキャッシュ %d 件をローカル再パースします"
+        "（netkeiba 非アクセス。所要は件数に比例し数十分〜の場合あり）", n_cache,
+    )
 
     # DB ファイルも退避
     if os.path.exists(LocalPaths.DB_PATH):
