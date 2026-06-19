@@ -148,6 +148,16 @@ class RawDataRepo:
         if "ingested_at" in df.columns:
             df = df.drop(columns=["ingested_at"])
 
+        # pandas 3.x は SQLite の文字列列を pyarrow/string 拡張 dtype で返すが、scrape 由来の
+        # raw pickle は object dtype（欠損は NaN）。下流の前処理（_horse_results_processor 等）は
+        # object/str 前提のため、文字列系の拡張 dtype は object へ正規化して挙動を揃える
+        # （数値列はそのまま）。DB 復元 pickle が scrape 版と同じ型で処理されるようにする。
+        for col in df.columns:
+            dtype = df[col].dtype
+            is_arrow_string = type(dtype).__name__ == "ArrowDtype" and "string" in str(dtype).lower()
+            if isinstance(dtype, pd.StringDtype) or is_arrow_string:
+                df[col] = df[col].astype(object)
+
         # auto_row_idx_col で自動付与した row_idx は、return_tables の場合は
         # 「raw DataFrame の元構造」には含まれていなかった列なので、PK の補助情報として
         # 残すか落とすかは alias に依存する。Phase 1 では「保持」を選び、

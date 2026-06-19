@@ -8,6 +8,25 @@ from src.constants._units import COURSE_LEN_BUCKET_METERS
 from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
+def parse_corner(x, n):
+    """通過順文字列（例 "3-3-2-1"）から n 番目のコーナー位置を取り出す。
+
+    n=1 は最初、n=4 は最終コーナー。文字列以外（NaN 等）や数字を含まない値
+    （空文字・"-"・DB 復元時の空通過順）は欠損（pd.NA）として扱い、
+    ``int(re.findall(...)[0])`` が IndexError で落ちるのを防ぐ。
+    """
+    if not isinstance(x, str):
+        return x
+    nums = re.findall(r"\d+", x)
+    if not nums:
+        return pd.NA
+    if n == 4:
+        return int(nums[-1])
+    if n == 1:
+        return int(nums[0])
+    return pd.NA
+
+
 class HorseResultsProcessor(AbstractDataProcessor):
     def __init__(self, filepath):
         """
@@ -39,18 +58,9 @@ class HorseResultsProcessor(AbstractDataProcessor):
         df[Cols.RANK_DIFF] = pd.to_numeric(df[Cols.RANK_DIFF], errors="coerce").fillna(0)
         df[Cols.RANK_DIFF] = df[Cols.RANK_DIFF].map(lambda x: 0 if x < 0 else x)
 
-        # レース展開データ
-        # n=1: 最初のコーナー位置, n=4: 最終コーナー位置
-        def corner(x, n):
-            if not isinstance(x, str):
-                return x
-            elif n == 4:
-                return int(re.findall(r"\d+", x)[-1])
-            elif n == 1:
-                return int(re.findall(r"\d+", x)[0])
-
-        df["first_corner"] = df[Cols.CORNER].map(lambda x: corner(x, 1))
-        df["final_corner"] = df[Cols.CORNER].map(lambda x: corner(x, 4))
+        # レース展開データ（n=1: 最初のコーナー位置, n=4: 最終コーナー位置）
+        df["first_corner"] = df[Cols.CORNER].map(lambda x: parse_corner(x, 1))
+        df["final_corner"] = df[Cols.CORNER].map(lambda x: parse_corner(x, 4))
 
         df["final_to_rank"] = df["final_corner"] - df[Cols.RANK]
         df["first_to_rank"] = df["first_corner"] - df[Cols.RANK]
