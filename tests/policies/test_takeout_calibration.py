@@ -70,12 +70,34 @@ class TestCalibrateTakeout:
         assert info["n"] == 40
         assert abs(info["takeout"] - 0.25) < 1e-3
 
+    def test_calibrated_has_ci_bracketing_estimate(self):
+        # 合成データは全レース r=(1-t) で同一 → SE=0 → CI は点推定に収束（low<=t<=high）
+        tansho = _tansho(40)
+        payouts = _synthetic_payouts(tansho, BetType.SANRENTAN, (1, 2, 3), takeout=0.25)
+        calib = calibrate_takeout_from_payouts(tansho, payouts, min_samples=20)
+        info = calib[BetType.SANRENTAN]
+        assert info["ci_low"] is not None and info["ci_high"] is not None
+        assert info["ci_low"] <= info["takeout"] <= info["ci_high"]
+
+    def test_ci_widens_with_noise(self):
+        # ノイズのある払戻を与えると CI に幅が出る（low < high）
+        import random
+
+        rng = random.Random(0)
+        tansho = _tansho(200)
+        payouts = _synthetic_payouts(tansho, BetType.UMAREN, (1, 2), takeout=0.225)
+        payouts = {k: v * rng.uniform(0.5, 1.5) for k, v in payouts.items()}
+        calib = calibrate_takeout_from_payouts(tansho, payouts, min_samples=20)
+        info = calib[BetType.UMAREN]
+        assert info["ci_high"] - info["ci_low"] > 0.0
+
     def test_falls_back_to_nominal_when_few_samples(self):
         tansho = _tansho(3)
         payouts = _synthetic_payouts(tansho, BetType.UMAREN, (1, 2), takeout=0.5)
         calib = calibrate_takeout_from_payouts(tansho, payouts, min_samples=20)
         info = calib[BetType.UMAREN]
         assert info["source"] == "nominal"
+        assert info["ci_low"] is None and info["ci_high"] is None
         # 公称（馬連 0.225）に張り付き、合成の 0.5 は採用されない
         assert abs(info["takeout"] - 0.225) < 1e-9
 

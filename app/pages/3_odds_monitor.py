@@ -246,11 +246,17 @@ if st.button("払戻実績から較正を実行", key="run_takeout_calib"):
             BetType.FUKUSHO: "複勝", BetType.UMAREN: "馬連", BetType.UMATAN: "馬単",
             BetType.WIDE: "ワイド", BetType.SANRENPUKU: "三連複", BetType.SANRENTAN: "三連単",
         }
+        def _ci_str(info):
+            if info.get("ci_low") is None:
+                return "—"
+            return f"[{info['ci_low']:.4f}, {info['ci_high']:.4f}]"
+
         calib_df = pd.DataFrame(
             [
                 {
                     "馬券種": _label_c.get(bt, bt),
                     "実効控除率": round(info["takeout"], 4),
+                    "95%信頼区間": _ci_str(info),
                     "サンプル数": info["n"],
                     "種別": "較正" if info["source"] == "calibrated" else "公称(不足)",
                 }
@@ -258,6 +264,10 @@ if st.button("払戻実績から較正を実行", key="run_takeout_calib"):
             ]
         )
         st.dataframe(calib_df, use_container_width=True, hide_index=True)
+        st.caption(
+            "95%信頼区間は trimmed mean の標準誤差による正規近似。"
+            "区間が公称控除率を外れていれば、その差（Harville バイアス）は統計的に有意。"
+        )
         save_takeout_calibration(calib, takeout_calibration_path())
         st.success(
             f"保存しました → {takeout_calibration_path()}。"

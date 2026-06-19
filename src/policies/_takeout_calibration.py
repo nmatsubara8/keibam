@@ -63,6 +63,7 @@ NOMINAL_TAKEOUT: dict[str, float] = {
 DEFAULT_TAKEOUT = 0.2
 MIN_SAMPLES = 20  # この件数未満の券種は公称控除率へフォールバック
 TRIM_FRAC = 0.1  # 集計時に上下から切り捨てる割合（外れ値耐性）
+Z_95 = 1.959964  # 95% 信頼区間の正規分位点
 
 
 def parse_win_combo(win) -> list[int] | None:
@@ -153,12 +154,28 @@ def _parse_combo_key(combo_str: str) -> list[int]:
     return out
 
 
-def _trimmed_mean(values: Sequence[float], trim: float = TRIM_FRAC) -> float:
-    """上下 trim 割合を切り捨てた平均（不偏寄りかつ外れ値に頑健）。"""
+def _trimmed_stats(values: Sequence[float], trim: float = TRIM_FRAC) -> tuple[float, float, int]:
+    """上下 trim 割合を切り捨てた (平均, 不偏標準偏差, 残存件数) を返す。
+
+    平均は外れ値に頑健な点推定。標準偏差は CI 用（残存サンプルの標本標準偏差）。
+    """
     s = sorted(values)
     k = int(len(s) * trim)
     core = s[k: len(s) - k] if len(s) - 2 * k >= 1 else s
-    return sum(core) / len(core)
+    n = len(core)
+    mean = sum(core) / n
+    if n > 1:
+        var = sum((x - mean) ** 2 for x in core) / (n - 1)
+        std = var ** 0.5
+    else:
+        std = 0.0
+    return mean, std, n
+
+
+def _trimmed_mean(values: Sequence[float], trim: float = TRIM_FRAC) -> float:
+    """上下 trim 割合を切り捨てた平均（不偏寄りかつ外れ値に頑健）。"""
+    mean, _, _ = _trimmed_stats(values, trim)
+    return mean
 
 
 def winner_return_rate(
@@ -205,8 +222,11 @@ def calibrate_takeout_from_payouts(
 
     Returns
     -------
-    {bet_type: {"takeout": float, "n": int, "source": "calibrated"|"nominal"}}
-        較正対象の全券種を含む。サンプル不足は公称控除率にフォールバックする。
+    {bet_type: {"takeout", "n", "source", "ci_low", "ci_high"}}
+        較正対象の全券種を含む。サンプル不足は公称控除率にフォールバック（CI は None）。
+        ci_low/ci_high は takeout の 95% 信頼区間（trimmed mean の標準誤差による正規近似）。
+        注: 複勝/ワイドは 1 レースに複数サンプルあり race 内相関を無視するため、CI 幅は
+        やや楽観的（実際よりわずかに狭い）になりうる。n が大きいので実用上は十分に狭い。
     """
     rates: dict[str, list[float]] = {bt: [] for bt in CALIBRATABLE_BET_TYPES}
     for (race_id, bet_type, combo_str), actual in payout_lookup.items():
@@ -223,16 +243,29 @@ def calibrate_takeout_from_payouts(
         if r is not None and r > 0:
             rates[bet_type].append(r)
 
+    def _clip(x: float) -> float:
+        return min(max(x, 0.0), 0.95)
+
     result: dict[str, dict] = {}
     for bt in CALIBRATABLE_BET_TYPES:
         samples = rates[bt]
         nominal = NOMINAL_TAKEOUT.get(bt, DEFAULT_TAKEOUT)
         if len(samples) >= min_samples:
-            t = 1.0 - _trimmed_mean(samples)
-            t = min(max(t, 0.0), 0.95)
-            result[bt] = {"takeout": round(t, 4), "n": len(samples), "source": "calibrated"}
+            mean, std, n_kept = _trimmed_stats(samples)
+            se = std / (n_kept ** 0.5) if n_kept > 0 else 0.0
+            t = _clip(1.0 - mean)
+            # mean が大きいほど takeout は小さい → CI の上下が反転する
+            ci_low = _clip(1.0 - (mean + Z_95 * se))
+            ci_high = _clip(1.0 - (mean - Z_95 * se))
+            result[bt] = {
+                "takeout": round(t, 4), "n": len(samples), "source": "calibrated",
+                "ci_low": round(ci_low, 4), "ci_high": round(ci_high, 4),
+            }
         else:
-            result[bt] = {"takeout": nominal, "n": len(samples), "source": "nominal"}
+            result[bt] = {
+                "takeout": nominal, "n": len(samples), "source": "nominal",
+                "ci_low": None, "ci_high": None,
+            }
     return result
 
 

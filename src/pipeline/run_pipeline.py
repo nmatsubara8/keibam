@@ -714,9 +714,13 @@ def _calibrate_takeout(args: argparse.Namespace) -> None:
             len(overlap),
         )
     for bt, info in calib.items():
+        ci = (
+            f" 95%CI[{info['ci_low']:.4f},{info['ci_high']:.4f}]"
+            if info.get("ci_low") is not None else ""
+        )
         logger.info(
-            "[calibrate-takeout] %-11s takeout=%.4f (n=%d, %s)",
-            bt, info["takeout"], info["n"], info["source"],
+            "[calibrate-takeout] %-11s takeout=%.4f%s (n=%d, %s)",
+            bt, info["takeout"], ci, info["n"], info["source"],
         )
 
     if getattr(args, "dry_run", False):
