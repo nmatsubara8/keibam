@@ -62,6 +62,16 @@ def main() -> None:
             print(f"        '{odc}' サンプル: {list(odds.dropna().astype(str).head(5))}")
             tmap = tansho_odds_by_race_from_table(df, umc, odc)
             print(f"        → tansho_odds_by_race_from_table: {len(tmap)} レース（≥2頭の正の単勝）")
+        # race_id（index）の構造診断
+        idx = df.index
+        print(f"        index.name={idx.name!r}  dtype={idx.dtype}")
+        print(f"        index サンプル: {list(idx.astype(str)[:5])}")
+        rows_per = df.groupby(level=0).size()
+        dist = rows_per.value_counts().sort_index()
+        print(f"        1レースあたり行数の分布(行数:レース数, 上位): "
+              f"{dict(list(dist.items())[:6])}")
+        print(f"        ≥2行のrace_id数={int((rows_per >= 2).sum())} / "
+              f"最大頭数={int(rows_per.max())}")
 
     # ---- raw_return_tables（払戻）----
     print("\n■ raw_return_tables（払戻）")
@@ -88,6 +98,19 @@ def main() -> None:
         print("  券種別の払戻レース数:")
         for bt, races in sorted(per_bt.items()):
             print(f"    {bt:<12} {len(races)} レース")
+        # 払戻 race_id のサンプル（results との形式比較用）
+        sample_payout_races = sorted({k[0] for k in payout})[:5]
+        print(f"  払戻 race_id サンプル: {sample_payout_races}")
+        # results の race_id サンプルと桁数を比較
+        res_df = db if not db.empty else pk
+        if not res_df.empty:
+            res_ids = list(res_df.index.astype(str)[:5])
+            print(f"  results race_id サンプル: {res_ids}")
+            import collections
+            res_len = collections.Counter(len(s) for s in res_df.index.astype(str))
+            pay_len = collections.Counter(len(s) for s in {k[0] for k in payout})
+            print(f"  results race_id 桁数分布: {dict(res_len)}")
+            print(f"  払戻    race_id 桁数分布: {dict(pay_len)}")
 
         # ---- 重なり ----
         tmap = tansho_odds_by_race_from_table(
