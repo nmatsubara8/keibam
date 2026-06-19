@@ -23,6 +23,26 @@ _DROP_FOR_PREDICT = ["horse_id", ResultsCols.TANSHO_ODDS, "rank", "date", Result
 META_COLS = [ResultsCols.UMABAN, ResultsCols.WAKUBAN, *_DROP_FOR_PREDICT]
 
 
+def _coerce_for_predict(frame: pd.DataFrame) -> pd.DataFrame:
+    """特徴量フレームを LightGBM が扱える数値に正規化する。
+
+    pandas の nullable 拡張dtype（Int64/Float64/boolean）や object 列に pd.NA(NAType) が
+    あると、LightGBM/numpy が ``float() argument must be ... not 'NAType'`` で落ちる。
+    該当列だけ ``to_numeric``→float64（pd.NA→np.nan）に変換し、欠損は LightGBM が
+    ネイティブに扱える np.nan へ統一する。通常の float64/int64 列は触らない。
+    """
+    bad_cols = [
+        c for c in frame.columns
+        if pd.api.types.is_extension_array_dtype(frame[c].dtype) or frame[c].dtype == object
+    ]
+    if not bad_cols:
+        return frame
+    out = frame.copy()
+    for c in bad_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce").astype("float64")
+    return out
+
+
 # common funcs
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     score_table = X[ResultsCols.UMABAN].to_frame().copy()
@@ -36,7 +56,7 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     # UMABANの個数がWAKUBANの個数よりも多い場合にwakuban_flagを設定
     wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
     wakuban_flag.name = "wakuban_flag"
-    X_pred = X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore")
+    X_pred = _coerce_for_predict(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))
     try:
         score = model.predict_proba(X_pred)[:, 1]
     except Exception:
@@ -148,7 +168,9 @@ class ExpectedValueScorePolicy(AbstractScorePolicy):
 
     @staticmethod
     def calc(model, X: pd.DataFrame) -> pd.DataFrame:
-        prob = model.predict_proba(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))[:, 1]
+        prob = model.predict_proba(
+            _coerce_for_predict(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))
+        )[:, 1]
         table = X[[ResultsCols.UMABAN]].copy()
         table[PROB] = prob
         table[CURRENT_ODDS] = X[ResultsCols.TANSHO_ODDS].astype(float)
