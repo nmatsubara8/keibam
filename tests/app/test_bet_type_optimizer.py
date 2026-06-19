@@ -99,6 +99,23 @@ def test_compare_calibration_backtest_structure():
     assert umaren["n_nominal"] == umaren["n_calibrated"]
 
 
+def test_compare_calibration_backtest_ev_threshold_override():
+    from app._bet_type_optimizer import compare_calibration_backtest
+
+    ai = _FakeAI(_ev_score_table())
+    rp = _return_tables()
+    calibrated = {BetType.UMAREN: 0.2}
+    # 低い閾値なら馬連の買い目が出る、高すぎる閾値なら 0 になる
+    low = compare_calibration_backtest(
+        ai, pd.DataFrame(), rp, calibrated, bet_types=[BetType.UMAREN], ev_threshold=1.0,
+    ).iloc[0]
+    high = compare_calibration_backtest(
+        ai, pd.DataFrame(), rp, calibrated, bet_types=[BetType.UMAREN], ev_threshold=999.0,
+    ).iloc[0]
+    assert low["n_nominal"] >= high["n_nominal"]
+    assert int(high["n_nominal"]) == 0
+
+
 def test_optimize_bet_type_returns_best():
     ai = _FakeAI(_ev_score_table())
     rp = _return_tables()

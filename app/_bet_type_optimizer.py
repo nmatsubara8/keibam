@@ -203,6 +203,7 @@ def compare_calibration_backtest(
     bet_types=None,
     params_map: Mapping | None = None,
     nominal_takeout: float = 0.2,
+    ev_threshold: float | None = None,
 ) -> pd.DataFrame:
     """券種ごとに「公称控除率」vs「較正済み控除率」のバックテストを比較する。
 
@@ -211,11 +212,17 @@ def compare_calibration_backtest(
     実払戻での回収率がどう変わるかを A/B 比較する。単勝は実オッズ直returnで控除率の影響を
     受けないため両者同値になる。
 
+    ev_threshold を渡すと全券種の EV 閾値をその値で上書きする（既定の BetThresholds は
+    tansho 1.78〜sanrentan 10.0 と高く、較正済みモデルでは買い目が 0 になりやすいため、
+    較正の効果を観察するには低めの閾値で買い目を発生させる必要がある）。
+
     Returns
     -------
     DataFrame[bet_type, n_nominal, return_nominal, hit_nominal,
               n_calibrated, return_calibrated, hit_calibrated, delta_return]
     """
+    import dataclasses
+
     from src.policies._bet_type_params import OPTIMIZABLE_BET_TYPES
     from src.policies._bet_type_params import default_params
 
@@ -223,6 +230,8 @@ def compare_calibration_backtest(
     rows = []
     for bt in targets:
         params = (params_map or {}).get(bt) or default_params(bt)
+        if ev_threshold is not None:
+            params = dataclasses.replace(params, ev_threshold=ev_threshold)
         nom, _ = backtest_bet_type(ai, featured_slice, return_processor, bt, params, nominal_takeout)
         cal, _ = backtest_bet_type(ai, featured_slice, return_processor, bt, params, calibrated_takeout)
         r_nom = nom.get("return_rate")

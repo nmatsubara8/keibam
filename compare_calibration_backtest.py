@@ -41,6 +41,11 @@ def main() -> None:
     ap.add_argument("--test-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
     ap.add_argument("--version", default=None, help="モデルのバージョン名（既定は最新）")
     ap.add_argument("--min-bets", type=int, default=10, help="この買い目数未満の券種は警告のみ")
+    ap.add_argument(
+        "--ev-threshold", type=float, default=None,
+        help="全券種の EV 閾値を上書き（既定の BetThresholds は高く較正モデルでは買い目0になりやすい。"
+             "較正効果を見るには 1.0 等の低めを指定）",
+    )
     args = ap.parse_args()
 
     from app._bet_type_optimizer import compare_calibration_backtest
@@ -83,12 +88,15 @@ def main() -> None:
     featured_slice = recent_race_slice(featured, args.test_frac)
     n_races = featured_slice.index.nunique()
     logger.info(
-        "[compare] モデル=%s / 検証 %d レース（直近 %.0f%%）/ 較正控除率=%s",
+        "[compare] モデル=%s / 検証 %d レース（直近 %.0f%%）/ EV閾値=%s / 較正控除率=%s",
         model_label, n_races, args.test_frac * 100,
+        args.ev_threshold if args.ev_threshold is not None else "既定(BetThresholds)",
         {k: round(v, 4) for k, v in calib.items()},
     )
 
-    df = compare_calibration_backtest(ai, featured_slice, rp, calib)
+    df = compare_calibration_backtest(
+        ai, featured_slice, rp, calib, ev_threshold=args.ev_threshold
+    )
 
     print("\n" + "=" * 86)
     print("較正あり/なし バックテスト比較（回収率 = 払戻 / 投資。1.0 超で黒字）")
@@ -110,8 +118,15 @@ def main() -> None:
             f"{_fmt(delta):>12}{mark}"
         )
     print("=" * 86)
-    print("Δ回収率 = 較正 − 公称。▲ は較正で改善、▼ は悪化。単勝は控除率の影響を受けない。")
-    print("買い目数が少ない券種（< --min-bets）は統計的に不安定なので参考値。")
+    total_bets = int(df["n_nominal"].sum() + df["n_calibrated"].sum())
+    if total_bets == 0:
+        print("⚠ 全券種で買い目0。較正済みモデルでは EV が既定閾値"
+              "（単勝1.78〜三連単10.0）を超えないためです（効率的市場の現実）。")
+        print("  較正効果を観察するには低い閾値で再実行: "
+              "python compare_calibration_backtest.py --ev-threshold 1.0")
+    else:
+        print("Δ回収率 = 較正 − 公称。▲ は較正で改善、▼ は悪化。単勝は控除率の影響を受けない。")
+        print("買い目数が少ない券種（< --min-bets）は統計的に不安定なので参考値。")
     print("=" * 86)
 
 
