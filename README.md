@@ -164,7 +164,17 @@ python -m src.pipeline.run_pipeline ingest --race-id 202605030211
 
 # 誤情報修正時: DB 行を事前 DELETE して再投入
 python -m src.pipeline.run_pipeline ingest --race-id 202605030211 --force
+
+# データ取得元を切替（既定 netkeiba / jravan=ファイル受信）。
+# 省略時は UI（モデルラボでなく成績・設定ページ）で選択・保存した値、無ければ netkeiba。
+python -m src.pipeline.run_pipeline ingest --post-date 20260607 --source jravan
 ```
+
+取得元は `AbstractRaceDataSource` で抽象化され、結果/情報/払戻/馬/血統の全データを
+ソース非依存に取得する（`src/preparing/_data_source.py`）。`NetkeibaDataSource`（スクレイプ）が
+既定で、`JraVanFileDropSource` は Windows 側 JV-Link エージェントが
+`data/incoming/jravan/<種別>/<id>.json`（pandas split 形式）に置いたファイルを受信する。
+UI の「🏆 成績・設定」→「データ取得元」で選択・保存できる（`ingest --source` 未指定時に使用）。
 
 ingest は「新規レースの HTML 取得 → テーブル化 → 既存 pickle へキー付きマージ →
 SQLite 冪等 upsert → 未知の馬の馬ページ/血統の差分取得 → 特徴量（featured_data）再生成」

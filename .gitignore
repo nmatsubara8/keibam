@@ -23,6 +23,7 @@ models/**/*.pickle
 models/odds_dynamics_eval.json
 models/odds_gravity.json
 models/bet_type_params.json
+models/selected_data_source.json
 .DS_Store
 playground.ipynb
 

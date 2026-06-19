@@ -174,3 +174,32 @@ class TestFilterFinalOddsRaceIds:
             self._IDS, years=[2024], done={"202406010101"}, limit=5
         )
         assert out == ["202406010102"]
+
+
+class TestIngestSourceArg:
+    def test_source_default_none(self):
+        args = _parse_args(["ingest", "--race-id", "1"])
+        assert args.source is None
+
+    def test_source_value(self):
+        args = _parse_args(["ingest", "--race-id", "1", "--source", "jravan"])
+        assert args.source == "jravan"
+
+
+class TestResolveDataSource:
+    def test_cli_wins(self, monkeypatch):
+        from src.pipeline.run_pipeline import _resolve_data_source
+
+        class _A:
+            source = "jravan"
+        assert _resolve_data_source(_A()) == "jravan"
+
+    def test_falls_back_to_saved(self, monkeypatch):
+        import src.preparing._data_source as ds
+        from src.pipeline.run_pipeline import _resolve_data_source
+
+        monkeypatch.setattr(ds, "load_selected_source", lambda *a, **k: "jravan")
+
+        class _A:
+            source = None
+        assert _resolve_data_source(_A()) == "jravan"

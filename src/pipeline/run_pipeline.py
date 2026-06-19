@@ -52,66 +52,67 @@ def _auto_migrate_db() -> None:
         logger.warning("[pipeline] DB auto-migrate 失敗 (non-fatal): %s", e)
 
 
-def _scrape_new_race_data(race_ids: list) -> list:
-    """新規 race_id のレース HTML を取得し、raw テーブルを増分更新する（Playwright 必須）。
+def _resolve_data_source(args) -> str:
+    """使用するデータソース名を決める（CLI --source > UI 選択保存 > 既定 netkeiba）。"""
+    from src.preparing._data_source import load_selected_source
 
-    既存 results.pkl に存在する race_id はスキップする。HTML（bin）→ テーブル化は
-    data/html/race/ 配下の bin 全件が対象（bin はキャッシュ。新規分のみ追加取得され、
-    transfer_temp_file が既存 pkl へ新データ優先でマージする）。
+    cli = getattr(args, "source", None)
+    if cli:
+        return cli
+    return load_selected_source()
+
+
+def _scrape_new_race_data(race_ids: list, source=None) -> list:
+    """新規 race_id のレースデータを取得し、raw テーブルを増分更新する。
+
+    既存 results.pkl に存在する race_id はスキップする（dedup は pipeline 側）。
+    実際の取得（スクレイプ/ファイル受信）は DataSource（既定 netkeiba）に委譲する。
 
     Returns
     -------
-    list : 今回新たにスクレイプした race_id（pickle へマージ済み）。
+    list : 今回新たに取得した race_id（pickle へマージ済み）。
     """
-    import pandas as pd
-
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import existing_race_ids
     from src.pipeline._ingestion import find_new_race_ids
     from src.pipeline._ingestion import load_raw
-    from src.preparing._get_rawdata import get_rawdata_info
-    from src.preparing._get_rawdata import get_rawdata_results
-    from src.preparing._get_rawdata import get_rawdata_return
-    from src.preparing._scrape_html_race import scrape_html_race
+
+    if source is None:
+        from src.preparing._data_source import NetkeibaDataSource
+
+        source = NetkeibaDataSource()
 
     existing = load_raw(LocalPaths.RAW_RESULTS_PATH)
     if not existing.empty and "race_id" in existing.columns and existing.index.name != "race_id":
         existing = existing.set_index("race_id")
     new_ids = find_new_race_ids(existing_race_ids(existing), [int(r) for r in race_ids])
     if not new_ids:
-        logger.info("[ingest] 新規 race_id なし（HTML スクレイプ不要）")
+        logger.info("[ingest] 新規 race_id なし（取得不要）")
         return []
 
-    logger.info("[ingest] 新規レース %d 件の HTML を取得します", len(new_ids))
-    race_id_df = pd.DataFrame({"race_id": [str(r) for r in new_ids]})
-    scrape_html_race(race_id_df, skip=True)
-    # only_ids=new_ids で新規レースの bin だけを再パースする（全 HTML コーパスの
-    # 再パースを回避）。transfer_temp_file が data/raw の正本へ race_id キーで
-    # マージするため既存全件は保持される。
-    get_rawdata_results(skip=False, only_ids=new_ids)
-    get_rawdata_info(skip=False, only_ids=new_ids)
-    get_rawdata_return(skip=False, only_ids=new_ids)
+    logger.info("[ingest] 新規レース %d 件を %s から取得します", len(new_ids), source.name)
+    source.acquire_races([str(r) for r in new_ids])
     return new_ids
 
 
-def _scrape_new_horse_data() -> int:
-    """results に存在するが horse_info に無い馬の HTML を取得し、馬系テーブルを増分更新する。
+def _scrape_new_horse_data(source=None) -> int:
+    """results に存在するが horse_info に無い馬データを取得し増分更新する。
 
     新規レースの取込で初出走馬・地方/海外からの転入馬が現れると、horse_results /
     horse_info / peds に欠落が生じ、特徴量の馬履歴・血統が NaN になる。
-    馬ページ・血統ページは差分ダウンロード（既存 bin はスキップ）。
+    実際の取得は DataSource（既定 netkeiba）に委譲する。
 
     Returns
     -------
-    int : 新たにスクレイプした馬の数。
+    int : 新たに取得した馬の数。
     """
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import load_raw
-    from src.preparing._get_rawdata import get_rawdata_horse_info
-    from src.preparing._get_rawdata import get_rawdata_horse_results
-    from src.preparing._get_rawdata import get_rawdata_peds
-    from src.preparing._scrape_html_horse import scrape_html_horse_with_master
-    from src.preparing._scrape_html_ped import scrape_html_ped
+
+    if source is None:
+        from src.preparing._data_source import NetkeibaDataSource
+
+        source = NetkeibaDataSource()
 
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
     hi = load_raw(LocalPaths.RAW_HORSE_INFO_PATH)
@@ -124,17 +125,11 @@ def _scrape_new_horse_data() -> int:
     )
     missing = sorted(set(res["horse_id"].astype(str)) - known)
     if not missing:
-        logger.info("[ingest] 馬データの欠落なし（馬ページのスクレイプ不要）")
+        logger.info("[ingest] 馬データの欠落なし（馬ページの取得不要）")
         return 0
 
-    logger.info("[ingest] 未取得の馬 %d 頭の HTML（馬ページ・血統）を取得します", len(missing))
-    scrape_html_horse_with_master(missing, skip=True)
-    scrape_html_ped(missing, skip=True)
-    # only_ids=missing で新規馬の bin だけを再パースする（全馬 HTML の再パースを回避）。
-    # transfer_temp_file が data/raw の正本へ horse_id キーでマージするため既存は保持される。
-    get_rawdata_horse_results(skip=False, only_ids=missing)
-    get_rawdata_horse_info(skip=False, only_ids=missing)
-    get_rawdata_peds(skip=False, only_ids=missing)
+    logger.info("[ingest] 未取得の馬 %d 頭を %s から取得します", len(missing), source.name)
+    source.acquire_horses(missing)
 
     # Phase 1: 更新された馬系 pickle を DB へ冪等 upsert（保険、non-fatal）
     try:
@@ -161,25 +156,34 @@ def _ingest(args: argparse.Namespace) -> None:
     # Phase 1: pickle → DB の自動移行（DB が空の場合のみ実行される）
     _auto_migrate_db()
 
-    # --post-date が指定された場合は race_id を自動取得する
-    if getattr(args, "post_date", None):
-        args.race_ids = _resolve_race_ids(args.post_date)
+    # データソース（既定 netkeiba / UI で選択した jravan 等）を生成
+    from src.preparing._data_source import create_data_source
 
-    # 新規レースの HTML 取得 → raw テーブル増分更新。
-    # スクレイプ失敗時は既存 pickle のみで継続する（冪等・リジューム前提）。
+    source = create_data_source(_resolve_data_source(args))
+    logger.info("[ingest] データソース: %s", source.name)
+
+    # --post-date が指定された場合は race_id をソースから取得する
+    if getattr(args, "post_date", None):
+        args.race_ids = source.resolve_race_ids(args.post_date)
+        logger.info("[ingest] --post-date %s: %d レース", args.post_date, len(args.race_ids))
+
+    # 新規レースのデータ取得 → raw テーブル増分更新。
+    # 取得失敗時は既存 pickle のみで継続する（冪等・リジューム前提）。
     scraped_new: list = []
     try:
-        scraped_new = _scrape_new_race_data(list(args.race_ids))
+        scraped_new = _scrape_new_race_data(list(args.race_ids), source=source)
     except Exception as e:  # noqa: BLE001
-        logger.warning("[ingest] 新規レースのスクレイプに失敗 (既存データのみで継続): %s", e)
+        logger.warning("[ingest] 新規レースの取得に失敗 (既存データのみで継続): %s", e)
 
     # 新規レースに含まれる未知の馬（初出走・転入）の馬ページ・血統を取得。
     # 失敗しても既存の馬データで featured 再生成は可能なため non-fatal。
     scraped_horses = 0
     try:
-        scraped_horses = _scrape_new_horse_data()
+        scraped_horses = _scrape_new_horse_data(source=source)
     except Exception as e:  # noqa: BLE001
-        logger.warning("[ingest] 馬データのスクレイプに失敗 (既存データのみで継続): %s", e)
+        logger.warning("[ingest] 馬データの取得に失敗 (既存データのみで継続): %s", e)
+    finally:
+        source.close()
 
     # Phase 1: --force フラグを IngestConfig に伝搬（DB 行の事前 DELETE を有効化）。
     # スクレイプで新規レース・新規馬を取り込んだ場合も force 扱いにする: 新規行は
@@ -603,6 +607,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--force",
         action="store_true",
         help="既存 DB 行を削除してから再取込（誤情報修正時に使用）",
+    )
+    ingest_p.add_argument(
+        "--source",
+        default=None,
+        help="データ取得元（netkeiba / jravan）。省略時は UI 選択 or 既定 netkeiba",
     )
 
     # retrain サブコマンド
