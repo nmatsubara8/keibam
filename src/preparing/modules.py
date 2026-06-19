@@ -187,7 +187,15 @@ def process_pkl_file(self, process_function):
 
     # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
     from tqdm.auto import tqdm
-    pbar = tqdm(total=total_files, desc=f"{self.alias} 取得", unit="件", leave=True)
+    # 🌐 ネットワーク取得フェーズ（netkeiba へ HTTP アクセス。ポライトネス制御が効く）
+    logger.info(
+        "🌐 ネット取得フェーズ: %s を %d 件 netkeiba からダウンロードします"
+        "（ポライトネス制御: 間隔 ~%.1fs + 1時間上限 %s 件）",
+        self.alias, total_files,
+        max(float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0")), 1.0),
+        os.environ.get("KEIBA_MAX_REQUESTS_PER_HOUR", "1000"),
+    )
+    pbar = tqdm(total=total_files, desc=f"🌐 {self.alias} ネット取得", unit="件", leave=True)
 
     # スクレイパーのインスタンス化（Playwright 全面移行）。
     # process_function には従来の driver 引数位置で AbstractScraper を渡す
@@ -512,9 +520,15 @@ def process_bin_file(self, process_function):
 
     logger.info("start %s processing", self.alias)
 
+    # 💾 ローカル解析フェーズ（保存済み HTML を解析するだけ。netkeiba へは一切アクセスしない）
+    logger.info(
+        "💾 ローカル解析フェーズ: %s を %d 件のローカル HTML から作成します"
+        "（ネットワーク非アクセス＝ポライトネス対象外）",
+        self.alias, total_files,
+    )
     # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
     from tqdm.auto import tqdm
-    pbar = tqdm(total=total_files, desc=f"{self.alias} 取得", unit="件", leave=True)
+    pbar = tqdm(total=total_files, desc=f"💾 {self.alias} ローカル解析", unit="件", leave=True)
 
     for batch_index in range(total_batches):
         start_index = batch_index * self.batch_size
