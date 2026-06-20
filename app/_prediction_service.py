@@ -81,6 +81,9 @@ def run_prediction(
     list[BetCandidate] : stake が設定された配分済み候補（EV 降順）。
     """
     thresholds = thresholds or default_thresholds()
+    # 検証済み戦略: 単勝EV下限を config で上書き（None=既定 BetThresholds=1.78）。
+    if op_config.tansho_ev_threshold is not None:
+        thresholds = {**thresholds, BetType.TANSHO: op_config.tansho_ev_threshold}
     takeout = _load_live_takeout(takeout)
 
     # 1. 較正勝率 + 現在オッズのテーブル
@@ -110,6 +113,10 @@ def run_prediction(
     # 3. EV 選定（券種別最適化パラメータがあれば温度・較正・閾値を反映）
     policy = ExpectedValueBetPolicy(provider, thresholds=thresholds, bet_type_params=bet_type_params)
     candidates = policy.select(table[[ResultsCols.UMABAN, PROB]])
+
+    # 検証済み戦略: オッズ上限フィルタ（既定 inf=無効）。3–15倍にエッジが集中し、
+    # 15倍超は -EV な人気薄ジャンクのため除外する。
+    candidates = [c for c in candidates if c.odds <= op_config.max_odds]
 
     if not candidates:
         return []

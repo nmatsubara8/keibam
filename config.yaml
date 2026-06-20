@@ -7,9 +7,17 @@ operation_mode: advisory
 
 # 資金・リスク
 bankroll: 100000.0
-kelly_fraction_ratio: 0.5   # フラクショナル・ケリー係数（0<r<=1）
+kelly_fraction_ratio: 0.25  # フラクショナル・ケリー係数（0<r<=1）。締切前オッズでの
+                            #   実現性が未検証のため保守的な1/4ケリー（確定オッズ前提の
+                            #   回収率2.0は上限値。前向き検証後に引き上げ可）
 per_bet_cap_ratio: 0.05     # 1馬券あたり上限（bankroll比）
 max_daily_ratio: 1.0        # 1日総投資上限（bankroll比）
+
+# 検証済み単勝戦略（kelly_backtest.py / validate_edge.py）
+#   単勝・EV>1.1・オッズ≤15倍。プラセボ＆リーク監査を通過し、2022–2026 の全年度で
+#   フラット回収率1.9–2.1（確定オッズ基準）。エッジは3–15倍に集中し、15倍超は -EV。
+max_odds: 15.0              # これ超のオッズ（人気薄）は買わない
+tansho_ev_threshold: 1.1   # 単勝EV下限（既定 BetThresholds の1.78を上書き）
 
 # 安全装置（損失ストップ / kill switch）
 kill_switch_enabled: true   # 当日実現損失が上限超で推奨/記録を停止する

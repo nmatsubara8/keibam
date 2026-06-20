@@ -51,6 +51,30 @@ def test_run_prediction_returns_candidates_when_ev_positive():
     assert all(c.expected_value > 1.0 for c in result)
 
 
+def test_run_prediction_max_odds_filters_longshots():
+    # 馬3は EV2.0(0.10*20) で閾値は超えるが、オッズ20倍 > max_odds=15 で除外されるべき。
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    thresholds = {BetType.TANSHO: 1.0}
+    uncapped = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
+    capped = run_prediction(model, X, _default_op_config(max_odds=15.0), thresholds=thresholds)
+    assert any(c.combo == (3,) for c in uncapped)  # 上限なしなら20倍馬は採用
+    assert all(c.odds <= 15.0 for c in capped)
+    assert all(c.combo != (3,) for c in capped)  # 上限ありなら20倍馬は除外
+
+
+def test_run_prediction_tansho_ev_threshold_override():
+    # 既定 BetThresholds(単勝1.78) では EV1.3 の本命は不採用。config で1.1へ下げると採用。
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    base = run_prediction(model, X, _default_op_config())
+    lowered = run_prediction(model, X, _default_op_config(tansho_ev_threshold=1.1))
+    base_tansho = [c for c in base if c.combo == (1,)]
+    lowered_tansho = [c for c in lowered if c.combo == (1,)]
+    assert not base_tansho       # 1.78 では本命(EV1.3)は出ない
+    assert lowered_tansho        # 1.1 では本命が出る
+
+
 def test_run_prediction_stake_within_bankroll():
     X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
     model = _StubModel([0.65, 0.25, 0.10])

@@ -23,6 +23,13 @@ class OperationConfig:
     kelly_fraction_ratio: float = 0.5
     per_bet_cap_ratio: float = 0.05
     max_daily_ratio: float = 1.0
+    # 検証済み単勝戦略の運用パラメータ。コード既定は無害（フィルタ無効）にして
+    # 既存呼び出しを変えず、実値は config.yaml 側で指定する。
+    #   max_odds: これ超のオッズ（人気薄）を除外。kelly_backtest で 3–15倍に
+    #     エッジが集中し、≤15倍で 2022–2026 の全年度 回収率1.9–2.1 を確認。
+    #   tansho_ev_threshold: 単勝EV下限の上書き（None=既定 BetThresholds。検証値=1.1）。
+    max_odds: float = float("inf")
+    tansho_ev_threshold: float | None = None
     # オッズ力学モデルの予測確定オッズで EV を計算する（odds_watch の最新予測を使用。
     # 予測が無いレース/馬は現在オッズへ自動フォールバック）
     use_predicted_odds: bool = False
@@ -38,6 +45,10 @@ class OperationConfig:
             raise ValueError(
                 f"max_daily_loss_ratio は 0 < r <= 1: {self.max_daily_loss_ratio}"
             )
+        if self.max_odds <= 0:
+            raise ValueError(f"max_odds は正の値: {self.max_odds}")
+        if self.tansho_ev_threshold is not None and self.tansho_ev_threshold <= 0:
+            raise ValueError(f"tansho_ev_threshold は正の値か None: {self.tansho_ev_threshold}")
 
     @classmethod
     def from_dict(cls, data: dict) -> "OperationConfig":
