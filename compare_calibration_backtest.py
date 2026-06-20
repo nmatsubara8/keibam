@@ -138,24 +138,26 @@ def main() -> None:
         ai, featured_slice, rp, calib, ev_threshold=args.ev_threshold
     )
 
-    print("\n" + "=" * 86)
+    print("\n" + "=" * 92)
     print("較正あり/なし バックテスト比較（回収率 = 払戻 / 投資。1.0 超で黒字）")
-    print("=" * 86)
-    header = (f"{'券種':<8}{'買い目(公称)':>12}{'回収率(公称)':>14}"
-              f"{'買い目(較正)':>12}{'回収率(較正)':>14}{'Δ回収率':>12}")
+    print("=" * 92)
+    header = (f"{'券種':<8}{'買い目(公称)':>11}{'回収率(公称)':>13}{'Sharpe公':>10}"
+              f"{'回収率(較正)':>13}{'Sharpe較':>10}{'Δ回収率':>11}")
     print(header)
-    print("-" * 86)
+    print("-" * 92)
     for _, r in df.iterrows():
         bt = r["bet_type"]
         delta = r["delta_return"]
         mark = ""
         if delta is not None:
-            mark = "  ▲" if delta > 0.005 else ("  ▼" if delta < -0.005 else "")
+            mark = " ▲" if delta > 0.005 else (" ▼" if delta < -0.005 else "")
         print(
             f"{_LABEL.get(bt, bt):<8}"
-            f"{int(r['n_nominal']):>12}{_fmt(r['return_nominal']):>14}"
-            f"{int(r['n_calibrated']):>12}{_fmt(r['return_calibrated']):>14}"
-            f"{_fmt(delta):>12}{mark}"
+            f"{int(r['n_nominal']):>11}{_fmt(r['return_nominal']):>13}"
+            f"{_fmt(r.get('sharpe_nominal')):>10}"
+            f"{_fmt(r['return_calibrated']):>13}"
+            f"{_fmt(r.get('sharpe_calibrated')):>10}"
+            f"{_fmt(delta):>11}{mark}"
         )
     print("=" * 86)
     total_bets = int(df["n_nominal"].sum() + df["n_calibrated"].sum())

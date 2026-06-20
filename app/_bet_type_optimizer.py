@@ -242,9 +242,11 @@ def compare_calibration_backtest(
             "n_nominal": nom.get("n_bets", 0),
             "return_nominal": r_nom,
             "hit_nominal": nom.get("hit_rate"),
+            "sharpe_nominal": nom.get("sharpe_ratio"),
             "n_calibrated": cal.get("n_bets", 0),
             "return_calibrated": r_cal,
             "hit_calibrated": cal.get("hit_rate"),
+            "sharpe_calibrated": cal.get("sharpe_ratio"),
             "delta_return": (
                 (r_cal - r_nom) if (r_nom is not None and r_cal is not None) else None
             ),
