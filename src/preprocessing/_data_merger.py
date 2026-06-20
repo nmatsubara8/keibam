@@ -51,6 +51,9 @@ class DataMerger:
         self._horse_info = horse_info_processor.preprocessed_data.drop(["owner_id"], axis=1)
         self._peds = peds_processor.preprocessed_data
         self._target_cols = target_cols
+        # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
+        # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
+        self._group_target_cols = ["着順"] if "着順" in target_cols else target_cols
         self._group_cols = group_cols
         self._merged_data = pd.DataFrame()
         self._separated_results_dict: dict = {}
@@ -174,6 +177,7 @@ class DataMerger:
             results = self._add_pace_stats(results, horse_results)
             results = self._add_growth_stats(results, horse_results)
             results = self._add_prev_race_features(results, horse_results)
+            results = self._add_aptitude_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
@@ -435,6 +439,57 @@ class DataMerger:
         return results
 
     # ──────────────────────────────────────────
+    # §2n: Aptitude features — wet track & racecourse (Batch B)
+    # ──────────────────────────────────────────
+
+    def _add_aptitude_stats(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
+        """馬場・競馬場の適性特徴を追加する（リーク無し）。
+
+        - ``wet_win_rate`` / ``wet_rel_rank`` : 道悪（馬場∈稍重/重/不良）での勝率・相対着順。
+          今回の馬場に依らず「この馬の道悪実績」を表す（モデルが当日馬場ダミーと併用）。
+        - ``place_win_rate`` : 今回と同じ競馬場（開催）での過去勝率（東京専用機/中山の鬼を捕捉）。
+        horse_results は当該レース日より前のみ（リーク無し）。
+        """
+        rank_col = HRCols.RANK  # '着順'
+        n_horses_col = HRCols.N_HORSES  # '頭数'
+        ground_col = HRCols.GROUND_STATE  # '馬場'
+        place_col = HRCols.PLACE  # '開催'
+        if horse_results.empty or rank_col not in horse_results.columns:
+            return results
+
+        hr = horse_results.copy()
+        hr["_is_win"] = (pd.to_numeric(hr[rank_col], errors="coerce") == 1).astype(float)
+        if n_horses_col in hr.columns:
+            hr["_rel_rank"] = pd.to_numeric(hr[rank_col], errors="coerce") / pd.to_numeric(
+                hr[n_horses_col], errors="coerce"
+            )
+
+        # 道悪（非・良）実績: 当日馬場に依らない馬固有の適性
+        if ground_col in hr.columns:
+            wet = hr[hr[ground_col].astype(str).isin(["稍重", "重", "不良"])]
+            if not wet.empty:
+                wet_win = wet.groupby(level=0)["_is_win"].mean().rename("wet_win_rate")
+                results = results.merge(wet_win, left_on="horse_id", right_index=True, how="left")
+                if "_rel_rank" in wet.columns:
+                    wet_rr = wet.groupby(level=0)["_rel_rank"].mean().rename("wet_rel_rank")
+                    results = results.merge(wet_rr, left_on="horse_id", right_index=True, how="left")
+
+        # 競馬場別実績: 今回と同じ開催での過去勝率。開催コードは horse_results が
+        # ゼロ詰め文字列("05")・race_info が整数(5) と表現が異なるため数値化して比較する。
+        if place_col in hr.columns and place_col in results.columns:
+            hr_reset = hr.reset_index()
+            hr_reset["_place"] = pd.to_numeric(hr_reset[place_col], errors="coerce")
+            cur = results[["horse_id", place_col]].drop_duplicates("horse_id")
+            cur["_cur_place"] = pd.to_numeric(cur[place_col], errors="coerce")
+            merged = hr_reset.merge(cur[["horse_id", "_cur_place"]], on="horse_id")
+            same = merged[merged["_place"] == merged["_cur_place"]]
+            if not same.empty:
+                place_win = same.groupby("horse_id")["_is_win"].mean().rename("place_win_rate")
+                results = results.merge(place_win, left_on="horse_id", right_index=True, how="left")
+
+        return results
+
+    # ──────────────────────────────────────────
     # §2e: Course condition aggregate features
     # ──────────────────────────────────────────
 
@@ -587,7 +642,7 @@ class DataMerger:
         for group_col in self._group_cols:
             if group_col not in results.columns:
                 continue
-            summarized_with = self._summarize_with(hr, self._target_cols, group_col).add_suffix(
+            summarized_with = self._summarize_with(hr, self._group_target_cols, group_col).add_suffix(
                 f"_{group_col}{suffix}"
             )
             results = results.merge(

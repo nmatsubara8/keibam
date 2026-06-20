@@ -304,6 +304,70 @@ class TestAddPrevRaceFeatures:
 
 
 # ──────────────────────────────────────────
+# §2n(Batch B): _add_aptitude_stats
+# ──────────────────────────────────────────
+
+class TestAddAptitudeStats:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": [1], "開催": [5]},  # race_info は整数の開催コード
+            index=pd.Index(["r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        """horse1: 重(勝)/良(5着)@東京"05"、不良(2着)@中山"06"。"""
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1, 1],
+                "date": pd.to_datetime(["2023-01-01", "2023-02-01", "2023-03-01"]),
+                "着順": [1, 5, 2],
+                "頭数": [10, 10, 8],
+                "馬場": ["重", "良", "不良"],
+                "開催": ["05", "05", "06"],  # horse_results はゼロ詰め文字列
+            }
+        ).set_index("horse_id")
+
+    def test_wet_win_rate(self):
+        # 道悪=重(勝)+不良(負) → 勝率 0.5
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_aptitude_stats(self._results(), self._hr())
+        assert out["wet_win_rate"].iloc[0] == pytest.approx(0.5)
+
+    def test_wet_rel_rank(self):
+        # 道悪の相対着順 = mean(1/10, 2/8) = 0.175
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_aptitude_stats(self._results(), self._hr())
+        assert out["wet_rel_rank"].iloc[0] == pytest.approx((0.1 + 0.25) / 2)
+
+    def test_place_win_rate_numeric_match(self):
+        # 開催"05"(=5) の2走: 勝+負 → 0.5（文字列"05" vs 整数5 を数値化して一致）
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_aptitude_stats(self._results(), self._hr())
+        assert out["place_win_rate"].iloc[0] == pytest.approx(0.5)
+
+    def test_empty_horse_results_safe(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_aptitude_stats(self._results(), self._hr().iloc[:0])
+        assert "wet_win_rate" not in out.columns
+
+
+# ──────────────────────────────────────────
+# §2i: _summarize with extended target_cols (Batch B)
+# ──────────────────────────────────────────
+
+class TestSummarizeExtendedTargets:
+    def test_multiple_targets_aggregated(self):
+        from src.preprocessing._data_merger import DataMerger  # noqa: F401
+
+        m = _make_merger(_results_df_with_jockey())
+        hr = _horse_results_df().copy()
+        hr["着差"] = [0.0, 0.3, 0.0, 1.2, 2.0, 0.5]
+        out = m._summarize(hr, ["着順", "着差"])
+        assert "着順_mean" in out.columns
+        assert "着差_mean" in out.columns
+
+
+# ──────────────────────────────────────────
 # §2e: _add_course_condition_stats
 # ──────────────────────────────────────────
 

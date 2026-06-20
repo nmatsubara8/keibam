@@ -231,6 +231,7 @@ class FeatureEngineering:
         """
         from src.constants._feature_cols import (
             AGG_STATS,
+            APTITUDE_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
             GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
@@ -263,6 +264,7 @@ class FeatureEngineering:
             + GROWTH_FEATURE_COLS
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
+            + APTITUDE_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:

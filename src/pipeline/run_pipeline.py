@@ -161,6 +161,7 @@ def _build_featured_data(config):
     from src.preprocessing._peds_processor import PedsProcessor
     from src.preprocessing._race_info_processor import RaceInfoProcessor
     from src.preprocessing._results_processor import ResultsProcessor
+    from src.constants._feature_cols import AGG_TARGET_COLS
 
     merger = DataMerger(
         ResultsProcessor(config.raw_results_path),
@@ -168,7 +169,7 @@ def _build_featured_data(config):
         HorseResultsProcessor(config.raw_horse_results_path),
         HorseInfoProcessor(config.raw_horse_info_path),
         PedsProcessor(config.raw_peds_path),
-        target_cols=["着順"],
+        target_cols=AGG_TARGET_COLS,
         group_cols=["騎手"],
     )
     merger.merge()
@@ -339,6 +340,7 @@ def _retrain(args: argparse.Namespace) -> None:
                 from src.preprocessing._peds_processor import PedsProcessor
                 from src.preprocessing._race_info_processor import RaceInfoProcessor
                 from src.preprocessing._results_processor import ResultsProcessor
+                from src.constants._feature_cols import AGG_TARGET_COLS
 
                 merger = DataMerger(
                     ResultsProcessor(config.raw_results_path),
@@ -346,7 +348,7 @@ def _retrain(args: argparse.Namespace) -> None:
                     HorseResultsProcessor(config.raw_horse_results_path),
                     HorseInfoProcessor(config.raw_horse_info_path),
                     PedsProcessor(config.raw_peds_path),
-                    target_cols=["着順"],
+                    target_cols=AGG_TARGET_COLS,
                     group_cols=["騎手"],
                 )
                 merger.merge()

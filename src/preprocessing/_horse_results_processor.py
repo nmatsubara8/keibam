@@ -58,6 +58,9 @@ class HorseResultsProcessor(AbstractDataProcessor):
         df[Cols.RANK_DIFF] = pd.to_numeric(df[Cols.RANK_DIFF], errors="coerce").fillna(0)
         df[Cols.RANK_DIFF] = df[Cols.RANK_DIFF].map(lambda x: 0 if x < 0 else x)
 
+        # 上がり3F（終盤の脚力）を数値化（多窓集計の対象にするため）。"34.5" 等→float。
+        df[Cols.NOBORI] = pd.to_numeric(df[Cols.NOBORI], errors="coerce")
+
         # レース展開データ（n=1: 最初のコーナー位置, n=4: 最終コーナー位置）
         df["first_corner"] = df[Cols.CORNER].map(lambda x: parse_corner(x, 1))
         df["final_corner"] = df[Cols.CORNER].map(lambda x: parse_corner(x, 4))
