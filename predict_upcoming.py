@@ -36,8 +36,25 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 
+_JRA_PLACE = {
+    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟", "05": "東京",
+    "06": "中山", "07": "中京", "08": "京都", "09": "阪神", "10": "小倉",
+}
+
+
+def _race_label(race_id, post_str=None) -> str:
+    """race_id（年4+競馬場2+開催2+日2+R2）から『競馬場NR』表記を作る。post_str があれば発走時刻も付す。"""
+    rid = str(race_id)
+    place = _JRA_PLACE.get(rid[4:6], f"場{rid[4:6]}") if len(rid) >= 12 else "?"
+    rno = str(int(rid[-2:])) if rid[-2:].isdigit() else rid[-2:]
+    label = f"{place}{rno}R"
+    if post_str:
+        label += f" 発走{post_str}"
+    return label
+
+
 def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
-    """開催日の出馬表（暫定オッズ込み）をスクレイプし、結合 DataFrame を返す。
+    """開催日の出馬表（暫定オッズ込み）をスクレイプし、(結合DataFrame, 発走時刻dict) を返す。
 
     race_ids 未指定なら当日の全レースを自動検出する。取得失敗レースはスキップ。
     """
@@ -51,7 +68,7 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     all_ids, all_times = scrape_race_id_race_time_list(date_yyyymmdd)
     if not all_ids:
         logger.error("開催レースが見つかりません: %s（非開催日 or 出馬表未公開）", date_yyyymmdd)
-        return None
+        return None, {}
     post_of = {str(r): t for r, t in zip(all_ids, all_times, strict=False)}
     ids = [str(r) for r in race_ids] if race_ids else [str(r) for r in all_ids]
 
@@ -77,7 +94,8 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
             when = f"発走{post_s}・あと{mtp}分" + ("（発走済み）" if mtp < 0 else "")
         else:
             when = f"発走{post_s}"
-        print(f"  [{i:2d}/{len(ids)}] R{rid[-2:]} {rid}  {when} … 取得中", flush=True)
+        label = _race_label(rid)
+        print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  {when} … 取得中", flush=True)
         tmp = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
@@ -85,15 +103,15 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
             scrape_shutuba_table(rid, date_str, tmp)
             df = pd.read_pickle(tmp)
             frames.append(df)
-            print(f"  [{i:2d}/{len(ids)}] R{rid[-2:]} {rid}  ✓ 取得済み（{len(df)}頭）", flush=True)
+            print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✓ 取得済み（{len(df)}頭）", flush=True)
         except Exception as e:  # noqa: BLE001 — 1レースの失敗で全体を止めない
-            print(f"  [{i:2d}/{len(ids)}] R{rid[-2:]} {rid}  ✗ 取得失敗: {e}", flush=True)
+            print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✗ 取得失敗: {e}", flush=True)
         finally:
             if tmp and os.path.exists(tmp):
                 os.unlink(tmp)
     if not frames:
-        return None
-    return pd.concat(frames)
+        return None, post_of
+    return pd.concat(frames), post_of
 
 
 def _build_featured(shutuba_df):
@@ -156,7 +174,7 @@ def _build_featured(shutuba_df):
             os.unlink(shutuba_pkl)
 
 
-def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100) -> float:
+def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None) -> float:
     """1レースの推奨馬券を表示し、そのレースの合計投資額を返す。
 
     JRA は unit 円（既定100）単位でしか購入できないため、ケリーの生額を unit 単位に
@@ -173,7 +191,8 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
             rows.append((c, stake))
     if not rows:
         return 0.0
-    print(f"\n■ race_id {race_id}")
+    post_str = (post_of or {}).get(str(race_id))
+    print(f"\n■ {_race_label(race_id, post_str)}  [{race_id}]")
     print(f"  {'馬番':>4}{'オッズ':>8}{'勝率':>8}{'EV':>7}{'購入額':>10}")
     total = 0.0
     for c, stake in rows:
@@ -246,9 +265,9 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
     from app._prediction_service import run_prediction
 
     if shutuba_pkl:
-        shutuba_df = pd.read_pickle(shutuba_pkl)
+        shutuba_df, post_of = pd.read_pickle(shutuba_pkl), {}
     else:
-        shutuba_df = _scrape_shutuba_day(date_yyyymmdd, race_ids)
+        shutuba_df, post_of = _scrape_shutuba_day(date_yyyymmdd, race_ids)
     if shutuba_df is None or shutuba_df.empty:
         logger.error("出馬表が空のため予測スキップ")
         return 0, 0.0
@@ -269,7 +288,7 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
         except Exception as e:  # noqa: BLE001
             logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
-        spent = _print_recommendations(race_id, candidates, op_config.bankroll, unit)
+        spent = _print_recommendations(race_id, candidates, op_config.bankroll, unit, post_of)
         if spent > 0:
             grand_total += spent
             n_reco += 1
