@@ -73,7 +73,7 @@ def run_backtest(race_groups, settle_fn, optimizer, initial_bankroll: float, fla
     """
     bankroll = initial_bankroll
     peak = bankroll
-    max_dd = 0.0
+    max_dd_ratio = 0.0
     n_bets = n_hits = 0
     total_staked = total_return = 0.0
 
@@ -101,16 +101,21 @@ def run_backtest(race_groups, settle_fn, optimizer, initial_bankroll: float, fla
             n_bets += 1
             if return_amount > 0:
                 n_hits += 1
-            peak = max(peak, bankroll)
-            max_dd = max(max_dd, peak - bankroll)
+            # 最大ドローダウンは「その時点の peak 比」で取る。絶対額を最終 peak で割ると
+            # 複利で peak が巨大化した分だけ過小評価される（旧バグ）。
+            if bankroll > peak:
+                peak = bankroll
+            elif peak > 0:
+                max_dd_ratio = max(max_dd_ratio, (peak - bankroll) / peak)
             if bankroll <= 0:
+                max_dd_ratio = 1.0
                 break
 
     growth = math.log(bankroll / initial_bankroll) if bankroll > 0 else float("-inf")
     return {
         "final_bankroll": bankroll,
         "log_growth": growth,
-        "max_drawdown_ratio": (max_dd / peak) if peak > 0 else 0.0,
+        "max_drawdown_ratio": max_dd_ratio,
         "return_rate": (total_return / total_staked) if total_staked > 0 else 0.0,
         "n_bets": n_bets,
         "hit_rate": (n_hits / n_bets) if n_bets else 0.0,
