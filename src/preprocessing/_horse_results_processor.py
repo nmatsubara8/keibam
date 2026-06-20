@@ -97,6 +97,15 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # フォーマット例外は欠損値になる
         df["time_seconds"] = (datetime_s - basetime).dt.total_seconds()
 
+        # §2l スピード指数（タイム偏差）: (競馬場×種別×距離×馬場) ごとの基準タイムから
+        # 何σ速かったか。faster=正。生タイムは馬場/距離差で比較不能なため標準化して相対化する。
+        # 基準は母集団統計（着順という結果は使わない）。当該走のタイムのみで算出されリーク無し。
+        speed_keys = [Cols.PLACE, "race_type", "course_len", Cols.GROUND_STATE]
+        grp = df.groupby(speed_keys)["time_seconds"]
+        base_mean = grp.transform("mean")
+        base_std = grp.transform("std")
+        df["speed_figure"] = (base_mean - df["time_seconds"]) / (base_std + 1e-8)
+
         # インデックス名を与える
         # df.index.name = "horse_id"
         df.set_index("horse_id", inplace=True)
@@ -149,6 +158,7 @@ class HorseResultsProcessor(AbstractDataProcessor):
                 "race_type",
                 "course_len",
                 "time_seconds",
+                "speed_figure",
             ]
         ]
 

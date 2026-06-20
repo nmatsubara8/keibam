@@ -352,6 +352,48 @@ class TestAddAptitudeStats:
 
 
 # ──────────────────────────────────────────
+# §2l(Batch C): _add_speed_figure_stats
+# ──────────────────────────────────────────
+
+class TestAddSpeedFigureStats:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": [1]},
+            index=pd.Index(["r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        """horse1 の過去走 speed_figure（faster=正）。best=2.0、直近5走平均は全6走中5走。"""
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1, 1, 1, 1, 1],
+                "date": pd.to_datetime(
+                    ["2023-01-01", "2023-02-01", "2023-03-01",
+                     "2023-04-01", "2023-05-01", "2023-06-01"]
+                ),
+                "speed_figure": [-1.0, 0.0, 2.0, 1.0, 0.5, 1.5],
+            }
+        ).set_index("horse_id")
+
+    def test_best_is_max(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_speed_figure_stats(self._results(), self._hr())
+        assert out["speed_fig_best"].iloc[0] == pytest.approx(2.0)
+
+    def test_mean5_recent_only(self):
+        # 直近5走 = [0.0,2.0,1.0,0.5,1.5] → mean=1.0（最古の-1.0は除外）
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_speed_figure_stats(self._results(), self._hr())
+        assert out["speed_fig_mean5"].iloc[0] == pytest.approx(1.0)
+
+    def test_skips_when_no_speed_figure(self):
+        m = _make_merger(_results_df_with_jockey())
+        hr = self._hr().drop(columns=["speed_figure"])
+        out = m._add_speed_figure_stats(self._results(), hr)
+        assert "speed_fig_best" not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2i: _summarize with extended target_cols (Batch B)
 # ──────────────────────────────────────────
 

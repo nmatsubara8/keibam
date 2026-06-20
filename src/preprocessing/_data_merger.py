@@ -178,6 +178,7 @@ class DataMerger:
             results = self._add_growth_stats(results, horse_results)
             results = self._add_prev_race_features(results, horse_results)
             results = self._add_aptitude_stats(results, horse_results)
+            results = self._add_speed_figure_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
@@ -487,6 +488,31 @@ class DataMerger:
                 place_win = same.groupby("horse_id")["_is_win"].mean().rename("place_win_rate")
                 results = results.merge(place_win, left_on="horse_id", right_index=True, how="left")
 
+        return results
+
+    # ──────────────────────────────────────────
+    # §2l: Speed-figure features (Batch C)
+    # ──────────────────────────────────────────
+
+    def _add_speed_figure_stats(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
+        """スピード指数（タイム偏差）の集計を追加する（リーク無し）。
+
+        speed_figure は HorseResultsProcessor が各過去走に付与済み（基準タイムから何σ速いか、
+        faster=正）。ここでは馬ごとに:
+        - ``speed_fig_best``  : 過去最高指数（ピーク能力＝この馬の地力上限）
+        - ``speed_fig_mean5`` : 直近5走平均（現在の調子・近走の地力）
+        を算出する。horse_results は当該レース日より前のみ（リーク無し）。
+        """
+        if horse_results.empty or "speed_figure" not in horse_results.columns:
+            return results
+
+        hr = horse_results
+        best = hr.groupby(level=0)["speed_figure"].max().rename("speed_fig_best")
+        recent5 = self._filter_horse_results(hr, 5)
+        mean5 = recent5.groupby(level=0)["speed_figure"].mean().rename("speed_fig_mean5")
+
+        results = results.merge(best, left_on="horse_id", right_index=True, how="left")
+        results = results.merge(mean5, left_on="horse_id", right_index=True, how="left")
         return results
 
     # ──────────────────────────────────────────

@@ -239,6 +239,7 @@ class FeatureEngineering:
             PACE_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
             SIRE_FEATURE_COLS,
+            SPEED_FIGURE_FEATURE_COLS,
         )
 
         # Batch A の連続値（前走比較・行内導出）もレース内相対化する。二値フラグは除く。
@@ -265,6 +266,7 @@ class FeatureEngineering:
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
             + APTITUDE_FEATURE_COLS
+            + SPEED_FIGURE_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:
