@@ -173,6 +173,7 @@ class DataMerger:
 
             results = self._add_pace_stats(results, horse_results)
             results = self._add_growth_stats(results, horse_results)
+            results = self._add_prev_race_features(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
@@ -378,6 +379,59 @@ class DataMerger:
 
         results = results.merge(growth, left_on="horse_id", right_index=True, how="left")
         results = results.merge(n_starts, left_on="horse_id", right_index=True, how="left")
+        return results
+
+    # ──────────────────────────────────────────
+    # §2m: Previous-race comparison features (Batch A)
+    # ──────────────────────────────────────────
+
+    def _add_prev_race_features(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
+        """前走との比較特徴（距離延長/短縮・斤量増減・乗り替わり）を追加する。
+
+        前走＝最も新しい過去走（horse_results は当該レース日より前のみなのでリーク無し）。
+        - ``dist_change``    : 今回 course_len − 前走 course_len（正=延長・負=短縮）
+        - ``kinryo_delta``   : 今回 斤量 − 前走 斤量（ハンデ増減）
+        - ``jockey_change``  : 騎手が前走から替わったか（1=乗り替わり、0=継続、初出走=NaN）
+        """
+        if horse_results.empty:
+            return results
+
+        hr = horse_results.sort_values("date")
+        prev = hr.groupby(level=0).tail(1)  # 馬ごとの最新（=前走）1行
+        rename: dict = {}
+        if "course_len" in prev.columns:
+            rename["course_len"] = "_prev_course_len"
+        if HRCols.KINRYO in prev.columns:
+            rename[HRCols.KINRYO] = "_prev_kinryo"
+        if HRCols.JOCKEY in prev.columns:
+            rename[HRCols.JOCKEY] = "_prev_jockey"
+        if not rename:
+            return results
+
+        prev_sub = prev[list(rename)].rename(columns=rename)
+        results = results.merge(prev_sub, left_on="horse_id", right_index=True, how="left")
+
+        if "_prev_course_len" in results.columns and "course_len" in results.columns:
+            results["dist_change"] = (
+                pd.to_numeric(results["course_len"], errors="coerce")
+                - pd.to_numeric(results["_prev_course_len"], errors="coerce")
+            )
+        if "_prev_kinryo" in results.columns and HRCols.KINRYO in results.columns:
+            results["kinryo_delta"] = (
+                pd.to_numeric(results[HRCols.KINRYO], errors="coerce")
+                - pd.to_numeric(results["_prev_kinryo"], errors="coerce")
+            )
+        if "_prev_jockey" in results.columns and HRCols.JOCKEY in results.columns:
+            cur_j = results[HRCols.JOCKEY].astype(str).str.strip()
+            prev_j = results["_prev_jockey"].astype(str).str.strip()
+            jc = (cur_j != prev_j).astype(float)
+            jc[results["_prev_jockey"].isna()] = float("nan")  # 初出走は欠損
+            results["jockey_change"] = jc
+
+        results = results.drop(
+            columns=[c for c in ("_prev_course_len", "_prev_kinryo", "_prev_jockey") if c in results.columns],
+            errors="ignore",
+        )
         return results
 
     # ──────────────────────────────────────────

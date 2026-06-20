@@ -247,6 +247,63 @@ class TestAddGrowthStats:
 
 
 # ──────────────────────────────────────────
+# §2m(Batch A): _add_prev_race_features
+# ──────────────────────────────────────────
+
+class TestAddPrevRaceFeatures:
+    def _results(self):
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 2],
+                "course_len": [20, 16],
+                "斤量": [56.0, 55.0],
+                "騎手": ["B", "X"],
+            },
+            index=pd.Index(["r01", "r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        """horse1 は2走（前走=最新2023-03: course_len18/斤量55/騎手B）、horse2 は履歴なし。"""
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1],
+                "date": pd.to_datetime(["2023-01-01", "2023-03-01"]),
+                "course_len": [16, 18],
+                "斤量": [54.0, 55.0],
+                "騎手": ["A", "B"],
+            }
+        ).set_index("horse_id")
+
+    def test_dist_and_kinryo_delta(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_prev_race_features(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        assert h1["dist_change"] == pytest.approx(20 - 18)
+        assert h1["kinryo_delta"] == pytest.approx(56.0 - 55.0)
+
+    def test_jockey_change_continued_is_zero(self):
+        # horse1: 今回騎手B == 前走騎手B → 0（継続）
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_prev_race_features(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        assert h1["jockey_change"] == pytest.approx(0.0)
+
+    def test_no_history_is_nan(self):
+        # horse2 は前走なし → 全特徴 NaN（リーク無しで安全な欠損扱い）
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_prev_race_features(self._results(), self._hr())
+        h2 = out[out["horse_id"] == 2].iloc[0]
+        assert pd.isna(h2["dist_change"])
+        assert pd.isna(h2["jockey_change"])
+
+    def test_temp_cols_dropped(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_prev_race_features(self._results(), self._hr())
+        for c in ("_prev_course_len", "_prev_kinryo", "_prev_jockey"):
+            assert c not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2e: _add_course_condition_stats
 # ──────────────────────────────────────────
 

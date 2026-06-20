@@ -103,6 +103,42 @@ class TestFeatureEngineeringInteraction:
 
 
 # ──────────────────────────────────────────
+# §2m(Batch A): add_derived_features
+# ──────────────────────────────────────────
+
+class TestAddDerivedFeatures:
+    def test_cols_added(self):
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        for c in ("単勝_log", "kinryo_per_weight", "is_layoff", "is_back_to_back"):
+            assert c in df.columns
+
+    def test_log_odds_value(self):
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        assert df["単勝_log"].iloc[0] == pytest.approx(np.log1p(2.5))
+
+    def test_kinryo_per_weight_value(self):
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        assert df["kinryo_per_weight"].iloc[0] == pytest.approx(56.0 / 450.0)
+
+    def test_layoff_flag(self):
+        # interval=[30,60,20,45] → is_layoff(>=56)=[0,1,0,0]
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        assert df["is_layoff"].tolist() == [0.0, 1.0, 0.0, 0.0]
+
+    def test_returns_self_for_chaining(self):
+        fe = _make_fe(_base_df())
+        assert fe.add_derived_features() is fe
+
+
+# ──────────────────────────────────────────
 # §2g: add_race_level_zscore via FeatureEngineering
 # ──────────────────────────────────────────
 

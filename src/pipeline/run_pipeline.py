@@ -176,6 +176,7 @@ def _build_featured_data(config):
         FeatureEngineering(merger)
         .add_interval()
         .add_agedays()
+        .add_derived_features()      # §2m(Batch A): log odds / 斤量比 / 休み明け
         .add_interaction_features()  # §2b: before dummification
         .add_race_level_zscore()     # §2g: after all aggregate features
         .dumminize_kaisai()
@@ -352,6 +353,7 @@ def _retrain(args: argparse.Namespace) -> None:
                 return (
                     FeatureEngineering(merger)
                     .add_interval().add_agedays()
+                    .add_derived_features()
                     .add_interaction_features()
                     .add_race_level_zscore()
                     .dumminize_kaisai().dumminize_sex().dumminize_weather()

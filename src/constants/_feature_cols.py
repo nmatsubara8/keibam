@@ -79,6 +79,25 @@ GROWTH_FEATURE_COLS: list = [
 ]
 
 # ──────────────────────────────────────────
+# §2m: 前走比較・行内導出特徴量（Batch A）
+# ──────────────────────────────────────────
+
+# 前走との比較（DataMerger._add_prev_race_features）
+PREV_RACE_FEATURE_COLS: list = [
+    "dist_change",    # 今回 − 前走の距離（正=延長・負=短縮）
+    "kinryo_delta",   # 今回 − 前走の斤量
+    "jockey_change",  # 乗り替わりフラグ（1=替わり）
+]
+
+# 行内導出（FeatureEngineering.add_derived_features）
+DERIVED_FEATURE_COLS: list = [
+    "単勝_log",            # log1p(単勝)
+    "kinryo_per_weight",  # 斤量 ÷ 馬体重
+    "is_layoff",          # 休み明けフラグ
+    "is_back_to_back",    # 連闘フラグ
+]
+
+# ──────────────────────────────────────────
 # §2g: レース内 Z-score 対象列
 # ──────────────────────────────────────────
 

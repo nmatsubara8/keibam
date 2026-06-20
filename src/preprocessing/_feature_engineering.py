@@ -51,6 +51,31 @@ class FeatureEngineering:
         self.__data.drop("birthday", axis=1, inplace=True)
         return self
 
+    def add_derived_features(self):
+        """§2m(Batch A): 行内導出の市場・物理特徴を追加する（リーク無し）。
+
+        - ``単勝_log``          : log1p(単勝)。右に歪んだオッズ分布を対数化し決定木の分割効率を上げる。
+        - ``kinryo_per_weight`` : 斤量 ÷ 馬体重。小柄な馬への過斤量負荷を数理化。
+        - ``is_layoff``         : 休み明けフラグ（interval≥56日＝約8週、鉄砲適性）。
+        - ``is_back_to_back``   : 連闘フラグ（interval≤8日、詰まったローテ）。
+        interval は add_interval 後に存在する前提。各元列が無ければ該当特徴をスキップ。
+        """
+        import numpy as np
+
+        d = self.__data
+        if "単勝" in d.columns:
+            d["単勝_log"] = np.log1p(pd.to_numeric(d["単勝"], errors="coerce"))
+        if "斤量" in d.columns and "体重" in d.columns:
+            weight = pd.to_numeric(d["体重"], errors="coerce")
+            d["kinryo_per_weight"] = pd.to_numeric(d["斤量"], errors="coerce") / weight.replace(0, np.nan)
+        if "interval" in d.columns:
+            interval = pd.to_numeric(d["interval"], errors="coerce")
+            d["is_layoff"] = (interval >= 56).astype(float)
+            d["is_back_to_back"] = (interval <= 8).astype(float)
+            # 初出走（interval 欠損）はフラグも欠損にする
+            d.loc[interval.isna(), ["is_layoff", "is_back_to_back"]] = float("nan")
+        return self
+
     def dumminize_kaisai(self):
         """
         開催カラムをダミー変数化する
@@ -215,6 +240,11 @@ class FeatureEngineering:
             SIRE_FEATURE_COLS,
         )
 
+        # Batch A の連続値（前走比較・行内導出）もレース内相対化する。二値フラグは除く。
+        prev_derived_zscore_cols = [
+            "dist_change", "kinryo_delta", "単勝_log", "kinryo_per_weight",
+        ]
+
         # Start with G1 static list
         zscore_cols = [c for c in RACE_LEVEL_ZSCORE_COLS if c in self.__data.columns]
 
@@ -233,6 +263,7 @@ class FeatureEngineering:
             + GROWTH_FEATURE_COLS
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
+            + prev_derived_zscore_cols
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:
