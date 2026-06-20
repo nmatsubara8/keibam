@@ -85,6 +85,13 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     ids.sort(key=lambda r: _post_dt(r) or dt.datetime.max)
     print(f"出馬表・暫定オッズを取得: {date_yyyymmdd} / {len(ids)} レース（発走順）")
 
+    # ポライトネス: レース間に間隔を入れ、窓内レースが重なってもバースト送信にしない。
+    # 1時間あたり上限は scrape_shutuba_table→PlaywrightScraper.fetch の hourly limiter が別途担保。
+    import time as _time
+
+    from src.preparing._rate_limiter import polite_interval
+    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+
     frames = []
     for i, rid in enumerate(ids, 1):
         pdt = _post_dt(rid)
@@ -109,6 +116,11 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
         finally:
             if tmp and os.path.exists(tmp):
                 os.unlink(tmp)
+        # 次レースまで待機（最後のレースの後は待たない）。delay<=0 で無効化可。
+        if i < len(ids):
+            wait = polite_interval(delay)
+            if wait > 0:
+                _time.sleep(wait)
     if not frames:
         return None, post_of
     return pd.concat(frames), post_of
@@ -174,7 +186,63 @@ def _build_featured(shutuba_df):
             os.unlink(shutuba_pkl)
 
 
-def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None) -> float:
+def _minutes_to_post(date_yyyymmdd, post_s, now):
+    if not post_s:
+        return None
+    try:
+        pdt = dt.datetime.strptime(f"{date_yyyymmdd} {post_s}", "%Y%m%d %H:%M")
+        return int((pdt - now).total_seconds() // 60)
+    except (ValueError, TypeError):
+        return None
+
+
+def _save_live_odds(shutuba_df, post_of, date_yyyymmdd, captured_at):
+    """スクレイプした全レース・全馬の暫定単勝オッズを CSV に追記蓄積する。"""
+    import os
+
+    import pandas as pd
+
+    from src.constants._results_cols import ResultsCols
+
+    cap = captured_at.isoformat(timespec="seconds")
+    rows = []
+    for race_id in shutuba_df.index.unique():
+        rid = str(race_id)
+        post_s = post_of.get(rid, "")
+        mtp = _minutes_to_post(date_yyyymmdd, post_s, captured_at)
+        rno = int(rid[-2:]) if rid[-2:].isdigit() else rid[-2:]
+        for _, r in shutuba_df.loc[[race_id]].iterrows():
+            rows.append({
+                "captured_at": cap, "race_id": rid,
+                "場": _JRA_PLACE.get(rid[4:6], rid[4:6]), "R": rno,
+                "発走": post_s, "残り分": mtp,
+                "馬番": r.get(ResultsCols.UMABAN), "単勝": r.get(ResultsCols.TANSHO_ODDS),
+            })
+    if not rows:
+        return
+    os.makedirs("data/live", exist_ok=True)
+    path = f"data/live/odds_{date_yyyymmdd}.csv"
+    pd.DataFrame(rows).to_csv(path, mode="a", header=not os.path.exists(path),
+                              index=False, encoding="utf-8-sig")
+    logger.info("オッズ蓄積: %d 行を %s に追記", len(rows), path)
+
+
+def _save_live_bets(bet_rows, date_yyyymmdd):
+    """推奨買い目（100円単位の購入額）を CSV に追記する（発走後の結果検証用）。"""
+    import os
+
+    import pandas as pd
+
+    if not bet_rows:
+        return
+    os.makedirs("data/live", exist_ok=True)
+    path = f"data/live/bets_{date_yyyymmdd}.csv"
+    pd.DataFrame(bet_rows).to_csv(path, mode="a", header=not os.path.exists(path),
+                                  index=False, encoding="utf-8-sig")
+    logger.info("買い目記録: %d 件を %s に追記", len(bet_rows), path)
+
+
+def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None):
     """1レースの推奨馬券を表示し、そのレースの合計投資額を返す。
 
     JRA は unit 円（既定100）単位でしか購入できないため、ケリーの生額を unit 単位に
@@ -190,7 +258,7 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
         if stake >= unit:
             rows.append((c, stake))
     if not rows:
-        return 0.0
+        return 0.0, []
     post_str = (post_of or {}).get(str(race_id))
     print(f"\n■ {_race_label(race_id, post_str)}  [{race_id}]")
     print(f"  {'馬番':>4}{'オッズ':>8}{'勝率':>8}{'EV':>7}{'購入額':>10}")
@@ -201,7 +269,7 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
               f"{c.expected_value:>7.2f}{stake:>10,d}")
     print(f"  → 購入合計 {int(total):,} 円（{unit}円単位 / bankroll {int(bankroll):,} 円の "
           f"{total / bankroll * 100:.1f}%）")
-    return total
+    return total, rows
 
 
 def _align_features(featured, model):
@@ -258,12 +326,18 @@ def _in_window(schedule, now, lo: float, hi: float):
     return [rid for _, rid in sorted(out)]
 
 
-def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, unit=100):
-    """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。"""
+def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, unit=100,
+                       save_odds=False):
+    """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。
+
+    save_odds=True なら、スクレイプした全馬の暫定オッズ（data/live/odds_*.csv）と推奨買い目
+    （data/live/bets_*.csv）を captured_at・残り分つきで追記蓄積する。
+    """
     import pandas as pd
 
     from app._prediction_service import run_prediction
 
+    captured_at = dt.datetime.now()
     if shutuba_pkl:
         shutuba_df, post_of = pd.read_pickle(shutuba_pkl), {}
     else:
@@ -271,6 +345,8 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
     if shutuba_df is None or shutuba_df.empty:
         logger.error("出馬表が空のため予測スキップ")
         return 0, 0.0
+    if save_odds:
+        _save_live_odds(shutuba_df, post_of, date_yyyymmdd, captured_at)
     featured = _build_featured(shutuba_df)
     if featured is None or featured.empty:
         logger.error("featured が空のため予測スキップ")
@@ -281,6 +357,8 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
 
     grand_total = 0.0
     n_reco = 0
+    bet_rows = []
+    cap = captured_at.isoformat(timespec="seconds")
     for race_id in sorted(featured.index.unique()):
         X = featured.loc[[race_id]]
         try:
@@ -288,10 +366,25 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
         except Exception as e:  # noqa: BLE001
             logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
-        spent = _print_recommendations(race_id, candidates, op_config.bankroll, unit, post_of)
+        spent, placed = _print_recommendations(race_id, candidates, op_config.bankroll, unit, post_of)
         if spent > 0:
             grand_total += spent
             n_reco += 1
+        if save_odds:
+            rid = str(race_id)
+            post_s = post_of.get(rid, "")
+            mtp = _minutes_to_post(date_yyyymmdd, post_s, captured_at)
+            rno = int(rid[-2:]) if rid[-2:].isdigit() else rid[-2:]
+            for c, stake in placed:
+                bet_rows.append({
+                    "captured_at": cap, "race_id": rid,
+                    "場": _JRA_PLACE.get(rid[4:6], rid[4:6]), "R": rno,
+                    "発走": post_s, "残り分": mtp, "馬番": c.combo[0],
+                    "単勝": c.odds, "勝率": round(float(c.probability), 4),
+                    "EV": round(float(c.expected_value), 3), "購入額": stake,
+                })
+    if save_odds:
+        _save_live_bets(bet_rows, date_yyyymmdd)
     return n_reco, grand_total
 
 
@@ -310,6 +403,8 @@ def main() -> None:
     ap.add_argument("--interval", type=int, default=300, help="--loop 時の実行間隔（秒、既定300）")
     ap.add_argument("--unit", type=int, default=100,
                     help="購入単位（円、既定100）。ケリー額をこの単位に丸め、未満は見送り")
+    ap.add_argument("--save-odds", action="store_true",
+                    help="取得した全馬の暫定オッズと推奨買い目を data/live/ に追記蓄積する")
     ap.add_argument("--shutuba-pkl", default=None,
                     help="スクレイプ済み出馬表 pickle を使う（ネット不要。予測部の確認用）")
     args = ap.parse_args()
@@ -337,7 +432,8 @@ def main() -> None:
         print("=" * 70)
         print(f"予測（{date_yyyymmdd}） — 検証済み単勝戦略  {header}")
         print("=" * 70)
-        n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model, op_config, args.unit)
+        n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model,
+                                      op_config, args.unit, args.save_odds)
         print("\n" + "=" * 70)
         if n == 0:
             print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")
