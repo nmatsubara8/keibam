@@ -176,6 +176,33 @@ def _print_recommendations(race_id, candidates, bankroll: float) -> float:
     return total
 
 
+def _align_features(featured, model):
+    """featured の特徴量列をモデル学習時(feature_names_)の順序・セットに揃える。
+
+    KeibaAI.calc_score と同じ整合（不足列は0埋め・余分列は除外・score_policy が参照する
+    メタ列=馬番/枠番/単勝等は保持）を施す。run_prediction は effective_model を直接使い
+    この整合を経ないため、ここで明示的に行わないと学習時と列数が合わず predict が落ちる。
+    """
+    import pandas as pd
+
+    names = getattr(model, "feature_names_", None)
+    if not names:
+        logger.warning("モデルに feature_names_ が無く列整合をスキップ（旧モデル？）")
+        return featured
+    from src.policies._score_policy import META_COLS
+
+    meta = [c for c in META_COLS if c in featured.columns]
+    feat = [c for c in names if c not in meta]
+    missing = [c for c in feat if c not in featured.columns]
+    extra = [c for c in featured.columns if c not in names and c not in meta]
+    if missing or extra:
+        logger.info("列整合: 不足%d列を0埋め / 余分%d列を除外", len(missing), len(extra))
+    x_feat = featured.reindex(columns=feat, fill_value=0)
+    out = pd.concat([featured[meta], x_feat], axis=1)
+    out.index = featured.index
+    return out
+
+
 def main() -> None:
     from src.constants._logging_config import setup_logging
 
@@ -214,6 +241,10 @@ def main() -> None:
 
     # 3. モデル + 検証済み戦略で予測
     model = load_latest_model()
+    # run_prediction は effective_model（生LGBM）を使い KeibaAI.calc_score の列整合を
+    # 経ないため、ここで学習時(feature_names_)の列順・セットに揃える（出馬表チェーンと
+    # 学習チェーンの列差・ダミー列差を吸収。不足は0埋め・余分は除外・メタ列は保持）。
+    featured = _align_features(featured, model)
 
     odds_cap = "なし" if op_config.max_odds == float("inf") else f"{op_config.max_odds:.0f}倍"
     print("=" * 70)
