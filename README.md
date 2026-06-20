@@ -307,6 +307,9 @@ python -m src.pipeline.run_pipeline evaluate-odds-dynamics
 
 ### 4-5. 馬券発注フロー
 
+> 推奨馬券は検証済み戦略（**単勝・EV>1.1・オッズ≤15倍**）に絞られる。根拠・検証・運用パラメータは
+> [`docs/betting_strategy.md`](docs/betting_strategy.md) を参照。
+
 1. **予測**: 「🎯 予測・推奨」でレースを選び、推奨馬券を確認 → 「🛒 発注カートへ追加」
 2. **編集**: 「🛒 発注」ページで金額（100 円単位）を編集・発注対象を選択。
    カート合計は当日上限（`bankroll × max_daily_ratio`）でブロックされる
@@ -461,6 +464,7 @@ ingest/retrain 起動時に `auto_migrate_all` が空テーブルへ自動移行
 
 ## 8. 関連ドキュメント
 
+- [`docs/betting_strategy.md`](docs/betting_strategy.md) — 検証済み馬券戦略（単勝・EV>1.1・オッズ≤15）の根拠・検証・運用パラメータ
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — レイヤ設計・抽象境界・DI・ADR
 - [`docs/setup_vps.md`](docs/setup_vps.md) — VPS（Playwright）セットアップ・cron 運用
 - [`.claude-context.md`](.claude-context.md) — 開発履歴・修正の詳細ログ
