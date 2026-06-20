@@ -453,6 +453,11 @@ def main() -> None:
             return
         logger.info("ループ開始: %s / %d レース / 窓 %.0f-%.0f分前 / 間隔 %d秒",
                     date_yyyymmdd, len(schedule), lo, hi, args.interval)
+        # 起動時に現時点の全レースを1回予測（即座に現状把握。--save-odds なら現在オッズも保存）。
+        # その後、窓ベースのスケジュール待機に入る。
+        print(f"\n[{dt.datetime.now():%H:%M}] 起動時スナップショット: 全 {len(schedule)} レースを予測 …")
+        _run_once(None)
+        print(f"\n[{dt.datetime.now():%H:%M}] スケジュール待機開始（窓 {lo:.0f}-{hi:.0f}分前 / {args.interval}秒）…")
         while True:
             now = dt.datetime.now()
             ids = _in_window(schedule, now, lo, hi)
