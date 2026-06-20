@@ -156,22 +156,31 @@ def _build_featured(shutuba_df):
             os.unlink(shutuba_pkl)
 
 
-def _print_recommendations(race_id, candidates, bankroll: float) -> float:
-    """1レースの推奨馬券を表示し、そのレースの合計投資額を返す。"""
+def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100) -> float:
+    """1レースの推奨馬券を表示し、そのレースの合計投資額を返す。
+
+    JRA は unit 円（既定100）単位でしか購入できないため、ケリーの生額を unit 単位に
+    丸める。丸めて 0 になる薄いベット（< unit/2 円）は購入不可のため見送る。
+    """
     from src.constants._bet_types import BetType
 
     tansho = [c for c in candidates if c.bet_type in ("tansho", BetType.TANSHO)]
-    if not tansho:
+    # unit 単位に丸め、最小単位未満は見送り。
+    rows = []
+    for c in sorted(tansho, key=lambda c: -c.expected_value):
+        stake = int(round(c.stake / unit)) * unit
+        if stake >= unit:
+            rows.append((c, stake))
+    if not rows:
         return 0.0
     print(f"\n■ race_id {race_id}")
-    print(f"  {'馬番':>4}{'オッズ':>8}{'勝率':>8}{'EV':>7}{'推奨額':>10}")
+    print(f"  {'馬番':>4}{'オッズ':>8}{'勝率':>8}{'EV':>7}{'購入額':>10}")
     total = 0.0
-    for c in sorted(tansho, key=lambda c: -c.expected_value):
-        stake = int(round(c.stake))
+    for c, stake in rows:
         total += stake
         print(f"  {c.combo[0]:>4}{c.odds:>8.1f}{c.probability:>8.3f}"
               f"{c.expected_value:>7.2f}{stake:>10,d}")
-    print(f"  → 投資合計 {int(total):,} 円（bankroll {int(bankroll):,} 円の "
+    print(f"  → 購入合計 {int(total):,} 円（{unit}円単位 / bankroll {int(bankroll):,} 円の "
           f"{total / bankroll * 100:.1f}%）")
     return total
 
@@ -230,7 +239,7 @@ def _in_window(schedule, now, lo: float, hi: float):
     return [rid for _, rid in sorted(out)]
 
 
-def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config):
+def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, unit=100):
     """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。"""
     import pandas as pd
 
@@ -260,7 +269,7 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config):
         except Exception as e:  # noqa: BLE001
             logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
-        spent = _print_recommendations(race_id, candidates, op_config.bankroll)
+        spent = _print_recommendations(race_id, candidates, op_config.bankroll, unit)
         if spent > 0:
             grand_total += spent
             n_reco += 1
@@ -280,6 +289,8 @@ def main() -> None:
     ap.add_argument("--loop", action="store_true",
                     help="常駐ループ。--window 内のレースを --interval 秒ごとに再予測（既定窓 30-60分前）")
     ap.add_argument("--interval", type=int, default=300, help="--loop 時の実行間隔（秒、既定300）")
+    ap.add_argument("--unit", type=int, default=100,
+                    help="購入単位（円、既定100）。ケリー額をこの単位に丸め、未満は見送り")
     ap.add_argument("--shutuba-pkl", default=None,
                     help="スクレイプ済み出馬表 pickle を使う（ネット不要。予測部の確認用）")
     args = ap.parse_args()
@@ -307,7 +318,7 @@ def main() -> None:
         print("=" * 70)
         print(f"予測（{date_yyyymmdd}） — 検証済み単勝戦略  {header}")
         print("=" * 70)
-        n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model, op_config)
+        n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model, op_config, args.unit)
         print("\n" + "=" * 70)
         if n == 0:
             print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")
