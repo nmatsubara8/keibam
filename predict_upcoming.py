@@ -47,23 +47,47 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     from src.preparing._scrape_shutuba import scrape_shutuba_table
 
     date_str = f"{date_yyyymmdd[:4]}/{date_yyyymmdd[4:6]}/{date_yyyymmdd[6:8]}"
-    if not race_ids:
-        race_ids, _times = scrape_race_id_race_time_list(date_yyyymmdd)
-        if not race_ids:
-            logger.error("開催レースが見つかりません: %s（非開催日 or 出馬表未公開）", date_yyyymmdd)
+    # 開催レースと発走時刻を取得（--race-id 指定時はその部分集合に絞る）。
+    all_ids, all_times = scrape_race_id_race_time_list(date_yyyymmdd)
+    if not all_ids:
+        logger.error("開催レースが見つかりません: %s（非開催日 or 出馬表未公開）", date_yyyymmdd)
+        return None
+    post_of = {str(r): t for r, t in zip(all_ids, all_times, strict=False)}
+    ids = [str(r) for r in race_ids] if race_ids else [str(r) for r in all_ids]
+
+    def _post_dt(rid: str):
+        t = post_of.get(rid)
+        if not t:
             return None
-    logger.info("出馬表を取得: %s / %d レース", date_yyyymmdd, len(race_ids))
+        try:
+            return dt.datetime.strptime(f"{date_yyyymmdd} {t}", "%Y%m%d %H:%M")
+        except ValueError:
+            return None
+
+    # 発走順（早い順）に並べて「次のレース」を分かりやすくする。
+    ids.sort(key=lambda r: _post_dt(r) or dt.datetime.max)
+    print(f"出馬表・暫定オッズを取得: {date_yyyymmdd} / {len(ids)} レース（発走順）")
 
     frames = []
-    for rid in race_ids:
+    for i, rid in enumerate(ids, 1):
+        pdt = _post_dt(rid)
+        post_s = post_of.get(rid, "??:??")
+        if pdt is not None:
+            mtp = int((pdt - dt.datetime.now()).total_seconds() // 60)
+            when = f"発走{post_s}・あと{mtp}分" + ("（発走済み）" if mtp < 0 else "")
+        else:
+            when = f"発走{post_s}"
+        print(f"  [{i:2d}/{len(ids)}] R{rid[-2:]} {rid}  {when} … 取得中", flush=True)
         tmp = None
         try:
             with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
                 tmp = tf.name
-            scrape_shutuba_table(str(rid), date_str, tmp)
-            frames.append(pd.read_pickle(tmp))
+            scrape_shutuba_table(rid, date_str, tmp)
+            df = pd.read_pickle(tmp)
+            frames.append(df)
+            print(f"  [{i:2d}/{len(ids)}] R{rid[-2:]} {rid}  ✓ 取得済み（{len(df)}頭）", flush=True)
         except Exception as e:  # noqa: BLE001 — 1レースの失敗で全体を止めない
-            logger.warning("出馬表取得失敗 race_id=%s: %s", rid, e)
+            print(f"  [{i:2d}/{len(ids)}] R{rid[-2:]} {rid}  ✗ 取得失敗: {e}", flush=True)
         finally:
             if tmp and os.path.exists(tmp):
                 os.unlink(tmp)
@@ -89,6 +113,17 @@ def _build_featured(shutuba_df):
     from src.constants._local_paths import LocalPaths
 
     paths = LocalPaths()
+    # 発走前は馬体重が未発表（空欄）のことがある。'480(+2)' 形式を前提とする
+    # ResultsProcessor の体重パースが落ちるため、空欄を '0(0)'（体重=体重変化=0 の
+    # 中立値）に正規化してから渡す。
+    from src.constants._results_cols import ResultsCols
+    wcol = ResultsCols.WEIGHT_AND_DIFF
+    if wcol in shutuba_df.columns:
+        s = shutuba_df[wcol].astype(str).str.strip()
+        blank = ~s.str.contains("(", regex=False) | s.isin(["", "nan", "None", "NaN"])
+        if blank.any():
+            shutuba_df = shutuba_df.copy()
+            shutuba_df.loc[blank, wcol] = "0(0)"
     with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
         shutuba_pkl = tf.name
     shutuba_df.to_pickle(shutuba_pkl)
