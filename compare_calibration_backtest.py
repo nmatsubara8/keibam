@@ -34,10 +34,14 @@ def _fmt(x, pct=False):
 
 
 def _diagnose_tansho_ev(ai, featured_slice) -> None:
-    """単勝の EV(=較正勝率×単勝オッズ) 分布を出して、買い目0の原因を切り分ける。
+    """単勝の EV(=正規化勝率×単勝オッズ) 分布を出して、買い目0の原因を切り分ける。
 
-    - EV が NaN だらけ → 単勝オッズ列や勝率がおかしい（バグ）。
+    EV 選定は race 内で勝率を正規化（Σ=1）してから使う（Harville）。モデルは
+    scale_pos_weight で学習され raw predict_proba は race 内総和が1にならないため、
+    policy と同じく race 単位で正規化した上で EV を見る。
+
     - EV が 0.8 付近に密集 → 効率的市場（モデルが市場とほぼ一致）。閾値はそれ未満に。
+    - EV が広く 1 を超える → モデルが市場を出し抜けている（+EV 機会あり）。
     """
     import numpy as np
 
@@ -47,17 +51,22 @@ def _diagnose_tansho_ev(ai, featured_slice) -> None:
 
     try:
         table = ai.calc_score(featured_slice, ExpectedValueScorePolicy)
-        ev = (table[PROB].astype(float) * table[CURRENT_ODDS].astype(float)).to_numpy()
+        prob = table[PROB].astype(float)
+        # race(=index) 単位で正規化（policy の harville.normalize と同じ）
+        race_sum = table.groupby(level=0)[PROB].transform("sum")
+        norm_prob = prob / race_sum
+        ev = (norm_prob * table[CURRENT_ODDS].astype(float)).to_numpy()
         finite = ev[np.isfinite(ev)]
         n_nan = int(len(ev) - len(finite))
-        print("\n[診断] 単勝 EV = 較正勝率 × 単勝オッズ の分布")
+        print("\n[診断] 単勝 EV = 正規化勝率(race内Σ=1) × 単勝オッズ の分布")
         print(f"  対象 {len(ev)} 行 / NaN {n_nan} 行 / 有効 {len(finite)} 行")
         if len(finite):
             qs = np.percentile(finite, [50, 90, 95, 99, 100])
             print(f"  EV 中央値={qs[0]:.3f}  p90={qs[1]:.3f}  p95={qs[2]:.3f}"
                   f"  p99={qs[3]:.3f}  max={qs[4]:.3f}")
-            for th in (0.7, 0.8, 0.9, 1.0, 1.2):
-                print(f"   EV>{th}: {int((finite > th).sum())} 行")
+            for th in (0.7, 0.75, 0.8, 0.9, 1.0):
+                print(f"   EV>{th}: {int((finite > th).sum())} 行 "
+                      f"({100 * (finite > th).mean():.1f}%)")
     except Exception as e:  # noqa: BLE001
         print(f"[診断] EV 分布の計算に失敗: {e}")
 
