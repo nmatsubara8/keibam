@@ -17,7 +17,6 @@ from src.constants._feature_cols import (
     AGG_STATS,
     JOCKEY_RECENT_N,
     N_RACES_LIST,
-    PACE_CATEGORY_MAP,
     PACE_RECENT_N,
     SIRE_RECENT_YEARS,
 )
@@ -295,22 +294,32 @@ class DataMerger:
     # ──────────────────────────────────────────
 
     def _add_pace_stats(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
-        """直近 N レースの脚質集計特徴量（pace_median / leg_type_binary / pace_at_distance）を追加。"""
-        if HRCols.PACE not in horse_results.columns:
+        """直近 N レースの脚質(走法)集計特徴量（pace_median / leg_type_binary / pace_at_distance）を追加。
+
+        脚質は「ペース」列（レースのペース＝タイム文字列）ではなく通過順（第1コーナー位置）
+        から導く。``_pace_num = first_corner / 頭数 ∈ [0,1]``（0=逃げ/前、1=追込/後）。
+        旧実装は 'ペース'(6千種のタイム文字列)を脚質カテゴリ表(逃先差追)で map しており
+        全 NaN だった（重要度0%の原因）。first_corner は HorseResultsProcessor が通過順から
+        パース済み。
+        """
+        n_horses_col = HRCols.N_HORSES  # '頭数'
+        if "first_corner" not in horse_results.columns or n_horses_col not in horse_results.columns:
             return results
 
         hr = horse_results.copy()
-        hr["_pace_num"] = hr[HRCols.PACE].map(PACE_CATEGORY_MAP)
+        fc = pd.to_numeric(hr["first_corner"], errors="coerce")
+        nh = pd.to_numeric(hr[n_horses_col], errors="coerce")
+        hr["_pace_num"] = (fc / nh).clip(lower=0.0, upper=1.0)
 
         # Overall pace median over last N races
         n_hr = self._filter_horse_results(hr, PACE_RECENT_N)
         pace_median = n_hr.groupby(level=0)["_pace_num"].median().rename("pace_median")
 
-        # leg_type_binary: 逃/先(< 2) → 0, 差/追(>= 2) → 1, 中間値 → NaN
+        # leg_type_binary: 前半(<0.5)=0(逃げ・先行), 後半(>=0.5)=1(差し・追込)
         def _to_binary(v: float) -> float:
-            if pd.isna(v) or v == 1.5:
+            if pd.isna(v):
                 return float("nan")
-            return 0.0 if v < 2.0 else 1.0
+            return 0.0 if v < 0.5 else 1.0
 
         leg_binary = pace_median.map(_to_binary).rename("leg_type_binary")
 

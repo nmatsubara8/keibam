@@ -60,7 +60,8 @@ def _horse_results_df():
             ),
             "着順": [1, 2, 1, 3, 5, 2],
             "頭数": [12, 12, 16, 10, 10, 8],
-            "ペース": ["逃", "先", "差", "追", "逃", "先"],
+            # 脚質は通過順(第1コーナー位置)から導く。horse1 は前目(1,2,2)=逃げ・先行。
+            "first_corner": [1, 2, 2, 8, 9, 6],
             "race_type": ["芝", "芝", "ダート", "芝", "ダート", "芝"],
             "course_len": [16, 16, 18, 20, 16, 16],
         }
@@ -157,25 +158,34 @@ class TestAddPaceStats:
         out = m._add_pace_stats(results, hr)
         assert "pace_at_distance" in out.columns
 
-    def test_pace_category_map_applied(self):
-        """逃=0, 先=1 → horse 1 past [逃,先,差] → median=1 (先) → leg_type=0."""
+    def test_pace_from_corner_position(self):
+        """脚質は first_corner/頭数 から算出。horse1 は前目 → pace_median 小・leg_type=0(前)。"""
         from src.preprocessing._data_merger import DataMerger
 
         m = _make_merger(_results_df_with_jockey())
         results = self._make_results_for_pace()
         hr = _horse_results_df()
         out = m._add_pace_stats(results, hr)
-        # horse 1: ペース = [逃(0), 先(1), 差(2)] → median=1.0 → leg_type=0
+        # horse 1: first_corner=[1,2,2] / 頭数=[12,12,16] → _pace_num=[.083,.167,.125]
+        #          → median≈0.125 < 0.5 → leg_type=0（逃げ・先行）
         h1_row = out[out["horse_id"] == 1]
-        assert h1_row["pace_median"].iloc[0] == pytest.approx(1.0)
+        assert h1_row["pace_median"].iloc[0] == pytest.approx(0.125, abs=1e-3)
         assert h1_row["leg_type_binary"].iloc[0] == pytest.approx(0.0)
 
-    def test_skips_when_pace_col_absent(self):
+    def test_pace_not_all_nan(self):
+        """回帰: 旧実装(ペース列をカテゴリmap)で全NaNだったバグの再発防止。"""
+        m = _make_merger(_results_df_with_jockey())
+        results = self._make_results_for_pace()
+        hr = _horse_results_df()
+        out = m._add_pace_stats(results, hr)
+        assert out["pace_median"].notna().any()
+
+    def test_skips_when_corner_col_absent(self):
         from src.preprocessing._data_merger import DataMerger
 
         m = _make_merger(_results_df_with_jockey())
         results = self._make_results_for_pace()
-        hr = _horse_results_df().drop(columns=["ペース"])
+        hr = _horse_results_df().drop(columns=["first_corner"])
         out = m._add_pace_stats(results, hr)
         assert "pace_median" not in out.columns
 
