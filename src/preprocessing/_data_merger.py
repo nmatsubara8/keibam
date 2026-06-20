@@ -618,6 +618,12 @@ class DataMerger:
         horse_sire["_sire_key"] = horse_sire["peds_0"].astype(str)
 
         horse_sire_indexed = horse_sire[["horse_id", "_sire_key"]].set_index("horse_id")
+        # horse_id の型を揃える: 出馬表 results は str、peds 由来 index は pkl 欠落時の
+        # DB 復元で Int64 になりうる。両者 str に正規化してから結合する（学習では既に
+        # str のため no-op）。
+        horse_sire_indexed.index = horse_sire_indexed.index.astype(str)
+        results = results.copy()
+        results["horse_id"] = results["horse_id"].astype(str)
         results = results.merge(horse_sire_indexed, left_on="horse_id", right_index=True, how="left")
         results = results.merge(sire_all, left_on="_sire_key", right_index=True, how="left")
         results = results.drop(columns=["_sire_key"], errors="ignore")
