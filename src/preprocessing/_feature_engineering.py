@@ -207,6 +207,7 @@ class FeatureEngineering:
         from src.constants._feature_cols import (
             AGG_STATS,
             COURSE_CONDITION_FEATURE_COLS,
+            GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             N_RACES_LIST,
             PACE_FEATURE_COLS,
@@ -229,6 +230,7 @@ class FeatureEngineering:
         named_feature_cols = (
             JOCKEY_TRAINER_FEATURE_COLS
             + PACE_FEATURE_COLS
+            + GROWTH_FEATURE_COLS
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
         )

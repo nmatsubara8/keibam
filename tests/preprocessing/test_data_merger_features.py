@@ -191,6 +191,62 @@ class TestAddPaceStats:
 
 
 # ──────────────────────────────────────────
+# §2k: _add_growth_stats
+# ──────────────────────────────────────────
+
+class TestAddGrowthStats:
+    def _make_results(self):
+        return pd.DataFrame(
+            {"horse_id": [1, 2]},
+            index=pd.Index(["r01", "r01"], name="race_id"),
+        )
+
+    def _hr_with_trend(self):
+        """horse1=5走で上昇基調(古い=着順悪・新しい=着順良)、horse2=2走(履歴薄)。"""
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1, 1, 1, 1, 2, 2],
+                "date": pd.to_datetime(
+                    ["2023-01-01", "2023-02-01", "2023-03-01",
+                     "2023-04-01", "2023-05-01", "2023-01-15", "2023-02-15"]
+                ),
+                # 古い2走=着順悪(8/10,9/10)、直近3走=着順良(2/10,1/10,1/10)
+                "着順": [8, 9, 2, 1, 1, 3, 5],
+                "頭数": [10, 10, 10, 10, 10, 10, 10],
+            }
+        ).set_index("horse_id")
+
+    def test_growth_trend_and_n_starts_added(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_growth_stats(self._make_results(), self._hr_with_trend())
+        assert "growth_trend" in out.columns
+        assert "n_starts" in out.columns
+
+    def test_growth_trend_negative_for_improving_horse(self):
+        """上昇基調の馬は growth_trend < 0（直近の相対着順が小さい=良い）。"""
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_growth_stats(self._make_results(), self._hr_with_trend())
+        h1 = out[out["horse_id"] == 1]
+        # 直近3走 rel=(0.2+0.1+0.1)/3=0.1333、それ以前 rel=(0.8+0.9)/2=0.85
+        assert h1["growth_trend"].iloc[0] == pytest.approx(0.1333 - 0.85, abs=1e-3)
+        assert h1["n_starts"].iloc[0] == 5
+
+    def test_growth_trend_nan_when_too_few_starts(self):
+        """3走以下は『それ以前』が無く growth_trend=NaN（履歴不足は欠損扱い）。"""
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_growth_stats(self._make_results(), self._hr_with_trend())
+        h2 = out[out["horse_id"] == 2]
+        assert pd.isna(h2["growth_trend"].iloc[0])
+        assert h2["n_starts"].iloc[0] == 2
+
+    def test_skips_when_rank_col_absent(self):
+        m = _make_merger(_results_df_with_jockey())
+        hr = self._hr_with_trend().drop(columns=["着順"])
+        out = m._add_growth_stats(self._make_results(), hr)
+        assert "growth_trend" not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2e: _add_course_condition_stats
 # ──────────────────────────────────────────
 

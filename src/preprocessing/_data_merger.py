@@ -172,6 +172,7 @@ class DataMerger:
             results = results.merge(latest, left_on="horse_id", right_index=True, how="left")
 
             results = self._add_pace_stats(results, horse_results)
+            results = self._add_growth_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
@@ -341,6 +342,42 @@ class DataMerger:
         pace_at_dist = at_dist.groupby("horse_id")["_pace_num"].median().rename("pace_at_distance")
         results = results.merge(pace_at_dist, left_on="horse_id", right_index=True, how="left")
 
+        return results
+
+    # ──────────────────────────────────────────
+    # §2k: Growth / form-trajectory features
+    # ──────────────────────────────────────────
+
+    def _add_growth_stats(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
+        """成長/フォーム・トレンド特徴量を追加する（早熟/晩成の客観代理、リーク無し）。
+
+        ``growth_trend = 直近3走の平均相対着順 − それ以前の平均相対着順``。相対着順は
+        ``着順/頭数`` で 0=勝ち〜1=最下位。負＝直近の方が良い＝上昇基調（成長/復調）、
+        正＝直近が悪い＝下降。年齢とともに良化する馬（晩成）を捉える。``n_starts``（出走数）
+        も付与してキャリアの厚みを表す。horse_results は当該レース日より前のみ（リーク無し）。
+        """
+        rank_col = HRCols.RANK  # '着順'
+        n_horses_col = HRCols.N_HORSES  # '頭数'
+        if (
+            horse_results.empty
+            or rank_col not in horse_results.columns
+            or n_horses_col not in horse_results.columns
+        ):
+            return results
+
+        hr = horse_results.copy()
+        rr = pd.to_numeric(hr[rank_col], errors="coerce") / pd.to_numeric(hr[n_horses_col], errors="coerce")
+        hr["_rr"] = rr
+        hr = hr.sort_values("date")
+        # 馬ごとの新しい順インデックス（0=最新）。ベクトル化して per-group apply を避ける。
+        hr["_ridx"] = hr.groupby(level=0).cumcount(ascending=False)
+        recent = hr[hr["_ridx"] < 3].groupby(level=0)["_rr"].mean()
+        older = hr[hr["_ridx"] >= 3].groupby(level=0)["_rr"].mean()
+        growth = (recent - older).rename("growth_trend")
+        n_starts = hr.groupby(level=0)["_rr"].count().rename("n_starts")
+
+        results = results.merge(growth, left_on="horse_id", right_index=True, how="left")
+        results = results.merge(n_starts, left_on="horse_id", right_index=True, how="left")
         return results
 
     # ──────────────────────────────────────────
