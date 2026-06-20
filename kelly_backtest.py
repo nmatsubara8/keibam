@@ -37,40 +37,27 @@ def _fmt(x: float, nd: int = 3) -> str:
     return "—" if x is None else f"{x:.{nd}f}"
 
 
-def _build_candidates(table_1race, race_id, ev_floor: float, ev_max: float):
-    """1レース分の score_table 行から単勝 BetCandidate を作る。
+def _candidates_by_race(score_table, ev_floor: float, ev_max: float):
+    """検証済み ExpectedValueBetPolicy で単勝候補を選び、(race_id, [cand]) を時系列順に返す。
 
-    prob はレース内で正規化（Σ=1）した勝率を用いる（EV 診断と整合し、ケリーの p として
-    妥当な確率にする）。EV = prob*odds が (ev_floor, ev_max] のものだけ採用する。
+    買い目選択は validate_edge.py / backtest_bet_type と同一ロジック（Harville 勝率×実オッズ、
+    EV 閾値）。本スクリプトは選択は変えず「サイジング（フラット vs ケリー）」だけを差し替える。
     """
     from src.constants._results_cols import ResultsCols
-    from src.policies._bet_candidate import BetCandidate
+    from src.policies._bet_policy import ExpectedValueBetPolicy
+    from src.policies._odds_provider import HistoricalOddsProvider
     from src.policies._score_policy import CURRENT_ODDS
-    from src.policies._score_policy import PROB
 
-    probs = table_1race[PROB].astype(float)
-    total = probs.sum()
-    if not (total > 0):
-        return []
-    out = []
-    for _, row in table_1race.iterrows():
-        p = float(row[PROB]) / total
-        odds = float(row[CURRENT_ODDS])
-        if not (math.isfinite(odds) and odds > 0 and 0.0 < p < 1.0):
-            continue
-        ev = p * odds
-        if ev_floor < ev <= ev_max:
-            out.append(
-                BetCandidate(
-                    race_id=race_id,
-                    bet_type="tansho",
-                    combo=(int(row[ResultsCols.UMABAN]),),
-                    probability=p,
-                    odds=odds,
-                    expected_value=ev,
-                )
-            )
-    return out
+    odds_provider = HistoricalOddsProvider.from_score_table(
+        score_table, ResultsCols.UMABAN, CURRENT_ODDS, takeout=0.2
+    )
+    policy = ExpectedValueBetPolicy(
+        odds_provider, {"tansho": ev_floor}, bet_types=["tansho"], ev_max=ev_max
+    )
+    by_race: dict = {}
+    for cand in policy.select(score_table):
+        by_race.setdefault(cand.race_id, []).append(cand)
+    return [(rid, by_race[rid]) for rid in sorted(by_race)]
 
 
 def run_backtest(race_groups, settle_fn, optimizer, initial_bankroll: float, flat_unit: float):
@@ -134,13 +121,54 @@ def _print_table(rows):
     print("-" * 74)
 
 
-def _sorted_race_groups(score_table, ev_floor: float, ev_max: float):
-    """score_table を race_id 昇順（=時系列）で (race_id, candidates) に変換。"""
-    groups = []
-    for race_id in sorted(set(score_table.index)):
-        sub = score_table.loc[[race_id]]
-        groups.append((race_id, _build_candidates(sub, race_id, ev_floor, ev_max)))
-    return groups
+def _make_settle_fn(tickets):
+    """単勝決済を float64 で行う overflow-safe な settle_fn を返す。
+
+    bet_tansho を amount=100 で叩いて払戻倍率（=的中なら単勝オッズ、外れ 0）を取り、
+    実ステークとの掛け算は Python float64 で行う（払戻テーブルが float32 のため、
+    巨大ステークを直接渡すと float32 オーバーフローで infに化けるのを回避）。
+    """
+    def settle_fn(race_id, umaban, stake):
+        n, ba, ra = tickets.bet_tansho(race_id, [umaban], 100)
+        if n == 0 or ba == 0:
+            return 0.0, 0.0  # 払戻テーブルに無い等 → 賭けなかった扱い
+        multiple = float(ra) / 100.0  # 1円あたり払戻（的中=odds, 外れ=0）
+        return float(stake), float(stake) * multiple
+    return settle_fn
+
+
+def _print_edge_by_odds(groups, settle_fn, flat_unit: float):
+    """フラット100円ベットで、オッズ帯ごとの買い目数・的中率・回収率を出す。
+
+    回収率がどのオッズ帯（人気馬か人気薄か）に由来するかを切り分ける。ケリーは低オッズ
+    （人気馬）に厚く賭けるため、エッジが人気薄に偏っているならケリーは不利になる。
+    """
+    buckets = [(1.0, 3.0), (3.0, 7.0), (7.0, 15.0), (15.0, 50.0), (50.0, float("inf"))]
+    agg = {b: {"n": 0, "hit": 0, "stake": 0.0, "ret": 0.0} for b in buckets}
+    for race_id, cands in groups:
+        for c in cands:
+            for lo, hi in buckets:
+                if lo <= c.odds < hi:
+                    ba, ra = settle_fn(race_id, c.combo[0], flat_unit)
+                    if ba <= 0:
+                        break
+                    a = agg[(lo, hi)]
+                    a["n"] += 1
+                    a["stake"] += ba
+                    a["ret"] += ra
+                    if ra > 0:
+                        a["hit"] += 1
+                    break
+    print(f"\n[エッジの所在] オッズ帯別（フラット{int(flat_unit)}円）")
+    print(f"  {'オッズ帯':<12}{'買い目':>9}{'的中率':>9}{'回収率':>9}")
+    for lo, hi in buckets:
+        a = agg[(lo, hi)]
+        if a["n"] == 0:
+            continue
+        hr = a["hit"] / a["n"]
+        rr = a["ret"] / a["stake"] if a["stake"] > 0 else 0.0
+        hi_s = "∞" if hi == float("inf") else f"{hi:.0f}"
+        print(f"  {f'{lo:.0f}–{hi_s}':<12}{a['n']:>9}{_fmt(hr):>9}{_fmt(rr):>9}")
 
 
 def main() -> None:
@@ -192,7 +220,7 @@ def main() -> None:
 
     test_slice = recent_race_slice(featured, args.test_frac)
     score_table = ai.calc_score(test_slice, ExpectedValueScorePolicy)
-    groups = _sorted_race_groups(score_table, args.ev_floor, args.ev_max)
+    groups = _candidates_by_race(score_table, args.ev_floor, args.ev_max)
     n_races = len(groups)
     n_cand = sum(len(c) for _, c in groups)
 
@@ -203,10 +231,9 @@ def main() -> None:
           f"初期資金={args.bankroll:,.0f}円 / 候補 {n_cand} 件")
 
     tickets = BettingTickets(rp)
+    settle_fn = _make_settle_fn(tickets)
 
-    def settle_fn(race_id, umaban, stake):
-        _, bet_amount, return_amount = tickets.bet_tansho(race_id, [umaban], stake)
-        return bet_amount, return_amount
+    _print_edge_by_odds(groups, settle_fn, args.flat_unit)
 
     rows = []
     for fr in _FRACTIONS:
