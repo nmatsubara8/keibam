@@ -75,16 +75,35 @@ def main() -> None:
     # 領域別の集計（どのカテゴリにエッジが偏っているか）
     def _bucket(col: str) -> str:
         c = str(col)
+        if "speed_fig" in c:
+            return "スピード指数(§2l)"
+        if c.startswith("wet_") or "place_win" in c:
+            return "適性(馬場/競馬場 §2n)"
+        if any(c.startswith(p) for p in (
+            "dist_change", "kinryo_delta", "jockey_change",
+            "単勝_log", "kinryo_per_weight", "is_layoff", "is_back_to_back",
+        )):
+            return "前走比較/導出(§2m)"
+        if "growth" in c or c.startswith("n_starts"):
+            return "成長(§2k)"
         if "jockey" in c:
             return "騎手"
         if "trainer" in c:
             return "調教師"
+        if "owner" in c:
+            return "馬主"
         if "sire" in c or c.startswith("peds"):
             return "血統/種牡馬"
         if "pace" in c or "leg_type" in c:
             return "脚質/ペース"
         if "at_distance" in c or "course" in c or "race_type" in c:
             return "距離/コース"
+        if "着差" in c:
+            return "タイム着差集計"
+        if "上り" in c:
+            return "上がり3F集計"
+        if "賞金" in c:
+            return "賞金集計"
         if "着順" in c or "rank" in c:
             return "過去着順集計"
         if any(t in c for t in ("斤量", "体重", "年齢", "性", "枠", "馬番", "n_horses")):
