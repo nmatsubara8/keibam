@@ -58,6 +58,16 @@ class TestSelectCheckpointRaces:
         # 33 分前は許容外
         assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 33))], now) == []
 
+    def test_dense_window_captures_every_tick_near_deadline(self):
+        # 締切直前（残り ≤ DENSE_WINDOW_MIN=15分）は離散チェックポイントでなくても取得される。
+        now = dt.datetime(2026, 6, 7, 15, 0)
+        # 8 分前は従来チェックポイント(30/10/5/1)に無いが、密ウィンドウ内なので取得対象。
+        targets = select_checkpoint_races([("r8", dt.datetime(2026, 6, 7, 15, 8))], now)
+        assert len(targets) == 1
+        assert targets[0][2] == OddsPhase.T10  # classify_phase(8) = t10
+        # 18 分前は密ウィンドウ外かつ疎チェックポイント(60/30)からも外れる → 取得しない。
+        assert select_checkpoint_races([("r18", dt.datetime(2026, 6, 7, 15, 18))], now) == []
+
 
 def _make_snapshots(race_id="202606070511"):
     """thirty_min と t10 の 2 時点 × 4 頭のスナップショット。"""

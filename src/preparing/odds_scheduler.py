@@ -178,24 +178,33 @@ def select_checkpoint_races(
     pairs: Sequence[tuple[str, dt.datetime]],
     now: dt.datetime,
 ) -> list[tuple[str, dt.datetime, str]]:
-    """発走までの残分がチェックポイント（30/10/5/1 分前 ± 許容幅）にあるレースを選ぶ。
+    """いま取得すべきレースを返す（締切までの残り時間ベースの取得スケジュール）。
+
+    - 締切直前（残り ≤ DENSE_WINDOW_MIN 分）: 毎ティック取得して推移を密に記録する。
+    - それより前: SPARSE_CHECKPOINT_MINUTES（発走 N 分前 ±許容幅）でのみ取得（疎）。
 
     Returns
     -------
-    list[(race_id, post_time, phase)] : 該当チェックポイントのフェーズ付き。
-    無駄な全レース取得を避け、タイマー実行（cron */2 分等）のたびに
-    「いま取るべきレース」だけを返す純粋関数。
+    list[(race_id, post_time, phase)] : phase は minutes_to_post から分類した識別子
+        （メタデータ。実保存時に make_snapshot が classify_phase で再付与する）。
+    無駄な全レース取得を避け、タイマー実行（cron */2 分等）のたびに「いま取るべき
+    レース」だけを返す純粋関数。
     """
-    from src.constants._odds_dynamics import CHECKPOINT_MINUTES
     from src.constants._odds_dynamics import CHECKPOINT_TOLERANCE_MIN
+    from src.constants._odds_dynamics import DENSE_WINDOW_MIN
+    from src.constants._odds_dynamics import SPARSE_CHECKPOINT_MINUTES
+    from src.constants._odds_phases import classify_phase
 
     out: list[tuple[str, dt.datetime, str]] = []
     for race_id, post in pairs:
         mtp = (post - now).total_seconds() / 60
-        for phase, minutes in CHECKPOINT_MINUTES.items():
-            if abs(mtp - minutes) <= CHECKPOINT_TOLERANCE_MIN:
-                out.append((race_id, post, phase))
-                break
+        if mtp < 0:
+            continue  # 発走済みは対象外
+        take = mtp <= DENSE_WINDOW_MIN  # 締切直前は毎ティック密に取得
+        if not take:
+            take = any(abs(mtp - m) <= CHECKPOINT_TOLERANCE_MIN for m in SPARSE_CHECKPOINT_MINUTES)
+        if take:
+            out.append((race_id, post, classify_phase(int(round(mtp)))))
     return out
 
 

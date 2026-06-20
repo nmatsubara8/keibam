@@ -12,16 +12,18 @@ from ._odds_phases import OddsPhase
 # チェックポイント（タイマー取得の対象時点）
 # ---------------------------------------------------------------------------
 
-# 発走前のオッズ取得チェックポイント（分前）と対応フェーズ。
-# odds_watch はこの時点 ±CHECKPOINT_TOLERANCE_MIN に入ったレースだけを取得する。
-CHECKPOINT_MINUTES = {
-    OddsPhase.THIRTY_MIN: 30,
-    OddsPhase.T10: 10,
-    OddsPhase.T5: 5,
-    OddsPhase.T0: 1,
-}
+# オッズ取得スケジュール（odds_watch / select_checkpoint_races が使用）。
+# 締切から離れた区間はオッズ変動が小さいため疎な基準点で取得し、締切直前は毎ティック
+# 取得して推移を密に記録する（実際の取得間隔は odds_watch の --interval に一致。
+# --interval を下げるほど締切直前が密になる）。
+#   - SPARSE_CHECKPOINT_MINUTES: 早期の基準チェックポイント（発走 N 分前 ±許容幅）。
+#   - DENSE_WINDOW_MIN: この残り分数以内は毎ティック取得（締切直前を密に）。
+# フェーズ分類（オッズ力学モデル用）は classify_phase が minutes_to_post から独立に行うため、
+# この取得スケジュールの変更はモデルのフェーズ構造（thirty_min/t10/t5/t0）に影響しない。
+SPARSE_CHECKPOINT_MINUTES = (60, 30)
+DENSE_WINDOW_MIN = 15
 
-# チェックポイント許容幅（分）。cron/ループの実行間隔より広くとる。
+# 早期チェックポイントの許容幅（分）。cron/ループの実行間隔より広くとる。
 CHECKPOINT_TOLERANCE_MIN = 1.5
 
 # ---------------------------------------------------------------------------
