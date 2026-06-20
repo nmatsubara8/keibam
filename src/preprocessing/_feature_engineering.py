@@ -238,10 +238,23 @@ class FeatureEngineering:
             if col in self.__data.columns and col not in zscore_cols:
                 zscore_cols.append(col)
 
-        # Apply within-race (race_id index level 0) Z-score normalisation
-        for col in zscore_cols:
-            self.__data[f"{col}_z"] = self.__data.groupby(level=0)[col].transform(
-                lambda x: (x - x.mean()) / (x.std() + 1e-8)
+        # Apply within-race (race_id index level 0) Z-score normalisation.
+        # 列ごとの groupby+lambda transform は「レース数 × 列数」回の Python 呼び出しに
+        # なり rebuild の主要ボトルネック（数十万グループ×数十列）。mean/std を C 実装の
+        # grouped transform で全列一括算出してベクトル化する（ddof=1 std で従来と数値一致）。
+        if zscore_cols:
+            import time
+
+            t0 = time.perf_counter()
+            grouped = self.__data.groupby(level=0)[zscore_cols]
+            means = grouped.transform("mean")
+            stds = grouped.transform("std")
+            z = (self.__data[zscore_cols] - means) / (stds + 1e-8)
+            z.columns = [f"{c}_z" for c in zscore_cols]
+            self.__data = pd.concat([self.__data, z], axis=1)
+            logger.info(
+                "[fe] race-level zscore: %d 列を %.1fs でベクトル化算出",
+                len(zscore_cols), time.perf_counter() - t0,
             )
 
         return self
