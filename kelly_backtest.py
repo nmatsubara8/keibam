@@ -37,11 +37,12 @@ def _fmt(x: float, nd: int = 3) -> str:
     return "—" if x is None else f"{x:.{nd}f}"
 
 
-def _candidates_by_race(score_table, ev_floor: float, ev_max: float):
+def _candidates_by_race(score_table, ev_floor: float, ev_max: float, max_odds: float):
     """検証済み ExpectedValueBetPolicy で単勝候補を選び、(race_id, [cand]) を時系列順に返す。
 
     買い目選択は validate_edge.py / backtest_bet_type と同一ロジック（Harville 勝率×実オッズ、
     EV 閾値）。本スクリプトは選択は変えず「サイジング（フラット vs ケリー）」だけを差し替える。
+    max_odds でオッズ上限フィルタ（EV>1.1 が拾う -EV な人気薄を除外する運用レバー）。
     """
     from src.constants._results_cols import ResultsCols
     from src.policies._bet_policy import ExpectedValueBetPolicy
@@ -56,11 +57,14 @@ def _candidates_by_race(score_table, ev_floor: float, ev_max: float):
     )
     by_race: dict = {}
     for cand in policy.select(score_table):
+        if cand.odds > max_odds:
+            continue
         by_race.setdefault(cand.race_id, []).append(cand)
     return [(rid, by_race[rid]) for rid in sorted(by_race)]
 
 
-def run_backtest(race_groups, settle_fn, optimizer, initial_bankroll: float, flat_unit: float):
+def run_backtest(race_groups, settle_fn, optimizer, initial_bankroll: float, flat_unit: float,
+                 max_bet_yen: float = float("inf")):
     """レースを時系列順に処理し資産推移を返す。
 
     race_groups : (race_id, candidates) を時系列順に並べた iterable。
@@ -82,9 +86,12 @@ def run_backtest(race_groups, settle_fn, optimizer, initial_bankroll: float, fla
             allocated = optimizer.allocate(candidates, bankroll)
             staked = [(c, c.stake) for c in allocated]
         for c, stake in staked:
-            stake = int(round(stake))
-            if stake <= 0:
+            # 流動性制約（pari-mutuel プールに無制限には突っ込めない）＝絶対上限で頭打ち。
+            # これがないと複利が青天井に発散し float64 でも inf 化する。
+            stake = min(float(stake), max_bet_yen)
+            if not math.isfinite(stake) or stake < 1:
                 continue
+            stake = int(round(stake))
             bet_amount, return_amount = settle_fn(race_id, c.combo[0], stake)
             if bet_amount <= 0:
                 continue
@@ -182,6 +189,10 @@ def main() -> None:
     ap.add_argument("--flat-unit", type=float, default=100.0, help="フラット基準の1ベット円")
     ap.add_argument("--ev-floor", type=float, default=1.1, help="賭ける EV 下限（損益分岐は約1.10）")
     ap.add_argument("--ev-max", type=float, default=100.0, help="賭ける EV 上限（超高倍率の除外）")
+    ap.add_argument("--max-odds", type=float, default=float("inf"),
+                    help="オッズ上限。これ超の人気薄を除外（例: 15 で3–15倍帯に限定）")
+    ap.add_argument("--max-bet-yen", type=float, default=1_000_000.0,
+                    help="1ベット絶対上限（流動性制約。複利発散と inf 化を防ぐ）")
     ap.add_argument("--per-bet-cap", type=float, default=0.05, help="1ベット上限（bankroll比）")
     ap.add_argument("--max-race-ratio", type=float, default=0.5, help="1レース総投資上限（bankroll比）")
     ap.add_argument("--selftest", action="store_true", help="合成データで配線のみ検証（データ不要）")
@@ -220,15 +231,16 @@ def main() -> None:
 
     test_slice = recent_race_slice(featured, args.test_frac)
     score_table = ai.calc_score(test_slice, ExpectedValueScorePolicy)
-    groups = _candidates_by_race(score_table, args.ev_floor, args.ev_max)
+    groups = _candidates_by_race(score_table, args.ev_floor, args.ev_max, args.max_odds)
     n_races = len(groups)
     n_cand = sum(len(c) for _, c in groups)
 
+    odds_cap = "なし" if math.isinf(args.max_odds) else f"{args.max_odds:.0f}倍"
     print("=" * 74)
     print("単勝エッジ フラクショナル・ケリー資産成長バックテスト")
     print("=" * 74)
-    print(f"モデル={label} / 検証 {n_races} レース / EV下限={args.ev_floor} / "
-          f"初期資金={args.bankroll:,.0f}円 / 候補 {n_cand} 件")
+    print(f"モデル={label} / 検証 {n_races} レース / EV下限={args.ev_floor} / オッズ上限={odds_cap} / "
+          f"初期資金={args.bankroll:,.0f}円 / 1ベット上限={args.max_bet_yen:,.0f}円 / 候補 {n_cand} 件")
 
     tickets = BettingTickets(rp)
     settle_fn = _make_settle_fn(tickets)
@@ -247,11 +259,14 @@ def main() -> None:
                 max_daily_ratio=args.max_race_ratio,
             )
             lab = f"ケリー×{fr}"
-        rows.append((lab, run_backtest(groups, settle_fn, opt, args.bankroll, args.flat_unit)))
+        rows.append((lab, run_backtest(groups, settle_fn, opt, args.bankroll,
+                                       args.flat_unit, args.max_bet_yen)))
 
     _print_table(rows)
     print("\n判定:")
-    print(" - ケリーがフラットより対数成長↑かつ最大DDが許容範囲 → 採用価値あり")
+    print(" - [エッジの所在] で回収率>1のオッズ帯に --max-odds を合わせるのが最大の改善")
+    print("   （例: 3–15倍が強ければ `--max-odds 15`。15倍超の -EV 人気薄を除外する）")
+    print(" - ケリーがフラットより対数成長↑かつ最大DDが許容範囲 → サイジング採用価値あり")
     print(" - フルケリー(×1.0)でDDが過大 → 分数(×0.25〜0.5)が実戦的な運用点")
     print("=" * 74)
 
