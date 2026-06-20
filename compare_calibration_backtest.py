@@ -33,6 +33,35 @@ def _fmt(x, pct=False):
     return f"{x * 100:.1f}%" if pct else f"{x:.3f}"
 
 
+def _diagnose_tansho_ev(ai, featured_slice) -> None:
+    """単勝の EV(=較正勝率×単勝オッズ) 分布を出して、買い目0の原因を切り分ける。
+
+    - EV が NaN だらけ → 単勝オッズ列や勝率がおかしい（バグ）。
+    - EV が 0.8 付近に密集 → 効率的市場（モデルが市場とほぼ一致）。閾値はそれ未満に。
+    """
+    import numpy as np
+
+    from src.policies._score_policy import CURRENT_ODDS
+    from src.policies._score_policy import ExpectedValueScorePolicy
+    from src.policies._score_policy import PROB
+
+    try:
+        table = ai.calc_score(featured_slice, ExpectedValueScorePolicy)
+        ev = (table[PROB].astype(float) * table[CURRENT_ODDS].astype(float)).to_numpy()
+        finite = ev[np.isfinite(ev)]
+        n_nan = int(len(ev) - len(finite))
+        print("\n[診断] 単勝 EV = 較正勝率 × 単勝オッズ の分布")
+        print(f"  対象 {len(ev)} 行 / NaN {n_nan} 行 / 有効 {len(finite)} 行")
+        if len(finite):
+            qs = np.percentile(finite, [50, 90, 95, 99, 100])
+            print(f"  EV 中央値={qs[0]:.3f}  p90={qs[1]:.3f}  p95={qs[2]:.3f}"
+                  f"  p99={qs[3]:.3f}  max={qs[4]:.3f}")
+            for th in (0.7, 0.8, 0.9, 1.0, 1.2):
+                print(f"   EV>{th}: {int((finite > th).sum())} 行")
+    except Exception as e:  # noqa: BLE001
+        print(f"[診断] EV 分布の計算に失敗: {e}")
+
+
 def main() -> None:
     from src.constants._logging_config import setup_logging
 
@@ -93,6 +122,8 @@ def main() -> None:
         args.ev_threshold if args.ev_threshold is not None else "既定(BetThresholds)",
         {k: round(v, 4) for k, v in calib.items()},
     )
+
+    _diagnose_tansho_ev(ai, featured_slice)
 
     df = compare_calibration_backtest(
         ai, featured_slice, rp, calib, ev_threshold=args.ev_threshold
