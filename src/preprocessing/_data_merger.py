@@ -184,12 +184,16 @@ class DataMerger:
         self._merged_data = pd.concat(output_list)
 
     def _attach_jockey_trainer_stats(self) -> None:
-        """騎手・調教師の直近 JOCKEY_RECENT_N レース統計列を self._results に付与する。
+        """騎手・調教師・馬主の直近 JOCKEY_RECENT_N レース統計列を self._results に付与する。
 
         groupby + rolling で全レースを1回で計算する（ループ内の全件コピーを排除）。
         race_id は self._results の（非一意な）インデックスなので、列ではなく
         位置ベースで結果を書き戻し、インデックスとの不整合を防ぐ。
         shift(1) で自レースを除外し、未来情報のリークを防ぐ。
+
+        馬主は従来「生の owner_id（ラベル符号化）」しか特徴量が無く、GBDT が ID を
+        丸暗記して過学習しやすかった（重要度診断で owner_id が突出）。騎手・調教師と
+        同じく平滑な勝率/平均着順を与え、汎化可能な馬主シグナルにする。
         """
         rank_col = "着順"
         n_horses_col = "n_horses"
@@ -198,6 +202,7 @@ class DataMerger:
         if not has_rank or not has_jockey:
             return
         has_trainer = "trainer_id" in self._results.columns
+        has_owner = "owner_id" in self._results.columns
 
         # 位置を保持したまま計算するため reset_index（race_id は捨てて位置で戻す）
         res = self._results.reset_index(drop=True).copy()
@@ -207,29 +212,29 @@ class DataMerger:
         res["_is_win"] = (rank_num == 1).astype("float32")
         res["_rel_rank"] = (rank_num / n_horses_num).astype("float32")
 
-        # jockey: (jockey_id, date) でソートして直近 N レースの rolling mean
-        res = res.sort_values(["jockey_id", "date"], kind="stable")
-        res["jockey_win_rate"] = res.groupby("jockey_id")["_is_win"].transform(
-            lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
-        )
-        res["jockey_avg_rank"] = res.groupby("jockey_id")["_rel_rank"].transform(
-            lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
-        )
+        def _recent(id_col: str, win_name: str, rank_name: str) -> None:
+            nonlocal res
+            res = res.sort_values([id_col, "date"], kind="stable")
+            res[win_name] = res.groupby(id_col)["_is_win"].transform(
+                lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
+            )
+            res[rank_name] = res.groupby(id_col)["_rel_rank"].transform(
+                lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
+            )
 
+        _recent("jockey_id", "jockey_win_rate", "jockey_avg_rank")
         if has_trainer:
-            res = res.sort_values(["trainer_id", "date"], kind="stable")
-            res["trainer_win_rate"] = res.groupby("trainer_id")["_is_win"].transform(
-                lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
-            )
-            res["trainer_avg_rank"] = res.groupby("trainer_id")["_rel_rank"].transform(
-                lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
-            )
+            _recent("trainer_id", "trainer_win_rate", "trainer_avg_rank")
+        if has_owner:
+            _recent("owner_id", "owner_win_rate", "owner_avg_rank")
 
         # 元の行順に戻して self._results へ位置ベースで列を付与
         res = res.sort_values("_pos")
         cols = ["jockey_win_rate", "jockey_avg_rank"]
         if has_trainer:
             cols += ["trainer_win_rate", "trainer_avg_rank"]
+        if has_owner:
+            cols += ["owner_win_rate", "owner_avg_rank"]
         for c in cols:
             self._results[c] = res[c].to_numpy()
 

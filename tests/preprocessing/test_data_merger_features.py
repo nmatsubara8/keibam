@@ -401,3 +401,49 @@ class TestNormalizeJoinKeys:
             m._peds, left_on="horse_id", right_index=True, how="left"
         )
         assert merged["peds_0"].tolist() == ["sireA", "sireB", "sireA"]
+
+
+# ──────────────────────────────────────────
+# §2c 拡張: 馬主の集計特徴量（owner_win_rate / owner_avg_rank）
+# ──────────────────────────────────────────
+
+class TestAttachOwnerStats:
+    """_attach_jockey_trainer_stats が owner 統計を shift(1) でリーク無く付与する。"""
+
+    def _results(self):
+        # 馬主 O1 が 3 レース連続出走（着順 1,1,5）。日付昇順。
+        return pd.DataFrame(
+            {
+                "着順": [1, 1, 5],
+                "n_horses": [10, 10, 10],
+                "jockey_id": ["J1", "J1", "J1"],
+                "trainer_id": ["T1", "T1", "T1"],
+                "owner_id": ["O1", "O1", "O1"],
+                "date": pd.to_datetime(["2023-01-01", "2023-02-01", "2023-03-01"]),
+            },
+            index=pd.Index(["r1", "r2", "r3"], name="race_id"),
+        )
+
+    def test_owner_stats_attached(self):
+        m = _make_merger(self._results())
+        m._attach_jockey_trainer_stats()
+        assert "owner_win_rate" in m._results.columns
+        assert "owner_avg_rank" in m._results.columns
+
+    def test_owner_win_rate_is_leak_free(self):
+        m = _make_merger(self._results())
+        m._attach_jockey_trainer_stats()
+        wr = m._results["owner_win_rate"]
+        # 1走目は過去なし → NaN（shift(1)）
+        assert pd.isna(wr.loc["r1"])
+        # 2走目は過去=r1(勝ち) のみ → 1.0
+        assert wr.loc["r2"] == pytest.approx(1.0)
+        # 3走目は過去=r1,r2(共に勝ち) → 1.0（自レース r3 の着順5は含まない＝リーク無し）
+        assert wr.loc["r3"] == pytest.approx(1.0)
+
+    def test_no_owner_column_is_safe(self):
+        df = self._results().drop(columns=["owner_id"])
+        m = _make_merger(df)
+        m._attach_jockey_trainer_stats()  # owner 列が無くても落ちない
+        assert "owner_win_rate" not in m._results.columns
+        assert "jockey_win_rate" in m._results.columns

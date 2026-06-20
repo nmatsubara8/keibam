@@ -24,6 +24,8 @@ JOCKEY_TRAINER_FEATURE_COLS: list = [
     "jockey_avg_rank",
     "trainer_win_rate",
     "trainer_avg_rank",
+    "owner_win_rate",
+    "owner_avg_rank",
 ]
 
 # ──────────────────────────────────────────
