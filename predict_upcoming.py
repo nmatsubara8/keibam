@@ -203,56 +203,53 @@ def _align_features(featured, model):
     return out
 
 
-def main() -> None:
-    from src.constants._logging_config import setup_logging
+def _race_schedule(date_yyyymmdd: str):
+    """当日の (race_id, post_datetime) リストを取得する。"""
+    from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
 
-    setup_logging()
-    ap = argparse.ArgumentParser(description="未実施レースを暫定オッズで予測（検証済み単勝戦略）")
-    ap.add_argument("--date", default=None, help="開催日 YYYYMMDD（既定=明日）")
-    ap.add_argument("--race-id", dest="race_ids", nargs="+", default=None,
-                    help="対象 race_id を絞る（未指定なら当日全レース）")
-    ap.add_argument("--shutuba-pkl", default=None,
-                    help="スクレイプ済み出馬表 pickle を使う（ネット不要。予測部の確認用）")
-    args = ap.parse_args()
+    ids, times = scrape_race_id_race_time_list(date_yyyymmdd)
+    sched = []
+    for r, t in zip(ids or [], times or [], strict=False):
+        try:
+            pdt = dt.datetime.strptime(f"{date_yyyymmdd} {t}", "%Y%m%d %H:%M")
+        except (ValueError, TypeError):
+            pdt = None
+        sched.append((str(r), pdt))
+    return sched
 
+
+def _in_window(schedule, now, lo: float, hi: float):
+    """発走まで [lo, hi] 分のレース race_id を発走順で返す。"""
+    out = []
+    for rid, pdt in schedule:
+        if pdt is None:
+            continue
+        mtp = (pdt - now).total_seconds() / 60
+        if lo <= mtp <= hi:
+            out.append((mtp, rid))
+    return [rid for _, rid in sorted(out)]
+
+
+def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config):
+    """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。"""
     import pandas as pd
 
-    from app._data_loader import load_latest_model
-    from app._data_loader import load_operation_config
     from app._prediction_service import run_prediction
 
-    op_config = load_operation_config("config.yaml")
-    date_yyyymmdd = args.date or (dt.date.today() + dt.timedelta(days=1)).strftime("%Y%m%d")
-
-    # 1. 出馬表（暫定オッズ込み）を用意
-    if args.shutuba_pkl:
-        shutuba_df = pd.read_pickle(args.shutuba_pkl)
+    if shutuba_pkl:
+        shutuba_df = pd.read_pickle(shutuba_pkl)
     else:
-        shutuba_df = _scrape_shutuba_day(date_yyyymmdd, args.race_ids)
+        shutuba_df = _scrape_shutuba_day(date_yyyymmdd, race_ids)
     if shutuba_df is None or shutuba_df.empty:
-        logger.error("出馬表が空のため中止")
-        return
-
-    # 2. 特徴量化
+        logger.error("出馬表が空のため予測スキップ")
+        return 0, 0.0
     featured = _build_featured(shutuba_df)
     if featured is None or featured.empty:
-        logger.error("featured が空のため中止")
-        return
-
-    # 3. モデル + 検証済み戦略で予測
-    model = load_latest_model()
+        logger.error("featured が空のため予測スキップ")
+        return 0, 0.0
     # run_prediction は effective_model（生LGBM）を使い KeibaAI.calc_score の列整合を
-    # 経ないため、ここで学習時(feature_names_)の列順・セットに揃える（出馬表チェーンと
-    # 学習チェーンの列差・ダミー列差を吸収。不足は0埋め・余分は除外・メタ列は保持）。
+    # 経ないため、学習時(feature_names_)の列順・セットに揃える（不足0埋め・余分除外・メタ保持）。
     featured = _align_features(featured, model)
-
-    odds_cap = "なし" if op_config.max_odds == float("inf") else f"{op_config.max_odds:.0f}倍"
-    print("=" * 70)
-    print(f"明日予測（{date_yyyymmdd}） — 検証済み単勝戦略")
-    print(f"  EV下限={op_config.tansho_ev_threshold or 'BetThresholds既定'} / "
-          f"オッズ上限={odds_cap} / ケリー×{op_config.kelly_fraction_ratio} / "
-          f"bankroll={int(op_config.bankroll):,}円")
-    print("=" * 70)
 
     grand_total = 0.0
     n_reco = 0
@@ -267,14 +264,91 @@ def main() -> None:
         if spent > 0:
             grand_total += spent
             n_reco += 1
+    return n_reco, grand_total
 
-    print("\n" + "=" * 70)
-    if n_reco == 0:
-        print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")
-    else:
-        print(f"推奨 {n_reco} レース / 投資合計 {int(grand_total):,} 円")
-    print("※ 暫定オッズでの推奨。締切直前にオッズが動くため発走前に再実行を推奨。")
-    print("=" * 70)
+
+def main() -> None:
+    from src.constants._logging_config import setup_logging
+
+    setup_logging()
+    ap = argparse.ArgumentParser(description="未実施レースを暫定オッズで予測（検証済み単勝戦略）")
+    ap.add_argument("--date", default=None, help="開催日 YYYYMMDD（既定=明日）")
+    ap.add_argument("--race-id", dest="race_ids", nargs="+", default=None,
+                    help="対象 race_id を絞る（未指定なら当日全レース）")
+    ap.add_argument("--window", default=None,
+                    help="発走まで LO-HI 分のレースだけ予測（例: 30-60）。実戦の自動再予測用")
+    ap.add_argument("--loop", action="store_true",
+                    help="常駐ループ。--window 内のレースを --interval 秒ごとに再予測（既定窓 30-60分前）")
+    ap.add_argument("--interval", type=int, default=300, help="--loop 時の実行間隔（秒、既定300）")
+    ap.add_argument("--shutuba-pkl", default=None,
+                    help="スクレイプ済み出馬表 pickle を使う（ネット不要。予測部の確認用）")
+    args = ap.parse_args()
+
+    from app._data_loader import load_latest_model
+    from app._data_loader import load_operation_config
+
+    op_config = load_operation_config("config.yaml")
+    date_yyyymmdd = args.date or (dt.date.today() + dt.timedelta(days=1)).strftime("%Y%m%d")
+    model = load_latest_model()
+
+    lo = hi = None
+    if args.window:
+        try:
+            lo_s, hi_s = args.window.split("-")
+            lo, hi = float(lo_s), float(hi_s)
+        except ValueError:
+            ap.error("--window は LO-HI 形式で指定（例: 30-60）")
+
+    odds_cap = "なし" if op_config.max_odds == float("inf") else f"{op_config.max_odds:.0f}倍"
+    header = (f"EV下限={op_config.tansho_ev_threshold or 'BetThresholds既定'} / オッズ上限={odds_cap}"
+              f" / ケリー×{op_config.kelly_fraction_ratio} / bankroll={int(op_config.bankroll):,}円")
+
+    def _run_once(race_ids):
+        print("=" * 70)
+        print(f"予測（{date_yyyymmdd}） — 検証済み単勝戦略  {header}")
+        print("=" * 70)
+        n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model, op_config)
+        print("\n" + "=" * 70)
+        if n == 0:
+            print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")
+        else:
+            print(f"推奨 {n} レース / 投資合計 {int(total):,} 円")
+        print("※ 暫定オッズでの推奨。締切に近いほど確定オッズに収束します。")
+        print("=" * 70)
+
+    # --- ループ運用: 窓内レースを締切接近まで定期再予測 ---
+    if args.loop:
+        import time
+        if lo is None:
+            lo, hi = 30.0, 60.0  # 既定の窓（発走 30〜60 分前）
+        schedule = _race_schedule(date_yyyymmdd)
+        if not schedule:
+            logger.error("開催レースが見つかりません: %s（非開催日 or 出馬表未公開）", date_yyyymmdd)
+            return
+        logger.info("ループ開始: %s / %d レース / 窓 %.0f-%.0f分前 / 間隔 %d秒",
+                    date_yyyymmdd, len(schedule), lo, hi, args.interval)
+        while True:
+            now = dt.datetime.now()
+            ids = _in_window(schedule, now, lo, hi)
+            if ids:
+                print(f"\n[{now:%H:%M}] 窓内 {len(ids)} レースを再予測 …")
+                _run_once(ids)
+            # 終了: 窓上限(lo)以上のレースがもう無い＝今後再予測対象が出ない。
+            if not any(pdt is not None and (pdt - now).total_seconds() / 60 >= lo
+                       for _, pdt in schedule):
+                logger.info("全レースが窓を通過。ループ終了。")
+                break
+            time.sleep(args.interval)
+        return
+
+    # --- 単発実行 ---
+    race_ids = args.race_ids
+    if lo is not None and race_ids is None:
+        race_ids = _in_window(_race_schedule(date_yyyymmdd), dt.datetime.now(), lo, hi)
+        if not race_ids:
+            print(f"発走まで {lo:.0f}-{hi:.0f}分のレースは現在ありません。")
+            return
+    _run_once(race_ids)
 
 
 if __name__ == "__main__":
