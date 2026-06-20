@@ -44,9 +44,17 @@ class _BettingStrategy(ABC):
     min_horses: int = 1
 
     def __init__(self, return_table: pd.DataFrame) -> None:
+        # race_id の型をソース非依存にする: 払戻テーブルは pickle 由来だと int、
+        # DB 復元由来だと str になり、照合キー(actions)と型が食い違うと
+        # 「race_id not in index」で全件スキップ＝買い目0 になる。index を str に
+        # 正規化し、place() 側も str 化して常に str 同士で照合する。
+        if return_table is not None and not return_table.empty:
+            return_table = return_table.copy(deep=False)
+            return_table.index = return_table.index.astype(str)
         self._table = return_table
 
     def place(self, race_id, umaban, amount: int):
+        race_id = str(race_id)
         if umaban is None or len(umaban) < self.min_horses:
             logger.warning("betting_tickets: 例外 umaban=%s", umaban)
             return 0, 0, 0

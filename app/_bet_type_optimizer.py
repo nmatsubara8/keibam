@@ -72,8 +72,9 @@ def backtest_bet_type(
         bet_type_params={bet_type: params},
     )
     actions = policy.judge(score_table)
-    # featured_data の race_id は str、払戻テーブルの index は int のため正規化する。
-    actions = {int(race_id): bets for race_id, bets in actions.items()}
+    # race_id は featured も払戻テーブル(DB復元)も str。Simulator/BettingTickets 側でも
+    # str に正規化して照合するため、ここも str に揃える。
+    actions = {str(race_id): bets for race_id, bets in actions.items()}
 
     simulator = Simulator(return_processor)
     per_race = simulator.calc_returns_per_race(actions)

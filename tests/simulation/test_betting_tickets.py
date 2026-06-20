@@ -34,6 +34,24 @@ def _df(rows: dict, index):
     return pd.DataFrame(rows, index=index)
 
 
+class TestRaceIdTypeAgnostic:
+    """払戻テーブルの race_id 型(pickle=int / DB復元=str)と照合キー型が違っても的中する。"""
+
+    def test_str_indexed_table_matches_int_arg(self):
+        # DB 復元由来: index が str。照合キーが int でも str 正規化で的中する。
+        tansho = _df({"win_0": [5], "return_0": [350]}, index=["202401010101"])
+        bt = BettingTickets(_FakeReturnProcessor(tansho=tansho))
+        n, bet, ret = bt.bet_tansho(202401010101, [5], 100)
+        assert (n, bet, ret) == (1, 100, 350.0)
+
+    def test_int_indexed_table_matches_str_arg(self):
+        # pickle 由来: index が int。照合キーが str でも的中する。
+        tansho = _df({"win_0": [5], "return_0": [350]}, index=[202401010101])
+        bt = BettingTickets(_FakeReturnProcessor(tansho=tansho))
+        n, bet, ret = bt.bet_tansho("202401010101", [5], 100)
+        assert (n, bet, ret) == (1, 100, 350.0)
+
+
 class TestTansho:
     def _bt(self):
         # race=1: 5番が単勝、return=350 (×amount/100)
