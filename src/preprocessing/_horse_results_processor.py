@@ -50,9 +50,12 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # 日付をdatetime型に設定
         df["date"] = pd.to_datetime(df[Cols.DATE])
 
-        # 賞金のNaNを0で埋める
-        # df[Cols.PRIZE].fillna(0, inplace=True)
-        df[Cols.PRIZE] = df[Cols.PRIZE].fillna(0)
+        # 賞金を数値化（DB復元時は string dtype・カンマ区切り "1,600.0" のことがある）。
+        # 多窓集計(§2i)で mean 等を取るため float へ。欠損・解釈不能は 0 で埋める。
+        df[Cols.PRIZE] = pd.to_numeric(
+            df[Cols.PRIZE].astype(str).str.replace(",", "", regex=False),
+            errors="coerce",
+        ).fillna(0)
 
         # 1着の着差を0にする（xが0より小さい場合は、0、xが0以上の場合、xを返す）
         df[Cols.RANK_DIFF] = pd.to_numeric(df[Cols.RANK_DIFF], errors="coerce").fillna(0)

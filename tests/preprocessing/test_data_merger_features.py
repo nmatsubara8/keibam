@@ -408,6 +408,18 @@ class TestSummarizeExtendedTargets:
         assert "着順_mean" in out.columns
         assert "着差_mean" in out.columns
 
+    def test_string_dtype_target_does_not_crash(self):
+        # DB復元で賞金が string dtype（カンマ区切り）でも集計が落ちないこと（回帰）。
+        m = _make_merger(_results_df_with_jockey())
+        hr = _horse_results_df().copy()
+        hr["賞金"] = pd.array(
+            ["1,600.0", "0", "500", "2,000.0", "0", "300"], dtype="string"
+        )
+        out = m._summarize(hr, ["着順", "賞金"])
+        assert "賞金_mean" in out.columns
+        # "1,600.0" → 1600.0 と数値化されている
+        assert out["賞金_mean"].notna().any()
+
 
 # ──────────────────────────────────────────
 # §2e: _add_course_condition_stats

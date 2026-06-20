@@ -211,6 +211,14 @@ def test_horse_results_processor_prize_nan_filled():
     assert rp.preprocessed_data[HRCols.PRIZE].iloc[0] == 0
 
 
+def test_horse_results_processor_prize_string_comma_numeric():
+    # DB復元時の文字列・カンマ区切り "1,600.0" → float 1600.0（多窓集計を可能にする）
+    rp = _make_processor(HorseResultsProcessor, _make_hr_raw({HRCols.PRIZE: "1,600.0"}))
+    val = rp.preprocessed_data[HRCols.PRIZE].iloc[0]
+    assert val == pytest.approx(1600.0)
+    assert pd.api.types.is_numeric_dtype(rp.preprocessed_data[HRCols.PRIZE])
+
+
 def test_horse_results_processor_time_seconds_positive():
     rp = _make_processor(HorseResultsProcessor, _make_hr_raw({HRCols.TIME: "1:35.2"}))
     assert rp.preprocessed_data["time_seconds"].iloc[0] > 0

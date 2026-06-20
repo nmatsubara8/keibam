@@ -685,8 +685,12 @@ class DataMerger:
 
         返り値の列名形式: {col}_{stat}（例: 着順_mean, 着順_std）
         呼び出し元で .add_suffix("_5R") 等を付与する。
+
+        target_cols に string dtype の列（DB復元で混入しうる）が来ても落ちないよう、
+        集計前に数値へ強制変換する（mean/std 等の reduction が str で失敗するのを防ぐ）。
         """
-        agg = horse_results.groupby(level=0)[target_cols].agg(AGG_STATS)
+        num = horse_results[target_cols].apply(pd.to_numeric, errors="coerce")
+        agg = num.groupby(level=0).agg(AGG_STATS)
         agg.columns = [f"{col}_{stat}" for col, stat in agg.columns]
         return agg
 
