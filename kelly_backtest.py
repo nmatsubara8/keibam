@@ -178,6 +178,41 @@ def _print_edge_by_odds(groups, settle_fn, flat_unit: float):
         print(f"  {f'{lo:.0f}–{hi_s}':<12}{a['n']:>9}{_fmt(hr):>9}{_fmt(rr):>9}")
 
 
+def _print_by_year(groups, settle_fn, flat_unit: float):
+    """（オッズ絞り後の）候補を年度別にフラット集計し、回収率の時系列頑健性を見る。
+
+    回収率はスケール不変で複利の発散に影響されないため、年度別の頑健性指標として適切。
+    どの年度でも回収率>1なら「特定年の偶然でない本物のエッジ」。
+    """
+    years: dict = {}
+    for race_id, cands in groups:
+        y = str(race_id)[:4]
+        a = years.setdefault(y, {"n": 0, "hit": 0, "stake": 0.0, "ret": 0.0, "races": set()})
+        a["races"].add(race_id)
+        for c in cands:
+            ba, ra = settle_fn(race_id, c.combo[0], flat_unit)
+            if ba <= 0:
+                continue
+            a["n"] += 1
+            a["stake"] += ba
+            a["ret"] += ra
+            if ra > 0:
+                a["hit"] += 1
+    print(f"\n[年度別頑健性] フラット{int(flat_unit)}円・オッズ絞り後")
+    print(f"  {'年度':<8}{'レース':>8}{'買い目':>9}{'的中率':>9}{'回収率':>9}")
+    print("  " + "-" * 43)
+    for y in sorted(years):
+        a = years[y]
+        if a["n"] == 0:
+            continue
+        hr = a["hit"] / a["n"]
+        rr = a["ret"] / a["stake"] if a["stake"] > 0 else 0.0
+        mark = " ◎" if rr > 1.0 else ""
+        print(f"  {y:<8}{len(a['races']):>8}{a['n']:>9}{_fmt(hr):>9}{_fmt(rr):>9}{mark}")
+    print("  " + "-" * 43)
+    print("  どの年度でも回収率>1(◎) → 時系列に頑健な本物のエッジ")
+
+
 def main() -> None:
     from src.constants._logging_config import setup_logging
 
@@ -193,6 +228,8 @@ def main() -> None:
                     help="オッズ上限。これ超の人気薄を除外（例: 15 で3–15倍帯に限定）")
     ap.add_argument("--max-bet-yen", type=float, default=1_000_000.0,
                     help="1ベット絶対上限（流動性制約。複利発散と inf 化を防ぐ）")
+    ap.add_argument("--by-year", action="store_true",
+                    help="（オッズ絞り後の）戦略を年度別フラット集計し回収率の頑健性を見る")
     ap.add_argument("--per-bet-cap", type=float, default=0.05, help="1ベット上限（bankroll比）")
     ap.add_argument("--max-race-ratio", type=float, default=0.5, help="1レース総投資上限（bankroll比）")
     ap.add_argument("--selftest", action="store_true", help="合成データで配線のみ検証（データ不要）")
@@ -246,6 +283,11 @@ def main() -> None:
     settle_fn = _make_settle_fn(tickets)
 
     _print_edge_by_odds(groups, settle_fn, args.flat_unit)
+
+    if args.by_year:
+        _print_by_year(groups, settle_fn, args.flat_unit)
+        print("=" * 74)
+        return
 
     rows = []
     for fr in _FRACTIONS:
