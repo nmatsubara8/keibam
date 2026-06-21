@@ -134,7 +134,8 @@ DEFAULT_ALL = (
     "oikiri_final",
     "paddock",
     "comment",
-    "yoso_marks",
+    # yoso_marks は実DOM確認で全予想印が有償/課金（無料は空ウィジェットのみ）→ --all から除外。
+    # 種別は PAGE_TYPES に残置（診断時に個別取得は可能）。
     # 派生指標
     "barometer",
 )
