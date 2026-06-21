@@ -103,13 +103,18 @@ PAGE_TYPES: dict[str, tuple[str, str | None]] = {
     # ── yoso.netkeiba: 予想家プロフィール/実績（印のスキル加重の素・無料）──
     #   yid=予想家ID（印グリッドの各列に紐づく）。no<N> は区分（要サンプルで確定）。
     "yoso_profile": ("https://yoso.netkeiba.com/no1/?pid=profile&yid={person_id}", None),
-    # ── race.netkeiba: オッズ8券種（odds_watch で取得済・構造参照用。type=b1〜b8）──
-    #   b1=単勝/複勝, b2=枠連, b3=馬連, b4=ワイド, b5=馬単, b6=枠単?, b7=三連複, b8=三連単
-    "odds_b1": ("https://race.netkeiba.com/odds/index.html?type=b1&race_id={race_id}", None),
-    "odds_b3": ("https://race.netkeiba.com/odds/index.html?type=b3&race_id={race_id}", None),
-    "odds_b4": ("https://race.netkeiba.com/odds/index.html?type=b4&race_id={race_id}", None),
-    "odds_b7": ("https://race.netkeiba.com/odds/index.html?type=b7&race_id={race_id}", None),
-    "odds_b8": ("https://race.netkeiba.com/odds/index.html?type=b8&race_id={race_id}", None),
+    # ── race.netkeiba: オッズ（odds_watch で全券種取得済。構造参照/検証用）──
+    #   本番 src/preparing/_odds_snapshot.py の券種→ページコード対応（SSOT）:
+    #     b1=単勝/複勝(ページ内コード1/2), b3=枠連, b4=馬連, b5=ワイド, b6=馬単, b7=三連複, b8=三連単
+    #   ※ type無しの index は「上位人気一覧」要約ビュー。
+    "odds_summary": ("https://race.netkeiba.com/odds/index.html?race_id={race_id}", None),
+    "odds_b1_tanfuku": ("https://race.netkeiba.com/odds/index.html?type=b1&race_id={race_id}", None),
+    "odds_b3_wakuren": ("https://race.netkeiba.com/odds/index.html?type=b3&race_id={race_id}", None),
+    "odds_b4_umaren": ("https://race.netkeiba.com/odds/index.html?type=b4&race_id={race_id}", None),
+    "odds_b5_wide": ("https://race.netkeiba.com/odds/index.html?type=b5&race_id={race_id}", None),
+    "odds_b6_umatan": ("https://race.netkeiba.com/odds/index.html?type=b6&race_id={race_id}", None),
+    "odds_b7_sanrenpuku": ("https://race.netkeiba.com/odds/index.html?type=b7&race_id={race_id}", None),
+    "odds_b8_sanrentan": ("https://race.netkeiba.com/odds/index.html?type=b8&race_id={race_id}", None),
     # ── sp ドメイン: 派生指標（調子偏差値・自前再現候補）──
     "barometer": (
         "https://race.sp.netkeiba.com/barometer/score.html?race_id={race_id}",

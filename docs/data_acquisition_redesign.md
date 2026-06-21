@@ -620,6 +620,12 @@ raw では **peds** に対応（**今回は取得しない方針**。下記は�
 | 人物 年度別成績 | `nk_tb_common race_table_01` summary="年度別成績" | 年度/順位/1〜3着/着外/重賞/特別/平場/芝/ダート/勝率/連対率/複勝率/収得賞金(万円)/代表馬 | — |
 | 競馬新聞/馬柱 | `Shutuba_Past5_Table` ほか | 過去5走(horse_results 同源)/Stable_Comment/Stable_Time | 予測ラップ・予測前後半3F（`isFreemium`） |
 | 調子偏差値(sp) | `Shutuba_Table#t-shutuba` | 今回偏差値/上昇度/近走成績（**自前再現方針**） | （境界不明確） |
+| オッズ index `odds/index.html?type=bN` | （要約=上位人気一覧 / 券種別=type=bN） | **全8券種 取得済（本番 odds_watch）** | — |
+
+**オッズ券種別の構造は本番実装で確定済み**（SSOT: `src/preparing/_odds_snapshot.py`）:
+b1=単勝/複勝(ページ内コード1/2)・b3=枠連・b4=馬連・b5=ワイド・b6=馬単・b7=三連複・b8=三連単。
+`build_odds_url`→`OddsSnapshotScraper`→`parse_win_odds_html`/`parse_combo_odds_html`→
+`raw_odds_snapshots` で時系列収集。fetch_html_samples の odds_* は構造検証用（本番に合わせ修正済）。
 | 予想印 yoso/mark_list | div型グリッド（`<table>`でない） | **専門紙陣17人の印◎○▲△☆**（本紙/須田/丹下…石井）+ 馬番/性齢/斤量/騎手/厩舎/馬体重/オッズ/人気 | 「厳選予想ウマい馬券／172人予想」の詳細見解・買い目（=`有償`の別枠） |
 
 **予想印ページの結論（訂正・実DOM+スクショ確認 2026-06-21）**:
