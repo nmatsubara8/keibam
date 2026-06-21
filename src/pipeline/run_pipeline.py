@@ -162,6 +162,20 @@ def _build_featured_data(config):
     from src.preprocessing._race_info_processor import RaceInfoProcessor
     from src.preprocessing._results_processor import ResultsProcessor
     from src.constants._feature_cols import AGG_TARGET_COLS
+    from src.constants._local_paths import LocalPaths
+
+    def _read_optional_pickle(path):
+        """存在すれば DataFrame を読む。無ければ None（マージは no-op）。"""
+        import os
+
+        import pandas as pd
+
+        if path and os.path.isfile(path):
+            try:
+                return pd.read_pickle(path)
+            except Exception:  # noqa: BLE001 — 壊れていてもパイプライン全体は止めない
+                return None
+        return None
 
     merger = DataMerger(
         ResultsProcessor(config.raw_results_path),
@@ -171,6 +185,9 @@ def _build_featured_data(config):
         PedsProcessor(config.raw_peds_path),
         target_cols=AGG_TARGET_COLS,
         group_cols=["騎手"],
+        training_df=_read_optional_pickle(LocalPaths.RAW_TRAINING_PATH),
+        paddock_df=_read_optional_pickle(LocalPaths.RAW_PADDOCK_PATH),
+        comment_df=_read_optional_pickle(LocalPaths.RAW_COMMENT_PATH),
     )
     merger.merge()
     fe = (
@@ -188,6 +205,10 @@ def _build_featured_data(config):
         .dumminize_ground_state2()
         .dumminize_around()
         .dumminize_race_class()
+        .dumminize_paddock_eval()    # 当日ノート: パドック評価 A/B/穴 → one-hot
+        .encode_video_grade()        # 当日ノート: 映像グレード A/B/C → 順序
+        .encode_training_eval()      # 当日ノート: 調教評価 → ベストエフォート順序
+        .drop_text_note_columns()    # コメント類はモデル特徴から除外（raw は保持）
         .encode_horse_id()
         .encode_jockey_id()
         .encode_trainer_id()

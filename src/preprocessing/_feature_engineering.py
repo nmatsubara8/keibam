@@ -212,6 +212,42 @@ class FeatureEngineering:
         """breeder_idをラベルエンコーディングして、Categorical型に変換する。"""
         return self.encode("breeder_id")
 
+    # ── レース当日ノート（調教/パドック）の符号化。列が無ければ各メソッド no-op ──
+
+    def encode_video_grade(self):
+        """映像グレード(A/B/C)を順序エンコード（A=2,B=1,C=0）。"""
+        col = "映像グレード"
+        if col not in self.__data.columns:
+            return self
+        self.__data[col] = self.__data[col].map(Master.VIDEO_GRADE_ORDINAL)
+        return self
+
+    def encode_training_eval(self):
+        """調教評価(テキスト)をベストエフォート順序スコアに数値化（未知=NaN）。
+
+        生テキストは raw pickle に保持済みのため、特徴側は数値列 ``調教評価_score`` に
+        置換して元のテキスト列を drop する（モデル入力にテキストを残さない）。
+        """
+        col = "調教評価"
+        if col not in self.__data.columns:
+            return self
+        self.__data["調教評価_score"] = self.__data[col].map(Master.TRAINING_EVAL_ORDINAL)
+        self.__data.drop(columns=[col], inplace=True)
+        return self
+
+    def dumminize_paddock_eval(self):
+        """パドック評価(A/B/穴)を one-hot 化（穴は順序軸でないため）。"""
+        return self._dummify("パドック評価", Master.PADDOCK_EVAL_LIST, prefix="パドック評価_")
+
+    def drop_text_note_columns(self):
+        """自由文コメント列を特徴量から除外する（raw pickle 側に保持・将来 TF-IDF）。"""
+        self.__data.drop(
+            columns=["パドックコメント", "厩舎コメント", "コメント評価"],
+            errors="ignore",
+            inplace=True,
+        )
+        return self
+
     def add_interaction_features(self):
         """§2b: 交互作用特徴量（frame_x_course / sex_x_month_sin/cos / distance_x_around）を追加。
 

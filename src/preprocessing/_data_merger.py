@@ -9,6 +9,7 @@
 
 import logging
 import sys
+from typing import Optional
 
 import pandas as pd
 from tqdm.auto import tqdm
@@ -44,12 +45,19 @@ class DataMerger:
         peds_processor: PedsProcessor,
         target_cols: list,
         group_cols: list,
+        training_df: Optional[pd.DataFrame] = None,
+        paddock_df: Optional[pd.DataFrame] = None,
+        comment_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
         self._horse_results = horse_results_processor.preprocessed_data
         self._horse_info = horse_info_processor.preprocessed_data.drop(["owner_id"], axis=1)
         self._peds = peds_processor.preprocessed_data
+        # レース当日ノート（(race_id, 馬番) 属性）。未提供なら空＝マージは no-op。
+        self._training = training_df if training_df is not None else pd.DataFrame()
+        self._paddock = paddock_df if paddock_df is not None else pd.DataFrame()
+        self._comment = comment_df if comment_df is not None else pd.DataFrame()
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -71,6 +79,7 @@ class DataMerger:
 
         self._normalize_join_keys()
         _step("race_info", self._merge_race_info)
+        _step("race_day_notes", self._merge_race_day_notes)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -116,6 +125,45 @@ class DataMerger:
         self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
         dict_ = dict_selector("_results")
         self._results = convert_column_types(self._results, dict_)
+
+    def _merge_race_day_notes(self):
+        """調教評価/パドック/厩舎コメントを (race_id, 馬番) で results に左結合する。
+
+        各ソースは race_id を index に持つ raw（馬番=列）。未提供（空）はスキップ。
+        horse_id 等の重複列は持ち込まず、値列のみを結合する。race_info の後・
+        horse_results の前に実行し、当日属性として date ループに乗せて伝播させる。
+        """
+        specs = [
+            (self._training, ["調教評価", "映像グレード"]),
+            (self._paddock, ["パドック評価", "パドックコメント"]),
+            (self._comment, ["厩舎コメント", "コメント評価"]),
+        ]
+        if all(df is None or df.empty for df, _ in specs):
+            return
+        if "馬番" not in self._results.columns:
+            return
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+
+        for df, value_cols in specs:
+            if df is None or df.empty:
+                continue
+            notes = df.reset_index()
+            if "race_id" not in notes.columns:
+                notes = notes.rename(columns={notes.columns[0]: "race_id"})
+            notes["race_id"] = notes["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+            if "馬番" not in notes.columns:
+                continue
+            notes["_umaban_key"] = pd.to_numeric(notes["馬番"], errors="coerce").astype("Int64")
+            cols = ["race_id", "_umaban_key"] + [c for c in value_cols if c in notes.columns]
+            notes = notes[cols].drop_duplicates(["race_id", "_umaban_key"])
+            left = left.merge(notes, on=["race_id", "_umaban_key"], how="left")
+
+        self._results = left.drop(columns=["_umaban_key"]).set_index("race_id")
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。
