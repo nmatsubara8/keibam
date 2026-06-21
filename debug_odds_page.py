@@ -25,10 +25,11 @@ from src.preparing._odds_snapshot import parse_win_odds_html
 
 def _diagnose(html: str) -> None:
     odds_id_tag = 'id="odds-'
-    n_tansho_cells = len(re.findall(r'id="odds-1-\d+"', html))
+    # 単勝セル id は券種コードと馬番を `_` または `-` で区切る（odds-1_07 / odds-1-07）。
+    n_tansho_cells = len(re.findall(r'id="odds-1[-_]\d+"', html))
     print(f"  html長          : {len(html)}")
     print(f"  odds- セル含有   : {odds_id_tag in html}")
-    print(f"  odds-1-NN 件数   : {n_tansho_cells}")
+    print(f"  単勝(odds-1)件数 : {n_tansho_cells}")
     for marker in ("単勝", "複勝", "発売前", "発売", "確定", "締切", "終了", "オッズ"):
         if marker in html:
             print(f"  文言             : 「{marker}」あり")
