@@ -309,7 +309,7 @@ def _load_appearance_counts(date_yyyymmdd):
 
 
 def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None,
-                           counts=None, race_odds=None, prev_ev=None):
+                           counts=None, race_odds=None, prev_ev=None, gone_shown=None):
     """1レースの推奨馬券を表示し、(投資合計, 採用行) を返す。
 
     JRA は unit 円（既定100）単位でしか購入できないため、ケリーの生額を unit 単位に
@@ -317,7 +317,7 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
     色分け（端末出力時のみ。counts/prev_ev を渡したとき）:
       赤=初出 / 黄=2〜5回 / 緑=6回以上（出現回数＝安定度）
       オレンジ=消滅可能性が高い（EV が閾値近接かつ前ティックより下落＝剥がれかけ）
-      グレー=既に消滅（前回まで推奨→今回外れた。現在オッズ付き・参考表示）
+      グレー=消滅した瞬間のみ表示（gone_shown を渡すと、以降は復活しない限り出さない）
     """
     from src.constants._bet_types import BetType
 
@@ -335,6 +335,9 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
         cur = {c.combo[0] for c, _ in rows}
         rid_s = str(race_id)
         gone = sorted(u for (r, u) in counts if r == rid_s and u not in cur)
+    # 既にグレー表示済みは出さない（復活＝再推奨されない限り出し続けない）。
+    if gone_shown is not None:
+        gone = [u for u in gone if (str(race_id), u) not in gone_shown]
 
     if not rows and not gone:
         return 0.0, []
@@ -347,6 +350,8 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
     for c, stake in rows:
         total += stake
         key = (str(race_id), c.combo[0])
+        if gone_shown is not None:
+            gone_shown.discard(key)  # 推奨中＝復活/継続。次に消えたら再びグレー表示する
         n = counts.get(key, 0) + 1 if counts is not None else 1
         if counts is not None:
             counts[key] = n
@@ -366,6 +371,8 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
         od_s = f"{od:>8.1f}" if isinstance(od, (int, float)) else f"{'?':>8}"
         line = f"  {u:>4}{od_s}{'—':>8}{'—':>7}{'—':>10}{n:>6}{'消滅':>6}"
         print(_ansi(line, _GRAY, use_color))
+        if gone_shown is not None:
+            gone_shown.add((str(race_id), u))  # 一度表示したら以降は出さない
     if rows:
         print(f"  → 購入合計 {int(total):,} 円（{unit}円単位 / bankroll {int(bankroll):,} 円の "
               f"{total / bankroll * 100:.1f}%）")
@@ -427,7 +434,7 @@ def _in_window(schedule, now, lo: float, hi: float):
 
 
 def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, unit=100,
-                       save_odds=False, counts=None, prev_ev=None):
+                       save_odds=False, counts=None, prev_ev=None, gone_shown=None):
     """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。
 
     save_odds=True なら、スクレイプした全馬の暫定オッズ（data/live/odds_*.csv）と推奨買い目
@@ -481,7 +488,7 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
             continue
         spent, placed = _print_recommendations(race_id, candidates, op_config.bankroll, unit,
                                                 post_of, counts, odds_by_race.get(str(race_id)),
-                                                prev_ev)
+                                                prev_ev, gone_shown)
         if spent > 0:
             grand_total += spent
             n_reco += 1
@@ -543,14 +550,15 @@ def main() -> None:
     header = (f"EV下限={op_config.tansho_ev_threshold or 'BetThresholds既定'} / オッズ上限={odds_cap}"
               f" / ケリー×{op_config.kelly_fraction_ratio} / bankroll={int(op_config.bankroll):,}円")
 
-    def _run_once(race_ids, counts=None, prev_ev=None):
+    def _run_once(race_ids, counts=None, prev_ev=None, gone_shown=None):
         print("=" * 70)
         print(f"予測（{date_yyyymmdd}） — 検証済み単勝戦略  {header}")
         if counts is not None:
-            print("  色: 赤=初出/黄=2〜5回/緑=6回以上 ・ オレンジ=消滅可能性高(EV下落) ・ 灰=消滅")
+            print("  色: 赤=初出/黄=2〜5回/緑=6回以上 ・ オレンジ=消滅可能性高(EV下落) ・ 灰=消滅(初回のみ)")
         print("=" * 70)
         n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model,
-                                      op_config, args.unit, args.save_odds, counts, prev_ev)
+                                      op_config, args.unit, args.save_odds, counts, prev_ev,
+                                      gone_shown)
         print("\n" + "=" * 70)
         if n == 0:
             print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")
@@ -576,6 +584,8 @@ def main() -> None:
         if appear_counts:
             logger.info("bets履歴から %d 件の買い目の状態を復元（再起動時も継続）",
                         len(appear_counts))
+        # 既にグレー（消滅）表示した買い目。復活しない限り再表示しないための記録。
+        gone_shown: set = set()
         # 起動時に「未発走」の全レースを1回予測（即座に現状把握。--save-odds なら現在オッズも保存）。
         # 発走済みは買えないため除外する。その後、窓ベースのスケジュール待機に入る。
         now0 = dt.datetime.now()
@@ -583,7 +593,7 @@ def main() -> None:
                     if pdt is not None and (pdt - now0).total_seconds() > 0]
         if upcoming:
             print(f"\n[{now0:%H:%M}] 起動時スナップショット: 未発走 {len(upcoming)} レースを予測 …")
-            _run_once(upcoming, appear_counts, prev_ev)
+            _run_once(upcoming, appear_counts, prev_ev, gone_shown)
         else:
             print(f"\n[{now0:%H:%M}] 起動時スナップショット: 未発走レースなし（全レース発走済み）")
         print(f"\n[{dt.datetime.now():%H:%M}] スケジュール待機開始（窓 {lo:.0f}-{hi:.0f}分前 / {args.interval}秒）…")
@@ -592,7 +602,7 @@ def main() -> None:
             ids = _in_window(schedule, now, lo, hi)
             if ids:
                 print(f"\n[{now:%H:%M}] 窓内 {len(ids)} レースを再予測 …")
-                _run_once(ids, appear_counts, prev_ev)
+                _run_once(ids, appear_counts, prev_ev, gone_shown)
             # 終了: 窓上限(lo)以上のレースがもう無い＝今後再予測対象が出ない。
             if not any(pdt is not None and (pdt - now).total_seconds() / 60 >= lo
                        for _, pdt in schedule):
