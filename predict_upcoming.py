@@ -576,10 +576,16 @@ def main() -> None:
         if appear_counts:
             logger.info("bets履歴から %d 件の買い目の状態を復元（再起動時も継続）",
                         len(appear_counts))
-        # 起動時に現時点の全レースを1回予測（即座に現状把握。--save-odds なら現在オッズも保存）。
-        # その後、窓ベースのスケジュール待機に入る。
-        print(f"\n[{dt.datetime.now():%H:%M}] 起動時スナップショット: 全 {len(schedule)} レースを予測 …")
-        _run_once(None, appear_counts, prev_ev)
+        # 起動時に「未発走」の全レースを1回予測（即座に現状把握。--save-odds なら現在オッズも保存）。
+        # 発走済みは買えないため除外する。その後、窓ベースのスケジュール待機に入る。
+        now0 = dt.datetime.now()
+        upcoming = [rid for rid, pdt in schedule
+                    if pdt is not None and (pdt - now0).total_seconds() > 0]
+        if upcoming:
+            print(f"\n[{now0:%H:%M}] 起動時スナップショット: 未発走 {len(upcoming)} レースを予測 …")
+            _run_once(upcoming, appear_counts, prev_ev)
+        else:
+            print(f"\n[{now0:%H:%M}] 起動時スナップショット: 未発走レースなし（全レース発走済み）")
         print(f"\n[{dt.datetime.now():%H:%M}] スケジュール待機開始（窓 {lo:.0f}-{hi:.0f}分前 / {args.interval}秒）…")
         while True:
             now = dt.datetime.now()
