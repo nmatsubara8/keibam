@@ -250,6 +250,9 @@ def _backfill_notes(args: argparse.Namespace) -> None:
 
     cfg = IngestConfig()
     results = load_raw(cfg.raw_results_path)
+    # raw_results は race_id を列に持つ（RangeIndex）ことがある。index に揃えてから列挙する
+    if not results.empty and "race_id" in results.columns and results.index.name != "race_id":
+        results = results.set_index("race_id")
     ids = sorted(str(r) for r in existing_race_ids(results))
     if getattr(args, "min_year", None):
         ids = [r for r in ids if r[:4].isdigit() and int(r[:4]) >= args.min_year]

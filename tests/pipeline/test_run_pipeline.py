@@ -323,3 +323,52 @@ class TestLoadRawDbFirst:
         df, src = rp._load_raw_db_first("raw_results", "/whatever.pkl")
         assert src == "pickle"
         assert df["y"].tolist() == [9]
+
+
+class TestBackfillNotes:
+    """backfill-notes ジョブ: race_id 列の正規化・年代ゲート・取得済みスキップ。"""
+
+    def _run(self, monkeypatch, results, training, argv):
+        import src.pipeline._ingestion as ing
+        import src.preparing._data_source as ds
+        import src.pipeline.run_pipeline as rp
+        from src.constants._local_paths import LocalPaths
+
+        monkeypatch.setattr(
+            ing, "load_raw",
+            lambda p: training if p == LocalPaths.RAW_TRAINING_PATH else results,
+        )
+        called = {}
+
+        class _Src:
+            name = "netkeiba"
+
+            def acquire_race_day_notes(self, ids):
+                called["ids"] = list(ids)
+
+        monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
+        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
+        rp._backfill_notes(rp._parse_args(argv))
+        return called.get("ids")
+
+    def test_race_id_as_column_is_normalized(self, monkeypatch):
+        import pandas as pd
+
+        # race_id を列に持つ RangeIndex（実 raw_results 形状。着順など他列を伴う）
+        results = pd.DataFrame(
+            {"race_id": [202606140511, 202606140511, 201005030611], "着順": [1, 2, 1]}
+        )
+        training = pd.DataFrame()  # 取得済みなし
+        ids = self._run(monkeypatch, results, training, ["backfill-notes", "--min-year", "2010"])
+        assert ids == ["201005030611", "202606140511"]
+
+    def test_skip_existing_and_era_gate(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame(
+            {"race_id": [202606140511, 201005030611, 199801010101], "着順": [1, 1, 1]}
+        )
+        training = pd.DataFrame({"y": [1]}, index=pd.Index(["202606140511"], name="race_id"))
+        ids = self._run(monkeypatch, results, training, ["backfill-notes", "--min-year", "2010"])
+        # 1998 は年代ゲート除外、2026 は取得済みスキップ → 2010 のみ
+        assert ids == ["201005030611"]
