@@ -7,6 +7,7 @@ from src.preparing._html_structure import (
     find_element_ids,
     find_premium_markers,
     structure_report,
+    summarize_images,
     summarize_repeated_containers,
     summarize_tables,
 )
@@ -100,6 +101,33 @@ class TestRepeatedContainers:
         rep = structure_report(_CARDS, url="http://example/yoso", min_rows=2)
         assert "繰り返しコンテナ" in rep
         assert "YosoItem" in rep
+
+
+# 予想印がアイコン画像で表現されるケース
+_MARK_IMGS = """
+<html><body>
+<div class="YosoTableWrap">
+  <span class="mark"><img src="/m1.png" alt="◎"></span>
+  <span class="mark"><img src="/m2.png" alt="○"></span>
+  <span class="mark"><img src="/m1.png" alt="◎"></span>
+  <span class="mark"><img src="/m3.png" alt="▲"></span>
+  <img src="/logo.png" alt="netkeiba">
+</div>
+</body></html>
+"""
+
+
+class TestSummarizeImages:
+    def test_counts_alt_values(self):
+        imgs = dict(summarize_images(_MARK_IMGS))
+        assert imgs["◎"] == 2
+        assert imgs["○"] == 1
+        assert imgs["▲"] == 1
+
+    def test_report_surfaces_mark_icons(self):
+        rep = structure_report(_MARK_IMGS, url="http://example/yoso")
+        assert "印アイコン alt" in rep
+        assert "◎" in rep
 
 
 class TestStructureReport:

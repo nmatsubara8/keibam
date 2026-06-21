@@ -121,6 +121,22 @@ def summarize_repeated_containers(
     return out[:max_report]
 
 
+def summarize_images(html: str, top: int = 20) -> list[tuple[str, int]]:
+    """`<img alt="...">` の alt 値を頻度集計して返す（多い順 top 件）。
+
+    netkeiba の予想印（◎○▲△☆）は**アイコン画像**で表現されることが多く、テキスト
+    解析では拾えない。alt を数えることで「印が画像で何個入っているか」を可視化する。
+    """
+    soup = _soup(html)
+    counts: dict[str, int] = {}
+    for img in soup.find_all("img"):
+        alt = _clean(img.get("alt"))
+        if not alt:
+            continue
+        counts[alt] = counts.get(alt, 0) + 1
+    return sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:top]
+
+
 def find_element_ids(html: str, pattern: str) -> list[str]:
     """正規表現にマッチする要素 id を重複なし・出現順で返す（odds-* 等の手掛かり）。"""
     seen: dict[str, None] = {}
@@ -166,6 +182,14 @@ def structure_report(html: str, url: str = "", min_rows: int = 1) -> str:
     odds_ids = find_element_ids(html, r"^odds-")
     if odds_ids:
         lines.append(f"odds-* id 例 : {odds_ids[:8]}{' …' if len(odds_ids) > 8 else ''}")
+
+    # 予想印などアイコン画像（◎○▲）の alt 頻度。多い場合は印が画像表現。
+    imgs = summarize_images(html)
+    mark_alts = [(a, n) for a, n in imgs if any(g in a for g in "◎○◯▲△☆")]
+    if mark_alts:
+        lines.append(f"印アイコン alt : {mark_alts}")
+    elif imgs:
+        lines.append(f"img alt 上位 : {imgs[:8]}")
 
     tables = [t for t in summarize_tables(html) if t["n_rows"] >= min_rows]
     lines.append(f"table 数（{min_rows}行以上）: {len(tables)}")

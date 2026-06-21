@@ -100,6 +100,9 @@ PAGE_TYPES: dict[str, tuple[str, str | None]] = {
     "comment": ("https://race.netkeiba.com/race/comment.html?race_id={race_id}", "table"),
     "result_live": ("https://race.netkeiba.com/race/result.html?race_id={race_id}", "table"),
     "yoso_marks": ("https://race.netkeiba.com/yoso/mark_list.html?race_id={race_id}", "table"),
+    # ── yoso.netkeiba: 予想家プロフィール/実績（印のスキル加重の素・無料）──
+    #   yid=予想家ID（印グリッドの各列に紐づく）。no<N> は区分（要サンプルで確定）。
+    "yoso_profile": ("https://yoso.netkeiba.com/no1/?pid=profile&yid={person_id}", None),
     # ── race.netkeiba: オッズ8券種（odds_watch で取得済・構造参照用。type=b1〜b8）──
     #   b1=単勝/複勝, b2=枠連, b3=馬連, b4=ワイド, b5=馬単, b6=枠単?, b7=三連複, b8=三連単
     "odds_b1": ("https://race.netkeiba.com/odds/index.html?type=b1&race_id={race_id}", None),
@@ -134,8 +137,7 @@ DEFAULT_ALL = (
     "oikiri_final",
     "paddock",
     "comment",
-    # yoso_marks は実DOM確認で全予想印が有償/課金（無料は空ウィジェットのみ）→ --all から除外。
-    # 種別は PAGE_TYPES に残置（診断時に個別取得は可能）。
+    "yoso_marks",  # 専門紙陣の印グリッド（無料・div/img）。実績で重み付けする集約特徴の素
     # 派生指標
     "barometer",
 )
