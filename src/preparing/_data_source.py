@@ -78,6 +78,10 @@ class AbstractRaceDataSource(ABC):
         """
         pass
 
+    def acquire_peds(self, horse_ids: Sequence[str]) -> None:  # noqa: B027
+        """指定 horse_id の血統(peds)のみを取得する backfill 用フック。既定は no-op。"""
+        pass
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -183,19 +187,42 @@ class NetkeibaDataSource(AbstractRaceDataSource):
             self._acquire_race_day_notes(ids)
 
     def acquire_horses(self, horse_ids: Sequence[str]) -> None:
+        import os
+
         from src.preparing._get_rawdata import get_rawdata_horse_info
         from src.preparing._get_rawdata import get_rawdata_horse_results
-        from src.preparing._get_rawdata import get_rawdata_peds
         from src.preparing._scrape_html_horse import scrape_html_horse_with_master
-        from src.preparing._scrape_html_ped import scrape_html_ped
 
         ids = [str(h) for h in horse_ids]
         if not ids:
             return
         scrape_html_horse_with_master(ids, skip=True)
-        scrape_html_ped(ids, skip=True)
+        # 血統(peds)は別ページ・大量・ブロックされやすいため分離可能にする。
+        # KEIBA_SKIP_PEDS=1 で peds を後段の backfill-peds に委ね、まず馬ページ
+        # (horse_results/horse_info=全 horse_id) を先に網羅取得できる。
+        skip_peds = os.environ.get("KEIBA_SKIP_PEDS") == "1"
+        if not skip_peds:
+            from src.preparing._scrape_html_ped import scrape_html_ped
+
+            scrape_html_ped(ids, skip=True)
         get_rawdata_horse_results(skip=False, only_ids=ids)
         get_rawdata_horse_info(skip=False, only_ids=ids)
+        if not skip_peds:
+            from src.preparing._get_rawdata import get_rawdata_peds
+
+            get_rawdata_peds(skip=False, only_ids=ids)
+        else:
+            logger.info("[acquire_horses] KEIBA_SKIP_PEDS=1: 血統取得をスキップ（backfill-peds で後追い）")
+
+    def acquire_peds(self, horse_ids: Sequence[str]) -> None:
+        """血統(peds)のみを取得する公開フック（backfill-peds ジョブ用）。"""
+        from src.preparing._get_rawdata import get_rawdata_peds
+        from src.preparing._scrape_html_ped import scrape_html_ped
+
+        ids = [str(h) for h in horse_ids]
+        if not ids:
+            return
+        scrape_html_ped(ids, skip=True)
         get_rawdata_peds(skip=False, only_ids=ids)
 
 

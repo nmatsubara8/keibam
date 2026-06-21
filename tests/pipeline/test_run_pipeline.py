@@ -372,3 +372,50 @@ class TestBackfillNotes:
         ids = self._run(monkeypatch, results, training, ["backfill-notes", "--min-year", "2010"])
         # 1998 は年代ゲート除外、2026 は取得済みスキップ → 2010 のみ
         assert ids == ["201005030611"]
+
+
+class TestBackfillPeds:
+    """backfill-peds: horse_id を raw_results 列から dedup 列挙・取得済みスキップ。"""
+
+    def _run(self, monkeypatch, results, peds, argv):
+        import src.pipeline._ingestion as ing
+        import src.preparing._data_source as ds
+        import src.pipeline.run_pipeline as rp
+        from src.constants._local_paths import LocalPaths
+
+        def fake_load(p):
+            if p == LocalPaths.RAW_PEDS_PATH:
+                return peds
+            if p == LocalPaths.RAW_RESULTS_PATH:
+                return results
+            return __import__("pandas").DataFrame()
+
+        monkeypatch.setattr(ing, "load_raw", fake_load)
+        called = {}
+
+        class _Src:
+            name = "netkeiba"
+
+            def acquire_peds(self, ids):
+                called["ids"] = list(ids)
+
+        monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
+        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
+        rp._backfill_peds(rp._parse_args(argv))
+        return called.get("ids")
+
+    def test_dedup_and_skip_existing(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame({"horse_id": ["A", "A", "B", "C"], "着順": [1, 2, 3, 1]})
+        peds = pd.DataFrame({"p": [1]}, index=pd.Index(["C"], name="horse_id"))  # C 取得済み
+        ids = self._run(monkeypatch, results, peds, ["backfill-peds"])
+        assert ids == ["A", "B"]
+
+    def test_no_skip_existing(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame({"horse_id": ["A", "C"], "着順": [1, 1]})
+        peds = pd.DataFrame({"p": [1]}, index=pd.Index(["C"], name="horse_id"))
+        ids = self._run(monkeypatch, results, peds, ["backfill-peds", "--no-skip-existing"])
+        assert ids == ["A", "C"]

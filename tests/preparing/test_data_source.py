@@ -113,6 +113,45 @@ def test_netkeiba_acquire_horses_delegates(monkeypatch):
     assert calls["peds"] == ["h1", "h2"]
 
 
+def test_acquire_horses_skip_peds(monkeypatch):
+    """KEIBA_SKIP_PEDS=1: 馬ページは取得するが血統(peds)は取得しない。"""
+    calls = {}
+    import src.preparing._get_rawdata as gr
+    import src.preparing._scrape_html_horse as shh
+    import src.preparing._scrape_html_ped as shp
+
+    monkeypatch.setattr(shh, "scrape_html_horse_with_master",
+                        lambda ids, skip=True: calls.setdefault("horse", list(ids)))
+    monkeypatch.setattr(shp, "scrape_html_ped",
+                        lambda ids, skip=True: pytest.fail("skip-peds 指定で ped scrape が呼ばれた"))
+    monkeypatch.setattr(gr, "get_rawdata_horse_results",
+                        lambda skip=True, only_ids=None: calls.setdefault("hr", only_ids))
+    monkeypatch.setattr(gr, "get_rawdata_horse_info",
+                        lambda skip=True, only_ids=None: calls.setdefault("hi", only_ids))
+    monkeypatch.setattr(gr, "get_rawdata_peds",
+                        lambda skip=True, only_ids=None: pytest.fail("skip-peds 指定で peds 取得が呼ばれた"))
+    monkeypatch.setenv("KEIBA_SKIP_PEDS", "1")
+
+    NetkeibaDataSource().acquire_horses(["h1", "h2"])
+    assert calls["horse"] == ["h1", "h2"] and calls["hr"] == ["h1", "h2"]
+    assert "peds" not in calls
+
+
+def test_acquire_peds_delegates(monkeypatch):
+    """acquire_peds は ped scrape + get_rawdata_peds のみを呼ぶ。"""
+    calls = {}
+    import src.preparing._get_rawdata as gr
+    import src.preparing._scrape_html_ped as shp
+
+    monkeypatch.setattr(shp, "scrape_html_ped",
+                        lambda ids, skip=True: calls.setdefault("ped", list(ids)))
+    monkeypatch.setattr(gr, "get_rawdata_peds",
+                        lambda skip=True, only_ids=None: calls.setdefault("peds", only_ids))
+
+    NetkeibaDataSource().acquire_peds(["h1", "h2"])
+    assert calls["ped"] == ["h1", "h2"] and calls["peds"] == ["h1", "h2"]
+
+
 # ---------------------------------------------------------------------------
 # JraVanFileDropSource はファイル受信
 # ---------------------------------------------------------------------------

@@ -277,6 +277,41 @@ def _backfill_notes(args: argparse.Namespace) -> None:
     logger.info("[backfill-notes] 完了。rebuild-featured で featured に反映してください")
 
 
+def _backfill_peds(args: argparse.Namespace) -> None:
+    """既存 raw の全 horse_id に対し血統(peds)だけを取得する（馬ページ取得と独立）。
+
+    KEIBA_SKIP_PEDS=1 で馬ページ(horse_results/horse_info)を先に網羅取得した後、
+    本ジョブで血統を低レートで後追いする。peds.pkl は horse_id 単位で冪等総入替の
+    ため、取得済みを除外して中断・再開できる。完了後 rebuild-featured で反映。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
+    from src.preparing._data_source import create_data_source
+
+    res = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    if res.empty or "horse_id" not in res.columns:
+        logger.info("[backfill-peds] 対象 horse_id なし（raw_results が空 or horse_id 列なし）")
+        return
+    ids = sorted(set(res["horse_id"].astype(str)))
+    # 中断・再開: 既に peds 取得済み（peds.pkl の index）を除外
+    if not getattr(args, "no_skip_existing", False):
+        peds = load_raw(LocalPaths.RAW_PEDS_PATH)
+        done = {str(h) for h in peds.index} if not peds.empty else set()
+        before = len(ids)
+        ids = [h for h in ids if h not in done]
+        if before != len(ids):
+            logger.info("[backfill-peds] 取得済み %d 頭をスキップ（再開）", before - len(ids))
+    if getattr(args, "limit", None):
+        ids = ids[: args.limit]
+    if not ids:
+        logger.info("[backfill-peds] 対象 horse_id なし（全件取得済み）")
+        return
+    source = create_data_source(_resolve_data_source(args))
+    logger.info("[backfill-peds] %s で %d 頭の血統を取得します", source.name, len(ids))
+    source.acquire_peds(ids)
+    logger.info("[backfill-peds] 完了。rebuild-featured で featured に反映してください")
+
+
 def _ingest(args: argparse.Namespace) -> None:
     """取込ジョブを実行する（selenium / bs4 が実行時に必要）。"""
     from src.pipeline._ingestion import IngestConfig
@@ -888,6 +923,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     bn_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
     bn_p.add_argument("--no-skip-existing", action="store_true", help="取得済み race_id も再取得する（既定はスキップ）")
 
+    # backfill-peds サブコマンド（既存 horse_id の血統のみを取得。馬ページ取得と独立）
+    bp_p = sub.add_parser(
+        "backfill-peds",
+        help="既存 raw の horse_id に血統(peds)のみ取得。KEIBA_SKIP_PEDS=1 で馬ページ先行取得した後に使用",
+    )
+    bp_p.add_argument("--limit", type=int, default=None, help="先頭 N 頭のみ（動作確認用）")
+    bp_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
+    bp_p.add_argument("--no-skip-existing", action="store_true", help="取得済み horse_id も再取得する")
+
     # evaluate-odds-dynamics サブコマンド
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
     eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
@@ -1042,6 +1086,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "ingest": _ingest,
         "rebuild-featured": _rebuild_featured,
         "backfill-notes": _backfill_notes,
+        "backfill-peds": _backfill_peds,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,
         "calibrate-takeout": _calibrate_takeout,
