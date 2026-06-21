@@ -256,6 +256,31 @@ def _save_live_bets(bet_rows, date_yyyymmdd):
     logger.info("買い目記録: %d 件を %s に追記", len(bet_rows), path)
 
 
+def _load_appearance_counts(date_yyyymmdd):
+    """既存の bets_<date>.csv から (race_id, 馬番)→出現回数 を復元する。
+
+    --loop を再起動しても過去ティックの出現回数を引き継いで色分け（赤→黄→緑）するため。
+    回数 = その買い目が記録された distinct captured_at 数（= 推奨されたティック数）。
+    ファイルが無ければ空（カウント0から開始）。--save-odds で追記され続けるのが前提。
+    """
+    import os
+
+    path = f"data/live/bets_{date_yyyymmdd}.csv"
+    if not os.path.exists(path):
+        return {}
+    import pandas as pd
+
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("bets履歴の読込失敗（カウント0から開始）: %s", e)
+        return {}
+    if df.empty or not {"race_id", "馬番", "captured_at"} <= set(df.columns):
+        return {}
+    g = df.groupby(["race_id", "馬番"])["captured_at"].nunique()
+    return {(str(rid), int(uma)): int(n) for (rid, uma), n in g.items()}
+
+
 def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None,
                            counts=None):
     """1レースの推奨馬券を表示し、そのレースの合計投資額を返す。
@@ -481,7 +506,11 @@ def main() -> None:
         logger.info("ループ開始: %s / %d レース / 窓 %.0f-%.0f分前 / 間隔 %d秒",
                     date_yyyymmdd, len(schedule), lo, hi, args.interval)
         # 買い目（レース×馬番）のループ内出現回数。色分け（赤→黄→緑）に使う。
-        appear_counts: dict = {}
+        # 既存の bets_<date>.csv 履歴から復元 → --loop 再起動でも回数を引き継ぐ。
+        appear_counts: dict = _load_appearance_counts(date_yyyymmdd)
+        if appear_counts:
+            logger.info("bets履歴から %d 件の買い目の出現回数を復元（再起動時も継続）",
+                        len(appear_counts))
         # 起動時に現時点の全レースを1回予測（即座に現状把握。--save-odds なら現在オッズも保存）。
         # その後、窓ベースのスケジュール待機に入る。
         print(f"\n[{dt.datetime.now():%H:%M}] 起動時スナップショット: 全 {len(schedule)} レースを予測 …")
