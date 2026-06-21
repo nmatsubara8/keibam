@@ -33,8 +33,18 @@ import logging
 import os
 import sys
 import tempfile
+import warnings
+
+# 推論時は特徴量を numpy 配列（列名なし）で渡すため LightGBM が毎回出す無害な警告を抑止する。
+# （モデルは列名つきで学習済み。列整合は _align_features で担保しているため問題ない。）
+warnings.filterwarnings(
+    "ignore", message="X does not have valid feature names", category=UserWarning,
+)
 
 logger = logging.getLogger(__name__)
+
+
+_ORANGE = "38;5;208"  # 256色のオレンジ（推奨→消滅した買い目用）
 
 
 def _color_for_count(count: int) -> str:
@@ -46,8 +56,12 @@ def _color_for_count(count: int) -> str:
     return "32"  # 緑
 
 
+def _ansi(text: str, code: str, enable: bool) -> str:
+    return f"\033[{code}m{text}\033[0m" if enable else text
+
+
 def _colorize(text: str, count: int, enable: bool) -> str:
-    return f"\033[{_color_for_count(count)}m{text}\033[0m" if enable else text
+    return _ansi(text, _color_for_count(count), enable)
 
 
 _JRA_PLACE = {
@@ -282,13 +296,15 @@ def _load_appearance_counts(date_yyyymmdd):
 
 
 def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None,
-                           counts=None):
-    """1レースの推奨馬券を表示し、そのレースの合計投資額を返す。
+                           counts=None, race_odds=None):
+    """1レースの推奨馬券を表示し、(投資合計, 採用行) を返す。
 
     JRA は unit 円（既定100）単位でしか購入できないため、ケリーの生額を unit 単位に
     丸める。丸めて 0 になる薄いベット（< unit/2 円）は購入不可のため見送る。
     counts（{(race_id,馬番): 出現回数}）を渡すと、ループ内の出現回数で色分けする
     （1回目=赤・2〜5回目=黄・6回目以降=緑。端末出力時のみ着色）。
+    race_odds（{馬番: 現在オッズ}）も渡すと、過去に推奨されたが今回外れた買い目を
+    オレンジで表示する（現在オッズ付き。≤15なら EV低下＝オッズ下落、>15ならオッズ上昇）。
     """
     from src.constants._bet_types import BetType
 
@@ -299,8 +315,17 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
         stake = int(round(c.stake / unit)) * unit
         if stake >= unit:
             rows.append((c, stake))
-    if not rows:
+
+    # 消滅検出: 過去に推奨された（counts にある）が今回は外れた買い目。
+    gone = []
+    if counts is not None and race_odds is not None:
+        cur = {c.combo[0] for c, _ in rows}
+        rid_s = str(race_id)
+        gone = sorted(u for (r, u) in counts if r == rid_s and u not in cur)
+
+    if not rows and not gone:
         return 0.0, []
+
     use_color = counts is not None and sys.stdout.isatty()
     post_str = (post_of or {}).get(str(race_id))
     print(f"\n■ {_race_label(race_id, post_str)}  [{race_id}]")
@@ -316,8 +341,15 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
         line = (f"  {c.combo[0]:>4}{c.odds:>8.1f}{c.probability:>8.3f}"
                 f"{c.expected_value:>7.2f}{stake:>10,d}{n:>6}")
         print(_colorize(line, n, use_color))
-    print(f"  → 購入合計 {int(total):,} 円（{unit}円単位 / bankroll {int(bankroll):,} 円の "
-          f"{total / bankroll * 100:.1f}%）")
+    for u in gone:
+        od = (race_odds or {}).get(u)
+        n = counts[(str(race_id), u)]
+        od_s = f"{od:>8.1f}" if isinstance(od, (int, float)) else f"{'?':>8}"
+        line = f"  {u:>4}{od_s}{'—':>8}{'—':>7}{'消滅':>10}{n:>6}"
+        print(_ansi(line, _ORANGE, use_color))
+    if rows:
+        print(f"  → 購入合計 {int(total):,} 円（{unit}円単位 / bankroll {int(bankroll):,} 円の "
+              f"{total / bankroll * 100:.1f}%）")
     return total, rows
 
 
@@ -404,6 +436,19 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
     # 経ないため、学習時(feature_names_)の列順・セットに揃える（不足0埋め・余分除外・メタ保持）。
     featured = _align_features(featured, model)
 
+    # 現在オッズ（race_id→{馬番:単勝}）。消滅した買い目のオレンジ表示に使う（loop時のみ構築）。
+    odds_by_race = {}
+    if counts is not None:
+        from src.constants._results_cols import ResultsCols
+        for rid in shutuba_df.index.unique():
+            m = {}
+            for _, r in shutuba_df.loc[[rid]].iterrows():
+                try:
+                    m[int(r[ResultsCols.UMABAN])] = float(r[ResultsCols.TANSHO_ODDS])
+                except (TypeError, ValueError):
+                    pass
+            odds_by_race[str(rid)] = m
+
     grand_total = 0.0
     n_reco = 0
     bet_rows = []
@@ -416,7 +461,7 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
             logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
         spent, placed = _print_recommendations(race_id, candidates, op_config.bankroll, unit,
-                                                post_of, counts)
+                                                post_of, counts, odds_by_race.get(str(race_id)))
         if spent > 0:
             grand_total += spent
             n_reco += 1
