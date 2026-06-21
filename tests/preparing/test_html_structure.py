@@ -7,6 +7,7 @@ from src.preparing._html_structure import (
     find_element_ids,
     find_premium_markers,
     structure_report,
+    summarize_repeated_containers,
     summarize_tables,
 )
 
@@ -65,6 +66,40 @@ class TestPremiumMarkers:
 
     def test_clean_html_no_markers(self):
         assert find_premium_markers("<table><tr><td>x</td></tr></table>") == {}
+
+
+# 予想印のような div/カード型ページ（table を使わない）の合成サンプル
+_CARDS = """
+<html><body>
+<div class="YosoList">
+  <div class="YosoItem"><span class="name">予想家A</span> ◎7 ○3 ▲5</div>
+  <div class="YosoItem"><span class="name">予想家B</span> ◎3 ○7 ▲1</div>
+  <div class="YosoItem"><span class="name">本紙</span> ◎7 ○5 ▲3</div>
+  <div class="YosoItem"><span class="name">AI予想</span> ◎7 ○3 ▲11</div>
+</div>
+<ul class="nav"><li class="tab">A</li><li class="tab">B</li></ul>
+</body></html>
+"""
+
+
+class TestRepeatedContainers:
+    def test_detects_card_list(self):
+        cs = summarize_repeated_containers(_CARDS, min_repeat=3)
+        yoso = next(c for c in cs if c["child_class"] == "YosoItem")
+        assert yoso["count"] == 4
+        assert yoso["parent_class"] == "YosoList"
+        assert yoso["child_tag"] == "div"
+        assert "予想家A" in yoso["sample"]
+
+    def test_min_repeat_filters_small_groups(self):
+        # nav の li は 2 個 → min_repeat=3 で除外
+        cs = summarize_repeated_containers(_CARDS, min_repeat=3)
+        assert all(c["child_class"] != "tab" for c in cs)
+
+    def test_report_includes_containers_for_tableless_page(self):
+        rep = structure_report(_CARDS, url="http://example/yoso", min_rows=2)
+        assert "繰り返しコンテナ" in rep
+        assert "YosoItem" in rep
 
 
 class TestStructureReport:

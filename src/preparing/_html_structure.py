@@ -77,6 +77,50 @@ def summarize_tables(html: str, max_rows_scan: int = 3) -> list[dict[str, Any]]:
     return out
 
 
+def summarize_repeated_containers(
+    html: str, min_repeat: int = 3, max_report: int = 12
+) -> list[dict[str, Any]]:
+    """繰り返し子要素を持つコンテナ（div/ul/ol カード or 行）を要約する。
+
+    `<table>` でない一覧（予想印・カード型 UI 等）の構造を拾うための補助。
+    親要素ごとに「同一 class を持つ直下子要素」を数え、`min_repeat` 回以上
+    繰り返すものを「行/カードの集合」とみなして報告する。
+
+    返す各 dict: parent_tag / parent_class / parent_id / child_tag /
+    child_class / count / sample（最初の子のテキスト抜粋）。
+    """
+    soup = _soup(html)
+    out: list[dict[str, Any]] = []
+    for parent in soup.find_all(["div", "ul", "ol", "section", "tbody"]):
+        # 直下の子要素を (tag, class) でグルーピングして繰り返し数を数える
+        groups: dict[tuple[str, str], list[Any]] = {}
+        for child in parent.find_all(recursive=False):
+            if child.name not in ("div", "li", "tr", "a", "dl", "span"):
+                continue
+            key = (child.name, " ".join(child.get("class", []) or []))
+            if not key[1]:
+                continue  # class 無しの子は対象外（ノイズ）
+            groups.setdefault(key, []).append(child)
+        for (child_tag, child_class), children in groups.items():
+            if len(children) < min_repeat:
+                continue
+            sample = _clean(children[0].get_text())[:120]
+            out.append(
+                {
+                    "parent_tag": parent.name,
+                    "parent_class": " ".join(parent.get("class", []) or []),
+                    "parent_id": _clean(parent.get("id")),
+                    "child_tag": child_tag,
+                    "child_class": child_class,
+                    "count": len(children),
+                    "sample": sample,
+                }
+            )
+    # 繰り返し数が多い順。重複（同じ child_class が複数親で出る）も件数で上位を優先
+    out.sort(key=lambda d: d["count"], reverse=True)
+    return out[:max_report]
+
+
 def find_element_ids(html: str, pattern: str) -> list[str]:
     """正規表現にマッチする要素 id を重複なし・出現順で返す（odds-* 等の手掛かり）。"""
     seen: dict[str, None] = {}
@@ -144,4 +188,18 @@ def structure_report(html: str, url: str = "", min_rows: int = 1) -> str:
             sample = t["sample_row"][:12]
             tail = " …" if len(t["sample_row"]) > 12 else ""
             lines.append(f"  サンプル行 : {sample}{tail}")
+
+    # table が乏しいページ（予想印・カード型）向けに div/list の繰り返し構造も報告
+    containers = summarize_repeated_containers(html)
+    if containers:
+        lines.append("-" * 60)
+        lines.append(f"繰り返しコンテナ（div/list ベース）: {len(containers)} 種")
+        for c in containers:
+            parent = c["parent_class"] or c["parent_id"] or "(無属性)"
+            lines.append(
+                f"  <{c['parent_tag']} {parent}> 直下に "
+                f"<{c['child_tag']} class=\"{c['child_class']}\"> × {c['count']}"
+            )
+            if c["sample"]:
+                lines.append(f"    例 : {c['sample']}")
     return "\n".join(lines)
