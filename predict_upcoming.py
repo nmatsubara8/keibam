@@ -83,26 +83,43 @@ def _race_label(race_id, post_str=None) -> str:
     return label
 
 
-def _fetch_win_odds_map(race_id, odds_source) -> dict[int, float]:
-    """オッズ専用ページから {馬番: 単勝オッズ} を取得する（失敗時は空 dict）。
+def _fetch_win_odds_map(race_id, odds_source, retries: int = 1, backoff: float = 3.0) -> dict[int, float]:
+    """オッズ専用ページから {馬番: 単勝オッズ} を取得する（失敗/空時は空 dict）。
 
     odds_source.fetch_win_odds は OddsSnapshotScraper（Playwright）で
     race.netkeiba.com/odds/index.html を JS 描画完了まで待って取得・パースするため、
     静的スクレイプでは取れない午後（発走直前）の単勝オッズも確実に得られる。
+
+    ただし Ajax のライブ更新中はオッズセルが描画前（空）の瞬間があり 0 件で返ることが
+    あるため、空なら backoff 秒おいて retries 回まで再取得する。最終的に空のときは
+    （静かに失敗せず）警告を出す＝二重取得スロットリングか未描画かを切り分けられる。
     """
-    try:
-        rows = odds_source.fetch_win_odds(str(race_id))
-    except Exception as e:  # noqa: BLE001 — オッズページ取得失敗は当該レースのみスキップ
-        logger.warning("オッズページ取得失敗 race_id=%s: %s", race_id, e)
-        return {}
-    out: dict[int, float] = {}
-    for umaban, odds in rows:
+    import time as _time
+
+    last_empty = False
+    for attempt in range(retries + 1):
         try:
-            if float(odds) > 0:
-                out[int(umaban)] = float(odds)
-        except (TypeError, ValueError):
-            continue
-    return out
+            rows = odds_source.fetch_win_odds(str(race_id))
+        except Exception as e:  # noqa: BLE001 — オッズページ取得失敗は当該レースのみスキップ
+            logger.warning("オッズページ取得失敗 race_id=%s (試行%d): %s", race_id, attempt + 1, e)
+            rows = []
+        out: dict[int, float] = {}
+        for umaban, odds in rows:
+            try:
+                if float(odds) > 0:
+                    out[int(umaban)] = float(odds)
+            except (TypeError, ValueError):
+                continue
+        if out:
+            return out
+        last_empty = True
+        if attempt < retries:
+            logger.info("オッズページが空（未描画?）。%.0f秒後に再取得 race_id=%s", backoff, race_id)
+            _time.sleep(backoff)
+    if last_empty:
+        logger.warning("オッズページが単勝を返さない race_id=%s（throttle/未描画の可能性。"
+                       "KEIBA_ODDS_DEBUG=1 で生HTMLを診断可）", race_id)
+    return {}
 
 
 def _augment_win_odds(df, race_id, odds_source, delay: float):
@@ -127,6 +144,8 @@ def _augment_win_odds(df, race_id, odds_source, delay: float):
     odv = pd.to_numeric(df.get(tcol), errors="coerce") if tcol in df.columns else None
     n_valid = int((odv > 0).sum()) if odv is not None else 0
     if n_valid >= len(df):
+        logger.debug("出馬表に単勝そろい済み race_id=%s（%d頭）→オッズページ取得不要",
+                     race_id, len(df))
         return df  # 全馬そろっている＝オッズページ取得は不要
     # 出馬表取得直後の連続アクセスを避けるため 1 拍おく（hourly limiter とは別の作法）。
     wait = polite_interval(delay)
@@ -677,6 +696,10 @@ def main() -> None:
             print(f"\n[{now0:%H:%M}] 起動時スナップショット: 未発走レースなし（全レース発走済み）")
         print(f"\n[{dt.datetime.now():%H:%M}] スケジュール待機開始（窓 {lo:.0f}-{hi:.0f}分前 / {args.interval}秒）…")
         while True:
+            # 起動時スナップショットで全未発走レースを取得済みのため、先に待機してから
+            # 窓内を再予測する（直後に再取得すると同一オッズページを数秒で二度叩き、
+            # netkeiba 側のスロットリングや未描画（空オッズ）を誘発するため）。
+            time.sleep(args.interval)
             now = dt.datetime.now()
             # 発走時刻を毎ティック取り直す。天候等で遅延（発走時刻変更）したレースは
             # 更新後の時刻で mtp を再計算し、窓に復帰させる（取得失敗時は前回値を維持）。
@@ -692,7 +715,6 @@ def main() -> None:
                        for _, pdt in schedule):
                 logger.info("全レースが窓を通過。ループ終了。")
                 break
-            time.sleep(args.interval)
         return
 
     # --- 単発実行 ---
