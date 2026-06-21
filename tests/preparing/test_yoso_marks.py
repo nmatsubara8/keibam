@@ -49,16 +49,23 @@ _SAMPLE = {
 
 
 class TestParse:
-    def test_free_only_excludes_premium_and_paid(self):
+    def test_default_includes_premium_excludes_empty_paid(self):
+        # 既定(free_only=False)は無料＋プレミアム指定の両方を取得
         df = parse_pro_yoso_json(_SAMPLE, "202605030611")
         yids = set(df["predictor_yid"])
-        assert yids == {"266987", "266992"}  # 本紙・CP予想のみ
-        assert "266991" not in yids  # no1_premium 除外
-        assert "999999" not in yids  # umai_sell 除外
+        assert yids == {"266987", "266991", "266992"}  # 本紙・須田(premium)・CP予想
+        assert "999999" not in yids  # umai_sell は mark 空 → 自然に行なし
 
-    def test_include_premium_when_free_only_false(self):
-        df = parse_pro_yoso_json(_SAMPLE, "R", free_only=False)
-        assert "266991" in set(df["predictor_yid"])
+    def test_goods_kbn_preserved(self):
+        df = parse_pro_yoso_json(_SAMPLE, "R")
+        kbn = dict(zip(df["predictor_yid"], df["goods_kbn"], strict=False))
+        assert kbn["266987"] == "no1_free"
+        assert kbn["266991"] == "no1_premium"
+
+    def test_free_only_excludes_premium(self):
+        df = parse_pro_yoso_json(_SAMPLE, "R", free_only=True)
+        yids = set(df["predictor_yid"])
+        assert yids == {"266987", "266992"}  # プレミアム指定 266991 を除外
 
     def test_name_br_stripped(self):
         df = parse_pro_yoso_json(_SAMPLE, "R")
@@ -86,7 +93,7 @@ class TestParse:
     def test_accepts_jsonp_string(self):
         wrapped = "cb(" + json.dumps(_SAMPLE) + ");"
         df = parse_pro_yoso_json(wrapped, "R")
-        assert set(df["predictor_yid"]) == {"266987", "266992"}
+        assert set(df["predictor_yid"]) == {"266987", "266991", "266992"}
 
     def test_status_ng_returns_empty(self):
         df = parse_pro_yoso_json({"status": "NG", "reason": "x"}, "R")
@@ -96,14 +103,35 @@ class TestParse:
             "馬番",
             "predictor_yid",
             "predictor_name",
+            "goods_kbn",
             "mark",
             "mark_score",
         ]
 
+    def test_robust_to_malformed_payload(self):
+        # 壊れた入力・欠損フィールドでも例外を投げず空/スキップで返す
+        assert parse_pro_yoso_json("not json at all", "R").empty
+        assert parse_pro_yoso_json({"data": None}, "R").empty
+        # 一部要素が壊れていても健全な要素は拾う
+        mixed = {
+            "status": "OK",
+            "data": {
+                "ary_item": [
+                    "garbage",  # dict でない
+                    {"yosoka_id": "1", "mark": None},  # mark 欠損
+                    {"goods_kbn": "no1_free", "yosoka_id": "2", "yosoka_name": "甲",
+                     "mark": {"5": "1"}},
+                ]
+            },
+        }
+        df = parse_pro_yoso_json(mixed, "R")
+        assert set(df["predictor_yid"]) == {"2"}
+
 
 class TestAggregate:
     def test_consensus_counts_and_scores(self):
-        df = parse_pro_yoso_json(_SAMPLE, "202605030611")
+        # 無料のみで集約を検証（プレミアムを混ぜず期待値を明確化）
+        df = parse_pro_yoso_json(_SAMPLE, "202605030611", free_only=True)
         agg = aggregate_consensus(df).set_index("馬番")
         # 馬番11: 本紙○(4) + CP○(4) → 2予想家・◎0・合計8・平均4
         assert agg.loc[11, "yoso_n_marks"] == 2
@@ -116,6 +144,13 @@ class TestAggregate:
         # 馬番9: 本紙▲(3) + CP◎(5) → ◎1・合計8
         assert agg.loc[9, "yoso_n_honmei"] == 1
         assert agg.loc[9, "yoso_score_sum"] == 8
+
+    def test_free_count_separated_from_premium(self):
+        # 既定(premium含む)で集約。馬番2: 本紙☆(free) + 須田▲(premium) → 計2・無料1
+        df = parse_pro_yoso_json(_SAMPLE, "R")
+        agg = aggregate_consensus(df).set_index("馬番")
+        assert agg.loc[2, "yoso_n_marks"] == 2
+        assert agg.loc[2, "yoso_n_marks_free"] == 1
 
     def test_empty_input(self):
         agg = aggregate_consensus(pd.DataFrame())

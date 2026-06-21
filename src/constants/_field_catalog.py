@@ -255,7 +255,9 @@ YOSO_MARKS_FIELDS: tuple[FieldSpec, ...] = (
               note="予想家ID。raw_yoso_predictor と結合しスキル加重"),
     FieldSpec("predictor_name", SRC_YOSO_MARK, acquired=False, resolved_id="predictor_yid",
               note="本紙/AI予想ビルダー 等。結合は predictor_yid"),
-    FieldSpec("mark", SRC_YOSO_MARK, acquired=False, note="◎○▲△☆。JS描画→内部API要特定"),
+    FieldSpec("goods_kbn", SRC_YOSO_MARK, acquired=False,
+              note="no1_free/no1_premium 等。由来(無料/プレミアム指定)を保持し後段で選別可"),
+    FieldSpec("mark", SRC_YOSO_MARK, acquired=False, note="◎○▲△☆。内部API(無料+premium取得)"),
     FieldSpec("mark_score", SRC_YOSO_MARK, acquired=False, note="◎5○4▲3△2☆1 に数値化"),
 )
 

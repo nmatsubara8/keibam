@@ -13,8 +13,10 @@ API（raw HTML の JS 解析で特定）:
     - mark: {"<馬番>": "<code>"} … code 1=◎ 2=○ 3=▲ 4=△ 5=☆
     - recovery_rate（回収率・スキル加重の素）
 
-⚠️ 方針（ユーザー指定）: **無料予想家のみ取得**する。プレミアム指定(no1_premium)・
-有料(umai_sell)は除外（API が匿名で返しても取らない）。
+方針（ユーザー指定・更新）: **取得できる予想家は無料・プレミアム指定とも全て取得**する
+（API が匿名で返す `no1_premium` も含める）。由来は `goods_kbn` 列で保持し、後段で
+free/premium を区別・重み付けできるようにする。`umai_sell`（有料・未購入）は mark が空で
+自然に行が出ない。**取得できなくてもエラーにせず空で返す**（堅牢性優先）。
 
 レイヤ: preparing。pandas/requests のみに依存。
 """
@@ -22,16 +24,19 @@ API（raw HTML の JS 解析で特定）:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Optional
 
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 # 印コード（API） → グリフ / スコア
 MARK_CODE_TO_GLYPH: dict[int, str] = {1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆"}
 MARK_CODE_TO_SCORE: dict[int, int] = {1: 5, 2: 4, 3: 3, 4: 2, 5: 1}
 
-# 取得対象の goods_kbn（無料のみ）。umai_buy=購入済み（ログイン時のみ出現）も無料扱い。
+# 無料を表す goods_kbn（由来判定用）。umai_buy=購入済み（ログイン時のみ出現）も無料扱い。
 FREE_GOODS_KBN: frozenset[str] = frozenset({"no1_free", "umai_free", "umai_buy"})
 
 API_URL = "https://race.netkeiba.com/api/api_get_pro_yoso_list_v2.html"
@@ -41,6 +46,7 @@ _LONG_COLUMNS = [
     "馬番",
     "predictor_yid",
     "predictor_name",
+    "goods_kbn",
     "mark",
     "mark_score",
 ]
@@ -74,7 +80,7 @@ def _coerce_payload(payload: Any) -> dict[str, Any]:
 
 
 def parse_pro_yoso_json(
-    payload: Any, race_id: str, free_only: bool = True
+    payload: Any, race_id: str, free_only: bool = False
 ) -> pd.DataFrame:
     """予想印 API レスポンスを `raw_yoso_marks` ロング形式 DataFrame に変換する。
 
@@ -82,21 +88,27 @@ def parse_pro_yoso_json(
     ----------
     payload : dict / JSON文字列 / JSONP文字列（api_get_pro_yoso_list_v2 の応答）
     race_id : 対象レースID（応答に含まれないため呼び出し側が付与）
-    free_only : True（既定）で無料予想家（goods_kbn ∈ FREE_GOODS_KBN）のみ。
-        プレミアム指定・有料は除外する（ユーザー方針）。
+    free_only : 既定 False（**無料＋プレミアム指定の両方を取得**）。True にすると
+        無料予想家（goods_kbn ∈ FREE_GOODS_KBN）のみ。由来は `goods_kbn` 列に保持。
 
     Returns
     -------
-    DataFrame[race_id, 馬番, predictor_yid, predictor_name, mark, mark_score]
-        印が無い予想家・対象外 goods_kbn は行を生成しない。
+    DataFrame[race_id, 馬番, predictor_yid, predictor_name, goods_kbn, mark, mark_score]
+        印が無い予想家（umai_sell 等）は行を生成しない。壊れた要素はスキップし例外を投げない。
     """
-    data = _coerce_payload(payload)
-    if data.get("status") == "NG":
+    try:
+        data = _coerce_payload(payload)
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        logger.warning("yoso marks: payload 解析失敗 race_id=%s: %s", race_id, e)
+        return pd.DataFrame(columns=_LONG_COLUMNS)
+    if not isinstance(data, dict) or data.get("status") == "NG":
         return pd.DataFrame(columns=_LONG_COLUMNS)
     items = (data.get("data") or {}).get("ary_item") or []
 
     rows: list[dict[str, Any]] = []
     for item in items:
+        if not isinstance(item, dict):
+            continue
         goods_kbn = item.get("goods_kbn", "")
         if free_only and goods_kbn not in FREE_GOODS_KBN:
             continue
@@ -104,7 +116,7 @@ def parse_pro_yoso_json(
         name = _strip_br(item.get("yosoka_name"))
         marks = item.get("mark") or {}
         if not isinstance(marks, dict):
-            continue
+            continue  # 取得できない予想家は黙ってスキップ（エラーにしない）
         for umaban_raw, code_raw in marks.items():
             try:
                 umaban = int(umaban_raw)
@@ -120,6 +132,7 @@ def parse_pro_yoso_json(
                     "馬番": umaban,
                     "predictor_yid": yid,
                     "predictor_name": name,
+                    "goods_kbn": goods_kbn,
                     "mark": glyph,
                     "mark_score": MARK_CODE_TO_SCORE[code],
                 }
@@ -154,20 +167,29 @@ def aggregate_consensus(df_long: pd.DataFrame) -> pd.DataFrame:
         .groupby(["race_id", "馬番"])["_h"]
         .sum()
     )
+    # 無料予想家のみの印数も併設（プレミアム除外の特徴を後で選べるように。最大スキーマの思想）
+    if "goods_kbn" in df_long.columns:
+        free = df_long[df_long["goods_kbn"].isin(FREE_GOODS_KBN)]
+        out["yoso_n_marks_free"] = (
+            free.groupby(["race_id", "馬番"]).size() if not free.empty else 0
+        )
+        out["yoso_n_marks_free"] = out["yoso_n_marks_free"].fillna(0).astype(int)
+        cols = cols + ["yoso_n_marks_free"]
     return out.reset_index()[cols]
 
 
 def fetch_pro_yoso_marks(
     race_id: str,
     *,
-    free_only: bool = True,
+    free_only: bool = False,
     timeout: float = 10.0,
     session: Optional[Any] = None,
 ) -> pd.DataFrame:
     """予想印 API を叩いて `raw_yoso_marks` を取得する（ネットワーク・ユーザー環境用）。
 
-    匿名 GET。`output=json` を要求し JSON を解析する。ポライトネスの間隔は
-    呼び出し側（バッチ取得ループ）で polite_interval を挟むこと。
+    匿名 GET。`output=json` を要求し JSON を解析する。**取得できなくても例外を投げず
+    空 DataFrame を返す**（バッチ取得を止めない）。ポライトネスの間隔は呼び出し側で
+    polite_interval を挟むこと。既定で無料＋プレミアム指定の両方を取得する。
     """
     import requests  # 遅延 import（解析・テストは requests 不要）
 
@@ -179,6 +201,10 @@ def fetch_pro_yoso_marks(
     }
     headers = {"Referer": f"https://race.netkeiba.com/yoso/mark_list.html?race_id={race_id}"}
     sess = session or requests
-    resp = sess.get(API_URL, params=params, headers=headers, timeout=timeout)
-    resp.raise_for_status()
-    return parse_pro_yoso_json(resp.text, race_id, free_only=free_only)
+    try:
+        resp = sess.get(API_URL, params=params, headers=headers, timeout=timeout)
+        resp.raise_for_status()
+        return parse_pro_yoso_json(resp.text, race_id, free_only=free_only)
+    except Exception as e:  # noqa: BLE001 — 取得失敗はスキップ（空を返す）
+        logger.warning("yoso marks 取得失敗 race_id=%s: %s", race_id, e)
+        return pd.DataFrame(columns=_LONG_COLUMNS)

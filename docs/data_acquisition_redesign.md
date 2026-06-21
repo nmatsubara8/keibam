@@ -670,8 +670,11 @@ GET https://race.netkeiba.com/api/api_get_pro_yoso_list_v2.html
   - `mark`: `{seq: code}` 形式。**code 1=◎本命 2=○対抗 3=▲単穴 4=△押え 5=☆穴**
     （JS: `mark_class_list={1:Honmei,2:Taikou,3:Kurosan,4:Osae,5:Hoshi}`）
   - `recovery_rate`（回収率＝スキル加重の素）/ `yoso_point` / `is_paid_only`
-- **無料/有料はAPI側で分離**: `umai_sell`(未購入)は mark 空 → 取得すると自然にフリー印だけ残る
-  （プレミアム不取得の方針と整合）。
+- **取得方針（更新）**: 無料(`no1_free`)に加え**プレミアム指定(`no1_premium`)の印も取得**する
+  （API が匿名で返すため）。由来は `goods_kbn` 列で保持し、後段で free/premium を選別可能。
+  `umai_sell`(未購入)は mark 空 → 自然に行なし。**取得失敗は例外を投げず空で返す**（堅牢性）。
+  実装: `src/preparing/_yoso_marks.py`（parse_pro_yoso_json / aggregate_consensus /
+  fetch_pro_yoso_marks、テスト14件）。
 - `seq` が 馬番 か 0始まり index かは実 JSON で要確認（`.mark_<seq>` 列へ描画）。
 - 取得設計: `output=json` で JSON 取得 →
   `raw_yoso_marks`(race_id,馬番,yosoka_id,yosoka_name,mark_code,mark_score) ロング形式に展開。
