@@ -484,7 +484,17 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
         try:
             candidates = run_prediction(model.effective_model, X, op_config)
         except Exception as e:  # noqa: BLE001
-            logger.warning("予測失敗 race_id=%s: %s", race_id, e)
+            # 診断: 失敗レースの暫定オッズ状況（harville が正規化できない=全馬低スコアの
+            # 原因がオッズ異常かどうかの切り分け用）。
+            try:
+                from src.constants._results_cols import ResultsCols
+                odv = pd.to_numeric(X.get(ResultsCols.TANSHO_ODDS), errors="coerce")
+                valid = odv[odv > 0].dropna()
+                rng = f"[{valid.min():.1f},{valid.max():.1f}]" if len(valid) else "-"
+                logger.warning("予測失敗 race_id=%s: %s ｜ 有効単勝 %d/%d頭 %s",
+                               race_id, e, len(valid), len(X), rng)
+            except Exception:  # noqa: BLE001
+                logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
         spent, placed = _print_recommendations(race_id, candidates, op_config.bankroll, unit,
                                                 post_of, counts, odds_by_race.get(str(race_id)),
@@ -599,6 +609,11 @@ def main() -> None:
         print(f"\n[{dt.datetime.now():%H:%M}] スケジュール待機開始（窓 {lo:.0f}-{hi:.0f}分前 / {args.interval}秒）…")
         while True:
             now = dt.datetime.now()
+            # 発走時刻を毎ティック取り直す。天候等で遅延（発走時刻変更）したレースは
+            # 更新後の時刻で mtp を再計算し、窓に復帰させる（取得失敗時は前回値を維持）。
+            fresh = _race_schedule(date_yyyymmdd)
+            if fresh:
+                schedule = fresh
             ids = _in_window(schedule, now, lo, hi)
             if ids:
                 print(f"\n[{now:%H:%M}] 窓内 {len(ids)} レースを再予測 …")
