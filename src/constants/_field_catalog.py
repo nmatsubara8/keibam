@@ -49,6 +49,8 @@ SRC_PED = "ped"                  # db.../horse/ped/<horse_id>
 SRC_TRAINING = "training"        # race.../race/oikiri.html
 SRC_PADDOCK = "paddock"          # race.../race/paddock.html
 SRC_PERSON = "person"            # {jockey,trainer,owner,breeder}/result.html
+SRC_YOSO_MARK = "yoso_mark"      # race.../yoso/mark_list.html（印グリッド・JS描画）
+SRC_YOSO_PROF = "yoso_profile"   # yoso.../no1/?pid=profile&yid=（予想家実績）
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +245,42 @@ PERSON_YEARLY_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# raw_yoso_marks（予想印グリッド: レース × 馬 × 予想家）【新規・無料・JS描画で要API特定】
+# ---------------------------------------------------------------------------
+YOSO_MARKS_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("race_id", SRC_YOSO_MARK, acquired=False),
+    FieldSpec("馬番", SRC_YOSO_MARK, acquired=False, note="results との結合キー"),
+    FieldSpec("predictor_yid", SRC_YOSO_MARK, acquired=False,
+              note="予想家ID。raw_yoso_predictor と結合しスキル加重"),
+    FieldSpec("predictor_name", SRC_YOSO_MARK, acquired=False, resolved_id="predictor_yid",
+              note="本紙/AI予想ビルダー 等。結合は predictor_yid"),
+    FieldSpec("mark", SRC_YOSO_MARK, acquired=False, note="◎○▲△☆。JS描画→内部API要特定"),
+    FieldSpec("mark_score", SRC_YOSO_MARK, acquired=False, note="◎5○4▲3△2☆1 に数値化"),
+)
+
+# ---------------------------------------------------------------------------
+# raw_yoso_predictor（予想家の成績ログ: 予想家 × 過去レース）【新規・無料・as-of でリーク回避】
+# ---------------------------------------------------------------------------
+YOSO_PREDICTOR_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("predictor_yid", SRC_YOSO_PROF, acquired=False, note="予想家ID（正準キー）"),
+    FieldSpec("predictor_name", SRC_YOSO_PROF, acquired=False),
+    FieldSpec("date", SRC_YOSO_PROF, acquired=False),
+    FieldSpec("場名", SRC_YOSO_PROF, acquired=False),
+    FieldSpec("レース番号", SRC_YOSO_PROF, acquired=False),
+    FieldSpec("レース名", SRC_YOSO_PROF, acquired=False),
+    FieldSpec("結果", SRC_YOSO_PROF, acquired=False, leak_safe=False,
+              note="的中/不的中（当該行は事後）。スキルは as-of 集計で使う"),
+    FieldSpec("的中配当", SRC_YOSO_PROF, acquired=False, leak_safe=False,
+              note="例『３連単 23,640円』→ 回収率算出"),
+    FieldSpec("◎馬", SRC_YOSO_PROF, acquired=False, note="その予想家の◎馬名"),
+    FieldSpec("◎着順", SRC_YOSO_PROF, acquired=False, leak_safe=False, note="◎の成績（事後）"),
+    FieldSpec("◎人気", SRC_YOSO_PROF, acquired=False, leak_safe=False),
+    FieldSpec("週間回収率", SRC_YOSO_PROF, acquired=False, leak_safe=False,
+              note="pro_yoso_rank。直近スナップショット→as-of 注意"),
+)
+
+
 # alias → フィールド定義
 CATALOG: dict[str, tuple[FieldSpec, ...]] = {
     "raw_results": RESULTS_FIELDS,
@@ -253,6 +291,8 @@ CATALOG: dict[str, tuple[FieldSpec, ...]] = {
     "raw_training": TRAINING_FIELDS,
     "raw_paddock": PADDOCK_FIELDS,
     "raw_person_yearly": PERSON_YEARLY_FIELDS,
+    "raw_yoso_marks": YOSO_MARKS_FIELDS,
+    "raw_yoso_predictor": YOSO_PREDICTOR_FIELDS,
 }
 
 
