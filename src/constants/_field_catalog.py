@@ -48,6 +48,7 @@ SRC_HORSE = "horse"              # db.../horse/<horse_id>
 SRC_PED = "ped"                  # db.../horse/ped/<horse_id>
 SRC_TRAINING = "training"        # race.../race/oikiri.html
 SRC_PADDOCK = "paddock"          # race.../race/paddock.html
+SRC_COMMENT = "comment"          # race.../race/comment.html（厩舎コメント）
 SRC_PERSON = "person"            # {jockey,trainer,owner,breeder}/result.html
 SRC_YOSO_MARK = "yoso_mark"      # race.../yoso/mark_list.html（印グリッド・JS描画）
 SRC_YOSO_PROF = "yoso_profile"   # yoso.../no1/?pid=profile&yid=（予想家実績）
@@ -198,6 +199,7 @@ PEDS_FIELDS: tuple[FieldSpec, ...] = (
 # ---------------------------------------------------------------------------
 TRAINING_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("race_id", SRC_TRAINING, acquired=False),
+    FieldSpec("馬番", SRC_TRAINING, acquired=False, note="results との結合キー"),
     FieldSpec("horse_id", SRC_TRAINING, acquired=False),
     FieldSpec("調教日", SRC_TRAINING, acquired=False),
     FieldSpec("コース", SRC_TRAINING, acquired=False, note="美浦W/栗東坂 等"),
@@ -220,9 +222,22 @@ TRAINING_FIELDS: tuple[FieldSpec, ...] = (
 # ---------------------------------------------------------------------------
 PADDOCK_FIELDS: tuple[FieldSpec, ...] = (
     FieldSpec("race_id", SRC_PADDOCK, acquired=False),
+    FieldSpec("馬番", SRC_PADDOCK, acquired=False, note="results との結合キー"),
     FieldSpec("horse_id", SRC_PADDOCK, acquired=False),
     FieldSpec("パドック評価", SRC_PADDOCK, acquired=False, note="A/B/穴。順序特徴"),
-    FieldSpec("パドックコメント", SRC_PADDOCK, acquired=False, note="馬体・気配の寸評"),
+    FieldSpec("パドックコメント", SRC_PADDOCK, acquired=False, note="馬体・気配の寸評。raw保持(将来TF-IDF)"),
+)
+
+# ---------------------------------------------------------------------------
+# raw_comment（厩舎コメント: レース × 馬）【新規・無料・リーク無し】
+# ---------------------------------------------------------------------------
+COMMENT_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("race_id", SRC_COMMENT, acquired=False),
+    FieldSpec("馬番", SRC_COMMENT, acquired=False, note="results との結合キー"),
+    FieldSpec("horse_id", SRC_COMMENT, acquired=False),
+    FieldSpec("厩舎コメント", SRC_COMMENT, acquired=False,
+              note="陣営コメント。raw保持(将来TF-IDF)。事前確定＝リーク無し"),
+    FieldSpec("コメント評価", SRC_COMMENT, acquired=False, note="陣営の強気度マーク（あれば）"),
 )
 
 # ---------------------------------------------------------------------------
@@ -292,6 +307,7 @@ CATALOG: dict[str, tuple[FieldSpec, ...]] = {
     "raw_peds": PEDS_FIELDS,
     "raw_training": TRAINING_FIELDS,
     "raw_paddock": PADDOCK_FIELDS,
+    "raw_comment": COMMENT_FIELDS,
     "raw_person_yearly": PERSON_YEARLY_FIELDS,
     "raw_yoso_marks": YOSO_MARKS_FIELDS,
     "raw_yoso_predictor": YOSO_PREDICTOR_FIELDS,

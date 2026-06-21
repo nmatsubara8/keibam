@@ -101,6 +101,51 @@ class NetkeibaDataSource(AbstractRaceDataSource):
         get_rawdata_results(skip=False, only_ids=ids)
         get_rawdata_info(skip=False, only_ids=ids)
         get_rawdata_return(skip=False, only_ids=ids)
+        # レース当日ノート（調教評価/パドック/厩舎コメント）。無料・リーク無し・任意。
+        self._acquire_race_day_notes(ids)
+
+    def _acquire_race_day_notes(self, ids: Sequence[str]) -> None:
+        """調教評価/パドック/厩舎コメントを取得し raw pickle(+DB) に反映する。
+
+        失敗しても本体取得を妨げないよう全例外を握りつぶす。各ページ取得の間には
+        polite_interval を挟む（HourlyRateLimiter とは別の自主規制）。
+        環境変数 ``KEIBA_SKIP_RACE_DAY_NOTES=1`` で丸ごと無効化できる。
+        """
+        import os
+        import time
+
+        if os.environ.get("KEIBA_SKIP_RACE_DAY_NOTES") == "1":
+            return
+        try:
+            from src.constants._local_paths import LocalPaths
+            from src.preparing._race_day_notes import RaceDayNotesScraper
+            from src.preparing._race_day_notes import persist_notes
+            from src.preparing._rate_limiter import polite_interval
+        except Exception as e:  # noqa: BLE001
+            logger.warning("race_day_notes: モジュール読込失敗のためスキップ: %s", e)
+            return
+
+        path_by_type = {
+            "training": LocalPaths.RAW_TRAINING_PATH,
+            "paddock": LocalPaths.RAW_PADDOCK_PATH,
+            "comment": LocalPaths.RAW_COMMENT_PATH,
+        }
+        scraper = RaceDayNotesScraper()
+        first = True
+        for race_id in ids:
+            for note_type, path in path_by_type.items():
+                if not first:
+                    interval = polite_interval()
+                    if interval > 0:
+                        time.sleep(interval)
+                first = False
+                try:
+                    df = scraper.capture(race_id, note_type)
+                    persist_notes(df, path)
+                except Exception as e:  # noqa: BLE001 — 1ページの失敗で全体を止めない
+                    logger.warning(
+                        "race_day_notes 失敗 type=%s race_id=%s: %s", note_type, race_id, e
+                    )
 
     def acquire_horses(self, horse_ids: Sequence[str]) -> None:
         from src.preparing._get_rawdata import get_rawdata_horse_info

@@ -25,6 +25,10 @@ class LocalPaths:
     RAW_HORSE_RESULTS_PATH: str = os.path.join(RAW_DIR, "horse_results.pkl")
     RAW_HORSE_INFO_PATH: str = os.path.join(RAW_DIR, "horse_info.pkl")
     RAW_PEDS_PATH: str = os.path.join(RAW_DIR, "peds.pkl")
+    ### レース当日ノート（無料・リーク無し）の集約 pickle
+    RAW_TRAINING_PATH: str = os.path.join(RAW_DIR, "training.pkl")
+    RAW_PADDOCK_PATH: str = os.path.join(RAW_DIR, "paddock.pkl")
+    RAW_COMMENT_PATH: str = os.path.join(RAW_DIR, "comment.pkl")
     ### 段階オッズ スナップショットの集約 pickle（Layer2 学習データの蓄積先）
     RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
     ### オッズ力学モデルの予測テーブル（チェックポイント別の次時点/確定予測）

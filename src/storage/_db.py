@@ -110,6 +110,23 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("race_id", "checkpoint", "model", "umaban"),
         index_col=None,
     ),
+    # レース当日ノート（調教評価/パドック/厩舎コメント）。いずれも (race_id, 馬番) で一意、
+    # results と同じく race_id を index に持たせる。再取得は当該 race_id の行を総入替する。
+    "raw_training": TableSpec(
+        table_name="raw_training",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
+    "raw_paddock": TableSpec(
+        table_name="raw_paddock",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
+    "raw_comment": TableSpec(
+        table_name="raw_comment",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
 }
 
 
@@ -124,6 +141,9 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_PEDS_PATH: "raw_peds",
     LocalPaths.RAW_ODDS_SNAPSHOT_PATH: "raw_odds_snapshots",
     LocalPaths.RAW_ODDS_PREDICTIONS_PATH: "raw_odds_predictions",
+    LocalPaths.RAW_TRAINING_PATH: "raw_training",
+    LocalPaths.RAW_PADDOCK_PATH: "raw_paddock",
+    LocalPaths.RAW_COMMENT_PATH: "raw_comment",
 }
 
 

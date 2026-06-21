@@ -7,9 +7,11 @@
 import os
 
 from src.preparing._race_day_notes import (
+    RaceDayNotesScraper,
     parse_comments,
     parse_paddock,
     parse_training,
+    persist_notes,
 )
 
 _FIX = os.path.join(os.path.dirname(__file__), "..", "fixtures", "race_day")
@@ -71,6 +73,100 @@ class TestComments:
         df = parse_comments("<html></html>", "R")
         assert df.empty
         assert "厩舎コメント" in df.columns
+
+
+class _FakeScraper:
+    """fetch_sync をフィクスチャ HTML / 例外に差し替えるダミー。"""
+
+    def __init__(self, html_by_selector=None, raise_exc=False):
+        self._map = html_by_selector or {}
+        self._raise = raise_exc
+        self.calls = []
+
+    def fetch_sync(self, url, wait_selector=None):
+        self.calls.append((url, wait_selector))
+        if self._raise:
+            raise RuntimeError("network down")
+        return self._map.get(wait_selector, "")
+
+
+class TestScraper:
+    def test_capture_parses_each_type(self):
+        scraper = RaceDayNotesScraper(
+            scraper=_FakeScraper(
+                {
+                    "table.OikiriTable": _read("oikiri.html"),
+                    "table.Paddock_Table": _read("paddock.html"),
+                    "#All_Comment_Table": _read("comment.html"),
+                }
+            )
+        )
+        assert len(scraper.capture("R", "training")) == 16
+        assert len(scraper.capture("R", "paddock")) == 7
+        assert len(scraper.capture("R", "comment")) == 3
+
+    def test_capture_builds_correct_url(self):
+        fake = _FakeScraper({"table.OikiriTable": _read("oikiri.html")})
+        RaceDayNotesScraper(scraper=fake).capture("202605030611", "training")
+        url, sel = fake.calls[0]
+        assert "oikiri.html?race_id=202605030611" in url
+        assert sel == "table.OikiriTable"
+
+    def test_capture_returns_empty_on_fetch_failure(self):
+        scraper = RaceDayNotesScraper(scraper=_FakeScraper(raise_exc=True))
+        df = scraper.capture("R", "training")
+        assert df.empty
+        assert "調教評価" in df.columns  # 型付き空（例外を投げない）
+
+    def test_unknown_note_type_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            RaceDayNotesScraper(scraper=_FakeScraper()).capture("R", "bogus")
+
+
+class TestPersist:
+    def test_persist_sets_race_id_index(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_update(path, df):
+            captured["path"] = path
+            captured["df"] = df
+
+        monkeypatch.setattr(
+            "src.preparing._get_rawdata.update_rawdata", fake_update, raising=True
+        )
+        df = parse_training(_read("oikiri.html"), "202605030611")
+        n = persist_notes(df, str(tmp_path / "training.pkl"))
+        assert n == 16
+        assert captured["df"].index.name == "race_id"
+        assert "馬番" in captured["df"].columns
+
+    def test_persist_empty_is_noop(self):
+        import pandas as pd
+
+        assert persist_notes(pd.DataFrame(), "x.pkl") == 0
+
+
+class TestRegistration:
+    def test_aliases_registered(self):
+        from src.constants._local_paths import LocalPaths
+        from src.storage._db import PICKLE_PATH_TO_ALIAS, TABLE_SPECS
+
+        for alias, path in (
+            ("raw_training", LocalPaths.RAW_TRAINING_PATH),
+            ("raw_paddock", LocalPaths.RAW_PADDOCK_PATH),
+            ("raw_comment", LocalPaths.RAW_COMMENT_PATH),
+        ):
+            assert PICKLE_PATH_TO_ALIAS.get(path) == alias
+            assert TABLE_SPECS[alias].primary_key == ("race_id", "馬番")
+            assert TABLE_SPECS[alias].index_col == "race_id"
+
+    def test_catalog_has_comment_and_umaban(self):
+        from src.constants import _field_catalog as fc
+
+        for t in ("raw_training", "raw_paddock", "raw_comment"):
+            assert "馬番" in fc.columns(t)
 
 
 class TestJoinKeyConsistency:
