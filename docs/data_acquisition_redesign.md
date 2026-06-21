@@ -659,6 +659,25 @@ raw では **peds** に対応（**今回は取得しない方針**。下記は�
 - 代替: 各予想家 profile の「◎の成績」列から**予想家ごとの◎馬を全レース分**復元できる
   （◎のみだが、印グリッド API が不可でも最低限の◎コンセンサスは構築可能）。
 
+**🎯 予想印 API 解明（raw HTML 内 JS 解析 2026-06-21）— Playwright 不要・HTTP GET で取得可**:
+```
+GET https://race.netkeiba.com/api/api_get_pro_yoso_list_v2.html
+    ?input=UTF-8&output=json&race_id=<race_id>&ref_type=2
+```
+- レスポンス `json.data.ary_item[]`（予想家ごと）の主フィールド:
+  - `yosoka_id` / `yosoka_name`（実績ページ yid と同一）
+  - `goods_kbn`: `umai_free`/`no1_free`=**無料(印あり)** / `umai_sell`=有料(mark空) / `no1_premium`=要プレミアム
+  - `mark`: `{seq: code}` 形式。**code 1=◎本命 2=○対抗 3=▲単穴 4=△押え 5=☆穴**
+    （JS: `mark_class_list={1:Honmei,2:Taikou,3:Kurosan,4:Osae,5:Hoshi}`）
+  - `recovery_rate`（回収率＝スキル加重の素）/ `yoso_point` / `is_paid_only`
+- **無料/有料はAPI側で分離**: `umai_sell`(未購入)は mark 空 → 取得すると自然にフリー印だけ残る
+  （プレミアム不取得の方針と整合）。
+- `seq` が 馬番 か 0始まり index かは実 JSON で要確認（`.mark_<seq>` 列へ描画）。
+- 取得設計: `output=json` で JSON 取得 →
+  `raw_yoso_marks`(race_id,馬番,yosoka_id,yosoka_name,mark_code,mark_score) ロング形式に展開。
+  予想家の `recovery_rate` は `raw_yoso_predictor` 側のスキルとして保持。
+- 関連: 予想家タブ画像 `cdn.../yosoka/yosotab_<yid>.gif`、詳細 `yoso_pro_opinion_detail.html`(有料)。
+
 実装上の注意:
 - **`isFreemium` クラス / 各種「指数」列は非ログインで空セル** → パーサで最初から対象外にする。
 - 調教/パドック/厩舎コメントは **(race_id, 馬番) で results に結合可**（horse_id 解決不要で堅牢）。
