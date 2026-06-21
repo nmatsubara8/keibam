@@ -1,0 +1,122 @@
+"""予想印パーサ（_yoso_marks）のテスト。
+
+実 API レスポンス（api_get_pro_yoso_list_v2）の構造を模した合成 JSON で、
+無料予想家のみ抽出・印コード変換・(race_id,馬番) 集約を検証する。
+"""
+
+import json
+
+import pandas as pd
+
+from src.preparing._yoso_marks import (
+    aggregate_consensus,
+    parse_pro_yoso_json,
+)
+
+# 実レスポンス 202605030611 の構造を縮約（本紙=no1_free, 須田=no1_premium, CP予想=no1_free）
+_SAMPLE = {
+    "status": "OK",
+    "reason": "",
+    "data": {
+        "ary_item": [
+            {
+                "goods_kbn": "no1_free",
+                "yosoka_id": "266987",
+                "yosoka_name": "本<br>紙<br>",  # 本紙
+                "mark": {"13": "1", "11": "2", "9": "3", "2": "5", "12": "4"},
+            },
+            {
+                "goods_kbn": "no1_premium",  # プレミアム指定 → 除外対象
+                "yosoka_id": "266991",
+                "yosoka_name": "須<br>田<br>",  # 須田
+                "mark": {"11": "1", "13": "5", "2": "3"},
+            },
+            {
+                "goods_kbn": "no1_free",
+                "yosoka_id": "266992",
+                "yosoka_name": "C<br>P<br>予<br>想<br>",  # CP予想
+                "mark": {"9": "1", "11": "2", "4": "3", "1": "4"},
+            },
+            {
+                "goods_kbn": "umai_sell",  # 有料・mark空 → 除外
+                "yosoka_id": "999999",
+                "yosoka_name": "有料家",
+                "mark": {},
+            },
+        ]
+    },
+}
+
+
+class TestParse:
+    def test_free_only_excludes_premium_and_paid(self):
+        df = parse_pro_yoso_json(_SAMPLE, "202605030611")
+        yids = set(df["predictor_yid"])
+        assert yids == {"266987", "266992"}  # 本紙・CP予想のみ
+        assert "266991" not in yids  # no1_premium 除外
+        assert "999999" not in yids  # umai_sell 除外
+
+    def test_include_premium_when_free_only_false(self):
+        df = parse_pro_yoso_json(_SAMPLE, "R", free_only=False)
+        assert "266991" in set(df["predictor_yid"])
+
+    def test_name_br_stripped(self):
+        df = parse_pro_yoso_json(_SAMPLE, "R")
+        names = dict(zip(df["predictor_yid"], df["predictor_name"], strict=True))
+        assert names["266987"] == "本紙"
+        assert names["266992"] == "CP予想"
+
+    def test_mark_code_mapping(self):
+        df = parse_pro_yoso_json(_SAMPLE, "R")
+        honsi = df[df["predictor_yid"] == "266987"].set_index("馬番")
+        assert honsi.loc[13, "mark"] == "◎"
+        assert honsi.loc[13, "mark_score"] == 5
+        assert honsi.loc[11, "mark"] == "○"
+        assert honsi.loc[2, "mark"] == "☆"
+        assert honsi.loc[12, "mark"] == "△"
+
+    def test_umaban_is_int(self):
+        df = parse_pro_yoso_json(_SAMPLE, "R")
+        assert df["馬番"].map(type).eq(int).all()
+
+    def test_accepts_json_string(self):
+        df = parse_pro_yoso_json(json.dumps(_SAMPLE), "R")
+        assert len(df) > 0
+
+    def test_accepts_jsonp_string(self):
+        wrapped = "cb(" + json.dumps(_SAMPLE) + ");"
+        df = parse_pro_yoso_json(wrapped, "R")
+        assert set(df["predictor_yid"]) == {"266987", "266992"}
+
+    def test_status_ng_returns_empty(self):
+        df = parse_pro_yoso_json({"status": "NG", "reason": "x"}, "R")
+        assert df.empty
+        assert list(df.columns) == [
+            "race_id",
+            "馬番",
+            "predictor_yid",
+            "predictor_name",
+            "mark",
+            "mark_score",
+        ]
+
+
+class TestAggregate:
+    def test_consensus_counts_and_scores(self):
+        df = parse_pro_yoso_json(_SAMPLE, "202605030611")
+        agg = aggregate_consensus(df).set_index("馬番")
+        # 馬番11: 本紙○(4) + CP○(4) → 2予想家・◎0・合計8・平均4
+        assert agg.loc[11, "yoso_n_marks"] == 2
+        assert agg.loc[11, "yoso_n_honmei"] == 0
+        assert agg.loc[11, "yoso_score_sum"] == 8
+        assert agg.loc[11, "yoso_score_mean"] == 4
+        # 馬番13: 本紙◎(5) のみ → ◎1
+        assert agg.loc[13, "yoso_n_honmei"] == 1
+        assert agg.loc[13, "yoso_score_sum"] == 5
+        # 馬番9: 本紙▲(3) + CP◎(5) → ◎1・合計8
+        assert agg.loc[9, "yoso_n_honmei"] == 1
+        assert agg.loc[9, "yoso_score_sum"] == 8
+
+    def test_empty_input(self):
+        agg = aggregate_consensus(pd.DataFrame())
+        assert agg.empty
