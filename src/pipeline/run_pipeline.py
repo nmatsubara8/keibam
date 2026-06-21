@@ -236,6 +236,34 @@ def _rebuild_featured(args: argparse.Namespace) -> None:
     )
 
 
+def _backfill_notes(args: argparse.Namespace) -> None:
+    """既存 raw の全 race_id に対し当日ノート（調教/パドック/コメント）だけを取得する。
+
+    コア取得（results/horse/peds）とは独立。バルク再取得の後に走らせ、年代ゲート
+    （KEIBA_RACE_DAY_NOTES_MIN_YEAR・既定2010）で近年のみに絞る。ノートは race_id 単位で
+    冪等に総入替されるため、何度でも中断・再開できる。完了後は rebuild-featured で反映。
+    """
+    from src.pipeline._ingestion import IngestConfig
+    from src.pipeline._ingestion import existing_race_ids
+    from src.pipeline._ingestion import load_raw
+    from src.preparing._data_source import create_data_source
+
+    cfg = IngestConfig()
+    results = load_raw(cfg.raw_results_path)
+    ids = sorted(str(r) for r in existing_race_ids(results))
+    if getattr(args, "min_year", None):
+        ids = [r for r in ids if r[:4].isdigit() and int(r[:4]) >= args.min_year]
+    if getattr(args, "limit", None):
+        ids = ids[: args.limit]
+    if not ids:
+        logger.info("[backfill-notes] 対象 race_id なし（raw_results が空）")
+        return
+    source = create_data_source(_resolve_data_source(args))
+    logger.info("[backfill-notes] %s で %d レースの当日ノートを取得します", source.name, len(ids))
+    source.acquire_race_day_notes(ids)
+    logger.info("[backfill-notes] 完了。rebuild-featured で featured に反映してください")
+
+
 def _ingest(args: argparse.Namespace) -> None:
     """取込ジョブを実行する（selenium / bs4 が実行時に必要）。"""
     from src.pipeline._ingestion import IngestConfig
@@ -837,6 +865,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="raw pickle から featured_data を再生成する（スクレイプなし。DB 復元後等に使用）",
     )
 
+    # backfill-notes サブコマンド（既存 race_id の当日ノートのみを取得。コア取得と独立）
+    bn_p = sub.add_parser(
+        "backfill-notes",
+        help="既存 raw の race_id に当日ノート(調教/パドック/コメント)のみ取得。後で rebuild-featured",
+    )
+    bn_p.add_argument("--min-year", type=int, default=None, help="この開催年以降のみ対象（既定は年代ゲートに委譲）")
+    bn_p.add_argument("--limit", type=int, default=None, help="先頭 N レースのみ（動作確認用）")
+    bn_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
+
     # evaluate-odds-dynamics サブコマンド
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
     eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
@@ -990,6 +1027,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     handlers = {
         "ingest": _ingest,
         "rebuild-featured": _rebuild_featured,
+        "backfill-notes": _backfill_notes,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,
         "calibrate-takeout": _calibrate_takeout,

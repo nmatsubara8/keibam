@@ -70,6 +70,14 @@ class AbstractRaceDataSource(ABC):
         """指定 horse_id の馬ページ/血統を取得し data/raw に反映する。"""
         raise NotImplementedError
 
+    def acquire_race_day_notes(self, race_ids: Sequence[str]) -> None:  # noqa: B027
+        """指定 race_id の当日ノート（調教/パドック/コメント）のみを取得する。
+
+        コア取得と独立に走らせる backfill 用フック。既定は何もしない
+        （ノートを持たないソース向け）。netkeiba 等で override する。
+        """
+        pass
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -167,6 +175,12 @@ class NetkeibaDataSource(AbstractRaceDataSource):
                     logger.warning(
                         "race_day_notes 失敗 type=%s race_id=%s: %s", note_type, race_id, e
                     )
+
+    def acquire_race_day_notes(self, race_ids: Sequence[str]) -> None:
+        """当日ノートのみを取得する公開フック（backfill-notes ジョブ用）。"""
+        ids = [str(r) for r in race_ids]
+        if ids:
+            self._acquire_race_day_notes(ids)
 
     def acquire_horses(self, horse_ids: Sequence[str]) -> None:
         from src.preparing._get_rawdata import get_rawdata_horse_info
