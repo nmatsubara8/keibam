@@ -44,7 +44,9 @@ warnings.filterwarnings(
 logger = logging.getLogger(__name__)
 
 
-_ORANGE = "38;5;208"  # 256色のオレンジ（推奨→消滅した買い目用）
+_ORANGE = "38;5;208"  # オレンジ: 消滅可能性が高い（推奨中だが EV が閾値近接＆下落中）
+_GRAY = "90"          # グレー: 既に消滅（推奨から外れた・参考表示）
+_AT_RISK_EV = 1.15    # EV がこの未満かつ前ティックより下落 → 消滅可能性が高い
 
 
 def _color_for_count(count: int) -> str:
@@ -271,40 +273,51 @@ def _save_live_bets(bet_rows, date_yyyymmdd):
 
 
 def _load_appearance_counts(date_yyyymmdd):
-    """既存の bets_<date>.csv から (race_id, 馬番)→出現回数 を復元する。
+    """既存の bets_<date>.csv から (counts, prev_ev) を復元する。
 
-    --loop を再起動しても過去ティックの出現回数を引き継いで色分け（赤→黄→緑）するため。
-    回数 = その買い目が記録された distinct captured_at 数（= 推奨されたティック数）。
-    ファイルが無ければ空（カウント0から開始）。--save-odds で追記され続けるのが前提。
+    --loop を再起動しても過去ティックの出現回数（色分け赤→黄→緑）と、各買い目の直近 EV
+    （消滅可能性=EV下落判定）を引き継ぐため。
+      counts  : {(race_id,馬番): 出現回数}（= distinct captured_at 数）
+      prev_ev : {(race_id,馬番): 直近 captured_at の EV}
+    ファイルが無ければ空。--save-odds で bets が追記され続けるのが前提。
     """
     import os
 
     path = f"data/live/bets_{date_yyyymmdd}.csv"
     if not os.path.exists(path):
-        return {}
+        return {}, {}
     import pandas as pd
 
     try:
         df = pd.read_csv(path)
     except Exception as e:  # noqa: BLE001
         logger.warning("bets履歴の読込失敗（カウント0から開始）: %s", e)
-        return {}
+        return {}, {}
     if df.empty or not {"race_id", "馬番", "captured_at"} <= set(df.columns):
-        return {}
+        return {}, {}
     g = df.groupby(["race_id", "馬番"])["captured_at"].nunique()
-    return {(str(rid), int(uma)): int(n) for (rid, uma), n in g.items()}
+    counts = {(str(rid), int(uma)): int(n) for (rid, uma), n in g.items()}
+    prev_ev = {}
+    if "EV" in df.columns:
+        last = df.sort_values("captured_at").groupby(["race_id", "馬番"]).tail(1)
+        for _, r in last.iterrows():
+            try:
+                prev_ev[(str(r["race_id"]), int(r["馬番"]))] = float(r["EV"])
+            except (TypeError, ValueError):
+                pass
+    return counts, prev_ev
 
 
 def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100, post_of=None,
-                           counts=None, race_odds=None):
+                           counts=None, race_odds=None, prev_ev=None):
     """1レースの推奨馬券を表示し、(投資合計, 採用行) を返す。
 
     JRA は unit 円（既定100）単位でしか購入できないため、ケリーの生額を unit 単位に
     丸める。丸めて 0 になる薄いベット（< unit/2 円）は購入不可のため見送る。
-    counts（{(race_id,馬番): 出現回数}）を渡すと、ループ内の出現回数で色分けする
-    （1回目=赤・2〜5回目=黄・6回目以降=緑。端末出力時のみ着色）。
-    race_odds（{馬番: 現在オッズ}）も渡すと、過去に推奨されたが今回外れた買い目を
-    オレンジで表示する（現在オッズ付き。≤15なら EV低下＝オッズ下落、>15ならオッズ上昇）。
+    色分け（端末出力時のみ。counts/prev_ev を渡したとき）:
+      赤=初出 / 黄=2〜5回 / 緑=6回以上（出現回数＝安定度）
+      オレンジ=消滅可能性が高い（EV が閾値近接かつ前ティックより下落＝剥がれかけ）
+      グレー=既に消滅（前回まで推奨→今回外れた。現在オッズ付き・参考表示）
     """
     from src.constants._bet_types import BetType
 
@@ -329,24 +342,30 @@ def _print_recommendations(race_id, candidates, bankroll: float, unit: int = 100
     use_color = counts is not None and sys.stdout.isatty()
     post_str = (post_of or {}).get(str(race_id))
     print(f"\n■ {_race_label(race_id, post_str)}  [{race_id}]")
-    print(f"  {'馬番':>4}{'オッズ':>8}{'勝率':>8}{'EV':>7}{'購入額':>10}{'回数':>6}")
+    print(f"  {'馬番':>4}{'オッズ':>8}{'勝率':>8}{'EV':>7}{'購入額':>10}{'回数':>6}{'状態':>6}")
     total = 0.0
     for c, stake in rows:
         total += stake
-        n = 1
+        key = (str(race_id), c.combo[0])
+        n = counts.get(key, 0) + 1 if counts is not None else 1
         if counts is not None:
-            key = (str(race_id), c.combo[0])
-            n = counts.get(key, 0) + 1
             counts[key] = n
+        # 消滅可能性: EV が閾値近接かつ前ティックより下落（剥がれかけ）。
+        at_risk = False
+        if prev_ev is not None:
+            pe = prev_ev.get(key)
+            at_risk = c.expected_value < _AT_RISK_EV and pe is not None and c.expected_value < pe
+            prev_ev[key] = float(c.expected_value)
+        mark = "⚠落" if at_risk else ""
         line = (f"  {c.combo[0]:>4}{c.odds:>8.1f}{c.probability:>8.3f}"
-                f"{c.expected_value:>7.2f}{stake:>10,d}{n:>6}")
-        print(_colorize(line, n, use_color))
+                f"{c.expected_value:>7.2f}{stake:>10,d}{n:>6}{mark:>6}")
+        print(_ansi(line, _ORANGE, use_color) if at_risk else _colorize(line, n, use_color))
     for u in gone:
         od = (race_odds or {}).get(u)
         n = counts[(str(race_id), u)]
         od_s = f"{od:>8.1f}" if isinstance(od, (int, float)) else f"{'?':>8}"
-        line = f"  {u:>4}{od_s}{'—':>8}{'—':>7}{'消滅':>10}{n:>6}"
-        print(_ansi(line, _ORANGE, use_color))
+        line = f"  {u:>4}{od_s}{'—':>8}{'—':>7}{'—':>10}{n:>6}{'消滅':>6}"
+        print(_ansi(line, _GRAY, use_color))
     if rows:
         print(f"  → 購入合計 {int(total):,} 円（{unit}円単位 / bankroll {int(bankroll):,} 円の "
               f"{total / bankroll * 100:.1f}%）")
@@ -408,7 +427,7 @@ def _in_window(schedule, now, lo: float, hi: float):
 
 
 def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, unit=100,
-                       save_odds=False, counts=None):
+                       save_odds=False, counts=None, prev_ev=None):
     """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。
 
     save_odds=True なら、スクレイプした全馬の暫定オッズ（data/live/odds_*.csv）と推奨買い目
@@ -461,7 +480,8 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
             logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
         spent, placed = _print_recommendations(race_id, candidates, op_config.bankroll, unit,
-                                                post_of, counts, odds_by_race.get(str(race_id)))
+                                                post_of, counts, odds_by_race.get(str(race_id)),
+                                                prev_ev)
         if spent > 0:
             grand_total += spent
             n_reco += 1
@@ -523,14 +543,14 @@ def main() -> None:
     header = (f"EV下限={op_config.tansho_ev_threshold or 'BetThresholds既定'} / オッズ上限={odds_cap}"
               f" / ケリー×{op_config.kelly_fraction_ratio} / bankroll={int(op_config.bankroll):,}円")
 
-    def _run_once(race_ids, counts=None):
+    def _run_once(race_ids, counts=None, prev_ev=None):
         print("=" * 70)
         print(f"予測（{date_yyyymmdd}） — 検証済み単勝戦略  {header}")
         if counts is not None:
-            print("  色: 赤=初出 / 黄=2〜5回目 / 緑=6回目以降（ループ内の連続出現回数）")
+            print("  色: 赤=初出/黄=2〜5回/緑=6回以上 ・ オレンジ=消滅可能性高(EV下落) ・ 灰=消滅")
         print("=" * 70)
         n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model,
-                                      op_config, args.unit, args.save_odds, counts)
+                                      op_config, args.unit, args.save_odds, counts, prev_ev)
         print("\n" + "=" * 70)
         if n == 0:
             print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")
@@ -550,23 +570,23 @@ def main() -> None:
             return
         logger.info("ループ開始: %s / %d レース / 窓 %.0f-%.0f分前 / 間隔 %d秒",
                     date_yyyymmdd, len(schedule), lo, hi, args.interval)
-        # 買い目（レース×馬番）のループ内出現回数。色分け（赤→黄→緑）に使う。
-        # 既存の bets_<date>.csv 履歴から復元 → --loop 再起動でも回数を引き継ぐ。
-        appear_counts: dict = _load_appearance_counts(date_yyyymmdd)
+        # 出現回数（色分け赤→黄→緑）と直近EV（消滅可能性=EV下落判定）。
+        # 既存の bets_<date>.csv 履歴から復元 → --loop 再起動でも回数・トレンドを引き継ぐ。
+        appear_counts, prev_ev = _load_appearance_counts(date_yyyymmdd)
         if appear_counts:
-            logger.info("bets履歴から %d 件の買い目の出現回数を復元（再起動時も継続）",
+            logger.info("bets履歴から %d 件の買い目の状態を復元（再起動時も継続）",
                         len(appear_counts))
         # 起動時に現時点の全レースを1回予測（即座に現状把握。--save-odds なら現在オッズも保存）。
         # その後、窓ベースのスケジュール待機に入る。
         print(f"\n[{dt.datetime.now():%H:%M}] 起動時スナップショット: 全 {len(schedule)} レースを予測 …")
-        _run_once(None, appear_counts)
+        _run_once(None, appear_counts, prev_ev)
         print(f"\n[{dt.datetime.now():%H:%M}] スケジュール待機開始（窓 {lo:.0f}-{hi:.0f}分前 / {args.interval}秒）…")
         while True:
             now = dt.datetime.now()
             ids = _in_window(schedule, now, lo, hi)
             if ids:
                 print(f"\n[{now:%H:%M}] 窓内 {len(ids)} レースを再予測 …")
-                _run_once(ids, appear_counts)
+                _run_once(ids, appear_counts, prev_ev)
             # 終了: 窓上限(lo)以上のレースがもう無い＝今後再予測対象が出ない。
             if not any(pdt is not None and (pdt - now).total_seconds() / 60 >= lo
                        for _, pdt in schedule):
