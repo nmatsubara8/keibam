@@ -253,10 +253,20 @@ def _backfill_notes(args: argparse.Namespace) -> None:
     ids = sorted(str(r) for r in existing_race_ids(results))
     if getattr(args, "min_year", None):
         ids = [r for r in ids if r[:4].isdigit() and int(r[:4]) >= args.min_year]
+    # 中断・再開: 既に training ノートを取得済みの race_id を除外（--no-skip-existing で無効）
+    if not getattr(args, "no_skip_existing", False):
+        from src.constants._local_paths import LocalPaths
+
+        done = existing_race_ids(load_raw(LocalPaths.RAW_TRAINING_PATH))
+        done = {str(r) for r in done}
+        before = len(ids)
+        ids = [r for r in ids if r not in done]
+        if before != len(ids):
+            logger.info("[backfill-notes] 取得済み %d レースをスキップ（再開）", before - len(ids))
     if getattr(args, "limit", None):
         ids = ids[: args.limit]
     if not ids:
-        logger.info("[backfill-notes] 対象 race_id なし（raw_results が空）")
+        logger.info("[backfill-notes] 対象 race_id なし（全件取得済み or raw_results が空）")
         return
     source = create_data_source(_resolve_data_source(args))
     logger.info("[backfill-notes] %s で %d レースの当日ノートを取得します", source.name, len(ids))
@@ -873,6 +883,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     bn_p.add_argument("--min-year", type=int, default=None, help="この開催年以降のみ対象（既定は年代ゲートに委譲）")
     bn_p.add_argument("--limit", type=int, default=None, help="先頭 N レースのみ（動作確認用）")
     bn_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
+    bn_p.add_argument("--no-skip-existing", action="store_true", help="取得済み race_id も再取得する（既定はスキップ）")
 
     # evaluate-odds-dynamics サブコマンド
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
