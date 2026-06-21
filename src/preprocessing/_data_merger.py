@@ -180,6 +180,7 @@ class DataMerger:
             results = self._add_aptitude_stats(results, horse_results)
             results = self._add_speed_figure_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
+            results = self._add_career_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
             output_list.append(results)
@@ -513,6 +514,39 @@ class DataMerger:
 
         results = results.merge(best, left_on="horse_id", right_index=True, how="left")
         results = results.merge(mean5, left_on="horse_id", right_index=True, how="left")
+        return results
+
+    # ──────────────────────────────────────────
+    # §2n: As-of career aggregate features（過去キャリア累計・リーク無し）
+    # ──────────────────────────────────────────
+
+    def _add_career_stats(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
+        """as-of キャリア累計（出走数/勝利数/勝率/獲得賞金）を追加する（リーク無し）。
+
+        horse_info ページの「現在の通算成績・獲得賞金」はスクレイプ時点＝当該レースより
+        未来の走を含むためリーク（かつ train/serve skew）になる。代わりに horse_results を
+        **当該レース日より前**（`_merge_horse_results` が date でカット済み）で積算し、
+        各レース時点での過去キャリアを再現する。学習・推論で同一計算となり skew も消える。
+        """
+        import numpy as np
+
+        if horse_results.empty or HRCols.RANK not in horse_results.columns:
+            return results
+
+        hr = horse_results
+        starts = hr.groupby(level=0).size().rename("career_starts")
+        is_win = (hr[HRCols.RANK] == 1).astype(float)
+        wins = is_win.groupby(level=0).sum().rename("career_wins")
+        results = results.merge(starts, left_on="horse_id", right_index=True, how="left")
+        results = results.merge(wins, left_on="horse_id", right_index=True, how="left")
+        # 勝率（過去走 0 の初出走馬は starts/wins とも欠損 → 勝率も NaN のまま＝未知）
+        results["career_winrate"] = results["career_wins"] / results["career_starts"]
+
+        # 獲得賞金（過去走の賞金合計）。桁が大きく裾が重いので log1p で圧縮した列も持つ
+        if HRCols.PRIZE in hr.columns:
+            earnings = hr.groupby(level=0)[HRCols.PRIZE].sum().rename("career_earnings")
+            results = results.merge(earnings, left_on="horse_id", right_index=True, how="left")
+            results["career_earnings_log"] = np.log1p(results["career_earnings"].fillna(0.0))
         return results
 
     # ──────────────────────────────────────────
