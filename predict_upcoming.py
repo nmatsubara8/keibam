@@ -83,6 +83,68 @@ def _race_label(race_id, post_str=None) -> str:
     return label
 
 
+def _fetch_win_odds_map(race_id, odds_source) -> dict[int, float]:
+    """オッズ専用ページから {馬番: 単勝オッズ} を取得する（失敗時は空 dict）。
+
+    odds_source.fetch_win_odds は OddsSnapshotScraper（Playwright）で
+    race.netkeiba.com/odds/index.html を JS 描画完了まで待って取得・パースするため、
+    静的スクレイプでは取れない午後（発走直前）の単勝オッズも確実に得られる。
+    """
+    try:
+        rows = odds_source.fetch_win_odds(str(race_id))
+    except Exception as e:  # noqa: BLE001 — オッズページ取得失敗は当該レースのみスキップ
+        logger.warning("オッズページ取得失敗 race_id=%s: %s", race_id, e)
+        return {}
+    out: dict[int, float] = {}
+    for umaban, odds in rows:
+        try:
+            if float(odds) > 0:
+                out[int(umaban)] = float(odds)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _augment_win_odds(df, race_id, odds_source, delay: float):
+    """出馬表の欠損単勝を、オッズ専用ページの単勝で補完する（馬番でマージ）。
+
+    netkeiba の出馬表ページは午後（発走 30〜0 分前）になると単勝を JS/Ajax で描画するため、
+    静的スクレイプでは欠損する。オッズ専用ページは JS 描画完了を待って取得するため確実。
+    全馬に有効オッズが揃っている（=前売り時間帯で出馬表に単勝が載っている）場合は余分な
+    取得をしない（ポライトネス）。取得が必要なときのみ 1 拍おいてからアクセスする。
+    """
+    import time as _time
+
+    import pandas as pd
+
+    from src.constants._results_cols import ResultsCols
+    from src.preparing._rate_limiter import polite_interval
+
+    tcol = ResultsCols.TANSHO_ODDS
+    ucol = ResultsCols.UMABAN
+    if ucol not in df.columns:
+        return df
+    odv = pd.to_numeric(df.get(tcol), errors="coerce") if tcol in df.columns else None
+    n_valid = int((odv > 0).sum()) if odv is not None else 0
+    if n_valid >= len(df):
+        return df  # 全馬そろっている＝オッズページ取得は不要
+    # 出馬表取得直後の連続アクセスを避けるため 1 拍おく（hourly limiter とは別の作法）。
+    wait = polite_interval(delay)
+    if wait > 0:
+        _time.sleep(wait)
+    odds_map = _fetch_win_odds_map(race_id, odds_source)
+    if not odds_map:
+        return df
+    df = df.copy()
+    mapped = pd.to_numeric(df[ucol], errors="coerce").map(odds_map)
+    df[tcol] = mapped.where(mapped.notna(), df[tcol]) if tcol in df.columns else mapped
+    filled = int(pd.to_numeric(df[tcol], errors="coerce").gt(0).sum()) - n_valid
+    if filled > 0:
+        logger.info("オッズページで単勝を補完 race_id=%s: +%d頭（計%d/%d頭）",
+                    race_id, filled, n_valid + filled, len(df))
+    return df
+
+
 def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     """開催日の出馬表（暫定オッズ込み）をスクレイプし、(結合DataFrame, 発走時刻dict) を返す。
 
@@ -119,38 +181,45 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     # 1時間あたり上限は scrape_shutuba_table→PlaywrightScraper.fetch の hourly limiter が別途担保。
     import time as _time
 
+    from src.preparing._odds_source import NetkeibaOddsSource
     from src.preparing._rate_limiter import polite_interval
     delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
 
+    # 出馬表に単勝が載らない午後は、オッズ専用ページから補完する（同一インスタンスを使い回す）。
+    odds_source = NetkeibaOddsSource()
     frames = []
-    for i, rid in enumerate(ids, 1):
-        pdt = _post_dt(rid)
-        post_s = post_of.get(rid, "??:??")
-        if pdt is not None:
-            mtp = int((pdt - dt.datetime.now()).total_seconds() // 60)
-            when = f"発走{post_s}・あと{mtp}分" + ("（発走済み）" if mtp < 0 else "")
-        else:
-            when = f"発走{post_s}"
-        label = _race_label(rid)
-        print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  {when} … 取得中", flush=True)
-        tmp = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
-                tmp = tf.name
-            scrape_shutuba_table(rid, date_str, tmp)
-            df = pd.read_pickle(tmp)
-            frames.append(df)
-            print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✓ 取得済み（{len(df)}頭）", flush=True)
-        except Exception as e:  # noqa: BLE001 — 1レースの失敗で全体を止めない
-            print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✗ 取得失敗: {e}", flush=True)
-        finally:
-            if tmp and os.path.exists(tmp):
-                os.unlink(tmp)
-        # 次レースまで待機（最後のレースの後は待たない）。delay<=0 で無効化可。
-        if i < len(ids):
-            wait = polite_interval(delay)
-            if wait > 0:
-                _time.sleep(wait)
+    try:
+        for i, rid in enumerate(ids, 1):
+            pdt = _post_dt(rid)
+            post_s = post_of.get(rid, "??:??")
+            if pdt is not None:
+                mtp = int((pdt - dt.datetime.now()).total_seconds() // 60)
+                when = f"発走{post_s}・あと{mtp}分" + ("（発走済み）" if mtp < 0 else "")
+            else:
+                when = f"発走{post_s}"
+            label = _race_label(rid)
+            print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  {when} … 取得中", flush=True)
+            tmp = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tf:
+                    tmp = tf.name
+                scrape_shutuba_table(rid, date_str, tmp)
+                df = pd.read_pickle(tmp)
+                df = _augment_win_odds(df, rid, odds_source, delay)
+                frames.append(df)
+                print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✓ 取得済み（{len(df)}頭）", flush=True)
+            except Exception as e:  # noqa: BLE001 — 1レースの失敗で全体を止めない
+                print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✗ 取得失敗: {e}", flush=True)
+            finally:
+                if tmp and os.path.exists(tmp):
+                    os.unlink(tmp)
+            # 次レースまで待機（最後のレースの後は待たない）。delay<=0 で無効化可。
+            if i < len(ids):
+                wait = polite_interval(delay)
+                if wait > 0:
+                    _time.sleep(wait)
+    finally:
+        odds_source.close()  # Playwright ブラウザを解放
     if not frames:
         return None, post_of
     return pd.concat(frames), post_of
