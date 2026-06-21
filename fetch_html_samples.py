@@ -201,6 +201,12 @@ def main() -> None:
 
     from src.preparing._scraper import PlaywrightScraper
 
+    # 種別名の検証を先に行い、未知名はトレースバックでなくフレンドリーに終了する
+    if args.page_type and args.page_type not in PAGE_TYPES:
+        raise SystemExit(
+            f"未対応の種別: {args.page_type}\n対応: {', '.join(PAGE_TYPES)}"
+        )
+
     race_id, horse_id, person_id = args.race_id, args.horse_id, args.person_id
     if args.page_type and args.page_id:
         # 単発: 主 id を該当種別へ流し込む
@@ -211,9 +217,6 @@ def main() -> None:
             horse_id = args.page_id
         else:
             person_id = args.page_id
-
-    if args.page_type and args.page_type not in PAGE_TYPES:
-        raise SystemExit(f"未対応の種別: {args.page_type}\n対応: {', '.join(PAGE_TYPES)}")
 
     targets = DEFAULT_ALL if args.all or not args.page_type else [args.page_type]
 
