@@ -110,11 +110,32 @@ class NetkeibaDataSource(AbstractRaceDataSource):
         失敗しても本体取得を妨げないよう全例外を握りつぶす。各ページ取得の間には
         polite_interval を挟む（HourlyRateLimiter とは別の自主規制）。
         環境変数 ``KEIBA_SKIP_RACE_DAY_NOTES=1`` で丸ごと無効化できる。
+        当日ノートのページは近年のみ存在するため、``KEIBA_RACE_DAY_NOTES_MIN_YEAR``
+        （既定 2010）未満の開催年（race_id 先頭4桁）は取得を丸ごとスキップする。
+        古い年代で 1 レース ~15s の空振り（セレクタ待ち×3種）を避けるための年代ゲート。
         """
         import os
         import time
 
         if os.environ.get("KEIBA_SKIP_RACE_DAY_NOTES") == "1":
+            return
+        try:
+            min_year = int(os.environ.get("KEIBA_RACE_DAY_NOTES_MIN_YEAR", "2010"))
+        except ValueError:
+            min_year = 2010
+
+        def _race_year(rid: str) -> "int | None":
+            s = str(rid)
+            return int(s[:4]) if len(s) >= 4 and s[:4].isdigit() else None
+
+        target_ids = [r for r in ids if (_race_year(r) or min_year) >= min_year]
+        skipped = len(ids) - len(target_ids)
+        if skipped:
+            logger.info(
+                "race_day_notes: 年代ゲートで %d/%d レースをスキップ（開催年 < %d）",
+                skipped, len(ids), min_year,
+            )
+        if not target_ids:
             return
         try:
             from src.constants._local_paths import LocalPaths
@@ -132,7 +153,7 @@ class NetkeibaDataSource(AbstractRaceDataSource):
         }
         scraper = RaceDayNotesScraper()
         first = True
-        for race_id in ids:
+        for race_id in target_ids:
             for note_type, path in path_by_type.items():
                 if not first:
                     interval = polite_interval()

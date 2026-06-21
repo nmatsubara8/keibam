@@ -54,6 +54,35 @@ def test_netkeiba_acquire_races_delegates(monkeypatch):
     assert calls["ret"] == ["202401010101", "202401010102"]
 
 
+def test_race_day_notes_era_gate(monkeypatch):
+    """年代ゲート: KEIBA_RACE_DAY_NOTES_MIN_YEAR 未満の開催年は capture を呼ばない。"""
+    import pandas as pd
+
+    import src.preparing._race_day_notes as rdn
+    import src.preparing._rate_limiter as rl
+
+    seen = []
+    monkeypatch.setattr(rdn.RaceDayNotesScraper, "capture",
+                        lambda self, rid, nt: seen.append(rid) or pd.DataFrame())
+    monkeypatch.setattr(rdn, "persist_notes", lambda df, path: 0)
+    monkeypatch.setattr(rl, "polite_interval", lambda: 0)
+    monkeypatch.setenv("KEIBA_RACE_DAY_NOTES_MIN_YEAR", "2010")
+
+    NetkeibaDataSource()._acquire_race_day_notes(["199801010101", "202605030611"])
+    # 1998 は除外、2026 のみ（3 ノート種ぶん呼ばれる）
+    assert set(seen) == {"202605030611"}
+
+
+def test_race_day_notes_skip_env(monkeypatch):
+    """KEIBA_SKIP_RACE_DAY_NOTES=1 で丸ごと無効化。"""
+    import src.preparing._race_day_notes as rdn
+
+    monkeypatch.setattr(rdn.RaceDayNotesScraper, "capture",
+                        lambda self, rid, nt: pytest.fail("skip 指定でも capture が呼ばれた"))
+    monkeypatch.setenv("KEIBA_SKIP_RACE_DAY_NOTES", "1")
+    NetkeibaDataSource()._acquire_race_day_notes(["202605030611"])
+
+
 def test_netkeiba_acquire_races_empty_noop(monkeypatch):
     import src.preparing._scrape_html_race as shr
 
