@@ -53,9 +53,11 @@ ODDS_ID_TYPE = {
     BetType.SANRENTAN: "8",
 }
 
-# 馬券種ごとの id 抽出パターン（パース時の再コンパイルを避けるため事前コンパイル）
+# 馬券種ごとの id 抽出パターン（パース時の再コンパイルを避けるため事前コンパイル）。
+# netkeiba は券種コードと馬番列の区切りに `_`（単勝/複勝の現行 DOM: ``odds-1_07``）と
+# `-`（連系の一部 DOM）の両方を使う実績があるため、どちらの区切りも許容する。
 _ODDS_ID_RE = {
-    bet_type: re.compile(rf"^odds-{code}-(\d+)$") for bet_type, code in ODDS_ID_TYPE.items()
+    bet_type: re.compile(rf"^odds-{code}[-_](\d+)$") for bet_type, code in ODDS_ID_TYPE.items()
 }
 
 # オッズ値（"12.3" / レンジ "1.5 - 2.0"）の数値部分

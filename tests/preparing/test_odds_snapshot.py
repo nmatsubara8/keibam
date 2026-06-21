@@ -210,6 +210,25 @@ def test_parse_combo_odds_html_filters_other_bet_types():
     assert fukusho == [((1,), 1.3)]
 
 
+def test_parse_combo_odds_html_underscore_separator():
+    """現行 b1 ページは券種コードと馬番列を `_` で区切る（``odds-1_07``）。
+
+    旧 DOM のハイフン区切り（``odds-1-07``）と並んで underscore も解釈できること。
+    回帰防止: これが壊れると午後の単勝オッズ取得が 0 件になり予測が崩壊する。
+    """
+    from src.preparing._odds_snapshot import parse_combo_odds_html
+
+    html = """
+    <td class="Odds Popular"><span id="odds-1_02">1.9</span></td>
+    <td class="Odds Popular"><span id="odds-1_10">5.0</span></td>
+    <td class="Odds"><span id="odds-2_02">1.1 - 1.1</span></td>
+    """
+    tansho = parse_combo_odds_html(html, BetType.TANSHO)
+    fukusho = parse_combo_odds_html(html, BetType.FUKUSHO)
+    assert sorted(tansho) == [((2,), 1.9), ((10,), 5.0)]
+    assert fukusho == [((2,), 1.1)]
+
+
 def test_parse_combo_odds_html_skips_pending_and_duplicates():
     from src.preparing._odds_snapshot import parse_combo_odds_html
 
