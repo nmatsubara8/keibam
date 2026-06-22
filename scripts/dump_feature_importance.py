@@ -21,6 +21,10 @@ import argparse
 import glob
 import os
 import sys
+from pathlib import Path
+
+# プロジェクトルートを sys.path に追加（python scripts/... 直接実行に対応）
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # 新規追加した特徴グループ → 接頭辞/キーワード（合計寄与の集計用）
