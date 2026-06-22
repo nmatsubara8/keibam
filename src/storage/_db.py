@@ -134,6 +134,13 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("race_id", "馬番", "predictor_yid"),
         index_col="race_id",
     ),
+    # 人物の年度別成績。(entity_type, entity_id, year) で一意。entity_id を index に持たせ、
+    # 再取得は当該人物の行を総入替する。
+    "raw_person_yearly": TableSpec(
+        table_name="raw_person_yearly",
+        primary_key=("entity_type", "entity_id", "year"),
+        index_col="entity_id",
+    ),
 }
 
 
@@ -152,6 +159,7 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_PADDOCK_PATH: "raw_paddock",
     LocalPaths.RAW_COMMENT_PATH: "raw_comment",
     LocalPaths.RAW_YOSO_MARKS_PATH: "raw_yoso_marks",
+    LocalPaths.RAW_PERSON_YEARLY_PATH: "raw_person_yearly",
 }
 
 

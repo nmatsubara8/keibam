@@ -87,6 +87,14 @@ YOSO_FEATURE_COLS: list = [
     "yoso_best_skill",         # 同・最大
 ]
 
+# 人物（騎手/調教師）の前年成績（as-of・DataMerger._merge_person_yearly）
+PERSON_YEARLY_FEATURE_COLS: list = [
+    "jockey_py_勝率", "jockey_py_複勝率", "jockey_py_芝勝率", "jockey_py_ダート勝率",
+    "jockey_py_重賞勝利", "jockey_py_出走回数",
+    "trainer_py_勝率", "trainer_py_複勝率", "trainer_py_芝勝率", "trainer_py_ダート勝率",
+    "trainer_py_重賞勝利", "trainer_py_出走回数",
+]
+
 # ──────────────────────────────────────────
 # §2k: 成長/フォーム・トレンド特徴量
 # ──────────────────────────────────────────

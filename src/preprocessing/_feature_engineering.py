@@ -275,6 +275,7 @@ class FeatureEngineering:
             N_RACES_LIST,
             OPPONENT_STRENGTH_FEATURE_COLS,
             PACE_FEATURE_COLS,
+            PERSON_YEARLY_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
             SIRE_FEATURE_COLS,
             SPEED_FIGURE_FEATURE_COLS,
@@ -309,6 +310,7 @@ class FeatureEngineering:
             + OPPONENT_STRENGTH_FEATURE_COLS
             + DAMSIRE_FEATURE_COLS
             + YOSO_FEATURE_COLS
+            + PERSON_YEARLY_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:

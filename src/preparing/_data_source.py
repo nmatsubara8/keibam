@@ -86,6 +86,10 @@ class AbstractRaceDataSource(ABC):
         """指定 race_id の予想印のみを取得する backfill 用フック。既定は no-op。"""
         pass
 
+    def acquire_persons(self, pairs: Sequence[tuple]) -> None:  # noqa: B027
+        """(entity_type, entity_id) の年度別成績のみを取得する backfill 用フック。既定 no-op。"""
+        pass
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -182,6 +186,42 @@ class NetkeibaDataSource(AbstractRaceDataSource):
         ids = [str(r) for r in race_ids]
         if ids:
             self._acquire_yoso_marks(ids)
+
+    def acquire_persons(self, pairs: Sequence[tuple]) -> None:
+        """(entity_type, entity_id) の年度別成績を取得する（backfill-persons 用）。
+
+        EUC-JP の result.html を1人1リクエストで取得。共有 HourlyRateLimiter＋polite_interval
+        でポライトに。失敗は握りつぶす。``KEIBA_SKIP_PERSON_YEARLY=1`` で無効化。
+        """
+        import os
+        import time
+
+        if os.environ.get("KEIBA_SKIP_PERSON_YEARLY") == "1":
+            return
+        try:
+            from src.constants._local_paths import LocalPaths
+            from src.preparing._person_yearly import fetch_person_yearly
+            from src.preparing._person_yearly import persist_person_yearly
+            from src.preparing._rate_limiter import get_hourly_limiter
+            from src.preparing._rate_limiter import polite_interval
+        except Exception as e:  # noqa: BLE001
+            logger.warning("person_yearly: モジュール読込失敗のためスキップ: %s", e)
+            return
+
+        limiter = get_hourly_limiter()
+        first = True
+        for entity_type, entity_id in pairs:
+            if not first:
+                interval = polite_interval()
+                if interval > 0:
+                    time.sleep(interval)
+            first = False
+            limiter.acquire()
+            try:
+                df = fetch_person_yearly(str(entity_type), str(entity_id))
+                persist_person_yearly(df, LocalPaths.RAW_PERSON_YEARLY_PATH)
+            except Exception as e:  # noqa: BLE001 — 1人の失敗で全体を止めない
+                logger.warning("person_yearly 失敗 %s/%s: %s", entity_type, entity_id, e)
 
     def _acquire_race_day_notes(self, ids: Sequence[str]) -> None:
         """調教評価/パドック/厩舎コメントを取得し raw pickle(+DB) に反映する。

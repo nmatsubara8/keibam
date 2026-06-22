@@ -201,3 +201,39 @@ class TestYosoPredictorSkill:
         m._results, m._yoso_marks = results, pd.DataFrame()
         m._add_yoso_predictor_skill()
         assert "yoso_best_skill" not in m._results.columns
+
+
+class TestMergePersonYearly:
+    """騎手/調教師の前年成績 as-of 結合（_merge_person_yearly）。"""
+
+    def test_prev_year_join(self):
+        results = pd.DataFrame(
+            {"馬番": [1, 2], "jockey_id": ["J1", "J2"], "trainer_id": ["T1", "T1"],
+             "date": pd.to_datetime(["2026-03-01", "2026-03-01"])},
+            index=pd.Index(["R1", "R1"], name="race_id"),
+        )
+        py = pd.DataFrame(
+            {"entity_type": ["jockey", "jockey", "trainer"], "year": [2025, 2024, 2025],
+             "勝率": [0.20, 0.99, 0.10], "複勝率": [0.5, 0.9, 0.3], "芝勝率": [0.22, 0.9, 0.11],
+             "ダート勝率": [0.18, 0.9, 0.09], "重賞勝利": [5, 99, 2], "出走回数": [800, 1, 400]},
+            index=pd.Index(["J1", "J1", "T1"], name="entity_id"),
+        )
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._person_yearly = results, py
+        m._merge_person_yearly()
+        by = m._results.set_index("馬番")
+        # 前年(2025)を結合・2024 は無視
+        assert by.loc[1, "jockey_py_勝率"] == pytest.approx(0.20)
+        assert by.loc[1, "trainer_py_勝率"] == pytest.approx(0.10)
+        # 未登録騎手 J2 は NaN
+        assert pd.isna(by.loc[2, "jockey_py_勝率"])
+
+    def test_empty_is_noop(self):
+        results = pd.DataFrame(
+            {"馬番": [1], "jockey_id": ["J1"], "date": pd.to_datetime(["2026-03-01"])},
+            index=pd.Index(["R1"], name="race_id"),
+        )
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._person_yearly = results, pd.DataFrame()
+        m._merge_person_yearly()
+        assert not any(c.startswith("jockey_py_") for c in m._results.columns)

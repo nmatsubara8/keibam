@@ -50,6 +50,7 @@ class DataMerger:
         paddock_df: Optional[pd.DataFrame] = None,
         comment_df: Optional[pd.DataFrame] = None,
         yoso_marks_df: Optional[pd.DataFrame] = None,
+        person_yearly_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
@@ -62,6 +63,8 @@ class DataMerger:
         self._comment = comment_df if comment_df is not None else pd.DataFrame()
         # 予想印ロング（race_id×馬番×予想家）。未提供なら空＝マージは no-op。
         self._yoso_marks = yoso_marks_df if yoso_marks_df is not None else pd.DataFrame()
+        # 人物の年度別成績（entity_id×year）。未提供なら空＝マージは no-op。
+        self._person_yearly = person_yearly_df if person_yearly_df is not None else pd.DataFrame()
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -86,6 +89,7 @@ class DataMerger:
         _step("race_day_notes", self._merge_race_day_notes)
         _step("yoso_marks", self._merge_yoso_marks)
         _step("yoso_skill", self._add_yoso_predictor_skill)
+        _step("person_yearly", self._merge_person_yearly)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -262,6 +266,50 @@ class DataMerger:
         self._results = merged.drop(
             columns=["_umaban_key", "_chaku"], errors="ignore"
         ).set_index("race_id")
+
+    # 人物年度別成績から featured に乗せる統計（前年=as-of 結合）
+    _PERSON_STAT_COLS: ClassVar[tuple] = ("勝率", "複勝率", "芝勝率", "ダート勝率", "重賞勝利", "出走回数")
+
+    def _merge_person_yearly(self):
+        """騎手/調教師の『前年』年度別成績を as-of 結合する（リーク無し）。
+
+        当該レース年 Y に対し year=Y-1（完了済みの前年）の成績を結合する。当年は集計途中
+        （リーク）なので使わない。jockey_py_* / trainer_py_* を付与。未提供（空）はスキップ。
+        """
+        if self._person_yearly is None or self._person_yearly.empty:
+            return
+        if "date" not in self._results.columns:
+            return
+        py = self._person_yearly.reset_index()
+        if "entity_id" not in py.columns:
+            py = py.rename(columns={py.columns[0]: "entity_id"})
+        if "entity_type" not in py.columns or "year" not in py.columns:
+            return
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        res = base.reset_index()
+        res["_pry"] = pd.to_datetime(res["date"], errors="coerce").dt.year - 1
+
+        stat_cols = [c for c in self._PERSON_STAT_COLS if c in py.columns]
+        for etype, idcol, prefix in (
+            ("jockey", "jockey_id", "jockey_py"),
+            ("trainer", "trainer_id", "trainer_py"),
+        ):
+            if idcol not in res.columns or not stat_cols:
+                continue
+            sub = py[py["entity_type"] == etype][["entity_id", "year"] + stat_cols].copy()
+            if sub.empty:
+                continue
+            sub = sub.rename(columns={c: f"{prefix}_{c}" for c in stat_cols})
+            sub = sub.rename(columns={"entity_id": idcol, "year": "_pry"})
+            sub[idcol] = sub[idcol].astype(str)
+            sub["_pry"] = pd.to_numeric(sub["_pry"], errors="coerce")
+            res[idcol] = res[idcol].astype(str)
+            res = res.merge(sub.drop_duplicates([idcol, "_pry"]), on=[idcol, "_pry"], how="left")
+
+        self._results = res.drop(columns=["_pry"], errors="ignore").set_index("race_id")
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。

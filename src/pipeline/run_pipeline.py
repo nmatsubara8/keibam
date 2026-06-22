@@ -189,6 +189,7 @@ def _build_featured_data(config):
         paddock_df=_read_optional_pickle(LocalPaths.RAW_PADDOCK_PATH),
         comment_df=_read_optional_pickle(LocalPaths.RAW_COMMENT_PATH),
         yoso_marks_df=_read_optional_pickle(LocalPaths.RAW_YOSO_MARKS_PATH),
+        person_yearly_df=_read_optional_pickle(LocalPaths.RAW_PERSON_YEARLY_PATH),
     )
     merger.merge()
     fe = (
@@ -312,6 +313,51 @@ def _backfill_yoso(args: argparse.Namespace) -> None:
     logger.info("[backfill-yoso] %s で %d レースの予想印を取得します", source.name, len(ids))
     source.acquire_yoso_marks(ids)
     logger.info("[backfill-yoso] 完了。rebuild-featured で featured に反映してください")
+
+
+def _backfill_persons(args: argparse.Namespace) -> None:
+    """results の jockey_id/trainer_id に対し人物の年度別成績だけを取得する（コア取得と独立）。
+
+    (entity_type, entity_id) 単位で冪等総入替。取得済み entity_id は除外して中断・再開できる。
+    完了後 rebuild-featured で as-of 結合される。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
+    from src.preparing._data_source import create_data_source
+
+    res = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    if res.empty:
+        logger.info("[backfill-persons] results が空")
+        return
+    types = args.types.split(",") if getattr(args, "types", None) else ["jockey", "trainer"]
+    pairs: list[tuple] = []
+    for etype in types:
+        col = f"{etype}_id"
+        if col not in res.columns:
+            logger.warning("[backfill-persons] results に %s 列なし。スキップ", col)
+            continue
+        for eid in sorted(set(res[col].dropna().astype(str))):
+            pairs.append((etype, eid))
+    # 中断・再開: 既に取得済み（person_yearly の (entity_type, entity_id)）を除外
+    if not getattr(args, "no_skip_existing", False):
+        done = load_raw(LocalPaths.RAW_PERSON_YEARLY_PATH)
+        if not done.empty and "entity_type" in done.columns:
+            eid_series = (done.index.astype(str) if done.index.name == "entity_id"
+                          else done["entity_id"].astype(str))
+            done_set = set(zip(done["entity_type"].astype(str), eid_series, strict=False))
+            before = len(pairs)
+            pairs = [p for p in pairs if p not in done_set]
+            if before != len(pairs):
+                logger.info("[backfill-persons] 取得済み %d 人をスキップ（再開）", before - len(pairs))
+    if getattr(args, "limit", None):
+        pairs = pairs[: args.limit]
+    if not pairs:
+        logger.info("[backfill-persons] 対象なし（全件取得済み or 列なし）")
+        return
+    source = create_data_source(_resolve_data_source(args))
+    logger.info("[backfill-persons] %s で %d 人の年度別成績を取得します", source.name, len(pairs))
+    source.acquire_persons(pairs)
+    logger.info("[backfill-persons] 完了。rebuild-featured で featured に反映してください")
 
 
 def _backfill_peds(args: argparse.Namespace) -> None:
@@ -970,6 +1016,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     by_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
     by_p.add_argument("--no-skip-existing", action="store_true", help="取得済み race_id も再取得する")
 
+    # backfill-persons サブコマンド（人物の年度別成績のみ取得。コア取得と独立）
+    bp2 = sub.add_parser(
+        "backfill-persons",
+        help="results の jockey/trainer_id に人物年度別成績のみ取得。後で rebuild-featured",
+    )
+    bp2.add_argument("--types", type=str, default=None, help="対象種別（カンマ区切り。既定 jockey,trainer）")
+    bp2.add_argument("--limit", type=int, default=None, help="先頭 N 人のみ（動作確認用）")
+    bp2.add_argument("--source", type=str, default=None, help="データソース名")
+    bp2.add_argument("--no-skip-existing", action="store_true", help="取得済み entity も再取得する")
+
     # backfill-peds サブコマンド（既存 horse_id の血統のみを取得。馬ページ取得と独立）
     bp_p = sub.add_parser(
         "backfill-peds",
@@ -1134,6 +1190,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "rebuild-featured": _rebuild_featured,
         "backfill-notes": _backfill_notes,
         "backfill-yoso": _backfill_yoso,
+        "backfill-persons": _backfill_persons,
         "backfill-peds": _backfill_peds,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,
