@@ -94,6 +94,22 @@ def test_settle_exact_combo_not_box():
     assert s.roi == pytest.approx(4.0)
 
 
+def test_settle_ordered_combo_single_point_not_permutation_box():
+    # 三連単(1,2,3)が的中・払戻9000。候補(1,2,3)は1点で評価する（全6順列に展開しない）。
+    # 不一致順 (1,3,2) は外れ＝1点・0回収。
+    sanrentan = _df({"win_0": [(1, 2, 3)], "return_0": [9000]}, index=["1"])
+    rp = _FakeReturnProcessor(sanrentan=sanrentan)
+    cands = [
+        _cand("1", BetType.SANRENTAN, (1, 2, 3)),  # 正順 → 的中
+        _cand("1", BetType.SANRENTAN, (1, 3, 2)),  # 別順 → 不的中
+    ]
+    stats = settle_candidates(cands, rp, unit=1)
+    s = stats[BetType.SANRENTAN]
+    assert s.n_bets == 2  # 各候補1点（6順列に膨張しない）
+    assert s.n_hits == 1
+    assert s.returned == pytest.approx(90.0)  # 9000/100
+
+
 def test_settle_skips_race_absent_from_return_table():
     # 払戻テーブルに無いレースは評価不能 → 集計から除外（0回収で薄めない）
     tansho = _df({"win_0": [5], "return_0": [350]}, index=["1"])

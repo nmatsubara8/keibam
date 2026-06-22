@@ -33,18 +33,6 @@ from src.policies._score_policy import ExpectedValueScorePolicy
 from src.preprocessing._return_processor import ReturnProcessor
 from src.simulation._betting_tickets import BettingTickets
 
-# 馬券種 → BettingTickets メソッド名（Simulator の dispatch と同一）
-_DISPATCH = {
-    BetType.TANSHO: "bet_tansho",
-    BetType.FUKUSHO: "bet_fukusho",
-    BetType.WAKUREN: "bet_wakuren_box",
-    BetType.UMAREN: "bet_umaren_box",
-    BetType.UMATAN: "bet_umatan_box",
-    BetType.WIDE: "bet_wide_box",
-    BetType.SANRENPUKU: "bet_sanrenpuku_box",
-    BetType.SANRENTAN: "bet_sanrentan_box",
-}
-
 
 def default_thresholds() -> dict:
     """BetThresholds から馬券種の EV 閾値 dict を返す（app 層に依存しない）。
@@ -106,19 +94,17 @@ def settle_candidates(
     return_processor: ReturnProcessor,
     unit: int = 1,
 ) -> dict[str, BetTypeStats]:
-    """各 BetCandidate を「その組合せだけ」決済して馬券種別に集計する。
+    """各 BetCandidate を「その組合せ 1 点だけ」決済して馬券種別に集計する。
 
-    払戻テーブルに該当レースが無い候補（n_bets=0）は集計から除外する
-    （評価不能なものを 0 回収として混ぜると回収率が歪むため）。
+    `BettingTickets.settle_one` を使い BOX 再展開を避ける（順序あり券種でも
+    候補の順序どおり 1 点で評価）。払戻テーブルに該当レースが無い候補（n_bets=0）は
+    集計から除外する（評価不能なものを 0 回収として混ぜると回収率が歪むため）。
     """
     tickets = BettingTickets(return_processor)
     stats: dict[str, BetTypeStats] = {}
     for cand in candidates:
-        method = _DISPATCH.get(cand.bet_type)
-        if method is None:
-            continue
-        n_bets, bet_amount, returned = getattr(tickets, method)(
-            cand.race_id, list(cand.combo), unit
+        n_bets, bet_amount, returned = tickets.settle_one(
+            cand.bet_type, cand.race_id, cand.combo, unit
         )
         if n_bets == 0:
             continue
