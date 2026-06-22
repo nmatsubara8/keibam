@@ -78,11 +78,13 @@ DAMSIRE_FEATURE_COLS: list = [
 
 # 予想印コンセンサス（DataMerger._merge_yoso_marks）。発走前確定・リーク無し。
 YOSO_FEATURE_COLS: list = [
-    "yoso_n_marks",       # 印を付けた予想家数（注目度）
-    "yoso_n_honmei",      # ◎の数
-    "yoso_score_sum",     # 印スコア合計（◎5..☆1）
-    "yoso_score_mean",    # 印スコア平均
-    "yoso_n_marks_free",  # 無料予想家のみの印数
+    "yoso_n_marks",            # 印を付けた予想家数（注目度）
+    "yoso_n_honmei",           # ◎の数
+    "yoso_score_sum",          # 印スコア合計（◎5..☆1）
+    "yoso_score_mean",         # 印スコア平均
+    "yoso_n_marks_free",       # 無料予想家のみの印数
+    "yoso_honmei_skill_sum",   # ◎を付けた予想家の as-of 的中率の合計（自前計算スキル加重）
+    "yoso_best_skill",         # 同・最大
 ]
 
 # ──────────────────────────────────────────

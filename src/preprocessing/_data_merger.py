@@ -85,6 +85,7 @@ class DataMerger:
         _step("race_info", self._merge_race_info)
         _step("race_day_notes", self._merge_race_day_notes)
         _step("yoso_marks", self._merge_yoso_marks)
+        _step("yoso_skill", self._add_yoso_predictor_skill)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -205,6 +206,62 @@ class DataMerger:
         left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
         merged = left.merge(consensus, on=["race_id", "_umaban_key"], how="left")
         self._results = merged.drop(columns=["_umaban_key"]).set_index("race_id")
+
+    def _add_yoso_predictor_skill(self):
+        """予想家の as-of ◎的中率で◎を加重した特徴を追加する（自前計算・リーク無し）。
+
+        取得済み yoso_marks（予想家の印）と results（着順）から、各予想家の「◎を付けた馬が
+        1着になった率」を**当該レース日より前**で expanding 集計（自分の当該行は除外）し、
+        ◎を付けた予想家の skill を馬ごとに合算/最大する。スクレイプ不要・追加取得なし。
+        - ``yoso_honmei_skill_sum`` : ◎を付けた予想家の as-of 的中率の合計（質×量）
+        - ``yoso_best_skill``       : 同・最大（最も当てる予想家が◎を付けたか）
+        skill 不明（履歴ゼロの予想家）の寄与は NaN（best）/0（sum・skipna）。
+        """
+        import numpy as np  # noqa: F401 — where 経由で利用
+
+        if self._yoso_marks is None or self._yoso_marks.empty:
+            return
+        if "馬番" not in self._results.columns or "着順" not in self._results.columns:
+            return
+        long = self._yoso_marks.reset_index()
+        if "race_id" not in long.columns:
+            long = long.rename(columns={long.columns[0]: "race_id"})
+        if not {"馬番", "predictor_yid", "mark"}.issubset(long.columns):
+            return
+        long["race_id"] = long["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        long["_umaban_key"] = pd.to_numeric(long["馬番"], errors="coerce").astype("Int64")
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        res = base.reset_index()
+        res["_umaban_key"] = pd.to_numeric(res["馬番"], errors="coerce").astype("Int64")
+        res["_chaku"] = pd.to_numeric(res["着順"], errors="coerce")
+        race_date = res.groupby("race_id")["date"].first() if "date" in res.columns else None
+
+        hon = long[long["mark"] == "◎"].copy()
+        if hon.empty or race_date is None:
+            return
+        hon = hon.merge(
+            res[["race_id", "_umaban_key", "_chaku"]], on=["race_id", "_umaban_key"], how="left"
+        )
+        hon["_date"] = hon["race_id"].map(race_date)
+        hon["_hit"] = (hon["_chaku"] == 1).astype(float)
+        hon = hon.sort_values(["_date", "race_id"])
+        grp = hon.groupby("predictor_yid")
+        n_prior = grp.cumcount()                       # 当該行より前の◎数
+        hits_prior = grp["_hit"].cumsum() - hon["_hit"]  # 当該行を除く的中数
+        hon["_skill"] = hits_prior / n_prior.where(n_prior > 0)  # 履歴ゼロは NaN
+
+        sk = hon.groupby(["race_id", "_umaban_key"]).agg(
+            yoso_honmei_skill_sum=("_skill", "sum"),
+            yoso_best_skill=("_skill", "max"),
+        ).reset_index()
+
+        merged = res.merge(sk, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(
+            columns=["_umaban_key", "_chaku"], errors="ignore"
+        ).set_index("race_id")
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。

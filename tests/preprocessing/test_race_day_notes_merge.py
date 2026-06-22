@@ -6,6 +6,7 @@ DataMerger は重い processor 群を要するため __new__ でバイパスし�
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.constants._master import Master
 from src.preprocessing._data_merger import DataMerger
@@ -163,3 +164,40 @@ class TestMergeYosoMarks:
         m._yoso_marks = pd.DataFrame()
         m._merge_yoso_marks()
         assert not any(c.startswith("yoso_") for c in m._results.columns)
+
+
+class TestYosoPredictorSkill:
+    """予想家 as-of ◎的中率による加重（_add_yoso_predictor_skill・自前計算・リーク無し）。"""
+
+    def test_as_of_skill_weighting(self):
+        results = pd.DataFrame(
+            {"馬番": [1, 2, 3], "着順": [1, 5, 2],
+             "date": pd.to_datetime(["2023-01-01", "2023-02-01", "2023-03-01"])},
+            index=pd.Index(["R1", "R2", "R3"], name="race_id"),
+        )
+        yoso = pd.DataFrame(
+            {"馬番": [1, 2, 3, 3], "predictor_yid": ["A", "A", "A", "B"],
+             "mark": ["◎", "◎", "◎", "◎"], "mark_score": [5, 5, 5, 5]},
+            index=pd.Index(["R1", "R2", "R3", "R3"], name="race_id"),
+        )
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._yoso_marks = results, yoso
+        m._add_yoso_predictor_skill()
+        out = m._results
+        # R2: A の as-of = R1的中/1 = 1.0
+        assert out.loc["R2", "yoso_best_skill"] == pytest.approx(1.0)
+        # R3 馬番3: A=(1+0)/2=0.5, B=NaN → sum=0.5, best=0.5
+        assert out.loc["R3", "yoso_honmei_skill_sum"] == pytest.approx(0.5)
+        assert out.loc["R3", "yoso_best_skill"] == pytest.approx(0.5)
+        # R1: A は履歴ゼロ → best=NaN（リーク無し）
+        assert pd.isna(out.loc["R1", "yoso_best_skill"])
+
+    def test_empty_is_noop(self):
+        results = pd.DataFrame(
+            {"馬番": [1], "着順": [1], "date": pd.to_datetime(["2023-01-01"])},
+            index=pd.Index(["R1"], name="race_id"),
+        )
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._yoso_marks = results, pd.DataFrame()
+        m._add_yoso_predictor_skill()
+        assert "yoso_best_skill" not in m._results.columns
