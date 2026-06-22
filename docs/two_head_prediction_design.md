@@ -141,11 +141,15 @@ for combo in ...:
 ---
 
 ## 7. 既知の限界・未対応
-1. **ワイドは依然 Harville**（2頭が共に3着内の joint 確率が必要で、Place の馬単位 marginal
-   からは直接出せない）。Win ヘッドの Harville 経由になる。→ 改善は別途検討。
+1. ~~**ワイドは依然 Harville**~~ → **対応済み(2026-06-23)**: ワイドは Place の top3 marginal から
+   **固定サイズ抽出の Hájek 二次近似**で joint を作る（`harville.prob_wide_from_place`）。
+   `π_ab ≈ p_a p_b (1 − (1−p_a)(1−p_b)/d), d=Σ p_k(1−p_k)`。3枠制約の負相関を再現し独立積より
+   小さくなる。`direct_place_prob=False` で従来 Harville(Plackett-Luce) に戻せる。
 2. **未検証**: 本実装コンテナに lightgbm が無く、retrain/predict の実走は未確認。
    ユーザ環境での実走検証が必要（§8）。
 3. Win ヘッド学習で**学習時間が約2倍**（同パイプラインを2回）。`--no-win-head` で回避可。
+4. ワイドの Hájek 近似は二次近似のため、ペア包含確率の総和は厳密に C(3,2)=3 にはならない
+   （概ね一致）。EV 閾値で吸収する前提。
 
 ---
 

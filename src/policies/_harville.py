@@ -135,3 +135,49 @@ def _prob_in_top(p: dict[int, float], horse: int, others: list[int], depth: int)
         rest = [x for x in others if x != o]
         prob_later += prob_o_here * _prob_in_top(p, horse, rest, depth - 1)
     return prob_here + prob_later
+
+
+# ---------------------------------------------------------------------------
+# Place ヘッド（top3 直接予測）から連系の joint を導く近似
+# ---------------------------------------------------------------------------
+
+
+def normalize_place(place_probs: Probabilities, n_places: int = 3) -> dict[int, float]:
+    """複勝（top3）marginal を「3枠の固定サイズ制約」に合わせ総和=n_places に正規化する。
+
+    Place ヘッドの較正出力は馬ごとに独立に較正されるため Σ_h P(top3) は厳密に 3 にならない。
+    固定サイズ抽出（ちょうど 3 頭が top3）の枠制約を満たすようスケールする。
+    """
+    total = float(sum(place_probs.values()))
+    if total <= 0:
+        raise ValueError("複勝確率の総和が0以下です。正規化できません。")
+    scale = n_places / total
+    # 個々の確率が 1 を超えないようにクリップ（極端な較正値の保険）
+    return {h: min(1.0, float(p) * scale) for h, p in place_probs.items()}
+
+
+def prob_wide_from_place(
+    place_probs: Probabilities, horse_a: int, horse_b: int, n_places: int = 3
+) -> float:
+    """Place ヘッドの top3 marginal から **ワイド**（a,b が共に3着内）の joint を近似する。
+
+    固定サイズ（=n_places 頭が top3）抽出の二次近似（Hájek）:
+        π_ab ≈ p_a p_b ( 1 − (1−p_a)(1−p_b)/d ),   d = Σ_k p_k(1−p_k)
+    独立仮定 p_a·p_b と違い、3枠の取り合いによる**負の相関**を再現する（π_ab ≤ p_a p_b）。
+    Win 由来の Harville（Plackett-Luce）と異なり、ペースや展開の相関を学習した Place ヘッドの
+    情報を直接使える。入力は top3 marginal のみ。
+
+    返り値は [0, min(p_a, p_b)] にクリップ（確率の整合性ガード）。
+    """
+    if horse_a not in place_probs or horse_b not in place_probs:
+        return 0.0
+    p = normalize_place(place_probs, n_places)
+    pa, pb = p[horse_a], p[horse_b]
+    if pa <= 0 or pb <= 0:
+        return 0.0
+    d = sum(pi * (1.0 - pi) for pi in p.values())
+    if d <= 0:
+        joint = pa * pb
+    else:
+        joint = pa * pb * (1.0 - (1.0 - pa) * (1.0 - pb) / d)
+    return max(0.0, min(joint, pa, pb))

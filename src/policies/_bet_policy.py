@@ -281,6 +281,12 @@ class ExpectedValueBetPolicy:
                     if base_p is None or base_p <= 0:
                         continue
                     prob = base_p * prob_scale
+                elif self._direct_place_prob and bet_type == BetType.WIDE:
+                    # ワイドは Place の top3 marginal から固定サイズ近似で joint を作る
+                    pw = harville.prob_wide_from_place(place_probs, combo[0], combo[1])
+                    if pw <= 0:
+                        continue
+                    prob = pw * prob_scale
                 else:
                     prob = harville.combo_probability(bet_type, bt_win_probs, combo) * prob_scale
                 odds = self._odds_provider.get_odds(race_id, bet_type, combo)
