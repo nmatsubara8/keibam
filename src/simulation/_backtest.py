@@ -47,12 +47,15 @@ _DISPATCH = {
 
 
 def default_thresholds() -> dict:
-    """BetThresholds から全馬券種の EV 閾値 dict を返す（app 層に依存しない）。"""
+    """BetThresholds から馬券種の EV 閾値 dict を返す（app 層に依存しない）。
+
+    枠連（WAKUREN）は枠番ベースで Harville（馬番）が未対応のため、本番の
+    run_prediction と同様に対象外とする（含めると combo_probability が例外）。
+    """
     th = BetThresholds()
     return {
         BetType.TANSHO: th.TANSHO,
         BetType.FUKUSHO: th.FUKUSHO,
-        BetType.WAKUREN: th.UMAREN,  # 枠連は専用閾値が無いため馬連を流用
         BetType.UMAREN: th.UMAREN,
         BetType.UMATAN: th.UMATAN,
         BetType.WIDE: th.WIDE,
