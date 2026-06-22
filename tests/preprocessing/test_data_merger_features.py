@@ -281,6 +281,16 @@ class TestAddPrevRaceFeatures:
         assert h1["dist_change"] == pytest.approx(20 - 18)
         assert h1["kinryo_delta"] == pytest.approx(56.0 - 55.0)
 
+    def test_dist_change_ratio(self):
+        # horse1: 前走18 → 今回20。比 = (20-18)/18
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_prev_race_features(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        assert h1["dist_change_ratio"] == pytest.approx((20 - 18) / 18)
+        # 履歴なしの horse2 は NaN
+        h2 = out[out["horse_id"] == 2].iloc[0]
+        assert pd.isna(h2["dist_change_ratio"])
+
     def test_jockey_change_continued_is_zero(self):
         # horse1: 今回騎手B == 前走騎手B → 0（継続）
         m = _make_merger(_results_df_with_jockey())

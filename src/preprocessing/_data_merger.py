@@ -443,9 +443,10 @@ class DataMerger:
         """前走との比較特徴（距離延長/短縮・斤量増減・乗り替わり）を追加する。
 
         前走＝最も新しい過去走（horse_results は当該レース日より前のみなのでリーク無し）。
-        - ``dist_change``    : 今回 course_len − 前走 course_len（正=延長・負=短縮）
-        - ``kinryo_delta``   : 今回 斤量 − 前走 斤量（ハンデ増減）
-        - ``jockey_change``  : 騎手が前走から替わったか（1=乗り替わり、0=継続、初出走=NaN）
+        - ``dist_change``       : 今回 course_len − 前走 course_len（正=延長・負=短縮）
+        - ``dist_change_ratio`` : dist_change ÷ 前走距離（相対距離変化。基準距離依存の負荷を表現）
+        - ``kinryo_delta``      : 今回 斤量 − 前走 斤量（ハンデ増減）
+        - ``jockey_change``     : 騎手が前走から替わったか（1=乗り替わり、0=継続、初出走=NaN）
         """
         if horse_results.empty:
             return results
@@ -466,10 +467,13 @@ class DataMerger:
         results = results.merge(prev_sub, left_on="horse_id", right_index=True, how="left")
 
         if "_prev_course_len" in results.columns and "course_len" in results.columns:
+            prev_len = pd.to_numeric(results["_prev_course_len"], errors="coerce")
             results["dist_change"] = (
-                pd.to_numeric(results["course_len"], errors="coerce")
-                - pd.to_numeric(results["_prev_course_len"], errors="coerce")
+                pd.to_numeric(results["course_len"], errors="coerce") - prev_len
             )
+            # 相対距離変化（前走比）。基準距離で割り、延長/短縮の体力負荷を非線形に表現。
+            # 0除算は NaN（前走距離0は実データ上ありえないが安全側）。
+            results["dist_change_ratio"] = results["dist_change"] / prev_len.where(prev_len != 0)
         if "_prev_kinryo" in results.columns and HRCols.KINRYO in results.columns:
             results["kinryo_delta"] = (
                 pd.to_numeric(results[HRCols.KINRYO], errors="coerce")

@@ -84,9 +84,10 @@ GROWTH_FEATURE_COLS: list = [
 
 # 前走との比較（DataMerger._add_prev_race_features）
 PREV_RACE_FEATURE_COLS: list = [
-    "dist_change",    # 今回 − 前走の距離（正=延長・負=短縮）
-    "kinryo_delta",   # 今回 − 前走の斤量
-    "jockey_change",  # 乗り替わりフラグ（1=替わり）
+    "dist_change",        # 今回 − 前走の距離（正=延長・負=短縮）
+    "dist_change_ratio",  # dist_change ÷ 前走距離（相対距離変化）
+    "kinryo_delta",       # 今回 − 前走の斤量
+    "jockey_change",      # 乗り替わりフラグ（1=替わり）
 ]
 
 # 行内導出（FeatureEngineering.add_derived_features）

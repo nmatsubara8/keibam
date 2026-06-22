@@ -280,7 +280,7 @@ class FeatureEngineering:
 
         # Batch A の連続値（前走比較・行内導出）もレース内相対化する。二値フラグは除く。
         prev_derived_zscore_cols = [
-            "dist_change", "kinryo_delta", "単勝_log", "kinryo_per_weight",
+            "dist_change", "dist_change_ratio", "kinryo_delta", "単勝_log", "kinryo_per_weight",
         ]
 
         # Start with G1 static list
