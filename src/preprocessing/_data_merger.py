@@ -292,6 +292,8 @@ class DataMerger:
         res = base.reset_index()
         res["_pry"] = pd.to_datetime(res["date"], errors="coerce").dt.year - 1
 
+        from src.preparing._person_yearly import canon_person_id
+
         stat_cols = [c for c in self._PERSON_STAT_COLS if c in py.columns]
         for etype, idcol, prefix in (
             ("jockey", "jockey_id", "jockey_py"),
@@ -304,9 +306,10 @@ class DataMerger:
                 continue
             sub = sub.rename(columns={c: f"{prefix}_{c}" for c in stat_cols})
             sub = sub.rename(columns={"entity_id": idcol, "year": "_pry"})
-            sub[idcol] = sub[idcol].astype(str)
+            # 結合キーを正準化（results の id は int=先頭ゼロ落ち、person 側は 5桁ゼロ埋め）
+            sub[idcol] = sub[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
             sub["_pry"] = pd.to_numeric(sub["_pry"], errors="coerce")
-            res[idcol] = res[idcol].astype(str)
+            res[idcol] = res[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
             res = res.merge(sub.drop_duplicates([idcol, "_pry"]), on=[idcol, "_pry"], how="left")
 
         self._results = res.drop(columns=["_pry"], errors="ignore").set_index("race_id")

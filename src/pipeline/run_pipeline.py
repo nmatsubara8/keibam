@@ -324,6 +324,7 @@ def _backfill_persons(args: argparse.Namespace) -> None:
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import load_raw
     from src.preparing._data_source import create_data_source
+    from src.preparing._person_yearly import canon_person_id
 
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
     if res.empty:
@@ -336,7 +337,8 @@ def _backfill_persons(args: argparse.Namespace) -> None:
         if col not in res.columns:
             logger.warning("[backfill-persons] results に %s 列なし。スキップ", col)
             continue
-        for eid in sorted(set(res[col].dropna().astype(str))):
+        # 5桁ゼロ埋め等に正準化（results は int=先頭ゼロ落ち）。重複排除。
+        for eid in sorted({canon_person_id(etype, v) for v in res[col].dropna()}):
             pairs.append((etype, eid))
     # 中断・再開: 既に取得済み（person_yearly の (entity_type, entity_id)）を除外
     if not getattr(args, "no_skip_existing", False):

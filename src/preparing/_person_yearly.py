@@ -37,6 +37,18 @@ _LONG_COLUMNS = [
 ]
 
 
+def canon_person_id(entity_type: str, eid: Any) -> str:
+    """人物 ID を正準化する。jockey/trainer は netkeiba の 5 桁ゼロ埋め（例 1009→'01009'）。
+
+    results の jockey_id は int64（先頭ゼロ落ち）なので、URL 用にも結合キー用にもこの形で
+    揃える。owner/breeder は ID 形式が異なる（英数）ため数字のときのみゼロ埋めし、他は素通し。
+    """
+    s = re.sub(r"\.0$", "", str(eid).strip())
+    if entity_type in ("jockey", "trainer") and s.isdigit():
+        return s.zfill(5)
+    return s
+
+
 def _num(text: Any) -> float:
     """カンマ・空白除去して数値化（'.225' や '5,145,314.6' も）。不可は NaN。"""
     if text is None:
@@ -104,13 +116,14 @@ def fetch_person_yearly(
     if tmpl is None:
         logger.warning("person_yearly: 未知の entity_type=%s", entity_type)
         return pd.DataFrame(columns=_LONG_COLUMNS)
-    url = tmpl.format(eid=entity_id)
+    cid = canon_person_id(entity_type, entity_id)  # 5桁ゼロ埋め（jockey/trainer）
+    url = tmpl.format(eid=cid)
     sess = session or requests
     try:
         resp = sess.get(url, headers={"User-Agent": _DEFAULT_USER_AGENT}, timeout=timeout)
         resp.raise_for_status()
         resp.encoding = "euc-jp"  # netkeiba db は EUC-JP
-        return parse_person_yearly(resp.text, entity_type, entity_id)
+        return parse_person_yearly(resp.text, entity_type, cid)
     except Exception as e:  # noqa: BLE001 — 取得失敗はスキップ（空）
         logger.warning("person_yearly 取得失敗 %s/%s: %s", entity_type, entity_id, e)
         return pd.DataFrame(columns=_LONG_COLUMNS)
