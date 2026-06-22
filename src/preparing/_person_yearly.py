@@ -130,14 +130,21 @@ def fetch_person_yearly(
 
 
 def persist_person_yearly(df: pd.DataFrame, pickle_path: str) -> int:
-    """年度別ロングを entity_id index にして raw pickle(+DB) に反映する。
+    """年度別ロングを raw pickle(+DB) に反映する。
 
-    update_rawdata は index で dedup する。同一 entity_id の旧行を総入替（再取得で最新化）。
+    update_rawdata は **index で dedup** する。entity_id 単独だと owner/breeder の 6桁ID が
+    衝突して相互上書きするため、``entity_type/entity_id`` の複合キー（index 名 ``_pkey``）で
+    dedup する。entity_id は列として保持（マージ・DB の PK 用）。RawDataRepo は index 名が
+    spec.index_col(entity_id) でなく entity_id 列が在る場合 reset_index(drop) で正しく扱う。
     """
     if df is None or df.empty:
         return 0
     from src.preparing._get_rawdata import update_rawdata
 
-    indexed = df.set_index("entity_id")
+    indexed = df.copy()
+    indexed["entity_id"] = indexed["entity_id"].astype(str)
+    indexed.index = pd.Index(
+        indexed["entity_type"].astype(str) + "/" + indexed["entity_id"], name="_pkey"
+    )
     update_rawdata(pickle_path, indexed)
     return len(indexed)
