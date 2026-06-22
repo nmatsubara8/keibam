@@ -89,12 +89,16 @@ YOSO_FEATURE_COLS: list = [
     "yoso_profile_best",       # 同・最大
 ]
 
-# 人物（騎手/調教師）の前年成績（as-of・DataMerger._merge_person_yearly）
+# 人物（騎手/調教師/馬主/生産者）の前年成績（as-of・DataMerger._merge_person_yearly）
 PERSON_YEARLY_FEATURE_COLS: list = [
     "jockey_py_勝率", "jockey_py_複勝率", "jockey_py_芝勝率", "jockey_py_ダート勝率",
     "jockey_py_重賞勝利", "jockey_py_出走回数",
     "trainer_py_勝率", "trainer_py_複勝率", "trainer_py_芝勝率", "trainer_py_ダート勝率",
     "trainer_py_重賞勝利", "trainer_py_出走回数",
+    "owner_py_勝率", "owner_py_複勝率", "owner_py_芝勝率", "owner_py_ダート勝率",
+    "owner_py_重賞勝利", "owner_py_出走回数",
+    "breeder_py_勝率", "breeder_py_複勝率", "breeder_py_芝勝率", "breeder_py_ダート勝率",
+    "breeder_py_重賞勝利", "breeder_py_出走回数",
 ]
 
 # ──────────────────────────────────────────

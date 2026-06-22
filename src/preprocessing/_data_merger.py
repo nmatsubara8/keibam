@@ -343,10 +343,25 @@ class DataMerger:
 
         from src.preparing._person_yearly import canon_person_id
 
+        # breeder_id は results に無く horse_info にある。後段の horse_info マージと衝突しない
+        # よう一時列 _breeder_tmp に horse_id 経由で引き、最後に drop する。
+        if (
+            "horse_id" in res.columns
+            and self._horse_info is not None
+            and not self._horse_info.empty
+            and "breeder_id" in self._horse_info.columns
+        ):
+            bi = self._horse_info[["breeder_id"]].rename(columns={"breeder_id": "_breeder_tmp"}).copy()
+            bi.index = bi.index.astype(str)
+            res["horse_id"] = res["horse_id"].astype(str)
+            res = res.merge(bi, left_on="horse_id", right_index=True, how="left")
+
         stat_cols = [c for c in self._PERSON_STAT_COLS if c in py.columns]
         for etype, idcol, prefix in (
             ("jockey", "jockey_id", "jockey_py"),
             ("trainer", "trainer_id", "trainer_py"),
+            ("owner", "owner_id", "owner_py"),
+            ("breeder", "_breeder_tmp", "breeder_py"),
         ):
             if idcol not in res.columns or not stat_cols:
                 continue
@@ -355,13 +370,13 @@ class DataMerger:
                 continue
             sub = sub.rename(columns={c: f"{prefix}_{c}" for c in stat_cols})
             sub = sub.rename(columns={"entity_id": idcol, "year": "_pry"})
-            # 結合キーを正準化（results の id は int=先頭ゼロ落ち、person 側は 5桁ゼロ埋め）
+            # 結合キーを正準化（jockey/trainer は5桁ゼロ埋め、owner/breeder は素通し）
             sub[idcol] = sub[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
             sub["_pry"] = pd.to_numeric(sub["_pry"], errors="coerce")
             res[idcol] = res[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
             res = res.merge(sub.drop_duplicates([idcol, "_pry"]), on=[idcol, "_pry"], how="left")
 
-        self._results = res.drop(columns=["_pry"], errors="ignore").set_index("race_id")
+        self._results = res.drop(columns=["_pry", "_breeder_tmp"], errors="ignore").set_index("race_id")
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。

@@ -266,3 +266,32 @@ class TestYosoProfileSkill:
         m._results, m._yoso_marks, m._yoso_predictor = results, pd.DataFrame(), pd.DataFrame()
         m._add_yoso_profile_skill()
         assert not any(c.startswith("yoso_profile") for c in m._results.columns)
+
+
+class TestMergePersonYearlyOwnerBreeder:
+    """owner(results)/breeder(horse_info) の前年成績結合（_merge_person_yearly 拡張）。"""
+
+    def test_owner_and_breeder_join(self):
+        results = pd.DataFrame(
+            {"馬番": [1, 2], "horse_id": ["H1", "H2"], "owner_id": [700006, 700006],
+             "date": pd.to_datetime(["2026-03-01", "2026-03-01"])},
+            index=pd.Index(["R1", "R1"], name="race_id"),
+        )
+        horse_info = pd.DataFrame(
+            {"breeder_id": ["373126", "999999"]},
+            index=pd.Index(["H1", "H2"], name="horse_id"),
+        )
+        py = pd.DataFrame(
+            {"entity_type": ["owner", "breeder"], "year": [2025, 2025],
+             "勝率": [0.05, 0.12], "複勝率": [0.1, 0.3], "芝勝率": [0.04, 0.11],
+             "ダート勝率": [0.06, 0.13], "重賞勝利": [0, 720], "出走回数": [400, 5000]},
+            index=pd.Index(["700006", "373126"], name="entity_id"),
+        )
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._person_yearly, m._horse_info = results, py, horse_info
+        m._merge_person_yearly()
+        by = m._results.set_index("馬番")
+        assert by.loc[1, "owner_py_勝率"] == pytest.approx(0.05)
+        assert by.loc[1, "breeder_py_勝率"] == pytest.approx(0.12)   # H1→373126
+        assert pd.isna(by.loc[2, "breeder_py_勝率"])                  # H2→999999 未登録
+        assert "_breeder_tmp" not in m._results.columns               # 一時列は drop

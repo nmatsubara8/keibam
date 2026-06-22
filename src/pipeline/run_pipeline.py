@@ -361,18 +361,22 @@ def _backfill_persons(args: argparse.Namespace) -> None:
     from src.preparing._person_yearly import canon_person_id
 
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    hi = load_raw(LocalPaths.RAW_HORSE_INFO_PATH)
     if res.empty:
         logger.info("[backfill-persons] results が空")
         return
-    types = args.types.split(",") if getattr(args, "types", None) else ["jockey", "trainer"]
+    types = (args.types.split(",") if getattr(args, "types", None)
+             else ["jockey", "trainer", "owner", "breeder"])
     pairs: list[tuple] = []
     for etype in types:
         col = f"{etype}_id"
-        if col not in res.columns:
-            logger.warning("[backfill-persons] results に %s 列なし。スキップ", col)
+        # jockey/trainer/owner は results、breeder は horse_info から id を引く
+        src = res if col in res.columns else (hi if col in hi.columns else None)
+        if src is None:
+            logger.warning("[backfill-persons] %s 列が results/horse_info に無し。スキップ", col)
             continue
-        # 5桁ゼロ埋め等に正準化（results は int=先頭ゼロ落ち）。重複排除。
-        for eid in sorted({canon_person_id(etype, v) for v in res[col].dropna()}):
+        # 正準化（jockey/trainer は5桁ゼロ埋め、owner/breeder は素通し）。重複排除。
+        for eid in sorted({canon_person_id(etype, v) for v in src[col].dropna()}):
             pairs.append((etype, eid))
     # 中断・再開: 既に取得済み（person_yearly の (entity_type, entity_id)）を除外
     if not getattr(args, "no_skip_existing", False):
