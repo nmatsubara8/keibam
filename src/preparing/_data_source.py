@@ -140,6 +140,7 @@ class NetkeibaDataSource(AbstractRaceDataSource):
             min_year = 2010
         try:
             from src.constants._local_paths import LocalPaths
+            from src.preparing._rate_limiter import get_hourly_limiter
             from src.preparing._rate_limiter import polite_interval
             from src.preparing._yoso_marks import fetch_pro_yoso_marks
             from src.preparing._yoso_marks import persist_yoso_marks
@@ -158,6 +159,7 @@ class NetkeibaDataSource(AbstractRaceDataSource):
                 "yoso_marks: 年代ゲートで %d/%d レースをスキップ（開催年 < %d）",
                 skipped, len(ids), min_year,
             )
+        limiter = get_hourly_limiter()  # HTML 取得と共有の 1時間あたり上限
         first = True
         for race_id in target_ids:
             if not first:
@@ -165,6 +167,7 @@ class NetkeibaDataSource(AbstractRaceDataSource):
                 if interval > 0:
                     time.sleep(interval)
             first = False
+            limiter.acquire()  # 時間あたり上限に達していれば枠が空くまで待機
             try:
                 df = fetch_pro_yoso_marks(race_id)
                 persist_yoso_marks(df, LocalPaths.RAW_YOSO_MARKS_PATH)
