@@ -141,6 +141,12 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("entity_type", "entity_id", "year"),
         index_col="entity_id",
     ),
+    # 予想家プロフィール由来スキル prior。predictor_yid で一意。
+    "raw_yoso_predictor": TableSpec(
+        table_name="raw_yoso_predictor",
+        primary_key=("predictor_yid",),
+        index_col="predictor_yid",
+    ),
 }
 
 
@@ -160,6 +166,7 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_COMMENT_PATH: "raw_comment",
     LocalPaths.RAW_YOSO_MARKS_PATH: "raw_yoso_marks",
     LocalPaths.RAW_PERSON_YEARLY_PATH: "raw_person_yearly",
+    LocalPaths.RAW_YOSO_PREDICTOR_PATH: "raw_yoso_predictor",
 }
 
 

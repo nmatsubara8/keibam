@@ -51,6 +51,7 @@ class DataMerger:
         comment_df: Optional[pd.DataFrame] = None,
         yoso_marks_df: Optional[pd.DataFrame] = None,
         person_yearly_df: Optional[pd.DataFrame] = None,
+        yoso_predictor_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
@@ -65,6 +66,8 @@ class DataMerger:
         self._yoso_marks = yoso_marks_df if yoso_marks_df is not None else pd.DataFrame()
         # 人物の年度別成績（entity_id×year）。未提供なら空＝マージは no-op。
         self._person_yearly = person_yearly_df if person_yearly_df is not None else pd.DataFrame()
+        # 予想家スキル prior（predictor_yid×1行）。未提供なら空＝マージは no-op。
+        self._yoso_predictor = yoso_predictor_df if yoso_predictor_df is not None else pd.DataFrame()
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -89,6 +92,7 @@ class DataMerger:
         _step("race_day_notes", self._merge_race_day_notes)
         _step("yoso_marks", self._merge_yoso_marks)
         _step("yoso_skill", self._add_yoso_predictor_skill)
+        _step("yoso_profile", self._add_yoso_profile_skill)
         _step("person_yearly", self._merge_person_yearly)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
@@ -266,6 +270,51 @@ class DataMerger:
         self._results = merged.drop(
             columns=["_umaban_key", "_chaku"], errors="ignore"
         ).set_index("race_id")
+
+    def _add_yoso_profile_skill(self):
+        """予想家プロフィール由来スキル（prior）で◎を加重した特徴を追加する。
+
+        各予想家の profile_honmei_winrate（◎1着率の直近集計）を、◎を付けた馬ごとに合算/最大。
+        方式A（自前 as-of）が直近窓のみなのに対し、こちらは予想家自身のログ由来で広くカバー
+        （現時点スナップショット＝軽微リーク許容。ユーザー指定 B1）。未提供（空）はスキップ。
+        """
+        if self._yoso_predictor is None or self._yoso_predictor.empty:
+            return
+        if self._yoso_marks is None or self._yoso_marks.empty:
+            return
+        if "馬番" not in self._results.columns:
+            return
+        prior = self._yoso_predictor.reset_index()
+        if "predictor_yid" not in prior.columns:
+            prior = prior.rename(columns={prior.columns[0]: "predictor_yid"})
+        if "profile_honmei_winrate" not in prior.columns:
+            return
+        prior["predictor_yid"] = prior["predictor_yid"].astype(str)
+        skill = prior.set_index("predictor_yid")["profile_honmei_winrate"]
+
+        long = self._yoso_marks.reset_index()
+        if "race_id" not in long.columns:
+            long = long.rename(columns={long.columns[0]: "race_id"})
+        if not {"馬番", "predictor_yid", "mark"}.issubset(long.columns):
+            return
+        hon = long[long["mark"] == "◎"].copy()
+        if hon.empty:
+            return
+        hon["race_id"] = hon["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        hon["_umaban_key"] = pd.to_numeric(hon["馬番"], errors="coerce").astype("Int64")
+        hon["_sk"] = hon["predictor_yid"].astype(str).map(skill)
+        agg = hon.groupby(["race_id", "_umaban_key"]).agg(
+            yoso_profile_skill_sum=("_sk", "sum"),
+            yoso_profile_best=("_sk", "max"),
+        ).reset_index()
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        res = base.reset_index()
+        res["_umaban_key"] = pd.to_numeric(res["馬番"], errors="coerce").astype("Int64")
+        merged = res.merge(agg, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
 
     # 人物年度別成績から featured に乗せる統計（前年=as-of 結合）
     _PERSON_STAT_COLS: ClassVar[tuple] = ("勝率", "複勝率", "芝勝率", "ダート勝率", "重賞勝利", "出走回数")

@@ -237,3 +237,32 @@ class TestMergePersonYearly:
         m._results, m._person_yearly = results, pd.DataFrame()
         m._merge_person_yearly()
         assert not any(c.startswith("jockey_py_") for c in m._results.columns)
+
+
+class TestYosoProfileSkill:
+    """予想家プロフィール prior による◎加重（_add_yoso_profile_skill）。"""
+
+    def test_profile_weighting(self):
+        results = pd.DataFrame({"馬番": [1, 2, 3]}, index=pd.Index(["R1"] * 3, name="race_id"))
+        yoso = pd.DataFrame(
+            {"馬番": [1, 1, 2], "predictor_yid": ["A", "B", "A"], "mark": ["◎", "◎", "○"]},
+            index=pd.Index(["R1"] * 3, name="race_id"),
+        )
+        prior = pd.DataFrame(
+            {"profile_honmei_winrate": [0.30, 0.10]},
+            index=pd.Index(["A", "B"], name="predictor_yid"),
+        )
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._yoso_marks, m._yoso_predictor = results, yoso, prior
+        m._add_yoso_profile_skill()
+        by = m._results.set_index("馬番")
+        assert by.loc[1, "yoso_profile_skill_sum"] == pytest.approx(0.40)  # A+B
+        assert by.loc[1, "yoso_profile_best"] == pytest.approx(0.30)
+        assert pd.isna(by.loc[2, "yoso_profile_skill_sum"])  # ○のみ→対象外
+
+    def test_empty_is_noop(self):
+        results = pd.DataFrame({"馬番": [1]}, index=pd.Index(["R1"], name="race_id"))
+        m = DataMerger.__new__(DataMerger)
+        m._results, m._yoso_marks, m._yoso_predictor = results, pd.DataFrame(), pd.DataFrame()
+        m._add_yoso_profile_skill()
+        assert not any(c.startswith("yoso_profile") for c in m._results.columns)

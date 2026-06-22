@@ -33,6 +33,8 @@ class LocalPaths:
     RAW_YOSO_MARKS_PATH: str = os.path.join(RAW_DIR, "yoso_marks.pkl")
     ### 人物（騎手/調教師/馬主/生産者）の年度別成績（as-of で結合）
     RAW_PERSON_YEARLY_PATH: str = os.path.join(RAW_DIR, "person_yearly.pkl")
+    ### 予想家プロフィール由来のスキル prior（直近ログ集計・予想家×1行）
+    RAW_YOSO_PREDICTOR_PATH: str = os.path.join(RAW_DIR, "yoso_predictor.pkl")
     ### 段階オッズ スナップショットの集約 pickle（Layer2 学習データの蓄積先）
     RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
     ### オッズ力学モデルの予測テーブル（チェックポイント別の次時点/確定予測）

@@ -90,6 +90,10 @@ class AbstractRaceDataSource(ABC):
         """(entity_type, entity_id) の年度別成績のみを取得する backfill 用フック。既定 no-op。"""
         pass
 
+    def acquire_yoso_predictors(self, yids: Sequence[str]) -> None:  # noqa: B027
+        """予想家プロフィール由来スキル prior のみを取得する backfill 用フック。既定 no-op。"""
+        pass
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -186,6 +190,42 @@ class NetkeibaDataSource(AbstractRaceDataSource):
         ids = [str(r) for r in race_ids]
         if ids:
             self._acquire_yoso_marks(ids)
+
+    def acquire_yoso_predictors(self, yids: Sequence[str]) -> None:
+        """予想家プロフィール由来スキル prior を取得する（backfill-yoso-predictors 用）。
+
+        1人1リクエスト。共有 HourlyRateLimiter＋polite_interval でポライトに。
+        ``KEIBA_SKIP_YOSO_PREDICTOR=1`` で無効化。失敗は握りつぶす。
+        """
+        import os
+        import time
+
+        if os.environ.get("KEIBA_SKIP_YOSO_PREDICTOR") == "1":
+            return
+        try:
+            from src.constants._local_paths import LocalPaths
+            from src.preparing._rate_limiter import get_hourly_limiter
+            from src.preparing._rate_limiter import polite_interval
+            from src.preparing._yoso_predictor import fetch_yoso_predictor
+            from src.preparing._yoso_predictor import persist_yoso_predictor
+        except Exception as e:  # noqa: BLE001
+            logger.warning("yoso_predictor: モジュール読込失敗のためスキップ: %s", e)
+            return
+
+        limiter = get_hourly_limiter()
+        first = True
+        for yid in yids:
+            if not first:
+                interval = polite_interval()
+                if interval > 0:
+                    time.sleep(interval)
+            first = False
+            limiter.acquire()
+            try:
+                df = fetch_yoso_predictor(str(yid))
+                persist_yoso_predictor(df, LocalPaths.RAW_YOSO_PREDICTOR_PATH)
+            except Exception as e:  # noqa: BLE001 — 1人の失敗で全体を止めない
+                logger.warning("yoso_predictor 失敗 yid=%s: %s", yid, e)
 
     def acquire_persons(self, pairs: Sequence[tuple]) -> None:
         """(entity_type, entity_id) の年度別成績を取得する（backfill-persons 用）。

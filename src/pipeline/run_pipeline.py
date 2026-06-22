@@ -190,6 +190,7 @@ def _build_featured_data(config):
         comment_df=_read_optional_pickle(LocalPaths.RAW_COMMENT_PATH),
         yoso_marks_df=_read_optional_pickle(LocalPaths.RAW_YOSO_MARKS_PATH),
         person_yearly_df=_read_optional_pickle(LocalPaths.RAW_PERSON_YEARLY_PATH),
+        yoso_predictor_df=_read_optional_pickle(LocalPaths.RAW_YOSO_PREDICTOR_PATH),
     )
     merger.merge()
     fe = (
@@ -313,6 +314,39 @@ def _backfill_yoso(args: argparse.Namespace) -> None:
     logger.info("[backfill-yoso] %s で %d レースの予想印を取得します", source.name, len(ids))
     source.acquire_yoso_marks(ids)
     logger.info("[backfill-yoso] 完了。rebuild-featured で featured に反映してください")
+
+
+def _backfill_yoso_predictors(args: argparse.Namespace) -> None:
+    """raw_yoso_marks の predictor_yid に対し予想家スキル prior だけを取得する（独立）。
+
+    予想家プールは小さい。取得済み predictor_yid は除外して中断・再開できる。
+    完了後 rebuild-featured で profile-skill 加重に反映される。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
+    from src.preparing._data_source import create_data_source
+
+    marks = load_raw(LocalPaths.RAW_YOSO_MARKS_PATH)
+    if marks.empty or "predictor_yid" not in marks.columns:
+        logger.info("[backfill-yoso-predictors] yoso_marks が空 or predictor_yid 列なし")
+        return
+    yids = sorted(set(marks["predictor_yid"].dropna().astype(str)))
+    if not getattr(args, "no_skip_existing", False):
+        done = load_raw(LocalPaths.RAW_YOSO_PREDICTOR_PATH)
+        done_set = {str(y) for y in done.index} if not done.empty else set()
+        before = len(yids)
+        yids = [y for y in yids if y not in done_set]
+        if before != len(yids):
+            logger.info("[backfill-yoso-predictors] 取得済み %d 人をスキップ（再開）", before - len(yids))
+    if getattr(args, "limit", None):
+        yids = yids[: args.limit]
+    if not yids:
+        logger.info("[backfill-yoso-predictors] 対象なし（全件取得済み）")
+        return
+    source = create_data_source(_resolve_data_source(args))
+    logger.info("[backfill-yoso-predictors] %s で %d 人の予想家スキルを取得します", source.name, len(yids))
+    source.acquire_yoso_predictors(yids)
+    logger.info("[backfill-yoso-predictors] 完了。rebuild-featured で featured に反映してください")
 
 
 def _backfill_persons(args: argparse.Namespace) -> None:
@@ -1018,6 +1052,15 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     by_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
     by_p.add_argument("--no-skip-existing", action="store_true", help="取得済み race_id も再取得する")
 
+    # backfill-yoso-predictors サブコマンド（予想家スキル prior のみ取得）
+    byp = sub.add_parser(
+        "backfill-yoso-predictors",
+        help="yoso_marks の predictor_yid に予想家スキル prior のみ取得。後で rebuild-featured",
+    )
+    byp.add_argument("--limit", type=int, default=None, help="先頭 N 人のみ（動作確認用）")
+    byp.add_argument("--source", type=str, default=None, help="データソース名")
+    byp.add_argument("--no-skip-existing", action="store_true", help="取得済み予想家も再取得する")
+
     # backfill-persons サブコマンド（人物の年度別成績のみ取得。コア取得と独立）
     bp2 = sub.add_parser(
         "backfill-persons",
@@ -1192,6 +1235,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "rebuild-featured": _rebuild_featured,
         "backfill-notes": _backfill_notes,
         "backfill-yoso": _backfill_yoso,
+        "backfill-yoso-predictors": _backfill_yoso_predictors,
         "backfill-persons": _backfill_persons,
         "backfill-peds": _backfill_peds,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,

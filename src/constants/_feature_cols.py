@@ -83,8 +83,10 @@ YOSO_FEATURE_COLS: list = [
     "yoso_score_sum",          # 印スコア合計（◎5..☆1）
     "yoso_score_mean",         # 印スコア平均
     "yoso_n_marks_free",       # 無料予想家のみの印数
-    "yoso_honmei_skill_sum",   # ◎を付けた予想家の as-of 的中率の合計（自前計算スキル加重）
+    "yoso_honmei_skill_sum",   # ◎を付けた予想家の as-of 的中率の合計（方式A 自前計算）
     "yoso_best_skill",         # 同・最大
+    "yoso_profile_skill_sum",  # ◎を付けた予想家の profile由来◎1着率の合計（方式B1 prior）
+    "yoso_profile_best",       # 同・最大
 ]
 
 # 人物（騎手/調教師）の前年成績（as-of・DataMerger._merge_person_yearly）
