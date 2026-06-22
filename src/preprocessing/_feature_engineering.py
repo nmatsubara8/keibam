@@ -272,6 +272,7 @@ class FeatureEngineering:
             DAMSIRE_FEATURE_COLS,
             GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
+            MARKET_SIGNAL_FEATURE_COLS,
             N_RACES_LIST,
             OPPONENT_STRENGTH_FEATURE_COLS,
             PACE_FEATURE_COLS,
@@ -311,6 +312,7 @@ class FeatureEngineering:
             + DAMSIRE_FEATURE_COLS
             + YOSO_FEATURE_COLS
             + PERSON_YEARLY_FEATURE_COLS
+            + MARKET_SIGNAL_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:

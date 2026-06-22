@@ -867,3 +867,56 @@ class TestMergePersonYearly:
         m._merge_person_yearly()
         row = m._results[m._results["jockey_id"].astype(str).str.contains("1009")].iloc[0]
         assert row["jockey_py_勝率"] == pytest.approx(0.18)
+
+
+# ──────────────────────────────────────────
+# 市場歪み: _merge_odds_signals（(race_id,馬番) 左結合）
+# ──────────────────────────────────────────
+
+class TestMergeOddsSignals:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": ["1", "2"], "馬番": [1, 2]},
+            index=pd.Index(["r01", "r01"], name="race_id"),
+        )
+
+    def _signals(self):
+        from src.preprocessing._market_signals import MARKET_SIGNAL_COLS
+
+        df = pd.DataFrame(
+            {
+                "race_id": ["r01", "r01"],
+                "馬番": [1, 2],
+                "fukusho_implied_p": [1.5, 1.0],
+                "place_overlay": [0.1, -0.1],
+                "trio_top3_overlay": [0.05, -0.05],
+                "trifecta_win_overlay": [0.2, -0.2],
+                "trifecta_top3_overlay": [0.03, -0.03],
+            }
+        )
+        assert set(MARKET_SIGNAL_COLS).issubset(df.columns)
+        return df
+
+    def test_merge_attaches_overlay_columns(self):
+        m = _make_merger(self._results())
+        m._odds_signals = self._signals()
+        m._merge_odds_signals()
+        assert m._results.loc["r01"].iloc[0]["place_overlay"] == pytest.approx(0.1)
+        h2 = m._results[m._results["馬番"] == 2].iloc[0]
+        assert h2["trifecta_win_overlay"] == pytest.approx(-0.2)
+        assert m._results.index.name == "race_id"
+
+    def test_empty_signals_noop(self):
+        m = _make_merger(self._results())
+        m._odds_signals = pd.DataFrame()
+        m._merge_odds_signals()
+        assert "place_overlay" not in m._results.columns
+
+    def test_unmatched_umaban_is_nan(self):
+        m = _make_merger(self._results())
+        sig = self._signals()
+        sig.loc[sig["馬番"] == 2, "馬番"] = 9  # 馬番2 を欠落させる
+        m._odds_signals = sig
+        m._merge_odds_signals()
+        h2 = m._results[m._results["馬番"] == 2].iloc[0]
+        assert pd.isna(h2["place_overlay"])

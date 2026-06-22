@@ -148,6 +148,51 @@ def _scrape_new_horse_data(source=None) -> int:
     return len(missing)
 
 
+def _build_odds_signal_frame(config):
+    """券種別確定オッズ（odds_snapshots）から市場歪み特徴の (race_id,馬番) フレームを作る。
+
+    複勝/三連複/三連単の確定オッズと単勝（results）由来 Harville の差分（overlay）を
+    馬単位で算出する。スナップショット未取得 or 単勝列が無ければ None（マージは no-op）。
+    fetch-final-odds でオッズを貯めた後に効く（リーク無し＝発走前確定値）。
+    """
+    import os
+
+    import pandas as pd
+
+    from src.constants._local_paths import LocalPaths
+
+    path = LocalPaths.RAW_ODDS_SNAPSHOT_PATH
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        from src.pipeline._ingestion import load_raw
+        from src.preparing._odds_snapshot import build_final_odds_lookup
+        from src.preparing.odds_scheduler import load_snapshots
+        from src.preprocessing._market_signals import build_market_signal_frame
+
+        snapshots = load_snapshots(path)
+        if not snapshots:
+            return None
+        lookup = build_final_odds_lookup(snapshots)
+        # 単勝オッズ {race_id: {馬番: 単勝}} を results 生データから構成
+        res = load_raw(config.raw_results_path)
+        if res.empty or "単勝" not in res.columns or "馬番" not in res.columns:
+            return None
+        res = res.reset_index()
+        rid_col = "race_id" if "race_id" in res.columns else res.columns[0]
+        res["_rid"] = res[rid_col].astype(str).str.replace(r"\.0$", "", regex=True)
+        res["_um"] = pd.to_numeric(res["馬番"], errors="coerce")
+        res["_tan"] = pd.to_numeric(res["単勝"], errors="coerce")
+        win_by_race: dict = {}
+        for rid, g in res.dropna(subset=["_um", "_tan"]).groupby("_rid"):
+            win_by_race[rid] = {int(u): float(o) for u, o in zip(g["_um"], g["_tan"]) if o > 0}
+        frame = build_market_signal_frame(lookup, win_by_race)
+        return frame if not frame.empty else None
+    except Exception as e:  # noqa: BLE001 — オッズ特徴は任意。失敗してもパイプラインは継続
+        logger.warning("[featured] 市場歪み特徴の構築に失敗（スキップ）: %s", e)
+        return None
+
+
 def _build_featured_data(config):
     """raw pickle 群から DataMerger + FeatureEngineering で featured_data を生成する。
 
@@ -191,6 +236,7 @@ def _build_featured_data(config):
         yoso_marks_df=_read_optional_pickle(LocalPaths.RAW_YOSO_MARKS_PATH),
         person_yearly_df=_read_optional_pickle(LocalPaths.RAW_PERSON_YEARLY_PATH),
         yoso_predictor_df=_read_optional_pickle(LocalPaths.RAW_YOSO_PREDICTOR_PATH),
+        odds_signals_df=_build_odds_signal_frame(config),
     )
     merger.merge()
     fe = (

@@ -101,6 +101,16 @@ PERSON_YEARLY_FEATURE_COLS: list = [
     "breeder_py_重賞勝利", "breeder_py_出走回数",
 ]
 
+# 市場の歪み（複勝/三連複/三連単の確定オッズ vs 単勝由来 Harville・DataMerger._merge_odds_signals）
+# 発走前確定オッズ由来でリーク無し（``単勝`` と同じ前提）。MARKET_SIGNAL_COLS と一致させる。
+MARKET_SIGNAL_FEATURE_COLS: list = [
+    "fukusho_implied_p",      # 複勝市場の implied 3着内確率
+    "place_overlay",          # 複勝 implied − Harville複勝（市場間ズレ）
+    "trio_top3_overlay",      # 三連複 top3 marginal − Harville複勝
+    "trifecta_win_overlay",   # 三連単 1着 marginal − Harville勝率（連系のスマートマネー）
+    "trifecta_top3_overlay",  # 三連単 top3 marginal − Harville複勝
+]
+
 # ──────────────────────────────────────────
 # §2k: 成長/フォーム・トレンド特徴量
 # ──────────────────────────────────────────

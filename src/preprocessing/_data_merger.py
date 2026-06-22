@@ -52,6 +52,7 @@ class DataMerger:
         yoso_marks_df: Optional[pd.DataFrame] = None,
         person_yearly_df: Optional[pd.DataFrame] = None,
         yoso_predictor_df: Optional[pd.DataFrame] = None,
+        odds_signals_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
@@ -68,6 +69,8 @@ class DataMerger:
         self._person_yearly = person_yearly_df if person_yearly_df is not None else pd.DataFrame()
         # 予想家スキル prior（predictor_yid×1行）。未提供なら空＝マージは no-op。
         self._yoso_predictor = yoso_predictor_df if yoso_predictor_df is not None else pd.DataFrame()
+        # 市場歪み特徴（(race_id, 馬番) × overlay 群）。未提供なら空＝マージは no-op。
+        self._odds_signals = odds_signals_df if odds_signals_df is not None else pd.DataFrame()
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -93,6 +96,7 @@ class DataMerger:
         _step("yoso_marks", self._merge_yoso_marks)
         _step("yoso_skill", self._add_yoso_predictor_skill)
         _step("yoso_profile", self._add_yoso_profile_skill)
+        _step("odds_signals", self._merge_odds_signals)
         _step("person_yearly", self._merge_person_yearly)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
@@ -314,6 +318,37 @@ class DataMerger:
         res = base.reset_index()
         res["_umaban_key"] = pd.to_numeric(res["馬番"], errors="coerce").astype("Int64")
         merged = res.merge(agg, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
+
+    def _merge_odds_signals(self):
+        """市場歪み特徴（複勝/三連複/三連単 overlay）を (race_id, 馬番) で左結合する。
+
+        確定オッズ由来でリーク無し（``単勝`` と同じ前提）。run_pipeline 側で
+        ``build_market_signal_frame`` により事前計算された DataFrame を受け取り、値列のみ
+        左結合する。未提供（空）はスキップ。
+        """
+        if self._odds_signals is None or self._odds_signals.empty:
+            return
+        if "馬番" not in self._results.columns:
+            return
+        from src.preprocessing._market_signals import MARKET_SIGNAL_COLS
+
+        sig = self._odds_signals.copy()
+        if "race_id" not in sig.columns or "馬番" not in sig.columns:
+            return
+        sig["race_id"] = sig["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        sig["_umaban_key"] = pd.to_numeric(sig["馬番"], errors="coerce").astype("Int64")
+        value_cols = [c for c in MARKET_SIGNAL_COLS if c in sig.columns]
+        sig = sig[["race_id", "_umaban_key", *value_cols]].drop_duplicates(
+            ["race_id", "_umaban_key"]
+        )
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+        merged = left.merge(sig, on=["race_id", "_umaban_key"], how="left")
         self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
 
     # 人物年度別成績から featured に乗せる統計（前年=as-of 結合）
