@@ -50,6 +50,7 @@ def _make_featured_with_chakujun(n_races=60, horses=8, seed=0):
                     "date": date,
                     ResultsCols.RANK: chakujun,  # '着順'
                     "rank": 1 if chakujun < 4 else 0,
+                    "rank_win": 1 if chakujun == 1 else 0,
                     ResultsCols.TANSHO_ODDS: float(rng.uniform(1.5, 20.0)),
                     "feat_a": float(rng.normal()),
                 }
@@ -79,6 +80,45 @@ class TestChakujunNotLeaked:
         ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
         assert "rank" not in ds.X_train.columns
         assert "rank" not in ds.X_test.columns
+
+    def test_both_labels_dropped_from_features(self):
+        """rank(top3) と rank_win(1着) は**両方**特徴量から落ちること（相互リーク防止）。"""
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        for col in ("rank", "rank_win"):
+            assert col not in ds.X_train.columns
+            assert col not in ds.X_test.columns
+        ds.make_stacking_splits(meta_ratio=0.3)
+        for col in ("rank", "rank_win"):
+            assert col not in ds.X_base_train.columns
+            assert col not in ds.X_meta_train.columns
+            assert col not in ds.X_calib.columns
+
+
+class TestTargetColumn:
+    """target_col で Place(rank) / Win(rank_win) ヘッドを切替える。"""
+
+    def test_default_target_is_top3(self):
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        # 既定は rank(top3)。着順<4 が 1
+        assert ds.y_train.equals(ds.train_data["rank"])
+
+    def test_win_target_selects_rank_win(self):
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2, target_col="rank_win")
+        assert ds.y_train.equals(ds.train_data["rank_win"])
+        assert ds.y_test.equals(ds.test_data["rank_win"])
+        # 1着のみ正例 → top3 ラベルより正例が少ない
+        assert ds.y_train.sum() < ds.train_data["rank"].sum()
+
+    def test_win_target_stacking_labels(self):
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2, target_col="rank_win")
+        ds.make_stacking_splits(meta_ratio=0.3)
+        assert ds.y_base_train.equals(ds.base_train_data["rank_win"])
+        assert ds.y_meta_train.equals(ds.meta_train_data["rank_win"])
+        assert ds.y_calib.equals(ds.valid_data_optuna["rank_win"])
 
     def test_chakujun_dropped_from_stacking_splits(self):
         df = _make_featured_with_chakujun()

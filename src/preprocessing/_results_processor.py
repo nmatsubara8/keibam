@@ -61,6 +61,9 @@ class ResultsProcessor(AbstractDataProcessor):
         df.dropna(subset=[Cols.RANK], inplace=True)
         df[Cols.RANK] = df[Cols.RANK].astype(int)
         df["rank"] = df[Cols.RANK].map(lambda x: 1 if x < 4 else 0)
+        # Win ヘッド用の第二ラベル（1着=1）。Place ヘッド(rank=top3) と別目的変数。
+        # 学習入力からは rank と同様に必ず除外する（_DROP_FOR_TRAIN / _DROP_FOR_PREDICT）。
+        df["rank_win"] = df[Cols.RANK].map(lambda x: 1 if x == 1 else 0)
         return df
 
     def _select_columns(self, raw):
@@ -97,6 +100,7 @@ class ResultsProcessor(AbstractDataProcessor):
                 "体重変化",
                 "n_horses",
                 "rank",
+                "rank_win",
             ]
         ]
         df.set_index("race_id", inplace=True)

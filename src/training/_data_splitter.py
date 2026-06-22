@@ -13,14 +13,19 @@ logger = logging.getLogger(__name__)
 # - RANK('着順'): 当該レースの実着順。rank = (着順 < 4) の元データであり、
 #   特徴量に残すと目的変数リーク。§2c/2j 集計のため ResultsProcessor が選択するが
 #   学習入力からは必ず除外する。
-_DROP_FOR_TRAIN = ["rank", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
+# rank(top3) と rank_win(1着) は二値目的変数。どちらを学習しても**両方**を入力から除外し
+# 相互リーク（top3 に win が含まれる等）を防ぐ。
+_DROP_FOR_TRAIN = ["rank", "rank_win", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
 
 # テスト入力用: EV 計算のため TANSHO_ODDS('単勝') は残し、実着順 RANK は除外する。
-_DROP_FOR_TEST = ["rank", "date", "horse_id", ResultsCols.RANK]
+_DROP_FOR_TEST = ["rank", "rank_win", "date", "horse_id", ResultsCols.RANK]
 
 
 class DataSplitter:
-    def __init__(self, featured_data, test_size, valid_size) -> None:
+    def __init__(self, featured_data, test_size, valid_size, target_col: str = "rank") -> None:
+        # target_col: 目的変数列。"rank"=複勝(top3, 既定) / "rank_win"=単勝(1着)。
+        # Win ヘッドを学習するときは target_col="rank_win" を渡す。
+        self.__target = target_col
         # PreparedFeatures または plain DataFrame を受け付ける
         from src.preprocessing._prepared_features import PreparedFeatures
         if isinstance(featured_data, PreparedFeatures):
@@ -141,7 +146,7 @@ class DataSplitter:
 
             self.__lgb_train_optuna = lgb_o.Dataset(
                 self.__train_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-                self.__train_data_optuna["rank"],
+                self.__train_data_optuna[self.__target],
             )
         return self.__lgb_train_optuna
 
@@ -152,7 +157,7 @@ class DataSplitter:
 
             self.__lgb_valid_optuna = lgb_o.Dataset(
                 self.__valid_data_optuna.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-                self.__valid_data_optuna["rank"],
+                self.__valid_data_optuna[self.__target],
             )
         return self.__lgb_valid_optuna
 
@@ -165,7 +170,7 @@ class DataSplitter:
     @property
     def y_train(self):
         if self.__y_train is None:
-            self.__y_train = self.__train_data["rank"]
+            self.__y_train = self.__train_data[self.__target]
         return self.__y_train
 
     @property
@@ -177,7 +182,7 @@ class DataSplitter:
     @property
     def y_test(self):
         if self.__y_test is None:
-            self.__y_test = self.__test_data["rank"]
+            self.__y_test = self.__test_data[self.__target]
         return pd.Series(self.__y_test)
 
     # ------------------------------------------------------------------
@@ -202,11 +207,11 @@ class DataSplitter:
             base_opt_train, base_opt_valid = self.__split_by_date(self.__base_train, test_size=0.2)
             self.__lgb_train_optuna = lgb_o.Dataset(
                 base_opt_train.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-                base_opt_train["rank"],
+                base_opt_train[self.__target],
             )
             self.__lgb_valid_optuna = lgb_o.Dataset(
                 base_opt_valid.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore").values,
-                base_opt_valid["rank"],
+                base_opt_valid[self.__target],
             )
         logger.info(
             "stacking sizes: base_train=%d meta_train=%d calib_holdout=%d",
@@ -239,7 +244,7 @@ class DataSplitter:
 
     @property
     def y_base_train(self) -> pd.Series:
-        return self.base_train_data["rank"]
+        return self.base_train_data[self.__target]
 
     @property
     def X_meta_train(self) -> pd.DataFrame:
@@ -247,7 +252,7 @@ class DataSplitter:
 
     @property
     def y_meta_train(self) -> pd.Series:
-        return self.meta_train_data["rank"]
+        return self.meta_train_data[self.__target]
 
     @property
     def X_calib(self) -> pd.DataFrame:
@@ -255,7 +260,7 @@ class DataSplitter:
 
     @property
     def y_calib(self) -> pd.Series:
-        return self.__valid_data_optuna["rank"]
+        return self.__valid_data_optuna[self.__target]
 
     # ------------------------------------------------------------------
     # NN ストリームプロパティ（PreparedFeatures 使用時のみ有効）
