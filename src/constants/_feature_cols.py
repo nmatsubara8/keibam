@@ -69,11 +69,20 @@ SIRE_FEATURE_COLS: list = [
     "sire_recent_win_rate",   # 直近N年の種牡馬産駒勝率
 ]
 
-# 母父（broodmare sire = peds_2）の産駒集計（DataMerger._add_damsire_stats）
+# 母父（broodmare sire = peds_32）の産駒集計（DataMerger._add_damsire_stats）
 DAMSIRE_FEATURE_COLS: list = [
     "damsire_win_rate",         # 母父産駒の全期間勝率
     "damsire_avg_rank",         # 母父産駒の全期間平均着順
     "damsire_recent_win_rate",  # 直近N年の母父産駒勝率
+]
+
+# 予想印コンセンサス（DataMerger._merge_yoso_marks）。発走前確定・リーク無し。
+YOSO_FEATURE_COLS: list = [
+    "yoso_n_marks",       # 印を付けた予想家数（注目度）
+    "yoso_n_honmei",      # ◎の数
+    "yoso_score_sum",     # 印スコア合計（◎5..☆1）
+    "yoso_score_mean",    # 印スコア平均
+    "yoso_n_marks_free",  # 無料予想家のみの印数
 ]
 
 # ──────────────────────────────────────────

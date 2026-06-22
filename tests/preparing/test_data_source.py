@@ -83,6 +83,33 @@ def test_race_day_notes_skip_env(monkeypatch):
     NetkeibaDataSource()._acquire_race_day_notes(["202605030611"])
 
 
+def test_yoso_marks_era_gate(monkeypatch):
+    """年代ゲート: KEIBA_YOSO_MARKS_MIN_YEAR 未満は fetch を呼ばない。"""
+    import pandas as pd
+
+    import src.preparing._rate_limiter as rl
+    import src.preparing._yoso_marks as ym
+
+    seen = []
+    monkeypatch.setattr(ym, "fetch_pro_yoso_marks", lambda rid: seen.append(rid) or pd.DataFrame())
+    monkeypatch.setattr(ym, "persist_yoso_marks", lambda df, path: 0)
+    monkeypatch.setattr(rl, "polite_interval", lambda: 0)
+    monkeypatch.setenv("KEIBA_YOSO_MARKS_MIN_YEAR", "2010")
+
+    NetkeibaDataSource()._acquire_yoso_marks(["199801010101", "202605030611"])
+    assert seen == ["202605030611"]
+
+
+def test_yoso_marks_skip_env(monkeypatch):
+    """KEIBA_SKIP_YOSO_MARKS=1 で丸ごと無効化。"""
+    import src.preparing._yoso_marks as ym
+
+    monkeypatch.setattr(ym, "fetch_pro_yoso_marks",
+                        lambda rid: pytest.fail("skip 指定でも fetch が呼ばれた"))
+    monkeypatch.setenv("KEIBA_SKIP_YOSO_MARKS", "1")
+    NetkeibaDataSource()._acquire_yoso_marks(["202605030611"])
+
+
 def test_netkeiba_acquire_races_empty_noop(monkeypatch):
     import src.preparing._scrape_html_race as shr
 

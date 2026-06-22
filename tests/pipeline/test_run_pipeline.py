@@ -419,3 +419,41 @@ class TestBackfillPeds:
         peds = pd.DataFrame({"p": [1]}, index=pd.Index(["C"], name="horse_id"))
         ids = self._run(monkeypatch, results, peds, ["backfill-peds", "--no-skip-existing"])
         assert ids == ["A", "C"]
+
+
+class TestBackfillYoso:
+    """backfill-yoso: race_id 列の正規化・年代ゲート・取得済みスキップ。"""
+
+    def _run(self, monkeypatch, results, done_yoso, argv):
+        import src.pipeline._ingestion as ing
+        import src.preparing._data_source as ds
+        import src.pipeline.run_pipeline as rp
+        from src.constants._local_paths import LocalPaths
+
+        def fake_load(p):
+            return done_yoso if p == LocalPaths.RAW_YOSO_MARKS_PATH else results
+
+        monkeypatch.setattr(ing, "load_raw", fake_load)
+        called = {}
+
+        class _Src:
+            name = "netkeiba"
+
+            def acquire_yoso_marks(self, ids):
+                called["ids"] = list(ids)
+
+        monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
+        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
+        rp._backfill_yoso(rp._parse_args(argv))
+        return called.get("ids")
+
+    def test_race_id_column_normalized_and_skip(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame(
+            {"race_id": [202606140511, 201005030611, 199801010101], "着順": [1, 1, 1]}
+        )
+        done = pd.DataFrame({"y": [1]}, index=pd.Index(["202606140511"], name="race_id"))
+        ids = self._run(monkeypatch, results, done, ["backfill-yoso", "--min-year", "2010"])
+        # 1998 は年代ゲート除外、2026 は取得済みskip → 2010 のみ
+        assert ids == ["201005030611"]

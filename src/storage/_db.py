@@ -127,6 +127,13 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("race_id", "馬番"),
         index_col="race_id",
     ),
+    # 予想印（レース×馬×予想家のロング）。(race_id,馬番,predictor_yid) で一意。
+    # race_id を index に持たせ、再取得は当該 race_id の行を総入替する。
+    "raw_yoso_marks": TableSpec(
+        table_name="raw_yoso_marks",
+        primary_key=("race_id", "馬番", "predictor_yid"),
+        index_col="race_id",
+    ),
 }
 
 
@@ -144,6 +151,7 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_TRAINING_PATH: "raw_training",
     LocalPaths.RAW_PADDOCK_PATH: "raw_paddock",
     LocalPaths.RAW_COMMENT_PATH: "raw_comment",
+    LocalPaths.RAW_YOSO_MARKS_PATH: "raw_yoso_marks",
 }
 
 

@@ -82,6 +82,10 @@ class AbstractRaceDataSource(ABC):
         """指定 horse_id の血統(peds)のみを取得する backfill 用フック。既定は no-op。"""
         pass
 
+    def acquire_yoso_marks(self, race_ids: Sequence[str]) -> None:  # noqa: B027
+        """指定 race_id の予想印のみを取得する backfill 用フック。既定は no-op。"""
+        pass
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -115,6 +119,63 @@ class NetkeibaDataSource(AbstractRaceDataSource):
         get_rawdata_return(skip=False, only_ids=ids)
         # レース当日ノート（調教評価/パドック/厩舎コメント）。無料・リーク無し・任意。
         self._acquire_race_day_notes(ids)
+        # 予想印（無料＋プレミアム）。発走前確定・リーク無し・任意。
+        self._acquire_yoso_marks(ids)
+
+    def _acquire_yoso_marks(self, ids: Sequence[str]) -> None:
+        """予想印 API を取得し raw_yoso_marks(pickle+DB) に反映する。
+
+        失敗しても本体取得を妨げないよう全例外を握りつぶす。各取得の間に polite_interval を
+        挟む。``KEIBA_SKIP_YOSO_MARKS=1`` で無効化、``KEIBA_YOSO_MARKS_MIN_YEAR``（既定 2010）
+        未満の開催年は API 非対応のためスキップ（race_id 先頭4桁で判定）。
+        """
+        import os
+        import time
+
+        if os.environ.get("KEIBA_SKIP_YOSO_MARKS") == "1":
+            return
+        try:
+            min_year = int(os.environ.get("KEIBA_YOSO_MARKS_MIN_YEAR", "2010"))
+        except ValueError:
+            min_year = 2010
+        try:
+            from src.constants._local_paths import LocalPaths
+            from src.preparing._rate_limiter import polite_interval
+            from src.preparing._yoso_marks import fetch_pro_yoso_marks
+            from src.preparing._yoso_marks import persist_yoso_marks
+        except Exception as e:  # noqa: BLE001
+            logger.warning("yoso_marks: モジュール読込失敗のためスキップ: %s", e)
+            return
+
+        def _race_year(rid: str) -> "int | None":
+            s = str(rid)
+            return int(s[:4]) if len(s) >= 4 and s[:4].isdigit() else None
+
+        target_ids = [r for r in ids if (_race_year(r) or min_year) >= min_year]
+        skipped = len(ids) - len(target_ids)
+        if skipped:
+            logger.info(
+                "yoso_marks: 年代ゲートで %d/%d レースをスキップ（開催年 < %d）",
+                skipped, len(ids), min_year,
+            )
+        first = True
+        for race_id in target_ids:
+            if not first:
+                interval = polite_interval()
+                if interval > 0:
+                    time.sleep(interval)
+            first = False
+            try:
+                df = fetch_pro_yoso_marks(race_id)
+                persist_yoso_marks(df, LocalPaths.RAW_YOSO_MARKS_PATH)
+            except Exception as e:  # noqa: BLE001 — 1レースの失敗で全体を止めない
+                logger.warning("yoso_marks 失敗 race_id=%s: %s", race_id, e)
+
+    def acquire_yoso_marks(self, race_ids: Sequence[str]) -> None:
+        """予想印のみを取得する公開フック（backfill-yoso ジョブ用）。"""
+        ids = [str(r) for r in race_ids]
+        if ids:
+            self._acquire_yoso_marks(ids)
 
     def _acquire_race_day_notes(self, ids: Sequence[str]) -> None:
         """調教評価/パドック/厩舎コメントを取得し raw pickle(+DB) に反映する。

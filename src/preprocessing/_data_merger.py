@@ -49,6 +49,7 @@ class DataMerger:
         training_df: Optional[pd.DataFrame] = None,
         paddock_df: Optional[pd.DataFrame] = None,
         comment_df: Optional[pd.DataFrame] = None,
+        yoso_marks_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
@@ -59,6 +60,8 @@ class DataMerger:
         self._training = training_df if training_df is not None else pd.DataFrame()
         self._paddock = paddock_df if paddock_df is not None else pd.DataFrame()
         self._comment = comment_df if comment_df is not None else pd.DataFrame()
+        # 予想印ロング（race_id×馬番×予想家）。未提供なら空＝マージは no-op。
+        self._yoso_marks = yoso_marks_df if yoso_marks_df is not None else pd.DataFrame()
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -81,6 +84,7 @@ class DataMerger:
         self._normalize_join_keys()
         _step("race_info", self._merge_race_info)
         _step("race_day_notes", self._merge_race_day_notes)
+        _step("yoso_marks", self._merge_yoso_marks)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -165,6 +169,42 @@ class DataMerger:
             left = left.merge(notes, on=["race_id", "_umaban_key"], how="left")
 
         self._results = left.drop(columns=["_umaban_key"]).set_index("race_id")
+
+    def _merge_yoso_marks(self):
+        """予想印（ロング）を (race_id, 馬番) のコンセンサス特徴に集約して左結合する。
+
+        予想家の顔ぶれはレースで変動するため個別列でなく集約量（印数/◎数/スコア）を使う。
+        発走前確定＝リーク無し。未提供（空）はスキップ。
+        """
+        if self._yoso_marks is None or self._yoso_marks.empty:
+            return
+        if "馬番" not in self._results.columns:
+            return
+        from src.preparing._yoso_marks import aggregate_consensus
+
+        long = self._yoso_marks.reset_index()
+        if "race_id" not in long.columns:
+            long = long.rename(columns={long.columns[0]: "race_id"})
+        if "馬番" not in long.columns:
+            return
+        long["race_id"] = long["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        consensus = aggregate_consensus(long)
+        if consensus.empty:
+            return
+        consensus["race_id"] = consensus["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        consensus["_umaban_key"] = pd.to_numeric(consensus["馬番"], errors="coerce").astype("Int64")
+        value_cols = [c for c in consensus.columns if c.startswith("yoso_")]
+        consensus = consensus[["race_id", "_umaban_key"] + value_cols].drop_duplicates(
+            ["race_id", "_umaban_key"]
+        )
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+        merged = left.merge(consensus, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(columns=["_umaban_key"]).set_index("race_id")
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。

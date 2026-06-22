@@ -188,6 +188,7 @@ def _build_featured_data(config):
         training_df=_read_optional_pickle(LocalPaths.RAW_TRAINING_PATH),
         paddock_df=_read_optional_pickle(LocalPaths.RAW_PADDOCK_PATH),
         comment_df=_read_optional_pickle(LocalPaths.RAW_COMMENT_PATH),
+        yoso_marks_df=_read_optional_pickle(LocalPaths.RAW_YOSO_MARKS_PATH),
     )
     merger.merge()
     fe = (
@@ -275,6 +276,42 @@ def _backfill_notes(args: argparse.Namespace) -> None:
     logger.info("[backfill-notes] %s で %d レースの当日ノートを取得します", source.name, len(ids))
     source.acquire_race_day_notes(ids)
     logger.info("[backfill-notes] 完了。rebuild-featured で featured に反映してください")
+
+
+def _backfill_yoso(args: argparse.Namespace) -> None:
+    """既存 raw の全 race_id に対し予想印（コンセンサス用ロング）だけを取得する。
+
+    コア取得と独立。年代ゲート（KEIBA_YOSO_MARKS_MIN_YEAR・既定2010）で近年に絞る。
+    race_id 単位で冪等総入替のため、取得済みを除外して中断・再開できる。完了後 rebuild-featured。
+    """
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import existing_race_ids
+    from src.pipeline._ingestion import load_raw
+    from src.preparing._data_source import create_data_source
+
+    results = load_raw(LocalPaths.RAW_RESULTS_PATH)
+    if not results.empty and "race_id" in results.columns and results.index.name != "race_id":
+        results = results.set_index("race_id")
+    ids = sorted(str(r) for r in existing_race_ids(results))
+    if getattr(args, "min_year", None):
+        ids = [r for r in ids if r[:4].isdigit() and int(r[:4]) >= args.min_year]
+    # 中断・再開: 既に予想印を取得済みの race_id を除外（--no-skip-existing で無効）
+    if not getattr(args, "no_skip_existing", False):
+        done = existing_race_ids(load_raw(LocalPaths.RAW_YOSO_MARKS_PATH))
+        done = {str(r) for r in done}
+        before = len(ids)
+        ids = [r for r in ids if r not in done]
+        if before != len(ids):
+            logger.info("[backfill-yoso] 取得済み %d レースをスキップ（再開）", before - len(ids))
+    if getattr(args, "limit", None):
+        ids = ids[: args.limit]
+    if not ids:
+        logger.info("[backfill-yoso] 対象 race_id なし（全件取得済み or raw_results が空）")
+        return
+    source = create_data_source(_resolve_data_source(args))
+    logger.info("[backfill-yoso] %s で %d レースの予想印を取得します", source.name, len(ids))
+    source.acquire_yoso_marks(ids)
+    logger.info("[backfill-yoso] 完了。rebuild-featured で featured に反映してください")
 
 
 def _backfill_peds(args: argparse.Namespace) -> None:
@@ -923,6 +960,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     bn_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
     bn_p.add_argument("--no-skip-existing", action="store_true", help="取得済み race_id も再取得する（既定はスキップ）")
 
+    # backfill-yoso サブコマンド（既存 race_id の予想印のみを取得。コア取得と独立）
+    by_p = sub.add_parser(
+        "backfill-yoso",
+        help="既存 raw の race_id に予想印(無料+premium)のみ取得。後で rebuild-featured",
+    )
+    by_p.add_argument("--min-year", type=int, default=None, help="この開催年以降のみ対象")
+    by_p.add_argument("--limit", type=int, default=None, help="先頭 N レースのみ（動作確認用）")
+    by_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
+    by_p.add_argument("--no-skip-existing", action="store_true", help="取得済み race_id も再取得する")
+
     # backfill-peds サブコマンド（既存 horse_id の血統のみを取得。馬ページ取得と独立）
     bp_p = sub.add_parser(
         "backfill-peds",
@@ -1086,6 +1133,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "ingest": _ingest,
         "rebuild-featured": _rebuild_featured,
         "backfill-notes": _backfill_notes,
+        "backfill-yoso": _backfill_yoso,
         "backfill-peds": _backfill_peds,
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,

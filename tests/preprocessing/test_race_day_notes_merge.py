@@ -123,3 +123,43 @@ def test_master_ordinals_defined():
     assert "穴" in Master.PADDOCK_EVAL_LIST
     assert Master.TRAINING_EVAL_ORDINAL["好気配"] > Master.TRAINING_EVAL_ORDINAL["不安"]
     assert np.isnan(pd.Series(["未知"]).map(Master.TRAINING_EVAL_ORDINAL).iloc[0])
+
+
+class TestMergeYosoMarks:
+    """予想印ロング → (race_id,馬番) コンセンサス左結合（_merge_yoso_marks）。"""
+
+    def _results(self, umaban):
+        df = pd.DataFrame({"馬番": umaban, "date": "2026-06-14"}, index=["R1"] * len(umaban))
+        df.index.name = "race_id"
+        return df
+
+    def _yoso(self):
+        return pd.DataFrame(
+            {
+                "馬番": [1, 1, 2],
+                "predictor_yid": ["a", "b", "a"],
+                "predictor_name": ["A", "B", "A"],
+                "goods_kbn": ["1", "1", "1"],
+                "mark": ["◎", "◎", "○"],
+                "mark_score": [5, 5, 4],
+            },
+            index=pd.Index(["R1"] * 3, name="race_id"),
+        )
+
+    def test_consensus_merge(self):
+        m = DataMerger.__new__(DataMerger)
+        m._results = self._results([1, 2, 3])
+        m._yoso_marks = self._yoso()
+        m._merge_yoso_marks()
+        by = m._results.set_index("馬番")
+        assert by.loc[1, "yoso_n_marks"] == 2 and by.loc[1, "yoso_n_honmei"] == 2
+        assert by.loc[1, "yoso_score_mean"] == 5.0
+        assert by.loc[2, "yoso_n_marks"] == 1 and by.loc[2, "yoso_n_honmei"] == 0
+        assert pd.isna(by.loc[3, "yoso_n_marks"])  # 印なし馬は NaN
+
+    def test_empty_is_noop(self):
+        m = DataMerger.__new__(DataMerger)
+        m._results = self._results([1, 2])
+        m._yoso_marks = pd.DataFrame()
+        m._merge_yoso_marks()
+        assert not any(c.startswith("yoso_") for c in m._results.columns)

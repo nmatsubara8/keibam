@@ -208,3 +208,18 @@ def fetch_pro_yoso_marks(
     except Exception as e:  # noqa: BLE001 — 取得失敗はスキップ（空を返す）
         logger.warning("yoso marks 取得失敗 race_id=%s: %s", race_id, e)
         return pd.DataFrame(columns=_LONG_COLUMNS)
+
+
+def persist_yoso_marks(df: pd.DataFrame, pickle_path: str) -> int:
+    """予想印ロング DataFrame を race_id index にして raw pickle(+DB) に反映する。
+
+    `update_rawdata` は index で dedup するため race_id を index に置く。同一 race_id の
+    旧行は総入替される（再取得で最新に更新）。空なら何もしない。
+    """
+    if df is None or df.empty:
+        return 0
+    from src.preparing._get_rawdata import update_rawdata
+
+    indexed = df.set_index("race_id")
+    update_rawdata(pickle_path, indexed)
+    return len(indexed)
