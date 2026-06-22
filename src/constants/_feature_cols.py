@@ -69,6 +69,13 @@ SIRE_FEATURE_COLS: list = [
     "sire_recent_win_rate",   # 直近N年の種牡馬産駒勝率
 ]
 
+# 母父（broodmare sire = peds_2）の産駒集計（DataMerger._add_damsire_stats）
+DAMSIRE_FEATURE_COLS: list = [
+    "damsire_win_rate",         # 母父産駒の全期間勝率
+    "damsire_avg_rank",         # 母父産駒の全期間平均着順
+    "damsire_recent_win_rate",  # 直近N年の母父産駒勝率
+]
+
 # ──────────────────────────────────────────
 # §2k: 成長/フォーム・トレンド特徴量
 # ──────────────────────────────────────────

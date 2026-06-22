@@ -178,8 +178,11 @@ class DataMerger:
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
-        if "peds_0" in self._peds.columns:
-            hr_with_sire = self._horse_results.join(self._peds[["peds_0"]], how="left")
+        # peds_0=父(sire), peds_2=母父(broodmare sire)。存在する血統列を horse_results に付与し、
+        # 過去走の産駒成績から sire/damsire 集計（_add_sire_stats / _add_damsire_stats）に使う。
+        ped_cols = [c for c in ("peds_0", "peds_2") if c in self._peds.columns]
+        if ped_cols:
+            hr_with_sire = self._horse_results.join(self._peds[ped_cols], how="left")
         else:
             hr_with_sire = self._horse_results.copy()
 
@@ -232,6 +235,7 @@ class DataMerger:
             results = self._add_career_stats(results, horse_results)
             results = self._add_opponent_strength_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
+            results = self._add_damsire_stats(results, date)
 
             output_list.append(results)
             del self._separated_hr_with_sire_dict[date]
@@ -701,10 +705,26 @@ class DataMerger:
     # ──────────────────────────────────────────
 
     def _add_sire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """種牡馬産駒の集計特徴量（sire_win_rate / sire_avg_rank / sire_recent_win_rate）を追加。
+        """種牡馬（父=peds_0）産駒の集計特徴量を追加（sire_win_rate / sire_avg_rank / sire_recent_win_rate）。"""
+        return self._add_pedigree_stats(results, target_date, "peds_0", "sire")
 
-        _separated_hr_with_sire_dict は _separate_by_date() 内で peds_0 列を付与した
+    def _add_damsire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
+        """母父（broodmare sire=peds_2）の産駒集計特徴量を追加（damsire_*）。
+
+        母父は距離・ダート適性に効く競馬の重要軸。父(sire)と同じく過去走の産駒成績で集計する。
+        """
+        return self._add_pedigree_stats(results, target_date, "peds_2", "damsire")
+
+    def _add_pedigree_stats(
+        self, results: pd.DataFrame, target_date, peds_col: str, prefix: str
+    ) -> pd.DataFrame:
+        """血統（peds_col）単位の産駒集計特徴量を追加する（父/母父で共用、リーク無し）。
+
+        _separated_hr_with_sire_dict は _separate_by_date() 内で peds_0/peds_2 を付与した
         horse_results のサブセット（date < target_date）を保持する。
+        - ``{prefix}_win_rate``        : 産駒の全期間勝率
+        - ``{prefix}_avg_rank``        : 産駒の全期間平均相対着順（着順/頭数）
+        - ``{prefix}_recent_win_rate`` : 直近 SIRE_RECENT_YEARS 年の産駒勝率
         """
         if target_date not in self._separated_hr_with_sire_dict:
             return results
@@ -713,12 +733,14 @@ class DataMerger:
         rank_col = HRCols.RANK  # '着順'
         n_horses_col = HRCols.N_HORSES  # '頭数'
 
-        if "peds_0" not in phs.columns or phs.empty or rank_col not in phs.columns:
+        if peds_col not in phs.columns or phs.empty or rank_col not in phs.columns:
             return results
 
+        win_col, rank_name, recent_col = f"{prefix}_win_rate", f"{prefix}_avg_rank", f"{prefix}_recent_win_rate"
+
         phs = phs.copy()
-        # Use string representation of peds_0 to avoid category dtype issues in groupby
-        phs["_sire_key"] = phs["peds_0"].astype(str)
+        # category dtype の groupby 問題を避けるため血統キーは str 化する
+        phs["_ped_key"] = phs[peds_col].astype(str)
         phs["_is_win"] = (phs[rank_col] == 1).astype(float)
         if n_horses_col in phs.columns:
             phs["_rel_rank"] = phs[rank_col] / phs[n_horses_col]
@@ -727,37 +749,32 @@ class DataMerger:
         if "_rel_rank" in phs.columns:
             agg_dict["_rel_rank"] = "mean"
 
-        sire_all = phs.groupby("_sire_key").agg(agg_dict)
-        sire_all.columns = [
-            "sire_win_rate" if c == "_is_win" else "sire_avg_rank"
-            for c in sire_all.columns
-        ]
+        ped_all = phs.groupby("_ped_key").agg(agg_dict)
+        ped_all.columns = [win_col if c == "_is_win" else rank_name for c in ped_all.columns]
 
-        # Recent N years sire stats
+        # 直近 N 年
         cutoff = pd.Timestamp(target_date) - pd.DateOffset(years=SIRE_RECENT_YEARS)
         recent = phs[phs["date"] >= cutoff]
         if not recent.empty:
-            sire_recent = recent.groupby("_sire_key")["_is_win"].mean().rename("sire_recent_win_rate")
-            sire_all = sire_all.join(sire_recent, how="left")
+            ped_recent = recent.groupby("_ped_key")["_is_win"].mean().rename(recent_col)
+            ped_all = ped_all.join(ped_recent, how="left")
         else:
-            sire_all["sire_recent_win_rate"] = float("nan")
+            ped_all[recent_col] = float("nan")
 
-        # Current horses' sire key from peds
-        if "peds_0" not in self._peds.columns:
+        # 現役馬（出馬表）の血統キーを peds から引く
+        if peds_col not in self._peds.columns:
             return results
-        horse_sire = self._peds[["peds_0"]].reset_index()
-        horse_sire["_sire_key"] = horse_sire["peds_0"].astype(str)
+        horse_ped = self._peds[[peds_col]].reset_index()
+        horse_ped["_ped_key"] = horse_ped[peds_col].astype(str)
 
-        horse_sire_indexed = horse_sire[["horse_id", "_sire_key"]].set_index("horse_id")
-        # horse_id の型を揃える: 出馬表 results は str、peds 由来 index は pkl 欠落時の
-        # DB 復元で Int64 になりうる。両者 str に正規化してから結合する（学習では既に
-        # str のため no-op）。
-        horse_sire_indexed.index = horse_sire_indexed.index.astype(str)
+        horse_ped_indexed = horse_ped[["horse_id", "_ped_key"]].set_index("horse_id")
+        # horse_id の型を揃える（results は str、peds 由来 index は DB 復元で Int64 になりうる）
+        horse_ped_indexed.index = horse_ped_indexed.index.astype(str)
         results = results.copy()
         results["horse_id"] = results["horse_id"].astype(str)
-        results = results.merge(horse_sire_indexed, left_on="horse_id", right_index=True, how="left")
-        results = results.merge(sire_all, left_on="_sire_key", right_index=True, how="left")
-        results = results.drop(columns=["_sire_key"], errors="ignore")
+        results = results.merge(horse_ped_indexed, left_on="horse_id", right_index=True, how="left")
+        results = results.merge(ped_all, left_on="_ped_key", right_index=True, how="left")
+        results = results.drop(columns=["_ped_key"], errors="ignore")
 
         return results
 

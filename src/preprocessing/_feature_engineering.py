@@ -269,6 +269,7 @@ class FeatureEngineering:
             AGG_STATS,
             APTITUDE_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
+            DAMSIRE_FEATURE_COLS,
             GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             N_RACES_LIST,
@@ -305,6 +306,7 @@ class FeatureEngineering:
             + APTITUDE_FEATURE_COLS
             + SPEED_FIGURE_FEATURE_COLS
             + OPPONENT_STRENGTH_FEATURE_COLS
+            + DAMSIRE_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:
