@@ -169,6 +169,25 @@ Place(複勝=top3) と Win(単勝=1着) で AUC・正例率が異なるはず（
 
 ---
 
+## 8.5 EV バックテスト（券種別回収率の評価土台）
+`src/simulation/_backtest.py` + CLI `backtest`。学習済み2ヘッドをホールドアウト期間に適用し、
+**確定オッズで EV 選定 → 実払戻で決済 → 馬券種別の回収率/的中率/損益**を集計する。
+
+- 決済は `BettingTickets.place` に**候補の組合せだけ**を渡す（BOX 再展開しない厳密決済）。
+  → EV 選定した買い目を過不足なく評価。`unit=1`（フラット）で回収率＝払戻/投票。
+- 2ヘッド経路: 連系は Win 勝率→Harville、複勝/ワイドは Place top3 直接（予測本番と同一）。
+- オッズ: `StoredFinalOddsProvider`（fetch-final-odds の確定値）、無い組合せは単勝 Harville 推定へ。
+- リーク防止: 確定オッズ・市場歪み特徴は発走前確定値。**学習年と評価年を重ねないこと**
+  （CLI `--years` で評価期間を分離。例: 学習 2016–2023 / 評価 2024–2025）。
+
+```bash
+python -m src.pipeline.run_pipeline backtest --version twohead_3yr --years 2025
+python -m src.pipeline.run_pipeline backtest --years 2025 --no-win-head   # 2ヘッド有無の比較
+python -m src.pipeline.run_pipeline backtest --years 2025 --no-final-odds # 確定オッズ有無の比較
+```
+出力は券種別の `点数/的中/的中率/投票/払戻/回収率` 表 + 全体（`--json` で機械可読）。
+テスト: `tests/simulation/test_backtest.py`（厳密決済・集計・予測統合 8 本）。
+
 ## 9. 次の選択肢
 - (A) 2ヘッドを **10年データで本学習** → importance/AUC 比較。
 - (B) **ワイドも Place ベース**に（joint 近似 or 直接モデル化）。

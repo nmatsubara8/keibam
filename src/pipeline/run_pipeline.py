@@ -1236,6 +1236,29 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
 
     # doctor サブコマンド（健全性点検）
+    bt_p = sub.add_parser(
+        "backtest",
+        help="ホールドアウト期間で2ヘッド予測→確定オッズEV選定→実払戻で券種別回収率を評価",
+    )
+    bt_p.add_argument("--version", default=None, help="評価するモデルのバージョン名（省略時は最新）")
+    bt_p.add_argument(
+        "--years", type=int, nargs="+", default=None, metavar="YYYY",
+        help="評価対象を race_id の年で絞る（例: 2024 2025）。学習年と重ねないこと",
+    )
+    bt_p.add_argument(
+        "--no-win-head", action="store_true",
+        help="Win ヘッドを使わず Place 単独で評価（2ヘッド無効化）",
+    )
+    bt_p.add_argument(
+        "--no-final-odds", action="store_true",
+        help="確定オッズを使わず単勝からの Harville 推定オッズで評価",
+    )
+    bt_p.add_argument(
+        "--bet-types", nargs="+", default=None,
+        help="評価する券種（省略時は全券種）。例: fukusho wide sanrenpuku",
+    )
+    bt_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
+
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
     doctor_p.add_argument("--strict", action="store_true", help="WARN でも非0終了する")
@@ -1248,6 +1271,106 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
 
     return parser.parse_args(argv)
+
+
+def _resolve_backtest_model_path(version: str | None) -> str:
+    """評価対象の Place モデル pickle パスを解決する。
+
+    --version 指定時は ``models/*/<version>.pickle`` を厳密一致（__win は除外）。
+    省略時は正規モデル（``*_keibam.pickle``）の最新を使う。
+    """
+    import glob
+
+    if version:
+        matches = sorted(
+            m for m in glob.glob(os.path.join("models", "*", f"{version}.pickle"))
+            if not m.endswith("__win.pickle")
+        )
+        if not matches:
+            raise FileNotFoundError(f"バージョン '{version}' のモデルが見つかりません")
+        return matches[-1]
+    from app._data_loader import find_model_paths
+
+    paths = find_model_paths("models")
+    if not paths:
+        raise FileNotFoundError("models/ に評価可能なモデルがありません")
+    return paths[0]
+
+
+def _backtest(args: argparse.Namespace) -> None:
+    """ホールドアウト期間で2ヘッド予測→確定オッズEV選定→実払戻で券種別回収率を評価する。"""
+    import json
+
+    from app._data_loader import load_model_from_path, load_win_head_for
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
+    from src.preparing._odds_snapshot import build_final_odds_lookup
+    from src.preparing.odds_scheduler import load_snapshots
+    from src.simulation._backtest import default_thresholds, format_report, run_backtest
+
+    place_path = _resolve_backtest_model_path(getattr(args, "version", None))
+    place_ai = load_model_from_path(place_path)
+    win_ai = None if getattr(args, "no_win_head", False) else load_win_head_for(place_path)
+    logger.info(
+        "[backtest] モデル: %s（Win ヘッド=%s）",
+        os.path.basename(place_path), "あり" if win_ai is not None else "なし",
+    )
+
+    # ホールドアウト featured を年でフィルタ
+    featured = load_raw(LocalPaths.FEATURED_DATA_PATH)
+    if featured is None or featured.empty:
+        logger.error("[backtest] featured_data がありません。先に rebuild-featured を実行してください")
+        return
+    years = getattr(args, "years", None)
+    if years:
+        yset = {str(y) for y in years}
+        rid = featured.index.astype(str)
+        featured = featured[rid.str[:4].isin(yset)]
+        logger.info("[backtest] 評価対象を年 %s に絞り込み: %d 行", sorted(yset), len(featured))
+    if featured.empty:
+        logger.error("[backtest] 対象レースがありません（年フィルタが厳しすぎる可能性）")
+        return
+
+    # 確定オッズ lookup（--no-final-odds なら単勝 Harville 推定にフォールバック）
+    final_odds_lookup = None
+    if not getattr(args, "no_final_odds", False):
+        snaps = load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
+        final_odds_lookup = build_final_odds_lookup(snaps) if snaps else None
+        logger.info(
+            "[backtest] 確定オッズ lookup: %d 件", len(final_odds_lookup or {})
+        )
+
+    # 評価券種の絞り込み
+    thresholds = default_thresholds()
+    if getattr(args, "bet_types", None):
+        want = set(args.bet_types)
+        thresholds = {k: v for k, v in thresholds.items() if k in want}
+        if not thresholds:
+            logger.error("[backtest] --bet-types が全券種に不一致: %s", args.bet_types)
+            return
+
+    return_processor, _ = _return_processor_db_first()
+    result = run_backtest(
+        place_ai.effective_model,
+        featured,
+        return_processor,
+        win_model=win_ai.effective_model if win_ai is not None else None,
+        final_odds_lookup=final_odds_lookup,
+        thresholds=thresholds,
+    )
+
+    if getattr(args, "json", False):
+        out = {
+            "model": os.path.basename(place_path),
+            "win_head": win_ai is not None,
+            "n_races": result["n_races"],
+            "n_candidates": result["n_candidates"],
+            "overall": result["overall"].as_dict(),
+            "per_bet_type": {str(k): v.as_dict() for k, v in result["per_bet_type"].items()},
+        }
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        print(format_report(result))
 
 
 def _doctor(args: argparse.Namespace) -> None:
@@ -1349,6 +1472,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "fetch-final-odds": _fetch_final_odds,
         "calibrate-takeout": _calibrate_takeout,
         "retrain": _retrain,
+        "backtest": _backtest,
         "doctor": _doctor,
     }
     handler = handlers.get(args.job)
