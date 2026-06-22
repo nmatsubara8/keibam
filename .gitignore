@@ -10,6 +10,8 @@ data/**/*.csv
 data/**/**/*.bin
 data/**/*.pkl
 data/*.pkl
+data/**/*.pkl.bak
+data/*.pkl.bak
 # Phase 2: Parquet バックアップも容量が大きいため除外
 data/**/*.parquet
 data/*.parquet
