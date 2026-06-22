@@ -329,9 +329,16 @@ class DataMerger:
             return
         if "date" not in self._results.columns:
             return
-        py = self._person_yearly.reset_index()
-        if "entity_id" not in py.columns:
-            py = py.rename(columns={py.columns[0]: "entity_id"})
+        # index を列に正規化（_pkey index は捨て、旧 entity_id index は復元）。二重移行で
+        # _pkey 列が残っていても安全に除去する。
+        py = self._person_yearly
+        if "entity_id" in py.columns:
+            py = py.reset_index(drop=True)
+        else:
+            py = py.reset_index()
+            if "entity_id" not in py.columns:
+                py = py.rename(columns={py.columns[0]: "entity_id"})
+        py = py.drop(columns=["_pkey"], errors="ignore")
         if "entity_type" not in py.columns or "year" not in py.columns:
             return
 

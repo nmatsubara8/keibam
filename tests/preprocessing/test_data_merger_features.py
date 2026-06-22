@@ -786,3 +786,84 @@ class TestAttachOwnerStats:
         m._attach_jockey_trainer_stats()  # owner 列が無くても落ちない
         assert "owner_win_rate" not in m._results.columns
         assert "jockey_win_rate" in m._results.columns
+
+
+# ──────────────────────────────────────────
+# 人物年度別: _merge_person_yearly（前年 as-of 結合 + _pkey 堅牢性）
+# ──────────────────────────────────────────
+
+class TestMergePersonYearly:
+    def _results(self):
+        # 2023 年のレース → 前年=2022 の成績を引く
+        return pd.DataFrame(
+            {
+                "horse_id": ["1", "2"],
+                "jockey_id": [1009, 1010],  # int64（先頭ゼロ落ち）
+                "trainer_id": ["01100", "01101"],
+                "date": pd.to_datetime(["2023-04-01", "2023-04-01"]),
+            },
+            index=pd.Index(["r01", "r01"], name="race_id"),
+        )
+
+    def _person_yearly_long(self):
+        # jockey 01009 の 2022 年成績（前年）を1行
+        return pd.DataFrame(
+            {
+                "entity_type": ["jockey"],
+                "entity_id": ["01009"],
+                "year": [2022],
+                "勝率": [0.18],
+                "複勝率": [0.45],
+                "芝勝率": [0.2],
+                "ダート勝率": [0.16],
+                "重賞勝利": [3.0],
+                "出走回数": [800.0],
+            }
+        )
+
+    def _make_py_merger(self, py: pd.DataFrame):
+        m = _make_merger(self._results())
+        m._horse_info = pd.DataFrame()
+        m._person_yearly = py
+        return m
+
+    def test_pkey_indexed_pickle(self):
+        """persist_person_yearly 形式（_pkey index + entity_id 列）で結合できる。"""
+        py = self._person_yearly_long().copy()
+        py.index = pd.Index(
+            py["entity_type"] + "/" + py["entity_id"], name="_pkey"
+        )
+        m = self._make_py_merger(py)
+        m._merge_person_yearly()
+        row = m._results[m._results["jockey_id"].astype(str).str.contains("1009")].iloc[0]
+        assert row["jockey_py_勝率"] == pytest.approx(0.18)
+
+    def test_double_migrated_pickle_does_not_crash(self):
+        """二重移行（_pkey index AND _pkey 列が両方在る）でも落ちず結合できること（回帰）。"""
+        py = self._person_yearly_long().copy()
+        # 1回目の移行: _pkey index 化
+        py.index = pd.Index(
+            py["entity_type"] + "/" + py["entity_id"], name="_pkey"
+        )
+        # 2回目の移行をうっかり実行 → _pkey が列としても残る状態を再現
+        py = py.reset_index()  # _pkey が列になる
+        py.index = pd.Index(
+            py["entity_type"] + "/" + py["entity_id"], name="_pkey"
+        )
+        # この時点で py は _pkey index かつ _pkey 列を持つ
+        assert "_pkey" in py.columns and py.index.name == "_pkey"
+        m = self._make_py_merger(py)
+        m._merge_person_yearly()  # ValueError: cannot insert _pkey を出さない
+        row = m._results[m._results["jockey_id"].astype(str).str.contains("1009")].iloc[0]
+        assert row["jockey_py_勝率"] == pytest.approx(0.18)
+        # 結合の副産物列が残っていないこと
+        assert "_pkey" not in m._results.columns
+        assert "_pry" not in m._results.columns
+
+    def test_plain_entity_id_column_pickle(self):
+        """旧形式（RangeIndex + entity_id 列、_pkey 無し）でも結合できる。"""
+        py = self._person_yearly_long()  # RangeIndex, entity_id は列
+        m = self._make_py_merger(py)
+        m._merge_person_yearly()
+        row = m._results[m._results["jockey_id"].astype(str).str.contains("1009")].iloc[0]
+        assert row["jockey_py_勝率"] == pytest.approx(0.18)
