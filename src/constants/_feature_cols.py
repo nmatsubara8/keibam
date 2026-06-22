@@ -90,6 +90,14 @@ PREV_RACE_FEATURE_COLS: list = [
     "jockey_change",      # 乗り替わりフラグ（1=替わり）
 ]
 
+# 相手強度（軽量代理・DataMerger._add_opponent_strength_stats）
+# 過去走のレース格(grade)を ordinal 化して集計。名寄せ不要・リーク無し。
+OPPONENT_STRENGTH_FEATURE_COLS: list = [
+    "faced_grade_max",     # 過去最高グレード（実力の天井）
+    "faced_grade_mean",    # 平均グレード（普段の相手レベル）
+    "faced_graded_count",  # 重賞(G3+)出走回数
+]
+
 # 行内導出（FeatureEngineering.add_derived_features）
 DERIVED_FEATURE_COLS: list = [
     "単勝_log",            # log1p(単勝)

@@ -9,6 +9,7 @@
 
 import logging
 import sys
+from typing import ClassVar
 from typing import Optional
 
 import pandas as pd
@@ -229,6 +230,7 @@ class DataMerger:
             results = self._add_speed_figure_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
             results = self._add_career_stats(results, horse_results)
+            results = self._add_opponent_strength_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
 
             output_list.append(results)
@@ -599,6 +601,49 @@ class DataMerger:
             earnings = hr.groupby(level=0)[HRCols.PRIZE].sum().rename("career_earnings")
             results = results.merge(earnings, left_on="horse_id", right_index=True, how="left")
             results["career_earnings_log"] = np.log1p(results["career_earnings"].fillna(0.0))
+        return results
+
+    # 過去に走ったレースの格（grade/class）→ ordinal。相手強度の軽量代理。
+    # G1/Jpn1=5, G2/Jpn2=4, G3/Jpn3=3, Listed=2, OP=1, 条件戦/未勝利/新馬=0。
+    _GRADE_ORDINAL: ClassVar[dict] = {
+        "G1": 5, "Jpn1": 5, "G2": 4, "Jpn2": 4, "G3": 3, "Jpn3": 3, "L": 2, "OP": 1,
+    }
+
+    def _add_opponent_strength_stats(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """相手強度（軽量代理）: 過去に走ったレースの格を ordinal 化して集計する（リーク無し）。
+
+        名寄せ不要。horse_results のレース名から grade を抽出し、各馬の過去走（当該レース日
+        より前にカット済み）で集計する。
+        - ``faced_grade_max``    : これまでに走った最高グレード（実力の天井の代理）
+        - ``faced_grade_mean``   : 平均グレード（普段戦っている相手レベル）
+        - ``faced_graded_count`` : 重賞(G3 以上)出走回数
+        前走履歴なしの馬は全特徴 NaN（未知＝安全な欠損）。
+        """
+        from src.preprocessing._entity_resolver import extract_race_grade
+
+        name_col = HRCols.RACE_NAME
+        if horse_results.empty or name_col not in horse_results.columns:
+            return results
+
+        hr = horse_results
+        names = hr[name_col].astype(str)
+        # ユニークなレース名だけ grade 解決（重複名の正規表現コストを回避）
+        grade_by_name = {
+            n: self._GRADE_ORDINAL.get(extract_race_grade(n) or "", 0) for n in names.unique()
+        }
+        faced = names.map(grade_by_name)
+
+        g = faced.groupby(level=0)
+        results = results.merge(
+            g.max().rename("faced_grade_max"), left_on="horse_id", right_index=True, how="left"
+        )
+        results = results.merge(
+            g.mean().rename("faced_grade_mean"), left_on="horse_id", right_index=True, how="left"
+        )
+        graded = (faced >= 3).astype(float).groupby(level=0).sum().rename("faced_graded_count")
+        results = results.merge(graded, left_on="horse_id", right_index=True, how="left")
         return results
 
     # ──────────────────────────────────────────

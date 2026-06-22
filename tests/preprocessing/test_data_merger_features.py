@@ -314,6 +314,47 @@ class TestAddPrevRaceFeatures:
 
 
 # ──────────────────────────────────────────
+# 相手強度（軽量代理）: _add_opponent_strength_stats
+# ──────────────────────────────────────────
+
+class TestAddOpponentStrengthStats:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": [1, 2]},
+            index=pd.Index(["r01", "r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        # horse1: G1/G3/未勝利 を経験。horse2: 履歴なし。
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1, 1],
+                "レース名": ["有馬記念(G1)", "ラジオNIKKEI賞(G3)", "３歳未勝利"],
+            }
+        ).set_index("horse_id")
+
+    def test_grade_aggregates(self):
+        m = _make_merger(self._results())
+        out = m._add_opponent_strength_stats(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        assert h1["faced_grade_max"] == 5            # G1
+        assert h1["faced_grade_mean"] == pytest.approx((5 + 3 + 0) / 3)
+        assert h1["faced_graded_count"] == 2         # G1 + G3（>=3）
+
+    def test_no_history_is_nan(self):
+        m = _make_merger(self._results())
+        out = m._add_opponent_strength_stats(self._results(), self._hr())
+        h2 = out[out["horse_id"] == 2].iloc[0]
+        assert pd.isna(h2["faced_grade_max"])
+        assert pd.isna(h2["faced_grade_mean"])
+
+    def test_empty_hr_noop(self):
+        m = _make_merger(self._results())
+        out = m._add_opponent_strength_stats(self._results(), pd.DataFrame())
+        assert "faced_grade_max" not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2n(Batch B): _add_aptitude_stats
 # ──────────────────────────────────────────
 

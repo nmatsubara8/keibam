@@ -272,6 +272,7 @@ class FeatureEngineering:
             GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             N_RACES_LIST,
+            OPPONENT_STRENGTH_FEATURE_COLS,
             PACE_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
             SIRE_FEATURE_COLS,
@@ -303,6 +304,7 @@ class FeatureEngineering:
             + SIRE_FEATURE_COLS
             + APTITUDE_FEATURE_COLS
             + SPEED_FIGURE_FEATURE_COLS
+            + OPPONENT_STRENGTH_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:
