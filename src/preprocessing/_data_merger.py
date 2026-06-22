@@ -178,9 +178,10 @@ class DataMerger:
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
-        # peds_0=父(sire), peds_2=母父(broodmare sire)。存在する血統列を horse_results に付与し、
-        # 過去走の産駒成績から sire/damsire 集計（_add_sire_stats / _add_damsire_stats）に使う。
-        ped_cols = [c for c in ("peds_0", "peds_2") if c in self._peds.columns]
+        # peds_0=父(sire), peds_32=母父(broodmare sire)。実データ検証で母=peds_31(各馬ほぼ固有)、
+        # その次の peds_32 が母父(199ユニーク・父と12%重複)と確認。存在する血統列を horse_results に
+        # 付与し、過去走の産駒成績から sire/damsire 集計に使う。
+        ped_cols = [c for c in ("peds_0", "peds_32") if c in self._peds.columns]
         if ped_cols:
             hr_with_sire = self._horse_results.join(self._peds[ped_cols], how="left")
         else:
@@ -709,11 +710,13 @@ class DataMerger:
         return self._add_pedigree_stats(results, target_date, "peds_0", "sire")
 
     def _add_damsire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """母父（broodmare sire=peds_2）の産駒集計特徴量を追加（damsire_*）。
+        """母父（broodmare sire=peds_32）の産駒集計特徴量を追加（damsire_*）。
 
         母父は距離・ダート適性に効く競馬の重要軸。父(sire)と同じく過去走の産駒成績で集計する。
+        血統表は行順フラット化のため母=peds_31・母父=peds_32（実データで検証済み。
+        peds_2 は父父父であり母父ではない）。
         """
-        return self._add_pedigree_stats(results, target_date, "peds_2", "damsire")
+        return self._add_pedigree_stats(results, target_date, "peds_32", "damsire")
 
     def _add_pedigree_stats(
         self, results: pd.DataFrame, target_date, peds_col: str, prefix: str

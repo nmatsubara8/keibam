@@ -656,11 +656,11 @@ class TestAddSireStats:
 
 class TestAddDamsireStats:
     def _make_peds(self):
-        # peds_0=父, peds_2=母父。母父 bmsX を horse1,3 が共有。
+        # peds_0=父, peds_32=母父。母父 bmsX を horse1,3 が共有。
         return pd.DataFrame(
             {
                 "peds_0": pd.Categorical(["sireA", "sireB", "sireA"]),
-                "peds_2": pd.Categorical(["bmsX", "bmsY", "bmsX"]),
+                "peds_32": pd.Categorical(["bmsX", "bmsY", "bmsX"]),
             },
             index=pd.Index([1, 2, 3], name="horse_id"),
         )
@@ -668,7 +668,7 @@ class TestAddDamsireStats:
     def _make_hr(self, peds_df):
         hr = _horse_results_df()
         hr["peds_0"] = hr.index.map(peds_df["peds_0"])
-        hr["peds_2"] = hr.index.map(peds_df["peds_2"])
+        hr["peds_32"] = hr.index.map(peds_df["peds_32"])
         return hr
 
     def test_damsire_features_added_and_correct(self):
@@ -694,7 +694,7 @@ class TestAddDamsireStats:
         )
         out = m._add_damsire_stats(results, pd.Timestamp("2023-05-01"))
         assert "_ped_key" not in out.columns
-        assert "peds_2" not in out.columns
+        assert "peds_32" not in out.columns
 
 
 # ──────────────────────────────────────────
