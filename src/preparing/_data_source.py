@@ -167,7 +167,10 @@ class NetkeibaDataSource(AbstractRaceDataSource):
                 if interval > 0:
                     time.sleep(interval)
             first = False
-            limiter.acquire()  # 時間あたり上限に達していれば枠が空くまで待機
+            # fetch_pro_yoso_marks は 1レースで2リクエスト（出馬表＋予想印API）を行うため
+            # 時間あたり上限を2回計上する。
+            limiter.acquire()
+            limiter.acquire()
             try:
                 df = fetch_pro_yoso_marks(race_id)
                 persist_yoso_marks(df, LocalPaths.RAW_YOSO_MARKS_PATH)

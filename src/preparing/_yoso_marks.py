@@ -79,8 +79,54 @@ def _coerce_payload(payload: Any) -> dict[str, Any]:
     raise TypeError(f"unsupported payload type: {type(payload)!r}")
 
 
+def parse_umaban_map(html: str) -> dict[int, int]:
+    """出馬表 HTML から uma_id→馬番 の対応表を作る。
+
+    予想印 API の `mark` キーは **uma_id（出走登録ID）**で馬番ではない。出馬表の各行は
+    ``<tr id="tr_<uma_id>">`` を持ち、行内 ``td.Umaban`` が馬番。両者を対応づける。
+    """
+    from bs4 import BeautifulSoup
+
+    if not html:
+        return {}
+    soup = BeautifulSoup(html, "html.parser")
+    out: dict[int, int] = {}
+    for tr in soup.select("tr[id^=tr_]"):
+        m = re.match(r"tr_(\d+)$", tr.get("id", ""))
+        if not m:
+            continue
+        umaban_td = tr.find("td", class_=re.compile("Umaban"))
+        if umaban_td is None:
+            continue
+        txt = umaban_td.get_text(strip=True)
+        if not txt.isdigit():
+            continue
+        out[int(m.group(1))] = int(txt)
+    return out
+
+
+def fetch_umaban_map(
+    race_id: str, *, timeout: float = 10.0, session: Optional[Any] = None
+) -> dict[int, int]:
+    """出馬表ページを取得して uma_id→馬番 を返す（取得失敗時は空 dict）。"""
+    import requests
+
+    from src.preparing._scraper import _DEFAULT_USER_AGENT
+
+    url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+    sess = session or requests
+    try:
+        resp = sess.get(url, headers={"User-Agent": _DEFAULT_USER_AGENT}, timeout=timeout)
+        resp.raise_for_status()
+        return parse_umaban_map(resp.text)
+    except Exception as e:  # noqa: BLE001 — 取得失敗は空（呼び出し側で印を捨てる）
+        logger.warning("uma_id→馬番 取得失敗 race_id=%s: %s", race_id, e)
+        return {}
+
+
 def parse_pro_yoso_json(
-    payload: Any, race_id: str, free_only: bool = False
+    payload: Any, race_id: str, free_only: bool = False,
+    umaban_map: Optional[dict[int, int]] = None,
 ) -> pd.DataFrame:
     """予想印 API レスポンスを `raw_yoso_marks` ロング形式 DataFrame に変換する。
 
@@ -90,6 +136,9 @@ def parse_pro_yoso_json(
     race_id : 対象レースID（応答に含まれないため呼び出し側が付与）
     free_only : 既定 False（**無料＋プレミアム指定の両方を取得**）。True にすると
         無料予想家（goods_kbn ∈ FREE_GOODS_KBN）のみ。由来は `goods_kbn` 列に保持。
+    umaban_map : uma_id→馬番 の対応表（出馬表由来）。``mark`` のキーは uma_id のため、
+        これで馬番に変換する。**指定時、表に無い uma_id（取消馬等）の印は捨てる**。
+        None（既定）のときはキーをそのまま馬番として扱う（後方互換・主にテスト用）。
 
     Returns
     -------
@@ -117,12 +166,19 @@ def parse_pro_yoso_json(
         marks = item.get("mark") or {}
         if not isinstance(marks, dict):
             continue  # 取得できない予想家は黙ってスキップ（エラーにしない）
-        for umaban_raw, code_raw in marks.items():
+        for uma_id_raw, code_raw in marks.items():
             try:
-                umaban = int(umaban_raw)
+                uma_id = int(uma_id_raw)
                 code = int(code_raw)
             except (TypeError, ValueError):
                 continue
+            # mark のキーは uma_id。対応表があれば馬番に変換（無い uma_id は捨てる）。
+            if umaban_map is not None:
+                umaban = umaban_map.get(uma_id)
+                if umaban is None:
+                    continue
+            else:
+                umaban = uma_id  # 後方互換: 表なしはキーをそのまま
             glyph = MARK_CODE_TO_GLYPH.get(code)
             if glyph is None:
                 continue  # 未知コードは無視
@@ -207,10 +263,16 @@ def fetch_pro_yoso_marks(
         "Referer": f"https://race.netkeiba.com/yoso/mark_list.html?race_id={race_id}",
     }
     sess = session or requests
+    # mark のキーは uma_id のため、先に出馬表から uma_id→馬番 を引いて変換する。
+    # 取得できないと馬番を確定できないので印を捨てる（誤った馬番で結合しない）。
+    umaban_map = fetch_umaban_map(race_id, timeout=timeout, session=session)
+    if not umaban_map:
+        logger.warning("yoso marks: uma_id→馬番 が空のため race_id=%s をスキップ", race_id)
+        return pd.DataFrame(columns=_LONG_COLUMNS)
     try:
         resp = sess.get(API_URL, params=params, headers=headers, timeout=timeout)
         resp.raise_for_status()
-        return parse_pro_yoso_json(resp.text, race_id, free_only=free_only)
+        return parse_pro_yoso_json(resp.text, race_id, free_only=free_only, umaban_map=umaban_map)
     except Exception as e:  # noqa: BLE001 — 取得失敗はスキップ（空を返す）
         logger.warning("yoso marks 取得失敗 race_id=%s: %s", race_id, e)
         return pd.DataFrame(columns=_LONG_COLUMNS)

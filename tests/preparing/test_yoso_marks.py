@@ -155,3 +155,45 @@ class TestAggregate:
     def test_empty_input(self):
         agg = aggregate_consensus(pd.DataFrame())
         assert agg.empty
+
+
+class TestUmabanMapConversion:
+    """予想印 API の mark キーは uma_id。出馬表 tr_<uma_id> で馬番に変換する。"""
+
+    _SHUTUBA = (
+        '<table class="Shutuba_Table">'
+        '<tr class="HorseList" id="tr_9"><td class="Umaban Num1">1</td></tr>'
+        '<tr class="HorseList" id="tr_1"><td class="Umaban Num2">2</td></tr>'
+        '<tr class="HorseList" id="tr_16"><td class="Umaban Num5">5</td></tr>'
+        "</table>"
+    )
+
+    def test_parse_umaban_map(self):
+        from src.preparing._yoso_marks import parse_umaban_map
+
+        assert parse_umaban_map(self._SHUTUBA) == {9: 1, 1: 2, 16: 5}
+        assert parse_umaban_map("") == {}
+
+    def test_parse_with_umaban_map_converts_and_drops_unknown(self):
+        from src.preparing._yoso_marks import parse_pro_yoso_json, parse_umaban_map
+
+        m = parse_umaban_map(self._SHUTUBA)
+        payload = {
+            "status": "OK",
+            "data": {"ary_item": [
+                {"yosoka_id": "266994", "yosoka_name": "本紙", "goods_kbn": "no1_free",
+                 "mark": {"1": "1", "16": "2", "99": "1"}},  # uma_id 99 は出馬表に無い
+            ]},
+        }
+        df = parse_pro_yoso_json(payload, "R1", umaban_map=m)
+        got = {int(r["馬番"]): r["mark"] for _, r in df.iterrows()}
+        assert got == {2: "◎", 5: "○"}  # uma_id 1→馬番2(◎), 16→馬番5(○), 99 は除外
+
+    def test_none_map_is_legacy_passthrough(self):
+        from src.preparing._yoso_marks import parse_pro_yoso_json
+
+        payload = {"status": "OK", "data": {"ary_item": [
+            {"yosoka_id": "x", "yosoka_name": "n", "goods_kbn": "no1_free",
+             "mark": {"7": "1"}}]}}
+        df = parse_pro_yoso_json(payload, "R1")  # umaban_map 未指定
+        assert int(df.iloc[0]["馬番"]) == 7  # キーをそのまま（後方互換）
