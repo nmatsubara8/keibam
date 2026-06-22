@@ -421,6 +421,61 @@ class TestBackfillPeds:
         assert ids == ["A", "C"]
 
 
+class TestBackfillHorses:
+    """backfill-horses: horse_id を raw_results 列から dedup 列挙・取得済みスキップ。"""
+
+    def _run(self, monkeypatch, results, horse_results, argv):
+        import src.pipeline._ingestion as ing
+        import src.preparing._data_source as ds
+        import src.pipeline.run_pipeline as rp
+        from src.constants._local_paths import LocalPaths
+
+        def fake_load(p):
+            if p == LocalPaths.RAW_HORSE_RESULTS_PATH:
+                return horse_results
+            if p == LocalPaths.RAW_RESULTS_PATH:
+                return results
+            return __import__("pandas").DataFrame()
+
+        monkeypatch.setattr(ing, "load_raw", fake_load)
+        called = {}
+
+        class _Src:
+            name = "netkeiba"
+
+            def acquire_horses(self, ids):
+                called["ids"] = list(ids)
+
+        monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
+        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
+        rp._backfill_horses(rp._parse_args(argv))
+        return called.get("ids")
+
+    def test_dedup_and_skip_existing(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame({"horse_id": ["A", "A", "B", "C"], "着順": [1, 2, 3, 1]})
+        hr = pd.DataFrame({"着順": [1]}, index=pd.Index(["C"], name="horse_id"))  # C 取得済み
+        ids = self._run(monkeypatch, results, hr, ["backfill-horses"])
+        assert ids == ["A", "B"]
+
+    def test_no_skip_existing(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame({"horse_id": ["A", "C"], "着順": [1, 1]})
+        hr = pd.DataFrame({"着順": [1]}, index=pd.Index(["C"], name="horse_id"))
+        ids = self._run(monkeypatch, results, hr, ["backfill-horses", "--no-skip-existing"])
+        assert ids == ["A", "C"]
+
+    def test_limit(self, monkeypatch):
+        import pandas as pd
+
+        results = pd.DataFrame({"horse_id": ["A", "B", "C", "D"], "着順": [1, 1, 1, 1]})
+        hr = pd.DataFrame()
+        ids = self._run(monkeypatch, results, hr, ["backfill-horses", "--limit", "2"])
+        assert ids == ["A", "B"]
+
+
 class TestBackfillYoso:
     """backfill-yoso: race_id 列の正規化・年代ゲート・取得済みスキップ。"""
 
