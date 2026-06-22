@@ -193,13 +193,19 @@ def fetch_pro_yoso_marks(
     """
     import requests  # 遅延 import（解析・テストは requests 不要）
 
+    from src.preparing._scraper import _DEFAULT_USER_AGENT
+
     params = {
         "input": "UTF-8",
         "output": "json",
         "race_id": race_id,
         "ref_type": "2",
     }
-    headers = {"Referer": f"https://race.netkeiba.com/yoso/mark_list.html?race_id={race_id}"}
+    # 2024 のクローラー対策で UA 未設定だと HTTP 400。ブラウザ UA を必ず付ける。
+    headers = {
+        "User-Agent": _DEFAULT_USER_AGENT,
+        "Referer": f"https://race.netkeiba.com/yoso/mark_list.html?race_id={race_id}",
+    }
     sess = session or requests
     try:
         resp = sess.get(API_URL, params=params, headers=headers, timeout=timeout)
