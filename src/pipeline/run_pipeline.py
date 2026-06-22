@@ -629,7 +629,10 @@ def _retrain(args: argparse.Namespace) -> None:
     # Phase 1: pickle → DB の自動移行（DB が空の場合のみ実行される）
     _auto_migrate_db()
 
-    cfg = RetrainConfig(use_stacking=not args.no_stacking)
+    cfg = RetrainConfig(
+        use_stacking=not args.no_stacking,
+        train_win_head=not getattr(args, "no_win_head", False),
+    )
 
     featured_path = LocalPaths.FEATURED_DATA_PATH
     if not os.path.exists(featured_path):
@@ -1071,6 +1074,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     retrain_p = sub.add_parser("retrain", help="全データで週次再学習")
     retrain_p.add_argument("--version-name", default=None, help="バージョン名（省略時は日付自動生成）")
     retrain_p.add_argument("--no-stacking", action="store_true", help="スタッキングを使わない（LightGBM のみ）")
+    retrain_p.add_argument(
+        "--no-win-head", action="store_true",
+        help="Win ヘッド(1着予測, <version>__win.pickle)の併行学習を行わない（Place ヘッドのみ）",
+    )
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
     retrain_p.add_argument(
         "--params-rank",

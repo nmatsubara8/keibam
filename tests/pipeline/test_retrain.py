@@ -239,3 +239,92 @@ def test_retrain_job_injects_lgb_params(tmp_path):
     assert factory.created[0].injected_params == params
     assert meta["params_rank"] == 2
     assert meta["lgb_params"] == params
+
+
+# ---------------------------------------------------------------------------
+# Stage B: Win ヘッド併行学習（lightgbm/DataSplitter 非依存の軽量スタブ）
+# ---------------------------------------------------------------------------
+
+
+class _LightDatasets:
+    def __init__(self):
+        self._X = pd.DataFrame({"f": [0.1, 0.2, 0.3, 0.4]})
+        self._y = pd.Series([1, 0, 0, 1])
+
+    @property
+    def X_test(self):
+        return self._X
+
+    @property
+    def y_test(self):
+        return self._y
+
+
+class _LightAI:
+    def __init__(self, target_col):
+        X = np.array([[0.1], [0.2], [0.3], [0.4]])
+        y = np.array([1, 0, 0, 1])
+        self.effective_model = LogisticRegression(max_iter=200).fit(X, y)
+        self.datasets = _LightDatasets()
+        self.target_col = target_col
+
+    def train_with_stacking(self, **kwargs):
+        pass
+
+    def train_without_tuning(self):
+        pass
+
+
+class _TwoHeadFactory:
+    """target_col / suffix を尊重する 2 ヘッド対応スタブ。"""
+
+    def __init__(self):
+        self.saved = []  # (version, suffix, target_col)
+        self.created = []  # target_col
+
+    def create(self, featured_data, test_size, valid_size, target_col="rank"):
+        self.created.append(target_col)
+        return _LightAI(target_col)
+
+    def save(self, ai, version_name, suffix=""):
+        self.saved.append((version_name, suffix, ai.target_col))
+
+
+def test_retrain_trains_and_saves_win_head(tmp_path):
+    factory = _TwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    meta = job.run(_make_featured(), vname="v_2head", with_tuning=False)
+
+    # Place(rank) と Win(rank_win) の 2 ヘッドが create された
+    assert factory.created == ["rank", "rank_win"]
+    # 保存は Place(suffix="") と Win(suffix="__win") の 2 回
+    assert ("v_2head", "", "rank") in factory.saved
+    assert ("v_2head", "__win", "rank_win") in factory.saved
+    # メタに Win ヘッドの AUC が記録される
+    assert "win_head" in meta and "auc_test" in meta["win_head"]
+
+
+def test_retrain_skips_win_head_when_disabled(tmp_path):
+    factory = _TwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=False)
+    job = RetrainJob(factory, cfg)
+    meta = job.run(_make_featured(), vname="v_place_only", with_tuning=False)
+
+    assert factory.created == ["rank"]  # Place のみ
+    assert all(suffix == "" for _, suffix, _ in factory.saved)
+    assert "win_head" not in meta
+
+
+def test_retrain_win_head_skipped_if_factory_unsupported(tmp_path):
+    """target_col 非対応の旧 factory では Win ヘッドを安全にスキップ（非致命）。"""
+    factory = _StubFactory()  # create(featured_data, test_size, valid_size) のみ
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    # _StubAI は DataSplitter(lightgbm) を要するため、ここでは create が TypeError 以前に
+    # 失敗し得る。Win ヘッドが本体 retrain を壊さないこと（例外を投げない）だけ確認する。
+    try:
+        meta = job.run(_make_featured(), vname="v_compat", with_tuning=False)
+    except ModuleNotFoundError:
+        pytest.skip("lightgbm 未導入環境（Place ヘッド学習に必要）")
+    assert "win_head" not in meta

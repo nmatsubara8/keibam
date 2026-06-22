@@ -99,6 +99,27 @@ def load_model_from_path(path: str):
     return KeibaAIFactory.load(path)
 
 
+def win_head_path_for(place_path: str) -> str:
+    """Place モデルパスから対応する Win ヘッドのパスを導く（``X.pickle`` → ``X__win.pickle``）。"""
+    if place_path.endswith(".pickle"):
+        return place_path[: -len(".pickle")] + "__win.pickle"
+    return place_path + "__win.pickle"
+
+
+def load_win_head_for(place_path: str):
+    """Place モデルに対応する Win ヘッド（<version>__win.pickle）を読み込む。
+
+    存在しなければ None（Win ヘッド未学習の旧モデル・--no-win-head 運用との後方互換）。
+    Stage B: 連系の Harville に真の勝率を供給する 1着予測モデル。
+    """
+    from src.training._keiba_ai_factory import KeibaAIFactory
+
+    win_path = win_head_path_for(place_path)
+    if not os.path.exists(win_path):
+        return None
+    return KeibaAIFactory.load(win_path)
+
+
 # ---------------------------------------------------------------------------
 # オッズ スナップショット
 # ---------------------------------------------------------------------------

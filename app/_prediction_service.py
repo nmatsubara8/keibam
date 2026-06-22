@@ -62,13 +62,17 @@ def run_prediction(
     thresholds: dict | None = None,
     bet_type_params: dict | None = None,
     takeout=None,
+    win_model=None,
 ) -> list[BetCandidate]:
     """EV 選定 → 確信度付与 → ケリー配分の全パイプラインを実行する。
 
     Parameters
     ----------
-    model : predict_proba(X) → ndarray を持つ学習済みモデル。
+    model : predict_proba(X) → ndarray を持つ学習済みモデル（Place ヘッド=top3 予測）。
     X : 対象レースの特徴量 DataFrame（race_id インデックス、TANSHO_ODDS 含む）。
+    win_model : Win ヘッド（1着予測）。指定すると連系の Harville に真の勝率を供給し、
+        複勝は Place ヘッド(model)の top3 出力を直接使う（Stage B）。None なら
+        従来通り model 単独（top3 出力を勝率代理に流用）。
     op_config : 資金・ケリー設定。
     thresholds : 馬券種 → EV 閾値（省略時は BetThresholds の既定値）。
     bet_type_params : 券種別最適化パラメータ {券種: BetTypeParams}（省略可）。
@@ -86,8 +90,11 @@ def run_prediction(
         thresholds = {**thresholds, BetType.TANSHO: op_config.tansho_ev_threshold}
     takeout = _load_live_takeout(takeout)
 
-    # 1. 較正勝率 + 現在オッズのテーブル
+    # 1. 較正確率 + 現在オッズのテーブル（Place ヘッド=top3 予測）
     table = ExpectedValueScorePolicy.calc(model, X)
+    # Stage B: Win ヘッドがあれば、連系の Harville に渡す「勝率」テーブルを別途作る。
+    # 複勝は Place(table) の top3 出力を直接使い、連系は Win(win_table) を使う。
+    win_table = ExpectedValueScorePolicy.calc(win_model, X) if win_model is not None else None
 
     # 2. オッズ供給。既定は現在オッズ（歴史推定）。use_predicted_odds=True かつ
     #    odds_watch の最新予測（オッズ力学アンサンブル）が存在する場合は、
@@ -112,7 +119,14 @@ def run_prediction(
 
     # 3. EV 選定（券種別最適化パラメータがあれば温度・較正・閾値を反映）
     policy = ExpectedValueBetPolicy(provider, thresholds=thresholds, bet_type_params=bet_type_params)
-    candidates = policy.select(table[[ResultsCols.UMABAN, PROB]])
+    place_cols = table[[ResultsCols.UMABAN, PROB]]
+    if win_table is not None:
+        # 連系は Win ヘッドの勝率、複勝は Place ヘッドの top3 を直接使う
+        candidates = policy.select(
+            win_table[[ResultsCols.UMABAN, PROB]], place_prob_table=place_cols
+        )
+    else:
+        candidates = policy.select(place_cols)
 
     # 検証済み戦略: オッズ上限フィルタ（既定 inf=無効）。3–15倍にエッジが集中し、
     # 15倍超は -EV な人気薄ジャンクのため除外する。

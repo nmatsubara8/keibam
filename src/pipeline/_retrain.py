@@ -43,6 +43,10 @@ class RetrainConfig:
     valid_size: float = 0.2
     meta_ratio: float = 0.3
     use_stacking: bool = True
+    # Win ヘッド（target=rank_win=1着）を併せて学習し <version>__win.pickle に保存するか。
+    # Place ヘッド（既定 target=rank=top3）は常に学習・保存する。連系の Harville に
+    # 真の勝率を供給するために使う（Stage B）。
+    train_win_head: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +111,11 @@ def metadata_path(models_dir: str) -> str:
 class AIFactory(Protocol):
     """KeibaAIFactory の抽象（テスト時はスタブを注入）。"""
 
-    def create(self, featured_data: pd.DataFrame, test_size: float, valid_size: float): ...
+    def create(
+        self, featured_data: pd.DataFrame, test_size: float, valid_size: float, target_col: str = "rank"
+    ): ...
 
-    def save(self, ai, version_name: str) -> None: ...
+    def save(self, ai, version_name: str, suffix: str = "") -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +214,58 @@ class RetrainJob:
             meta["lgb_params"] = lgb_params
 
         self._factory.save(ai, vname)
+
+        # Win ヘッド（target=rank_win=1着）を併せて学習・保存（Stage B）。
+        # Place ヘッド（top3）の保存後に行い、失敗しても本体 retrain は壊さない。
+        if self._cfg.train_win_head:
+            win_metrics = self._train_and_save_win_head(
+                featured_data, vname, lgb_params, base_models_config
+            )
+            if win_metrics is not None:
+                meta["win_head"] = win_metrics
+
         save_metadata(meta, metadata_path(self._cfg.models_dir))
         logger.info("[retrain] version=%s auc_test=%s", vname, metrics["auc_test"])
         return meta
+
+    def _train_and_save_win_head(
+        self, featured_data, vname, lgb_params, base_models_config
+    ) -> dict | None:
+        """Win ヘッド（1着予測）を学習し <version>__win.pickle に保存する。
+
+        連系（単勝/馬連/馬単/三連複/三連単）の Harville に真の勝率を供給するためのモデル。
+        Place ヘッドと同じ featured_data・学習経路を target=rank_win で再利用する
+        （Optuna 再探索はしない＝with_tuning=False）。失敗は non-fatal でスキップ。
+        """
+        try:
+            win_ai = self._factory.create(
+                featured_data,
+                test_size=self._cfg.test_size,
+                valid_size=self._cfg.valid_size,
+                target_col="rank_win",
+            )
+        except TypeError:
+            logger.warning("[retrain] factory が target_col 非対応のため Win ヘッドをスキップ")
+            return None
+        try:
+            if lgb_params and hasattr(win_ai, "set_lgb_params"):
+                win_ai.set_lgb_params(lgb_params)
+            if self._cfg.use_stacking:
+                win_ai.train_with_stacking(
+                    meta_ratio=self._cfg.meta_ratio,
+                    with_tuning=False,
+                    base_models_config=base_models_config,
+                )
+            else:
+                win_ai.train_without_tuning()
+            win_metrics = evaluate_test(
+                win_ai.effective_model, win_ai.datasets.X_test, win_ai.datasets.y_test
+            )
+            self._factory.save(win_ai, vname, suffix="__win")
+            logger.info(
+                "[retrain] Win ヘッド保存: %s__win auc_test=%s", vname, win_metrics["auc_test"]
+            )
+            return win_metrics
+        except Exception as e:  # noqa: BLE001 — Win ヘッド失敗で Place 本体を失わない
+            logger.warning("[retrain] Win ヘッド学習に失敗（スキップ）: %s", e)
+            return None
