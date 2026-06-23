@@ -82,6 +82,14 @@ class TestClassifyCondition:
         assert classify_race_class("オープン") == Master.RACE_CLASS_OPEN
         assert classify_race_class("オープン特別") == Master.RACE_CLASS_OPEN_SPECIAL
 
+    def test_makedebut_is_shinba(self):
+        # JRA の新馬戦ブランド「メイクデビュー」も新馬として分類
+        assert classify_race_class("2歳メイクデビュー札幌") == Master.RACE_CLASS_SHINBA
+
+    def test_listed_literal_text(self):
+        # (L) 以外に文字列「リステッド」でも分類できる
+        assert classify_race_class("リステッド競走") == Master.RACE_CLASS_LISTED
+
     def test_grade_priority_over_open(self):
         # オープン特別だが (GⅢ) ならグレード優先
         assert classify_race_class("オープン特別(GⅢ)") == Master.RACE_CLASS_G3

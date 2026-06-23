@@ -353,6 +353,7 @@ _RACE_GRADE_TO_CLASS = {
 
 # 条件戦・OP のテキスト判定（NFKC 後・新称/旧称を網羅）。上から優先。
 _RACE_CONDITION_RULES: list = [
+    ("リステッド", Master.RACE_CLASS_LISTED),  # (L) 以外に文字列「リステッド」で書かれる場合
     ("オープン特別", Master.RACE_CLASS_OPEN_SPECIAL),
     ("オープン", Master.RACE_CLASS_OPEN),
     ("3勝クラス", Master.RACE_CLASS_3SHO),
@@ -364,6 +365,7 @@ _RACE_CONDITION_RULES: list = [
     ("500万下", Master.RACE_CLASS_1SHO),
     ("未勝利", Master.RACE_CLASS_MISHORI),
     ("新馬", Master.RACE_CLASS_SHINBA),
+    ("メイクデビュー", Master.RACE_CLASS_SHINBA),  # JRA の新馬戦ブランド名（=新馬）
 ]
 
 
