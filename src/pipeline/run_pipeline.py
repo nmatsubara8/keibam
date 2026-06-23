@@ -109,6 +109,14 @@ def _scrape_new_horse_data(source=None) -> int:
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import load_raw
 
+    # KEIBA_SKIP_HORSES=1: 馬ページのインライン取得をスキップする。過去データの
+    # 大量バックフィルでは ingest を「レース取込のみ」に絞り、馬ページ・血統は後段の
+    # backfill-horses / backfill-peds で別途・低速に取得する方が安全（レート制限/
+    # ブロック時に毎回 未取得馬を再試行して時間を浪費するのを防ぐ）。
+    if os.environ.get("KEIBA_SKIP_HORSES", "").strip().lower() in ("1", "true", "yes"):
+        logger.info("[ingest] KEIBA_SKIP_HORSES=1: 馬ページ取得をスキップ（後で backfill-horses / backfill-peds）")
+        return 0
+
     if source is None:
         from src.preparing._data_source import NetkeibaDataSource
 

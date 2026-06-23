@@ -10,6 +10,22 @@ import pytest
 
 from src.pipeline.run_pipeline import _filter_final_odds_race_ids
 from src.pipeline.run_pipeline import _parse_args
+from src.pipeline.run_pipeline import _scrape_new_horse_data
+
+
+class _RaisingSource:
+    """acquire_horses が呼ばれたら失敗するスタブ（スキップ確認用）。"""
+
+    name = "stub"
+
+    def acquire_horses(self, ids):  # pragma: no cover - 呼ばれないことを検証
+        raise AssertionError("KEIBA_SKIP_HORSES=1 のとき馬取得を呼んではいけない")
+
+
+def test_skip_horses_env_skips_fetch(monkeypatch):
+    monkeypatch.setenv("KEIBA_SKIP_HORSES", "1")
+    # source.acquire_horses が呼ばれず 0 を返す（load_raw まで到達しない）
+    assert _scrape_new_horse_data(source=_RaisingSource()) == 0
 
 
 # ---------------------------------------------------------------------------
