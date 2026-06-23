@@ -21,6 +21,12 @@ class TestClassifyGrade:
         assert classify_race_class("レース(G2)") == Master.RACE_CLASS_G2
         assert classify_race_class("レース(G3)") == Master.RACE_CLASS_G3
 
+    def test_halfwidth_latin_roman_grades(self):
+        # 半角ラテン I のローマ数字表記（GI/GII/GIII）
+        assert classify_race_class("レース(GI)") == Master.RACE_CLASS_G1
+        assert classify_race_class("レース(GII)") == Master.RACE_CLASS_G2
+        assert classify_race_class("レース(GIII)") == Master.RACE_CLASS_G3
+
     def test_fullwidth_alnum_grade(self):
         # Ｇ３（全角英数）→ NFKC → G3
         assert classify_race_class("レースＧ３") == Master.RACE_CLASS_G3
