@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 
 from src.constants._master import Master
+from src.constants._master import classify_race_class
 
 if TYPE_CHECKING:
     from bs4 import BeautifulSoup
@@ -261,32 +262,17 @@ def _parse_race_header(soup: BeautifulSoup, race_id: str):
                 info["ground_state"] = gs
                 break
 
-    # レースクラス: RaceName / RaceData02 のテキストから判定
+    # レースクラス: RaceName / RaceData02 のテキストから判定。
+    # classify_race_class が NFKC + 正規表現でグレード(GⅢ/GIII/Ｇ３)・リステッド((L))・
+    # 条件戦(全角数字・旧称500-1600万下)を頑健に正規化する（現レース取得を学習側と統一）。
     data02 = soup.find(class_="RaceData02")
     text02 = data02.get_text(" ", strip=True) if data02 is not None else ""
     name_el = soup.find(class_="RaceName")
     text_name = name_el.get_text(" ", strip=True) if name_el is not None else ""
     class_text = " ".join([text_name, text02])
-    # グレードを優先的に判定
-    if "G3" in class_text:
-        info["race_class"] = Master.RACE_CLASS_G3
-    elif "G2" in class_text:
-        info["race_class"] = Master.RACE_CLASS_G2
-    elif "G1" in class_text:
-        info["race_class"] = Master.RACE_CLASS_G1
-    else:
-        for race_class in Master.RACE_CLASS_LIST:
-            if race_class in class_text:
-                info["race_class"] = race_class
-                break
-        # 旧表記の救済
-        if info["race_class"] is NaN:
-            if ("500万下" in class_text):
-                info["race_class"] = Master.RACE_CLASS_1SHO
-            elif ("1000万下" in class_text):
-                info["race_class"] = Master.RACE_CLASS_2SHO
-            elif ("1600万下" in class_text):
-                info["race_class"] = Master.RACE_CLASS_3SHO
+    race_class = classify_race_class(class_text)
+    if race_class is not None:
+        info["race_class"] = race_class
 
     return info
 
