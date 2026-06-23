@@ -190,6 +190,14 @@ APTITUDE_FEATURE_COLS: list = [
 # §2i 多窓集計の対象列（horse_id 単独集計）。着順に加え能力・終盤脚力・実績を集計。
 AGG_TARGET_COLS: list = ["着順", "着差", "上り", "賞金"]
 
+# 直近 N レースの成績「率」（DataMerger._add_recent_form_stats）。N_RACES_LIST から動的生成。
+# §2i の分布統計（着順_mean_NR 等）を補完する近走フォーム指標（勝率/連対率/複勝率/平均相対着順）。
+RECENT_FORM_FEATURE_COLS: list = [
+    f"{stem}_{n}R"
+    for n in N_RACES_LIST
+    for stem in ("win_rate", "rentai_rate", "place_rate", "avg_rel_rank")
+]
+
 # ──────────────────────────────────────────
 # §2l: スピード指数（タイム偏差）集計
 # ──────────────────────────────────────────

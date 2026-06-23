@@ -645,6 +645,71 @@ class TestAddRaceClassStats:
 
 
 # ──────────────────────────────────────────
+# 直近 N レースの成績率: _add_recent_form_stats
+# ──────────────────────────────────────────
+
+class TestAddRecentFormStats:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": [1, 7]},
+            index=pd.Index(["r01", "r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        # horse 1: 着順[1,2,1]/頭数[12,12,16]（3走）
+        # horse 7: 最古が9着・以降5走は1着（6走。直近5走の勝率=1.0、直近9走=5/6）
+        rows = [
+            (1, "2023-01-01", 1, 12),
+            (1, "2023-02-01", 2, 12),
+            (1, "2023-03-01", 1, 16),
+            (7, "2023-01-01", 9, 10),
+            (7, "2023-02-01", 1, 10),
+            (7, "2023-03-01", 1, 10),
+            (7, "2023-04-01", 1, 10),
+            (7, "2023-05-01", 1, 10),
+            (7, "2023-06-01", 1, 10),
+        ]
+        return pd.DataFrame(
+            {
+                "horse_id": [r[0] for r in rows],
+                "date": pd.to_datetime([r[1] for r in rows]),
+                "着順": [r[2] for r in rows],
+                "頭数": [r[3] for r in rows],
+            }
+        ).set_index("horse_id")
+
+    def test_columns_added(self):
+        m = _make_merger(self._results())
+        out = m._add_recent_form_stats(self._results(), self._hr())
+        for n in (5, 9, 20):
+            for stem in ("win_rate", "rentai_rate", "place_rate", "avg_rel_rank"):
+                assert f"{stem}_{n}R" in out.columns
+
+    def test_rates_for_horse1(self):
+        m = _make_merger(self._results())
+        out = m._add_recent_form_stats(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        # 着順[1,2,1] → 勝率2/3・連対率1.0・複勝率1.0
+        assert h1["win_rate_5R"] == pytest.approx(2 / 3)
+        assert h1["rentai_rate_5R"] == pytest.approx(1.0)
+        assert h1["place_rate_5R"] == pytest.approx(1.0)
+        assert h1["avg_rel_rank_5R"] == pytest.approx((1 / 12 + 2 / 12 + 1 / 16) / 3)
+
+    def test_window_limits_to_recent_n(self):
+        m = _make_merger(self._results())
+        out = m._add_recent_form_stats(self._results(), self._hr())
+        h7 = out[out["horse_id"] == 7].iloc[0]
+        # 直近5走は全て1着 → 1.0、直近9走(=全6走)は最古の9着を含み5/6
+        assert h7["win_rate_5R"] == pytest.approx(1.0)
+        assert h7["win_rate_9R"] == pytest.approx(5 / 6)
+
+    def test_empty_hr_noop(self):
+        m = _make_merger(self._results())
+        out = m._add_recent_form_stats(self._results(), pd.DataFrame())
+        assert "win_rate_5R" not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2c: _add_jockey_trainer_stats
 # ──────────────────────────────────────────
 

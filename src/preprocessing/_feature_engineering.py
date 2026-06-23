@@ -318,6 +318,7 @@ class FeatureEngineering:
             PERSON_YEARLY_FEATURE_COLS,
             RACE_CLASS_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
+            RECENT_FORM_FEATURE_COLS,
             SIRE_FEATURE_COLS,
             SPEED_FIGURE_FEATURE_COLS,
             TYPE_GROUND_FEATURE_COLS,
@@ -356,6 +357,7 @@ class FeatureEngineering:
             + MARKET_SIGNAL_FEATURE_COLS
             + TYPE_GROUND_FEATURE_COLS
             + RACE_CLASS_FEATURE_COLS
+            + RECENT_FORM_FEATURE_COLS
             + prev_derived_zscore_cols
         )
         for col in named_feature_cols:

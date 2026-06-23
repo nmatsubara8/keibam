@@ -490,6 +490,7 @@ class DataMerger:
             results = self._add_type_ground_stats(results, horse_results)
             results = self._add_race_class_stats(results, horse_results)
             results = self._add_career_stats(results, horse_results)
+            results = self._add_recent_form_stats(results, horse_results)
             results = self._add_opponent_strength_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
             results = self._add_damsire_stats(results, date)
@@ -862,6 +863,51 @@ class DataMerger:
             earnings = hr.groupby(level=0)[HRCols.PRIZE].sum().rename("career_earnings")
             results = results.merge(earnings, left_on="horse_id", right_index=True, how="left")
             results["career_earnings_log"] = np.log1p(results["career_earnings"].fillna(0.0))
+        return results
+
+    def _add_recent_form_stats(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """直近 N レースの成績「率」を追加する（リーク無し）。
+
+        §2i の多窓集計（着順_mean_5R 等）が分布統計（mean/std/...）なのに対し、ここでは
+        近走フォームの直感的指標を窓ごと（N_RACES_LIST=5/9/20）に算出する:
+        - ``win_rate_NR``      : 直近 N 走の勝率（着順==1 の割合）
+        - ``rentai_rate_NR``   : 直近 N 走の連対率（着順<=2 の割合）
+        - ``place_rate_NR``    : 直近 N 走の複勝率（着順<=3 の割合。Place ヘッドの top3 と整合）
+        - ``avg_rel_rank_NR``  : 直近 N 走の平均相対着順（着順/頭数。頭数差を補正）
+
+        horse_results は当該レース日より前のみ（_merge_horse_results が date でカット済み）。
+        過去走の無い馬・窓に満たない馬は該当走数だけで率を出す（履歴ゼロは NaN）。
+        """
+        rank_col = HRCols.RANK  # '着順'
+        n_horses_col = HRCols.N_HORSES  # '頭数'
+        if horse_results.empty or rank_col not in horse_results.columns:
+            return results
+
+        hr = horse_results.copy()
+        rank = pd.to_numeric(hr[rank_col], errors="coerce")
+        hr["_win"] = (rank == 1).astype(float)
+        hr["_rentai"] = (rank <= 2).astype(float)
+        hr["_place"] = (rank <= 3).astype(float)
+        has_rel = n_horses_col in hr.columns
+        if has_rel:
+            hr["_rel"] = rank / pd.to_numeric(hr[n_horses_col], errors="coerce")
+
+        for n in N_RACES_LIST:
+            recent = self._filter_horse_results(hr, n)
+            g = recent.groupby(level=0)
+            agg_map = {
+                f"win_rate_{n}R": ("_win", "mean"),
+                f"rentai_rate_{n}R": ("_rentai", "mean"),
+                f"place_rate_{n}R": ("_place", "mean"),
+            }
+            if has_rel:
+                agg_map[f"avg_rel_rank_{n}R"] = ("_rel", "mean")
+            summarized = g.agg(**agg_map)
+            results = results.merge(
+                summarized, left_on="horse_id", right_index=True, how="left"
+            )
         return results
 
     # 過去に走ったレースの格（grade/class）→ ordinal。相手強度の軽量代理。
