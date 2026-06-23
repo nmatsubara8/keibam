@@ -173,6 +173,10 @@ DATE_CYCLICAL_FEATURE_COLS: list = [
     "cos_date",  # cos(2π·年内通日/365.25) + 1
 ]
 
+# 現レースの格の順序値（FeatureEngineering.add_race_class_level）。one-hot(race_class_*)と併用。
+# レース内で一定（全頭同値）のため zscore 対象には含めない（レース間の比較に使う）。
+RACE_CLASS_LEVEL_COL: str = "race_class_level"
+
 # ──────────────────────────────────────────
 # §2n: 適性特徴量（Batch B: 馬場・競馬場）
 # ──────────────────────────────────────────

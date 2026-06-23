@@ -88,6 +88,48 @@ class TestSimpleDummify:
 
 
 # ──────────────────────────────────────────
+# add_race_class_level （現レースの格 → 順序値）
+# ──────────────────────────────────────────
+
+class TestAddRaceClassLevel:
+    def test_maps_class_to_level(self):
+        df = pd.DataFrame({"race_class": [Master.RACE_CLASS_G1, Master.RACE_CLASS_1SHO]})
+        fe = _make_fe(df)
+        out = fe.add_race_class_level().featured_data
+        assert out["race_class_level"].tolist() == [9, 2]
+
+    def test_keeps_race_class_for_dummify(self):
+        # add_race_class_level は race_class 列を残す（後段 dumminize_race_class が drop）
+        df = pd.DataFrame({"race_class": [Master.RACE_CLASS_OPEN]})
+        fe = _make_fe(df)
+        fe.add_race_class_level()
+        assert "race_class" in fe.featured_data.columns
+        assert "race_class_level" in fe.featured_data.columns
+
+    def test_unknown_class_is_nan(self):
+        df = pd.DataFrame({"race_class": ["謎クラス"]})
+        fe = _make_fe(df)
+        out = fe.add_race_class_level().featured_data
+        assert out["race_class_level"].isna().all()
+
+    def test_missing_column_is_noop(self):
+        df = pd.DataFrame({"keep_me": [1.0]})
+        fe = _make_fe(df)
+        assert fe.add_race_class_level() is fe
+        assert "race_class_level" not in fe.featured_data.columns
+
+    def test_chains_before_dummify(self):
+        # add_race_class_level → dumminize_race_class の順で両方の列が揃う
+        df = pd.DataFrame({"race_class": [Master.RACE_CLASS_G2]})
+        fe = _make_fe(df)
+        out = fe.add_race_class_level().dumminize_race_class().featured_data
+        assert "race_class_level" in out.columns
+        assert out["race_class_level"].iloc[0] == 8
+        assert any(c.startswith("race_class_") for c in out.columns if c != "race_class_level")
+        assert "race_class" not in out.columns
+
+
+# ──────────────────────────────────────────
 # dumminize_kaisai （特殊系: 別途固定。リファクタ対象外だが回帰ガード）
 # ──────────────────────────────────────────
 

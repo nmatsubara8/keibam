@@ -296,7 +296,7 @@ def _build_featured(shutuba_df):
             .dumminize_race_type()
             .dumminize_ground_state1().dumminize_ground_state2()
             .dumminize_ground_state()
-            .dumminize_around().dumminize_race_class()
+            .dumminize_around().add_race_class_level().dumminize_race_class()
             .encode_horse_id().encode_jockey_id().encode_trainer_id()
             .encode_owner_id().encode_breeder_id()
         ).featured_data

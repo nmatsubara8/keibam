@@ -164,6 +164,23 @@ class FeatureEngineering:
         """aroundカラムをダミー変数化する"""
         return self._dummify("around", Master.AROUND_LIST, prefix="around_")
 
+    def add_race_class_level(self):
+        """現レースの格を順序値（格の大小）特徴量 ``race_class_level`` にする（リーク無し）。
+
+        ``dumminize_race_class`` の one-hot は格の順序（新馬<…<G1）を捨てるため、
+        ``Master.race_class_level`` で 1..9 の連続軸（新馬/未勝利=1 … L=6, G3=7, G2=8, G1=9）に
+        写像した列を別途追加する。GBDT/NN がクラスの単調性を直接学習でき、未知クラスは NaN。
+
+        ``race_class`` 列は ``dumminize_race_class`` が drop するため、本メソッドは
+        その**前**に呼ぶこと（FE チェーンで dumminize_race_class の直前に配置）。
+        """
+        from src.constants._master import race_class_level
+
+        if "race_class" not in self.__data.columns:
+            return self
+        self.__data["race_class_level"] = self.__data["race_class"].map(race_class_level)
+        return self
+
     def dumminize_race_class(self):
         """race_classカラムをダミー変数化する"""
         return self._dummify("race_class", Master.RACE_CLASS_LIST, prefix="race_class_")
