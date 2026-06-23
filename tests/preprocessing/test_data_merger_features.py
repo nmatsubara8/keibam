@@ -526,6 +526,123 @@ class TestAddCourseConditionStats:
         out = m._add_course_condition_stats(results, hr)
         assert "win_rate_at_distance" not in out.columns
 
+    def test_new_distance_and_type_cols(self):
+        m = _make_merger(_results_df_with_jockey())
+        results = self._make_results_for_course()
+        hr = _horse_results_df()
+        out = m._add_course_condition_stats(results, hr)
+        for c in ("avg_rank_at_distance", "n_runs_at_distance", "win_rate_at_course_type"):
+            assert c in out.columns
+        # horse 1: 距離16の過去走2本（着順1,2）→ 出走数2・平均相対着順=(1/12+2/12)/2
+        h1 = out[out["horse_id"] == 1]
+        assert h1["n_runs_at_distance"].iloc[0] == 2
+        assert h1["avg_rank_at_distance"].iloc[0] == pytest.approx((1 / 12 + 2 / 12) / 2)
+
+
+# ──────────────────────────────────────────
+# レース種別 × 馬場別成績: _add_type_ground_stats
+# ──────────────────────────────────────────
+
+class TestAddTypeGroundStats:
+    def _results(self):
+        return pd.DataFrame(
+            {
+                "horse_id": [1],
+                "race_type": ["芝"],
+                "ground_state1": ["良"],  # 芝 → ground_state1 を採用
+                "ground_state2": ["良"],
+            },
+            index=pd.Index(["r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1, 1, 1],
+                "着順": [1, 4, 1, 1],
+                "頭数": [10, 10, 10, 10],
+                "race_type": ["芝", "芝", "芝", "ダート"],
+                "馬場": ["良", "良", "重", "良"],
+            }
+        ).set_index("horse_id")
+
+    def test_type_ground_match(self):
+        m = _make_merger(self._results())
+        out = m._add_type_ground_stats(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        # (芝,良) の過去走は 着順[1,4] のみ（重・ダートは除外）
+        assert h1["n_runs_type_ground"] == 2
+        assert h1["win_rate_type_ground"] == pytest.approx(0.5)
+        assert h1["avg_rank_type_ground"] == pytest.approx((1 / 10 + 4 / 10) / 2)
+
+    def test_dirt_uses_ground_state2(self):
+        results = self._results()
+        results["race_type"] = ["ダート"]
+        results["ground_state1"] = ["不良"]
+        results["ground_state2"] = ["良"]  # ダート → gs2=良
+        m = _make_merger(results)
+        out = m._add_type_ground_stats(results, self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        # (ダート,良) は 1本（着順1）
+        assert h1["n_runs_type_ground"] == 1
+        assert h1["win_rate_type_ground"] == pytest.approx(1.0)
+
+    def test_empty_hr_noop(self):
+        m = _make_merger(self._results())
+        out = m._add_type_ground_stats(self._results(), pd.DataFrame())
+        assert "win_rate_type_ground" not in out.columns
+
+
+# ──────────────────────────────────────────
+# レースクラス別成績: _add_race_class_stats
+# ──────────────────────────────────────────
+
+class TestAddRaceClassStats:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": [1], "race_class": ["2勝クラス"]},  # level 3
+            index=pd.Index(["r01"], name="race_id"),
+        )
+
+    def _hr(self):
+        return pd.DataFrame(
+            {
+                "horse_id": [1, 1, 1, 1],
+                "着順": [1, 5, 3, 1],
+                "頭数": [10, 10, 18, 12],
+                "レース名": ["2勝クラス", "2勝クラス", "天皇賞(GⅠ)", "3歳未勝利"],
+            }
+        ).set_index("horse_id")
+
+    def test_same_class_stats(self):
+        m = _make_merger(self._results())
+        out = m._add_race_class_stats(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        # 同格(2勝クラス) は 着順[1,5] → 勝率0.5・出走2・平均(1/10+5/10)/2
+        assert h1["n_runs_same_class"] == 2
+        assert h1["win_rate_same_class"] == pytest.approx(0.5)
+        assert h1["avg_rank_same_class"] == pytest.approx((1 / 10 + 5 / 10) / 2)
+
+    def test_higher_class_winrate(self):
+        m = _make_merger(self._results())
+        out = m._add_race_class_stats(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        # 今回以上(level>=3): 2勝(3),2勝(3),GI(9) の3本 着順[1,5,3]→is_win[1,0,0]→1/3
+        assert h1["win_rate_higher_class"] == pytest.approx(1 / 3)
+
+    def test_best_class_won(self):
+        m = _make_merger(self._results())
+        out = m._add_race_class_stats(self._results(), self._hr())
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        # 勝利した過去走: 2勝クラス(level3)・3歳未勝利(level1) → 最高=3
+        assert h1["best_class_won"] == 3
+
+    def test_skips_when_no_race_class(self):
+        results = self._results().drop(columns=["race_class"])
+        m = _make_merger(results)
+        out = m._add_race_class_stats(results, self._hr())
+        assert "win_rate_same_class" not in out.columns
+
 
 # ──────────────────────────────────────────
 # §2c: _add_jockey_trainer_stats

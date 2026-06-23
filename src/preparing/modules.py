@@ -7,6 +7,7 @@ import time
 import pandas as pd
 
 from src.constants._master import Master
+from src.constants._master import classify_race_class
 from src.preparing._rate_limiter import polite_interval
 
 
@@ -1004,18 +1005,21 @@ def create_raw_race_info(target_bin_file_path):
                 if sex in race_condition:
                     sex_info = sex
 
-            # レースクラスを取得
-            race_class_info = None
-            for race_class in Master.RACE_CLASS_LIST:
-                if race_class in race_condition:
-                    race_class_info = race_class
+            # レースクラスを取得。グレード(G1/GⅠ/Ｇ３)・リステッド(L) は race_name に、
+            # 条件戦(1勝クラス/未勝利/500万下…) は race_condition に現れる。両方を
+            # classify_race_class（NFKC + 正規表現で全角・ローマ数字・(L)・旧称を吸収）に
+            # かけ、グレード/L を優先して取りこぼしを防ぐ。
+            race_class_info = classify_race_class(race_name) or classify_race_class(race_condition)
             if race_class_info is None:
-                # 2019 年のクラス名称変更以前（500万下/1000万下/1600万下 等）は
-                # 現行クラスへ正規化する
-                for legacy, modern in Master.RACE_CLASS_LEGACY_ALIASES.items():
-                    if legacy in race_condition:
-                        race_class_info = modern
-                        break
+                # 後方互換フォールバック: 旧 RACE_CLASS_LIST 部分一致 + 旧称エイリアス
+                for race_class in Master.RACE_CLASS_LIST:
+                    if race_class in race_condition:
+                        race_class_info = race_class
+                if race_class_info is None:
+                    for legacy, modern in Master.RACE_CLASS_LEGACY_ALIASES.items():
+                        if legacy in race_condition:
+                            race_class_info = modern
+                            break
             if race_class_info is None:
                 logger.warning("unknown race_class definition appeared:%s", race_id)
             # 向きを取得

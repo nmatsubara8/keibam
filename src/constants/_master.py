@@ -1,5 +1,8 @@
 import dataclasses
+import re
+import unicodedata
 from typing import ClassVar
+from typing import Optional
 
 
 @dataclasses.dataclass(frozen=True)
@@ -301,3 +304,113 @@ class Master:
     }
 
 
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# レースクラス（格）の頑健な正規化 — 取りこぼし対策の単一情報源
+# ──────────────────────────────────────────────────────────────────────────
+#
+# netkeiba のクラス表記は揺れが大きい:
+#   - グレード: (G1) / (GⅠ) / (GⅢ) / Ｇ３ / (Jpn1) （全角ローマ数字・全角英数・括弧有無）
+#   - リステッド: レース名に (L) / （Ｌ） が付く
+#   - 条件戦: 1勝クラス / １勝クラス / 500万下 / 3歳未勝利 / 新馬 （全角数字・旧称）
+# これらを NFKC 正規化 + 正規表現で 1 箇所に吸収し、Master.RACE_CLASS_* の正準値へ写像する。
+# constants 層はフラット（モジュール間 import 禁止）のため、RACE_CLASS_* の定義元である
+# 本モジュールに同居させる。スクレイプ時の現レース判定（preparing.modules）と過去走レース名
+# からの格抽出（preprocessing の集計特徴量）が同じ規則を共有する。
+
+# レースクラスの順序（格の大小）。条件戦〜G1 を 1..9 の連続軸で表す。
+# Listed は OP より上・G3 より下（ブラックタイプの位置づけ）。
+RACE_CLASS_LEVEL: dict = {
+    Master.RACE_CLASS_SHINBA: 1,        # 新馬
+    Master.RACE_CLASS_MISHORI: 1,       # 未勝利
+    Master.RACE_CLASS_1SHO: 2,          # 1勝クラス（旧 500万下）
+    Master.RACE_CLASS_2SHO: 3,          # 2勝クラス（旧 1000万下）
+    Master.RACE_CLASS_3SHO: 4,          # 3勝クラス（旧 1600万下）
+    Master.RACE_CLASS_OPEN: 5,          # オープン
+    Master.RACE_CLASS_OPEN_SPECIAL: 5,  # オープン特別
+    Master.RACE_CLASS_LISTED: 6,        # リステッド
+    Master.RACE_CLASS_G3: 7,
+    Master.RACE_CLASS_G2: 8,
+    Master.RACE_CLASS_G1: 9,
+}
+
+# グレード検出（NFKC 後 = 全角→半角・ローマ数字 Ⅲ→"III" 化済みの文字列に対して）。
+# G/Jpn の直後に III/II/I/3/2/1。前後の英数で誤検出しないよう境界を要求する。
+_RACE_GRADE_TOKEN_RE = re.compile(
+    r"(?<![A-Z])(JPN|G)\s*(III|II|I|3|2|1)(?![A-Z0-9])",
+    re.IGNORECASE,
+)
+# Listed: 括弧付き L（レース名の "(L)" / "（Ｌ）"）。単独 "L" の誤検出を避け括弧必須。
+_RACE_LISTED_RE = re.compile(r"[(（]\s*L\s*[)）]", re.IGNORECASE)
+
+# グレード数字（III/II/I/3/2/1）→ 正準クラス。
+_RACE_GRADE_TO_CLASS = {
+    "III": Master.RACE_CLASS_G3, "3": Master.RACE_CLASS_G3,
+    "II": Master.RACE_CLASS_G2, "2": Master.RACE_CLASS_G2,
+    "I": Master.RACE_CLASS_G1, "1": Master.RACE_CLASS_G1,
+}
+
+# 条件戦・OP のテキスト判定（NFKC 後・新称/旧称を網羅）。上から優先。
+_RACE_CONDITION_RULES: list = [
+    ("オープン特別", Master.RACE_CLASS_OPEN_SPECIAL),
+    ("オープン", Master.RACE_CLASS_OPEN),
+    ("3勝クラス", Master.RACE_CLASS_3SHO),
+    ("1600万下", Master.RACE_CLASS_3SHO),
+    ("2勝クラス", Master.RACE_CLASS_2SHO),
+    ("1000万下", Master.RACE_CLASS_2SHO),
+    ("900万下", Master.RACE_CLASS_2SHO),
+    ("1勝クラス", Master.RACE_CLASS_1SHO),
+    ("500万下", Master.RACE_CLASS_1SHO),
+    ("未勝利", Master.RACE_CLASS_MISHORI),
+    ("新馬", Master.RACE_CLASS_SHINBA),
+]
+
+
+def _normalize_race_text(text) -> str:
+    """NFKC 正規化 + 連続空白の単一化。非文字列・欠損は空文字。"""
+    if text is None:
+        return ""
+    if isinstance(text, float) and text != text:  # NaN
+        return ""
+    s = unicodedata.normalize("NFKC", str(text))
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def classify_race_class(text) -> Optional[str]:
+    """レース名・条件テキストから正準クラス（Master.RACE_CLASS_*）を判定する。
+
+    優先順位: グレード(G1/G2/G3) > リステッド(L) > 条件戦/オープン。
+    判定できなければ None。全角・ローマ数字(GⅢ)・括弧の有無・旧称(500万下)を吸収する。
+    """
+    s = _normalize_race_text(text)
+    if not s:
+        return None
+    su = s.upper()
+
+    m = _RACE_GRADE_TOKEN_RE.search(su)  # 1) グレード（最優先）。"GⅢ"→NFKC→"GIII"
+    if m:
+        return _RACE_GRADE_TO_CLASS[m.group(2).upper()]
+
+    if _RACE_LISTED_RE.search(su):  # 2) リステッド（括弧付き L）
+        return Master.RACE_CLASS_LISTED
+
+    for keyword, cls in _RACE_CONDITION_RULES:  # 3) 条件戦 / オープン
+        if keyword in s:
+            return cls
+    return None
+
+
+def race_class_level(race_class) -> Optional[int]:
+    """正準クラス文字列、または生のレース名/条件テキストを順序値（1..9）に写像する。不明は None。"""
+    if race_class is None:
+        return None
+    if isinstance(race_class, float) and race_class != race_class:  # NaN
+        return None
+    level = RACE_CLASS_LEVEL.get(str(race_class).strip())  # まず正準値として直接引く
+    if level is not None:
+        return level
+    canonical = classify_race_class(race_class)  # 旧称・グレード表記は分類してから引く
+    if canonical is None:
+        return None
+    return RACE_CLASS_LEVEL.get(canonical)

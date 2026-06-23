@@ -54,7 +54,26 @@ PACE_FEATURE_COLS: list = [
 
 COURSE_CONDITION_FEATURE_COLS: list = [
     "win_rate_at_distance",     # 同距離帯(±100m)での勝率
+    "avg_rank_at_distance",     # 同距離帯での平均着順(相対値)
+    "n_runs_at_distance",       # 同距離帯での出走数(経験量)
+    "win_rate_at_course_type",  # 同コース種別での勝率
     "avg_rank_at_course_type",  # 同コース種別での平均着順(相対値)
+]
+
+# レース種別×馬場状態 別の過去成績（DataMerger._add_type_ground_stats）
+TYPE_GROUND_FEATURE_COLS: list = [
+    "win_rate_type_ground",  # 同種別×同馬場での勝率
+    "avg_rank_type_ground",  # 同種別×同馬場での平均着順(相対値)
+    "n_runs_type_ground",    # 同種別×同馬場での出走数
+]
+
+# レースクラス（格）別の過去成績（DataMerger._add_race_class_stats）
+RACE_CLASS_FEATURE_COLS: list = [
+    "win_rate_same_class",    # 今回と同格での勝率
+    "avg_rank_same_class",    # 今回と同格での平均着順(相対値)
+    "n_runs_same_class",      # 今回と同格での出走数
+    "win_rate_higher_class",  # 今回以上の格での勝率(格上で勝てる強さ)
+    "best_class_won",         # 勝利した最高クラスの順序値(実績の天井)
 ]
 
 # ──────────────────────────────────────────

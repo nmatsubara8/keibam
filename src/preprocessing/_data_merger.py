@@ -487,6 +487,8 @@ class DataMerger:
             results = self._add_aptitude_stats(results, horse_results)
             results = self._add_speed_figure_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
+            results = self._add_type_ground_stats(results, horse_results)
+            results = self._add_race_class_stats(results, horse_results)
             results = self._add_career_stats(results, horse_results)
             results = self._add_opponent_strength_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
@@ -912,7 +914,16 @@ class DataMerger:
     def _add_course_condition_stats(
         self, results: pd.DataFrame, horse_results: pd.DataFrame
     ) -> pd.DataFrame:
-        """同距離帯勝率・同コース種別平均着順を追加する。"""
+        """コース長別・コース種別別の過去成績を追加する（リーク無し）。
+
+        今回のコース条件に合わせた「この馬の適性」を表す:
+        - ``win_rate_at_distance``    : 同距離帯(±100m)での勝率
+        - ``avg_rank_at_distance``    : 同距離帯での平均相対着順（着順/頭数。小さいほど好成績）
+        - ``n_runs_at_distance``      : 同距離帯での出走数（経験量。少数集計の信頼度の手掛り）
+        - ``avg_rank_at_course_type`` : 同コース種別(芝/ダート)での平均相対着順
+        - ``win_rate_at_course_type`` : 同コース種別での勝率
+        前走履歴が条件に合致しない馬は該当特徴 NaN（未知＝安全な欠損）。
+        """
         rank_col = HRCols.RANK  # '着順'
         n_horses_col = HRCols.N_HORSES  # '頭数'
         if horse_results.empty or rank_col not in horse_results.columns:
@@ -936,23 +947,178 @@ class DataMerger:
             current_info, on="horse_id", suffixes=("_past", "_cur")
         )
 
-        # win_rate_at_distance: ±100m (±1 unit)
+        # win_rate_at_distance / avg_rank_at_distance / n_runs_at_distance: ±100m (±1 unit)
         at_dist = hr_with_cur[
             abs(hr_with_cur["course_len_past"] - hr_with_cur["course_len_cur"]) <= 1
         ]
-        win_rate = at_dist.groupby("horse_id")["_is_win"].mean().rename("win_rate_at_distance")
+        dist_grp = at_dist.groupby("horse_id")
+        win_rate = dist_grp["_is_win"].mean().rename("win_rate_at_distance")
         results = results.merge(win_rate, left_on="horse_id", right_index=True, how="left")
+        n_runs_dist = dist_grp.size().rename("n_runs_at_distance")
+        results = results.merge(n_runs_dist, left_on="horse_id", right_index=True, how="left")
+        if "_rel_rank" in at_dist.columns:
+            avg_rank_dist = dist_grp["_rel_rank"].mean().rename("avg_rank_at_distance")
+            results = results.merge(avg_rank_dist, left_on="horse_id", right_index=True, how="left")
 
-        # avg_rank_at_course_type: same race_type
+        # avg_rank_at_course_type / win_rate_at_course_type: same race_type
         if (
-            "_rel_rank" in hr_with_cur.columns
-            and "race_type_past" in hr_with_cur.columns
+            "race_type_past" in hr_with_cur.columns
             and "race_type_cur" in hr_with_cur.columns
         ):
             at_type = hr_with_cur[hr_with_cur["race_type_past"] == hr_with_cur["race_type_cur"]]
-            avg_rank = at_type.groupby("horse_id")["_rel_rank"].mean().rename("avg_rank_at_course_type")
-            results = results.merge(avg_rank, left_on="horse_id", right_index=True, how="left")
+            type_grp = at_type.groupby("horse_id")
+            win_type = type_grp["_is_win"].mean().rename("win_rate_at_course_type")
+            results = results.merge(win_type, left_on="horse_id", right_index=True, how="left")
+            if "_rel_rank" in at_type.columns:
+                avg_rank = type_grp["_rel_rank"].mean().rename("avg_rank_at_course_type")
+                results = results.merge(avg_rank, left_on="horse_id", right_index=True, how="left")
 
+        return results
+
+    def _add_type_ground_stats(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """レース種別 × 馬場状態の組合せ別の過去成績を追加する（リーク無し）。
+
+        今回のレース種別(芝/ダート)と馬場状態(良/稍重/重/不良)に合致する過去走だけで
+        集計し、「この条件でのこの馬の適性」を表す:
+        - ``win_rate_type_ground`` : 同種別×同馬場での勝率
+        - ``avg_rank_type_ground`` : 同種別×同馬場での平均相対着順
+        - ``n_runs_type_ground``   : 同種別×同馬場での出走数
+
+        今回の馬場は種別で使い分ける（芝→ground_state1 / ダート→ground_state2、
+        無ければ ground_state1）。過去走の馬場は horse_results の '馬場'。
+        前走履歴が条件に合致しない馬は NaN（未知＝安全な欠損）。
+        """
+        from src.constants._master import Master as _M
+
+        rank_col = HRCols.RANK
+        n_horses_col = HRCols.N_HORSES
+        ground_col = HRCols.GROUND_STATE  # '馬場'
+        if horse_results.empty or rank_col not in horse_results.columns:
+            return results
+        if "race_type" not in results.columns or ground_col not in horse_results.columns:
+            return results
+
+        # 今回の実効馬場: 芝は ground_state1、ダートは ground_state2（無ければ gs1）
+        gs1 = results["ground_state1"] if "ground_state1" in results.columns else None
+        gs2 = results["ground_state2"] if "ground_state2" in results.columns else None
+        cur_ground = gs1 if gs1 is not None else gs2
+        if cur_ground is None:
+            return results
+        if gs1 is not None and gs2 is not None:
+            cur_ground = gs1.where(results["race_type"] != _M.RACE_TYPE_DIRT, gs2)
+
+        cur = results[["horse_id", "race_type"]].copy()
+        cur["_cur_ground"] = cur_ground.astype(str)
+        cur = cur.drop_duplicates("horse_id")
+
+        hr = horse_results.copy()
+        hr["_is_win"] = (pd.to_numeric(hr[rank_col], errors="coerce") == 1).astype(float)
+        if n_horses_col in hr.columns:
+            hr["_rel_rank"] = pd.to_numeric(hr[rank_col], errors="coerce") / pd.to_numeric(
+                hr[n_horses_col], errors="coerce"
+            )
+        hr_reset = hr.reset_index()
+        if "race_type" not in hr_reset.columns:
+            return results
+        merged = hr_reset.merge(cur, on="horse_id", suffixes=("_past", "_cur"))
+        match = merged[
+            (merged["race_type_past"] == merged["race_type_cur"])
+            & (merged[ground_col].astype(str) == merged["_cur_ground"])
+        ]
+        if match.empty:
+            return results
+        grp = match.groupby("horse_id")
+        results = results.merge(
+            grp["_is_win"].mean().rename("win_rate_type_ground"),
+            left_on="horse_id", right_index=True, how="left",
+        )
+        results = results.merge(
+            grp.size().rename("n_runs_type_ground"),
+            left_on="horse_id", right_index=True, how="left",
+        )
+        if "_rel_rank" in match.columns:
+            results = results.merge(
+                grp["_rel_rank"].mean().rename("avg_rank_type_ground"),
+                left_on="horse_id", right_index=True, how="left",
+            )
+        return results
+
+    def _add_race_class_stats(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """レースクラス（格）別の過去成績を追加する（リーク無し）。
+
+        過去走のレース名から格を ``classify_race_class`` で判定し順序値化
+        （新馬/未勝利=1 … G1=9）、今回のクラス（race_class 列）と突き合わせる:
+        - ``win_rate_same_class``  : 今回と同格での勝率
+        - ``avg_rank_same_class``  : 今回と同格での平均相対着順
+        - ``n_runs_same_class``    : 今回と同格での出走数
+        - ``win_rate_higher_class``: 今回以上の格での勝率（格上で勝てる＝真に強い馬の代理）
+        - ``best_class_won``       : これまでに勝利した最高クラスの順序値（実績の天井）
+
+        race_class 列（race_info 由来）が無いレースは NaN（未知＝安全な欠損）。
+        """
+        from src.constants._master import classify_race_class, race_class_level
+
+        rank_col = HRCols.RANK
+        n_horses_col = HRCols.N_HORSES
+        name_col = HRCols.RACE_NAME  # 'レース名'
+        if horse_results.empty or rank_col not in horse_results.columns:
+            return results
+        if "race_class" not in results.columns or name_col not in horse_results.columns:
+            return results
+
+        # 今回クラスの順序値（馬ごと）
+        cur = results[["horse_id", "race_class"]].drop_duplicates("horse_id").copy()
+        cur["_cur_level"] = cur["race_class"].map(race_class_level)
+
+        hr = horse_results.copy()
+        hr["_is_win"] = (pd.to_numeric(hr[rank_col], errors="coerce") == 1).astype(float)
+        if n_horses_col in hr.columns:
+            hr["_rel_rank"] = pd.to_numeric(hr[rank_col], errors="coerce") / pd.to_numeric(
+                hr[n_horses_col], errors="coerce"
+            )
+        # ユニークなレース名だけ格判定（正規表現コストの重複回避）
+        names = hr[name_col].astype(str)
+        level_by_name = {n: race_class_level(classify_race_class(n)) for n in names.unique()}
+        hr["_past_level"] = names.map(level_by_name)
+
+        hr_reset = hr.reset_index()
+        merged = hr_reset.merge(cur[["horse_id", "_cur_level"]], on="horse_id")
+
+        # best_class_won: 勝利した過去走の最高クラス（今回クラスに依存しない）
+        won = merged[merged["_is_win"] == 1.0]
+        if not won.empty:
+            best_won = won.groupby("horse_id")["_past_level"].max().rename("best_class_won")
+            results = results.merge(best_won, left_on="horse_id", right_index=True, how="left")
+
+        # 同格・格上は今回クラスが判明している馬のみ対象
+        known = merged[merged["_cur_level"].notna() & merged["_past_level"].notna()]
+        if not known.empty:
+            same = known[known["_past_level"] == known["_cur_level"]]
+            if not same.empty:
+                sg = same.groupby("horse_id")
+                results = results.merge(
+                    sg["_is_win"].mean().rename("win_rate_same_class"),
+                    left_on="horse_id", right_index=True, how="left",
+                )
+                results = results.merge(
+                    sg.size().rename("n_runs_same_class"),
+                    left_on="horse_id", right_index=True, how="left",
+                )
+                if "_rel_rank" in same.columns:
+                    results = results.merge(
+                        sg["_rel_rank"].mean().rename("avg_rank_same_class"),
+                        left_on="horse_id", right_index=True, how="left",
+                    )
+            higher = known[known["_past_level"] >= known["_cur_level"]]
+            if not higher.empty:
+                results = results.merge(
+                    higher.groupby("horse_id")["_is_win"].mean().rename("win_rate_higher_class"),
+                    left_on="horse_id", right_index=True, how="left",
+                )
         return results
 
     # ──────────────────────────────────────────
