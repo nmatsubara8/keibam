@@ -4,6 +4,7 @@
 および確信度（EV 閾値）をパラメータとした回収率・的中率・損益の感度分析を提供する。
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -14,17 +15,27 @@ if _REPO_ROOT not in sys.path:
 import pandas as pd
 import streamlit as st
 
+from app._data_loader import find_model_paths
 from app._data_loader import list_model_versions
 from app._data_loader import load_model_by_version
+from app._data_loader import load_model_from_path
+from app._data_loader import load_odds_snapshots
+from app._data_loader import load_win_head_for
 from app._model_compare import BET_POLICY_CHOICES
 from app._model_compare import cumulative_profit
 from app._model_compare import recent_race_slice
 from app._model_compare import simulate_model
 from app._model_eval import _build_return_table_df
+from app._model_eval import _load_return_processor
 from app._model_eval import compute_confidence_sweep
 from app._model_eval import compute_full_backtest
 from app._model_eval import load_featured_data
+from app._two_head_backtest import BET_TYPE_LABELS
+from app._two_head_backtest import available_years
+from app._two_head_backtest import run_two_head_backtest
+from app._two_head_backtest import selectable_bet_types
 from src.constants._local_paths import LocalPaths
+from src.preparing._odds_snapshot import build_final_odds_lookup
 from src.simulation._plot import best_ev_threshold
 from src.simulation._plot import plot_confidence_sweep
 
@@ -49,6 +60,30 @@ def _load_model(version: str):
         return None
 
 
+@st.cache_resource(show_spinner=False)
+def _load_two_head(version: str):
+    """version に対応する Place モデルと Win ヘッド（<version>__win.pickle）を読み込む。
+
+    Win ヘッドが無い旧モデルでは win=None（連系は単勝 Harville 推定で評価）。
+    """
+    for path in find_model_paths("models"):
+        if version in os.path.basename(path):
+            return load_model_from_path(path), load_win_head_for(path)
+    return None, None
+
+
+@st.cache_resource(show_spinner=False)
+def _load_return_processor_cached():
+    return _load_return_processor()
+
+
+@st.cache_data(show_spinner=False)
+def _load_final_odds_lookup():
+    """確定オッズ lookup（スナップショット由来）を構築する（なければ None）。"""
+    snaps = load_odds_snapshots()
+    return build_final_odds_lookup(snaps) if snaps else None
+
+
 versions = list_model_versions()
 version_options = [v["version"] for v in versions] if versions else []
 
@@ -61,7 +96,12 @@ if featured is None:
     st.warning(f"`{LocalPaths.FEATURED_DATA_PATH}` が見つかりません。先に取込・特徴量生成を実行してください。")
     st.stop()
 
-tabs = st.tabs(["🎯 フルシミュレーション", "📈 確信度スイープ", "🎰 券種別バックテスト"])
+tabs = st.tabs([
+    "🎯 フルシミュレーション",
+    "📈 確信度スイープ",
+    "🎰 券種別バックテスト",
+    "🎯🎯 2ヘッド+確定オッズ",
+])
 
 # ──────────────────────────────────────────────────────────────────
 # Tab 1: フルシミュレーション
@@ -342,3 +382,130 @@ with tabs[2]:
                     file_name=f"backtest_{BET_POLICY_CHOICES[res['bet_label']][1]}.csv",
                     mime="text/csv",
                 )
+
+# ──────────────────────────────────────────────────────────────────
+# Tab 4: 2ヘッド予測 + 確定オッズの券種別 EV バックテスト（CLI backtest と同経路）
+# ──────────────────────────────────────────────────────────────────
+with tabs[3]:
+    st.subheader("2ヘッド予測 × 確定オッズ × 実払戻の券種別 EV バックテスト")
+    st.caption(
+        "CLI `run_pipeline backtest` と同じ評価です。"
+        " Place（複勝/top3）と Win（単勝/1着）の 2 ヘッドで EV 選定し、確定オッズ"
+        "（odds_snapshots、無い組合せは単勝 Harville 推定にフォールバック）で期待値を計算、"
+        " 実払戻テーブルで決済します（フラット 1 点=1 単位）。"
+    )
+    st.caption(
+        "⚠️ リーク回避: 評価年はモデルの**学習年と重ねない**でください"
+        "（例: 学習 ≤2024 / 評価 2025）。"
+    )
+
+    col_v2, col_y2 = st.columns([2, 3])
+    with col_v2:
+        sel_ver_2h = st.selectbox("モデルバージョン（Place）", version_options, key="th_version")
+    with col_y2:
+        year_opts = available_years(featured)
+        sel_years = st.multiselect(
+            "評価対象の年（race_id 先頭 4 桁・未選択で全期間）",
+            year_opts, default=[], key="th_years",
+            help="学習年と重ならない年だけを選ぶとリークのない ROI が得られます。",
+        )
+
+    col_o2, col_w2 = st.columns([2, 2])
+    with col_o2:
+        use_final_odds = st.checkbox(
+            "確定オッズを使う（odds_snapshots）", value=True, key="th_final_odds",
+            help="オフにすると全券種を単勝からの Harville 推定オッズで評価します。",
+        )
+    with col_w2:
+        use_win_head = st.checkbox(
+            "Win ヘッドを使う（連系の Harville に 1着勝率を供給）",
+            value=True, key="th_win_head",
+            help="オフにすると Place（複勝確率）のみで連系を評価します。",
+        )
+
+    bt_targets = selectable_bet_types()
+    sel_bet_types = st.multiselect(
+        "評価する券種（未選択で全券種）",
+        bt_targets,
+        default=[],
+        format_func=lambda bt: BET_TYPE_LABELS.get(bt, bt),
+        key="th_bet_types",
+        help="枠連は Harville（馬番）未対応のため対象外です。",
+    )
+
+    if st.button("2ヘッドバックテスト実行", key="run_two_head_bt"):
+        with st.spinner("計算中…"):
+            place_ai, win_ai = _load_two_head(sel_ver_2h)
+            rp = _load_return_processor_cached()
+            if place_ai is None:
+                st.error("Place モデルを読み込めませんでした。")
+            elif rp is None:
+                st.error("払戻テーブル（return_tables）を読み込めませんでした。ingest で取得してください。")
+            else:
+                final_lookup = _load_final_odds_lookup() if use_final_odds else None
+                result = run_two_head_backtest(
+                    place_ai,
+                    featured,
+                    rp,
+                    win_ai=win_ai if use_win_head else None,
+                    final_odds_lookup=final_lookup,
+                    bet_types=sel_bet_types or None,
+                    years=sel_years or None,
+                )
+                st.session_state["th_result"] = {
+                    "result": result,
+                    "win_used": use_win_head and win_ai is not None,
+                    "n_final_odds": len(final_lookup or {}),
+                }
+
+    if "th_result" in st.session_state:
+        stored = st.session_state["th_result"]
+        result = stored["result"]
+        frame = result.get("frame", pd.DataFrame())
+
+        st.caption(
+            f"対象レース: {result.get('n_races', 0):,} / 買い目総数:"
+            f" {result.get('n_candidates', 0):,} / Win ヘッド:"
+            f" {'使用' if stored['win_used'] else '未使用'} / 確定オッズ:"
+            f" {stored['n_final_odds']:,} 件"
+        )
+
+        if frame.empty:
+            st.warning(
+                "賭けが一件も成立しませんでした。閾値（券種別 EV 既定）に対し候補が無いか、"
+                " 払戻テーブルに該当レースがありません。評価年・券種を見直してください。"
+            )
+        else:
+            overall = result.get("overall")
+            if overall is not None:
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("回収率（全体）", f"{overall.roi * 100:.1f}%",
+                          delta=f"{(overall.roi - 1) * 100:.1f}%")
+                c2.metric("的中率（全体）", f"{overall.hit_rate * 100:.1f}%")
+                c3.metric("総損益（単位券）", f"{overall.profit:+,.0f}")
+                c4.metric("買い目点数", f"{overall.n_bets:,} 点")
+
+            st.subheader("券種別成績")
+            # 的中率・回収率は 0〜1 スケールなので、表示用コピーで % に直す
+            # （NumberColumn の format は格納値にそのまま適用されるため）。
+            frame_view = frame.copy()
+            for pct_col in ["的中率", "回収率"]:
+                frame_view[pct_col] = frame_view[pct_col] * 100
+            st.dataframe(
+                frame_view,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "的中率": st.column_config.NumberColumn(format="%.1f%%"),
+                    "回収率": st.column_config.NumberColumn(format="%.1f%%"),
+                    "投票": st.column_config.NumberColumn(format="%.0f"),
+                    "払戻": st.column_config.NumberColumn(format="%.1f"),
+                    "損益": st.column_config.NumberColumn(format="%+.1f"),
+                },
+            )
+            # CSV は割合（0〜1）のまま出力する。
+            csv = frame.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                "📥 CSV ダウンロード", csv,
+                file_name="backtest_two_head.csv", mime="text/csv",
+            )
