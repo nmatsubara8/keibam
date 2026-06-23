@@ -76,6 +76,28 @@ class FeatureEngineering:
             d.loc[interval.isna(), ["is_layoff", "is_back_to_back"]] = float("nan")
         return self
 
+    def add_date_cyclical(self):
+        """開催日の周期性（季節性）を sin/cos の周期特徴量として追加する（リーク無し）。
+
+        - ``sin_date`` : sin(2π · 年内通日 / 365.25) + 1
+        - ``cos_date`` : cos(2π · 年内通日 / 365.25) + 1
+
+        年内通日（``dt.dayofyear`` 1〜366）を 365.25 で正規化することでうるう年を吸収し、
+        12/31 と 1/1 が連続する円環として季節を符号化する。+1 は値域を [-1, 1] から
+        [0, 2] にずらす（負値を避け、決定木以外でも扱いやすくする）。``date`` 列が無ければ
+        スキップ。NaT は NaN になる。
+        """
+        import numpy as np
+
+        d = self.__data
+        if "date" not in d.columns:
+            return self
+        doy = pd.to_datetime(d["date"], errors="coerce").dt.dayofyear
+        angle = 2 * np.pi * doy / 365.25
+        d["sin_date"] = np.sin(angle) + 1
+        d["cos_date"] = np.cos(angle) + 1
+        return self
+
     def dumminize_kaisai(self):
         """
         開催カラムをダミー変数化する

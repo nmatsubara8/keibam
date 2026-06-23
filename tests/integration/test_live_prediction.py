@@ -114,6 +114,7 @@ def featured(merger):
     return (
         FeatureEngineering(merger)
         .add_interval().add_agedays()
+        .add_date_cyclical()
         .add_interaction_features().add_race_level_zscore()
         .dumminize_kaisai().dumminize_sex().dumminize_weather()
         .dumminize_race_type()

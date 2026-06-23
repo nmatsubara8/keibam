@@ -148,6 +148,12 @@ DERIVED_FEATURE_COLS: list = [
     "is_back_to_back",    # 連闘フラグ
 ]
 
+# 開催日の周期性（FeatureEngineering.add_date_cyclical）。うるう年込みの季節符号化。
+DATE_CYCLICAL_FEATURE_COLS: list = [
+    "sin_date",  # sin(2π·年内通日/365.25) + 1
+    "cos_date",  # cos(2π·年内通日/365.25) + 1
+]
+
 # ──────────────────────────────────────────
 # §2n: 適性特徴量（Batch B: 馬場・競馬場）
 # ──────────────────────────────────────────
