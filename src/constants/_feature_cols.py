@@ -130,6 +130,15 @@ MARKET_SIGNAL_FEATURE_COLS: list = [
     "trifecta_top3_overlay",  # 三連単 top3 marginal − Harville複勝
 ]
 
+# オッズ由来の派生特徴量（retrain --no-odds-features で学習から除外＝対市場エッジ A/B 用）。
+# 生の ``単勝`` は元から _DROP_FOR_TRAIN で除外済みだが、市場情報は派生列（単勝_log・市場歪み
+# overlay 群）とその _z を通じてモデルに入る。これらを落とすと「市場の写し」でない r̂ を作れる。
+ODDS_DERIVED_FEATURE_COLS: list = (
+    ["単勝", "単勝_log", "単勝_log_z"]
+    + MARKET_SIGNAL_FEATURE_COLS
+    + [f"{c}_z" for c in MARKET_SIGNAL_FEATURE_COLS]
+)
+
 # ──────────────────────────────────────────
 # §2k: 成長/フォーム・トレンド特徴量
 # ──────────────────────────────────────────

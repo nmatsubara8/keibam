@@ -691,6 +691,16 @@ def _retrain(args: argparse.Namespace) -> None:
     else:
         featured_data = pd.read_pickle(featured_path)
 
+    # --no-odds-features: オッズ由来の派生特徴（単勝_log・市場歪み overlay 等）を学習から
+    # 除外する。マーケット・エコー検証（r̂ が市場の写しでないかの A/B）用。Place/Win 両ヘッドに
+    # 適用される（この時点では DataFrame なので prepared_from_gbdt 変換の前に落とす）。
+    if getattr(args, "no_odds_features", False):
+        from src.constants._feature_cols import ODDS_DERIVED_FEATURE_COLS
+
+        present = [c for c in ODDS_DERIVED_FEATURE_COLS if c in featured_data.columns]
+        featured_data = featured_data.drop(columns=present, errors="ignore")
+        logger.info("[retrain] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
+
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
     lgb_params = None
@@ -1086,6 +1096,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     retrain_p.add_argument("--version-name", default=None, help="バージョン名（省略時は日付自動生成）")
     retrain_p.add_argument("--no-stacking", action="store_true", help="スタッキングを使わない（LightGBM のみ）")
     retrain_p.add_argument(
+        "--no-odds-features", action="store_true",
+        help="オッズ由来の派生特徴(単勝_log・市場歪み overlay 等)を除外して学習（対市場エッジの A/B 検証用）",
+    )
+    retrain_p.add_argument(
         "--no-win-head", action="store_true",
         help="Win ヘッド(1着予測, <version>__win.pickle)の併行学習を行わない（Place ヘッドのみ）",
     )
@@ -1269,6 +1283,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="評価する券種（省略時は全券種）。例: fukusho wide sanrenpuku",
     )
     bt_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
+    bt_p.add_argument(
+        "--edge-diagnostic", action="store_true",
+        help="自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss を併せて出力",
+    )
 
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
@@ -1370,6 +1388,15 @@ def _backtest(args: argparse.Namespace) -> None:
         thresholds=thresholds,
     )
 
+    # Edge/EV 診断（任意）: 自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss。
+    # 力学モデル不要（実現最終単勝を使う）。r̂ は Win ヘッド優先、無ければ Place。
+    edge_result = None
+    if getattr(args, "edge_diagnostic", False):
+        from src.simulation._edge_diagnostic import format_edge_report, run_edge_diagnostic
+
+        edge_model = (win_ai or place_ai).effective_model
+        edge_result = run_edge_diagnostic(edge_model, featured)
+
     if getattr(args, "json", False):
         out = {
             "model": os.path.basename(place_path),
@@ -1379,9 +1406,13 @@ def _backtest(args: argparse.Namespace) -> None:
             "overall": result["overall"].as_dict(),
             "per_bet_type": {str(k): v.as_dict() for k, v in result["per_bet_type"].items()},
         }
+        if edge_result is not None:
+            out["edge_diagnostic"] = edge_result["summary"]
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         print(format_report(result))
+        if edge_result is not None:
+            print("\n" + format_edge_report(edge_result))
 
 
 def _doctor(args: argparse.Namespace) -> None:
