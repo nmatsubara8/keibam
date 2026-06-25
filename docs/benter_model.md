@@ -104,9 +104,13 @@ $$P(i\to j\to k) = \pi_i \cdot \frac{\sigma_j}{1-\sigma_i} \cdot \frac{\tau_k}{1
 - [x] **ΔR²（combined vs public）診断**（`_blend.blend_diagnostic`・tipster=エコー知見を再現）
 - [x] **r̂ 較正レイヤ**（`_calibration` within-race isotonic・本命過小評価の是正）
 - [x] **プール影響の EV**（`_arbitrage.effective_odds / ev_with_impact / max_profit_bet`）
-- [ ] EV パイプライン（`ExpectedValueBetPolicy` / `_backtest`）へ上記（exponents/blend/calibrator/pool影響）を配線（opt-in）
+- [x] EV パイプライン（`ExpectedValueBetPolicy` / `_backtest`）へ上記（exponents/blend/calibrator/pool影響）を配線（opt-in）
+- [x] **fit ジョブ + CLI**（`_calibrate.py` の `build_calibration_inputs`/`fit_all` ＋ `run_pipeline.py calibrate-ev`）。
+      Win ヘッドの OOS 勝率→ `models/{place_exponents,win_calibrator,blend_weights}.json` を最尤推定で保存。
+      `backtest --corrected-harville/--calibrate/--blend` で読み込んで評価。`--years` で OOS を切る
 - [ ] **unratable → 公衆フォールバック**
-- [ ] **OOS 評価**で α,β / γ,δ / calibrator を fit（学習年<評価年。in-sample は楽観/退化）
+- [ ] **OOS 評価の実走**（データ投入後に `calibrate-ev --years <学習年より後>` を実行 → α,β/γ,δ/calibrator を確定し
+      backtest で in/out を比較。Benter §5: 学習年<評価年を厳守。現状はツール完備・データ待ち）
 
 ---
 

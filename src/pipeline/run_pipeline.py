@@ -1065,6 +1065,79 @@ def _calibrate_takeout(args: argparse.Namespace) -> None:
     logger.info("[calibrate-takeout] 保存しました → %s", path)
 
 
+def _calibrate_ev(args: argparse.Namespace) -> None:
+    """OOS データで補正Harville(γ,δ)/r̂較正/市場合成(α,β)を fit し models/*.json に保存する。
+
+    Win ヘッド（<version>__win.pickle）の OOS 勝率予測から、観測着順・確定単勝オッズを
+    使って3つの後段アーティファクトを最尤推定する。リーク回避のため **必ず学習年より後の年**
+    を --years で指定すること（in-sample は等値写像・過学習評価に退化する。Benter §5）。
+    保存物は backtest の --corrected-harville/--calibrate/--blend で読み込んで使う。
+    """
+    from app._data_loader import load_model_from_path, load_win_head_for
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
+    from src.simulation._calibrate import fit_all
+
+    place_path = _resolve_backtest_model_path(getattr(args, "version", None))
+    win_ai = load_win_head_for(place_path)
+    if win_ai is None:
+        logger.error(
+            "[calibrate-ev] Win ヘッド(%s__win.pickle)がありません。retrain で生成してください",
+            os.path.splitext(os.path.basename(place_path))[0],
+        )
+        # Place ヘッドで代替（複勝モデルの勝率近似）。較正は依然 OOS で行うこと。
+        win_ai = load_model_from_path(place_path)
+    logger.info("[calibrate-ev] モデル: %s", os.path.basename(place_path))
+
+    featured = load_raw(LocalPaths.FEATURED_DATA_PATH)
+    if featured is None or featured.empty:
+        logger.error("[calibrate-ev] featured_data がありません。先に rebuild-featured を実行してください")
+        return
+    years = getattr(args, "years", None)
+    if years:
+        yset = {str(y) for y in years}
+        rid = featured.index.astype(str)
+        featured = featured[rid.str[:4].isin(yset)]
+        logger.info("[calibrate-ev] OOS 年 %s に絞り込み: %d 行", sorted(yset), len(featured))
+    else:
+        logger.warning(
+            "[calibrate-ev] --years 未指定。学習年を含むと楽観バイアスになります（OOS 推奨）"
+        )
+    if featured.empty:
+        logger.error("[calibrate-ev] 対象レースがありません（年フィルタが厳しすぎる可能性）")
+        return
+
+    if getattr(args, "dry_run", False):
+        from src.simulation._calibrate import build_calibration_inputs
+
+        inputs = build_calibration_inputs(win_ai.effective_model, featured)
+        logger.info(
+            "[calibrate-ev] --dry-run: レース=%d 着順揃い place=%d blend=%d 較正標本=%d（保存しません）",
+            inputs.n_races, len(inputs.place_races), len(inputs.blend_races),
+            int(inputs.raw_probs.size),
+        )
+        return
+
+    summary = fit_all(
+        win_ai.effective_model, featured,
+        models_dir="models", which=tuple(args.which),
+    )
+    logger.info(
+        "[calibrate-ev] レース=%d place=%d blend=%d 較正標本=%d",
+        summary["n_races"], summary["n_place_races"], summary["n_blend_races"],
+        summary["n_calib_samples"],
+    )
+    if "exponents" in summary:
+        e = summary["exponents"]
+        logger.info("[calibrate-ev] (γ,δ)=(%.4f,%.4f) → %s", e["gamma"], e["delta"], e["path"])
+    if "calibrator" in summary:
+        c = summary["calibrator"]
+        logger.info("[calibrate-ev] r̂較正 閾値%d点 → %s", c["n_thresholds"], c["path"])
+    if "blend" in summary:
+        b = summary["blend"]
+        logger.info("[calibrate-ev] (α,β)=(%.4f,%.4f) → %s", b["alpha"], b["beta"], b["path"])
+
+
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="継続学習パイプライン")
     sub = parser.add_subparsers(dest="job", required=True)
@@ -1260,7 +1333,27 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="逆算結果をログ表示するのみで保存しない",
     )
 
-    # doctor サブコマンド（健全性点検）
+    # calibrate-ev サブコマンド（OOS で γ,δ / r̂較正 / α,β を fit して保存）
+    ce_p = sub.add_parser(
+        "calibrate-ev",
+        help="OOSデータで補正Harville(γ,δ)/r̂較正/市場合成(α,β)を fit し models/*.json に保存",
+    )
+    ce_p.add_argument("--version", default=None, help="基準にするモデルのバージョン名（省略時は最新）")
+    ce_p.add_argument(
+        "--years", type=int, nargs="+", default=None, metavar="YYYY",
+        help="fit に使う年（学習年より後の OOS にすること。例: 2025）",
+    )
+    ce_p.add_argument(
+        "--which", nargs="+", default=["exponents", "calibrator", "blend"],
+        choices=["exponents", "calibrator", "blend"],
+        help="fit するアーティファクト（既定: 全て）",
+    )
+    ce_p.add_argument(
+        "--dry-run", dest="dry_run", action="store_true",
+        help="fit 結果をログ表示するのみで保存しない",
+    )
+
+    # backtest サブコマンド
     bt_p = sub.add_parser(
         "backtest",
         help="ホールドアウト期間で2ヘッド予測→確定オッズEV選定→実払戻で券種別回収率を評価",
@@ -1291,6 +1384,18 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-odds-features", action="store_true",
         help="retrain --no-odds-features で学習したモデルを評価する際に指定（featured から同じ"
              "オッズ由来列を落として列を一致させる。学習=.values で位置一致が必要なため）",
+    )
+    bt_p.add_argument(
+        "--corrected-harville", action="store_true",
+        help="models/place_exponents.json の (γ,δ) を読み補正Harvilleで順序券種を評価",
+    )
+    bt_p.add_argument(
+        "--calibrate", action="store_true",
+        help="models/win_calibrator.json の r̂ 較正を適用して勝率を補正",
+    )
+    bt_p.add_argument(
+        "--blend", action="store_true",
+        help="models/blend_weights.json の (α,β) で市場合成した勝率を使う",
     )
 
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
@@ -1393,6 +1498,27 @@ def _backtest(args: argparse.Namespace) -> None:
             logger.error("[backtest] --bet-types が全券種に不一致: %s", args.bet_types)
             return
 
+    # EV 較正アーティファクト（calibrate-ev で OOS fit したもの）を opt-in で読み込む
+    place_exponents = win_calibrator = blend_weights = None
+    if getattr(args, "corrected_harville", False):
+        from src.simulation._calibrate import place_exponents_path
+        from src.policies._harville import load_place_exponents
+
+        place_exponents = load_place_exponents(place_exponents_path("models"))
+        logger.info("[backtest] 補正Harville: %s", place_exponents or "ファイル無し→素のHarville")
+    if getattr(args, "calibrate", False):
+        from src.simulation._calibrate import win_calibrator_path
+        from src.policies._calibration import load_calibrator
+
+        win_calibrator = load_calibrator(win_calibrator_path("models"))
+        logger.info("[backtest] r̂較正: %s", "あり" if win_calibrator else "ファイル無し→較正なし")
+    if getattr(args, "blend", False):
+        from src.simulation._calibrate import blend_weights_path
+        from src.policies._blend import load_blend_weights
+
+        blend_weights = load_blend_weights(blend_weights_path("models"))
+        logger.info("[backtest] 市場合成: %s", blend_weights or "ファイル無し→合成なし")
+
     return_processor, _ = _return_processor_db_first()
     result = run_backtest(
         place_ai.effective_model,
@@ -1401,6 +1527,9 @@ def _backtest(args: argparse.Namespace) -> None:
         win_model=win_ai.effective_model if win_ai is not None else None,
         final_odds_lookup=final_odds_lookup,
         thresholds=thresholds,
+        place_exponents=place_exponents,
+        win_calibrator=win_calibrator,
+        blend_weights=blend_weights,
     )
 
     # Edge/EV 診断（任意）: 自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss。
@@ -1528,6 +1657,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         "evaluate-odds-dynamics": _evaluate_odds_dynamics,
         "fetch-final-odds": _fetch_final_odds,
         "calibrate-takeout": _calibrate_takeout,
+        "calibrate-ev": _calibrate_ev,
         "retrain": _retrain,
         "backtest": _backtest,
         "doctor": _doctor,
