@@ -294,6 +294,28 @@ def fit_place_exponents(
     return PlaceExponents(*init)
 
 
+def save_place_exponents(exp: PlaceExponents, path: str) -> None:
+    """較正済み (γ, δ) を JSON（既定 models/place_exponents.json）へ保存する。"""
+    import json
+    import os
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"gamma": exp.gamma, "delta": exp.delta}, f, ensure_ascii=False, indent=2)
+
+
+def load_place_exponents(path: str) -> PlaceExponents | None:
+    """保存済み (γ, δ) を読み込む。ファイルが無ければ None（素の Harville を使う想定）。"""
+    import json
+    import os
+
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        d = json.load(f)
+    return PlaceExponents(gamma=float(d["gamma"]), delta=float(d["delta"]))
+
+
 # ---------------------------------------------------------------------------
 # Place ヘッド（top3 直接予測）から連系の joint を導く近似
 # ---------------------------------------------------------------------------

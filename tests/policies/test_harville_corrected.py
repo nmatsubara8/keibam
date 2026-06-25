@@ -129,3 +129,41 @@ class TestFit:
 
     def test_empty_returns_init(self):
         assert H.fit_place_exponents([], init=(0.8, 0.6)) == PlaceExponents(0.8, 0.6)
+
+
+# ──────────────────────────────────────────
+# (γ,δ) MLE 較正の recovery と永続化
+# ──────────────────────────────────────────
+
+class TestFitRecoveryAndPersist:
+    def _weighted_races(self, wp, true_exp, scale=4000):
+        """既知 (γ,δ) の真の確率に比例した頻度で着順を並べた決定論的レース群。
+
+        各順列を round(prob*scale) 回ずつ与えると、MLE は母集団 (γ,δ) を回復する。
+        """
+        from itertools import permutations
+        races = []
+        for order in permutations(wp.keys(), 3):
+            p = H.prob_trifecta_corrected(wp, *order, true_exp)
+            n = round(p * scale)
+            races.extend([(wp, order)] * n)
+        return races
+
+    def test_mle_recovers_known_exponents(self):
+        wp = {1: 0.45, 2: 0.25, 3: 0.18, 4: 0.12}
+        true_exp = PlaceExponents(0.75, 0.55)
+        races = self._weighted_races(wp, true_exp)
+        fitted = H.fit_place_exponents(races, init=(1.0, 1.0))
+        # 母集団 MLE なので真値近傍に回復する（離散丸めぶんの許容）
+        assert fitted.gamma == pytest.approx(true_exp.gamma, abs=0.12)
+        assert fitted.delta == pytest.approx(true_exp.delta, abs=0.12)
+
+    def test_save_load_round_trip(self, tmp_path):
+        path = str(tmp_path / "place_exponents.json")
+        exp = PlaceExponents(0.81, 0.65)
+        H.save_place_exponents(exp, path)
+        loaded = H.load_place_exponents(path)
+        assert loaded == exp
+
+    def test_load_missing_returns_none(self, tmp_path):
+        assert H.load_place_exponents(str(tmp_path / "nope.json")) is None
