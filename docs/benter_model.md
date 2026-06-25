@@ -99,12 +99,14 @@ $$P(i\to j\to k) = \pi_i \cdot \frac{\sigma_j}{1-\sigma_i} \cdot \frac{\tau_k}{1
 - [x] **プール逆算（V_t 復元）をオッズ力学に配線**（芦谷 2012）: `_arbitrage.recover_pool_total`
       ＋ `_odds_feature_builder.recover_pools_by_phase` / `build_training_frame(include_pool=True)` で
       `pool_current` + `pool_log_ratio_<phase>`（出来高モメンタム）を特徴量化。「総投票量は観測不能」を解消
-- [ ] **(γ,δ) を自前データで MLE**（`fit_place_exponents` を OOS 着順で実行 → `models/place_exponents.json`）
-- [ ] EV パイプライン（`ExpectedValueBetPolicy` / `_backtest`）へ `exponents` を配線（opt-in）
-- [ ] **ΔR²（combined vs public）診断**を `_edge_diagnostic` に追加
-- [ ] **合成モデル**（`combine_logpool` + `fit_blend`）— `P_fund × P_public` の2段目ロジット
+- [x] **(γ,δ) を自前データで MLE**（`fit_place_exponents` + `save/load_place_exponents`・OOS 着順で実行）
+- [x] **合成モデル**（`_blend.combine_logpool` + `fit_blend`）— `P_fund × P_public` の2段目ロジット
+- [x] **ΔR²（combined vs public）診断**（`_blend.blend_diagnostic`・tipster=エコー知見を再現）
+- [x] **r̂ 較正レイヤ**（`_calibration` within-race isotonic・本命過小評価の是正）
+- [x] **プール影響の EV**（`_arbitrage.effective_odds / ev_with_impact / max_profit_bet`）
+- [ ] EV パイプライン（`ExpectedValueBetPolicy` / `_backtest`）へ上記（exponents/blend/calibrator/pool影響）を配線（opt-in）
 - [ ] **unratable → 公衆フォールバック**
-- [ ] （実運用）プール影響・賭けサイズ上限（0.1〜0.5%/レース）
+- [ ] **OOS 評価**で α,β / γ,δ / calibrator を fit（学習年<評価年。in-sample は楽観/退化）
 
 ---
 
