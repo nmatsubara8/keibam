@@ -101,9 +101,12 @@ $$P(i\to j\to k) = \pi_i \cdot \frac{\sigma_j}{1-\sigma_i} \cdot \frac{\tau_k}{1
       `pool_current` + `pool_log_ratio_<phase>`（出来高モメンタム）を特徴量化。「総投票量は観測不能」を解消
 - [x] **(γ,δ) を自前データで MLE**（`fit_place_exponents` + `save/load_place_exponents`・OOS 着順で実行）
 - [x] **合成モデル**（`_blend.combine_logpool` + `fit_blend`）— `P_fund × P_public` の2段目ロジット
-- [x] **ΔR²（combined vs public）診断**（`_blend.blend_diagnostic`・tipster=エコー知見を再現）
+- [x] **ΔR²（combined vs public）診断**（`_blend.blend_diagnostic`・tipster=エコー知見を再現）。
+      `backtest --edge-diagnostic` に `blend_diagnostic_from_edge` で R²(公衆/合成)・ΔR²・(α,β) を出力（in-sample 注記付）
 - [x] **r̂ 較正レイヤ**（`_calibration` within-race isotonic・本命過小評価の是正）
-- [x] **プール影響の EV**（`_arbitrage.effective_odds / ev_with_impact / max_profit_bet`）
+- [x] **プール影響の EV**（`_arbitrage.effective_odds / ev_with_impact / max_profit_bet`）。
+      `_kelly.pool_capped_stake` ＋ `KellyPortfolioOptimizer(pool_impact=True)` でケリー stake を自己購入影響で上限。
+      live は `OperationConfig.use_pool_impact` ＋ `run_prediction(pool_by_race=)`（復元プールを渡す）
 - [x] EV パイプライン（`ExpectedValueBetPolicy` / `_backtest`）へ上記（exponents/blend/calibrator/pool影響）を配線（opt-in）
 - [x] **fit ジョブ + CLI**（`_calibrate.py` の `build_calibration_inputs`/`fit_all` ＋ `run_pipeline.py calibrate-ev`）。
       Win ヘッドの OOS 勝率→ `models/{place_exponents,win_calibrator,blend_weights}.json` を最尤推定で保存。

@@ -41,6 +41,9 @@ class OperationConfig:
     # 初出走（データ無し）馬に公衆 implied 勝率を割り当てる（ベンター §3）。featured の
     # career_starts==0/NaN を初出走と判定し、初出走のみのレースは選定から除外する。既定 False。
     use_unratable_fallback: bool = False
+    # 自己購入のオッズ低下（プール影響）でケリー stake を上限する（芦谷/ベンター）。run_prediction に
+    # pool_by_race（復元プール）を渡したときのみ作動。最適ベットは小さくなる。既定 False。
+    use_pool_impact: bool = False
     # 安全装置（損失ストップ / kill switch）
     kill_switch_enabled: bool = True       # 当日実現損失が上限超で推奨/記録を停止
     max_daily_loss_ratio: float = 0.3      # 当日実現損失が bankroll*この比率を超えたら停止

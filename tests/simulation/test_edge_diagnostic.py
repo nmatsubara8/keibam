@@ -17,6 +17,46 @@ def _score_table(probs, odds, race_ids, umaban):
     )
 
 
+def _edge_frame(rows):
+    """rows: list[(race_id, umaban, r_hat, p_mkt, won)] → edge_df 互換 DataFrame。"""
+    idx = [r[0] for r in rows]
+    return pd.DataFrame(
+        {
+            "umaban": [r[1] for r in rows],
+            "r_hat": [r[2] for r in rows],
+            "p_mkt": [r[3] for r in rows],
+            "won": [float(r[4]) for r in rows],
+        },
+        index=pd.Index(idx, name="race_id"),
+    )
+
+
+class TestBlendDiagnosticFromEdge:
+    def test_returns_delta_r2_keys(self):
+        df = _edge_frame([
+            ("r1", 1, 0.6, 0.3, 1), ("r1", 2, 0.3, 0.4, 0), ("r1", 3, 0.1, 0.3, 0),
+            ("r2", 1, 0.2, 0.5, 0), ("r2", 2, 0.5, 0.3, 1), ("r2", 3, 0.3, 0.2, 0),
+        ])
+        out = ed.blend_diagnostic_from_edge(df)
+        assert out is not None
+        for k in ("r2_public", "r2_combined", "delta_r2", "alpha", "beta", "n", "in_sample"):
+            assert k in out
+        assert out["in_sample"] is True
+        # in-sample fit では合成は公衆以上（ΔR² >= 0）
+        assert out["delta_r2"] >= -1e-9
+
+    def test_none_when_no_winners(self):
+        df = _edge_frame([("r1", 1, 0.6, 0.3, 0), ("r1", 2, 0.4, 0.7, 0)])
+        assert ed.blend_diagnostic_from_edge(df) is None
+
+    def test_explicit_weights_not_in_sample(self):
+        from src.policies._blend import BlendWeights
+
+        df = _edge_frame([("r1", 1, 0.6, 0.3, 1), ("r1", 2, 0.4, 0.7, 0)])
+        out = ed.blend_diagnostic_from_edge(df, weights=BlendWeights(1.0, 1.0))
+        assert out is not None and out["in_sample"] is False
+
+
 class TestMarketImpliedProb:
     def test_normalized_within_race(self):
         odds = pd.Series([2.0, 4.0, 4.0], index=["r1", "r1", "r1"])

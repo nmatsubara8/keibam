@@ -138,6 +138,37 @@ def diagnostic_summary(edge_df: pd.DataFrame) -> dict:
     }
 
 
+def blend_diagnostic_from_edge(edge_df: pd.DataFrame, weights=None) -> dict | None:
+    """edge_df から ΔR²（合成 − 公衆）を算出する（ベンターの価値指標）。
+
+    各レースを (p_fund=r_hat, p_public=p_mkt, winner) の BlendRace に変換し、
+    `_blend.blend_diagnostic` で擬似 R² を出す。weights 未指定なら fit_blend で (α,β) を
+    推定する。**注意**: 同じ edge_df で fit するため ΔR² は in-sample（楽観）。本来は学習年と
+    別の年で fit した重みを渡すこと（OOS）。ΔR²≈0 ⇒「市場の写し」、ΔR²>0 ⇒ 独立情報あり。
+
+    勝ち馬の無いレース・p_fund/p_public が空のレースは除外。レースが無ければ None。
+    """
+    from src.policies._blend import blend_diagnostic, fit_blend
+
+    df = edge_df.dropna(subset=["r_hat", "p_mkt"])
+    races: list = []
+    for _, g in df.groupby(level=0):
+        p_fund = {int(u): float(p) for u, p in zip(g["umaban"], g["r_hat"], strict=False) if p > 0}
+        p_public = {int(u): float(p) for u, p in zip(g["umaban"], g["p_mkt"], strict=False) if p > 0}
+        winners = g.loc[g["won"] == 1, "umaban"]
+        if len(winners) != 1 or not p_fund or not p_public:
+            continue
+        races.append((p_fund, p_public, int(winners.iloc[0])))
+    if not races:
+        return None
+    w = weights or fit_blend(races)
+    out = blend_diagnostic(races, w)
+    out["alpha"] = w.alpha
+    out["beta"] = w.beta
+    out["in_sample"] = weights is None  # 重み未指定＝同データ fit＝in-sample
+    return out
+
+
 def _actual_win(X: pd.DataFrame) -> pd.Series:
     """featured から 1着フラグ（0/1）を取り出す。rank_win 優先、無ければ 着順==1。"""
     if "rank_win" in X.columns:
@@ -162,6 +193,7 @@ def run_edge_diagnostic(model, X: pd.DataFrame, n_bands: int = 10) -> dict:
         "edge_df": edge_df,
         "calibration": calibration_by_band(edge_df, n_bands=n_bands),
         "summary": diagnostic_summary(edge_df),
+        "blend": blend_diagnostic_from_edge(edge_df),
     }
 
 
@@ -186,4 +218,13 @@ def format_edge_report(result: dict) -> str:
                 f"{int(r['band']):>4}{int(r['n']):>7}{r['p_mkt_mean']:>9.3f}"
                 f"{r['r_hat_mean']:>9.3f}{r['win_rate']:>9.3f}{r['edge_mean']:>+9.3f}{r['ev_mean']:>+9.2f}"
             )
+    blend = result.get("blend")
+    if blend:
+        note = "（in-sample・要OOS）" if blend.get("in_sample") else "（OOS重み）"
+        lines.append(
+            f"\nΔR²（市場への上乗せ情報・ベンター指標）{note}:"
+            f"\n  R²(公衆)={blend['r2_public']:.4f} R²(合成)={blend['r2_combined']:.4f} "
+            f"ΔR²={blend['delta_r2']:+.4f} (α={blend['alpha']:.2f},β={blend['beta']:.2f})"
+            f"\n  → {'独立情報あり✅' if blend['delta_r2'] > 1e-4 else '市場の写し（独立情報ほぼ無し）⚠️'}"
+        )
     return "\n".join(lines)

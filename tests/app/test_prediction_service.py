@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from app._prediction_service import default_thresholds
 from app._prediction_service import run_prediction
@@ -187,6 +188,30 @@ class TestEvCalibrationWiring:
         p_wired = {c.combo: c.probability for c in wired if c.bet_type == BetType.TANSHO}
         assert (1,) in p_base and (1,) in p_wired
         assert p_wired[(1,)] != p_base[(1,)]  # 較正で勝率が変化
+
+
+class TestPoolImpactWiring:
+    def test_pool_impact_caps_stake_in_live(self):
+        """use_pool_impact=True かつ pool_by_race 指定で stake がプール影響で縮む。"""
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        th = {BetType.TANSHO: 1.0}
+        op = _default_op_config(tansho_ev_threshold=1.0)
+        base = run_prediction(model, X, op, thresholds=th)
+        op_pool = _default_op_config(tansho_ev_threshold=1.0, use_pool_impact=True)
+        capped = run_prediction(model, X, op_pool, thresholds=th, pool_by_race={"r1": 2000.0})
+        sb = sum(c.stake for c in base)
+        sc = sum(c.stake for c in capped)
+        assert sb > 0 and sc < sb  # プール影響で総 stake が縮む
+
+    def test_pool_impact_off_ignores_pool(self):
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        th = {BetType.TANSHO: 1.0}
+        op = _default_op_config(tansho_ev_threshold=1.0)
+        a = run_prediction(model, X, op, thresholds=th, pool_by_race={"r1": 50.0})
+        b = run_prediction(model, X, op, thresholds=th)
+        assert sum(c.stake for c in a) == pytest.approx(sum(c.stake for c in b))
 
 
 def test_default_thresholds_covers_all_bet_types():

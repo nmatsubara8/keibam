@@ -12,7 +12,7 @@
 - 勝ち系（Σ_h = 1）: 単勝 Harville 勝率 / 三連単の1着 marginal。
 - 3着内系（Σ_h = 3, 3枠ぶん）: Harville 複勝確率 / 複勝 implied / 三連複・三連単の top3 marginal。
 
-レイヤ: preprocessing。pandas と policies._harville のみ依存（取得・I/O なし）。
+レイヤ: preprocessing。pandas と constants/_place_prob のみ依存（取得・I/O なし）。
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Mapping
 import pandas as pd
 
 from src.constants._bet_types import BetType
-from src.policies import _harville as harville
+from src.preprocessing import _place_prob
 
 # featured に乗せる市場歪み特徴量（生値。_z はレース内 zscore で別途付与）。
 MARKET_SIGNAL_COLS: list = [
@@ -59,8 +59,8 @@ def race_market_signals(
     if len(horses) < 3:
         return {}
     win_implied = {h: 1.0 / float(win_odds[h]) for h in horses}
-    win_probs = harville.normalize(win_implied)  # Σ_h = 1
-    place_p = {h: harville.prob_place(win_probs, h, 3) for h in horses}  # Σ_h ≈ 3
+    win_probs = _place_prob.normalize(win_implied)  # Σ_h = 1
+    place_p = {h: _place_prob.prob_place(win_probs, h, 3) for h in horses}  # Σ_h ≈ 3
 
     out: dict[int, dict[str, float]] = {h: {} for h in horses}
 

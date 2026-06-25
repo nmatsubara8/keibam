@@ -201,10 +201,11 @@ class RetrainJob:
                 logger.warning("[retrain] tuning_history 保存失敗 (non-fatal): %s", e)
 
         metrics = evaluate_test(ai.effective_model, ai.datasets.X_test, ai.datasets.y_test)
+        _fd = featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data
         meta: dict[str, Any] = {
             "version": vname,
             "trained_at": dt.datetime.now().isoformat(),
-            "n_races": int(len((featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data).index.unique())),
+            "n_races": int(len(_fd.index.unique())),
             "use_stacking": self._cfg.use_stacking,
             "base_models": list(ai.base_model_names_) if hasattr(ai, "base_model_names_") else ["LightGBM"],
             **metrics,

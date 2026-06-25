@@ -193,7 +193,7 @@ class DataMerger:
             return
         if "馬番" not in self._results.columns:
             return
-        from src.preparing._yoso_marks import aggregate_consensus
+        from src.preprocessing._yoso_consensus import aggregate_consensus
 
         long = self._yoso_marks.reset_index()
         if "race_id" not in long.columns:
@@ -383,7 +383,7 @@ class DataMerger:
         res = base.reset_index()
         res["_pry"] = pd.to_datetime(res["date"], errors="coerce").dt.year - 1
 
-        from src.preparing._person_yearly import canon_person_id
+        from src.preprocessing._person_id import canon_person_id
 
         # breeder_id は results に無く horse_info にある。後段の horse_info マージと衝突しない
         # よう一時列 _breeder_tmp に horse_id 経由で引き、最後に drop する。

@@ -84,6 +84,7 @@ def run_prediction(
     bet_type_params: dict | None = None,
     takeout=None,
     win_model=None,
+    pool_by_race: dict | None = None,
 ) -> list[BetCandidate]:
     """EV 選定 → 確信度付与 → ケリー配分の全パイプラインを実行する。
 
@@ -100,6 +101,8 @@ def run_prediction(
         指定券種は温度・確率較正・EV 閾値/上限を上書きする（Phase 2 最適化結果の反映）。
     takeout : 連系推定オッズの控除率（float または {券種: 控除率}）。省略時は
         較正済み控除率（calibrate-takeout の出力）を自動読込し、無ければ 0.2。
+    pool_by_race : {race_id: 復元プール（≒出来高）}。op_config.use_pool_impact=True のとき、
+        自己購入によるオッズ低下でケリー stake を上限する（芦谷/ベンター）。None なら影響なし。
 
     Returns
     -------
@@ -182,10 +185,11 @@ def run_prediction(
         for c in candidates
     ]
 
-    # 5. フラクショナル・ケリー配分
+    # 5. フラクショナル・ケリー配分（任意でプール影響＝自己購入のオッズ低下を反映）
     optimizer = KellyPortfolioOptimizer(
         kelly_fraction_ratio=op_config.kelly_fraction_ratio,
         per_bet_cap_ratio=op_config.per_bet_cap_ratio,
         max_daily_ratio=op_config.max_daily_ratio,
+        pool_impact=getattr(op_config, "use_pool_impact", False),
     )
-    return optimizer.allocate(scored, bankroll=op_config.bankroll)
+    return optimizer.allocate(scored, bankroll=op_config.bankroll, pool_by_race=pool_by_race)

@@ -20,6 +20,10 @@ from typing import Any, Optional
 
 import pandas as pd
 
+# canon_person_id は preprocessing へ移設（merger も使うためレイヤ逆流を解消）。
+# 既存の `from src.preparing._person_yearly import canon_person_id` を温存する再 export。
+from src.preprocessing._person_id import canon_person_id  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 # entity_type → URL テンプレート（いずれも EUC-JP・同じ race_table_01 構造を想定）
@@ -35,18 +39,6 @@ _LONG_COLUMNS = [
     "出走回数", "勝利数", "勝率", "連対率", "複勝率",
     "芝勝率", "ダート勝率", "重賞勝利", "収得賞金",
 ]
-
-
-def canon_person_id(entity_type: str, eid: Any) -> str:
-    """人物 ID を正準化する。jockey/trainer は netkeiba の 5 桁ゼロ埋め（例 1009→'01009'）。
-
-    results の jockey_id は int64（先頭ゼロ落ち）なので、URL 用にも結合キー用にもこの形で
-    揃える。owner/breeder は ID 形式が異なる（英数）ため数字のときのみゼロ埋めし、他は素通し。
-    """
-    s = re.sub(r"\.0$", "", str(eid).strip())
-    if entity_type in ("jockey", "trainer") and s.isdigit():
-        return s.zfill(5)
-    return s
 
 
 def _num(text: Any) -> float:

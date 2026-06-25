@@ -30,14 +30,16 @@ from typing import Any, Optional
 
 import pandas as pd
 
+# FREE_GOODS_KBN は constants へ、aggregate_consensus は preprocessing へ移設（レイヤ逆流の解消）。
+# 既存の `from src.preparing._yoso_marks import FREE_GOODS_KBN / aggregate_consensus` を温存する再 export。
+from src.constants._yoso import FREE_GOODS_KBN  # noqa: F401
+from src.preprocessing._yoso_consensus import aggregate_consensus  # noqa: F401
+
 logger = logging.getLogger(__name__)
 
 # 印コード（API） → グリフ / スコア
 MARK_CODE_TO_GLYPH: dict[int, str] = {1: "◎", 2: "○", 3: "▲", 4: "△", 5: "☆"}
 MARK_CODE_TO_SCORE: dict[int, int] = {1: 5, 2: 4, 3: 3, 4: 2, 5: 1}
-
-# 無料を表す goods_kbn（由来判定用）。umai_buy=購入済み（ログイン時のみ出現）も無料扱い。
-FREE_GOODS_KBN: frozenset[str] = frozenset({"no1_free", "umai_free", "umai_buy"})
 
 API_URL = "https://race.netkeiba.com/api/api_get_pro_yoso_list_v2.html"
 
@@ -197,41 +199,6 @@ def parse_pro_yoso_json(
     if not rows:
         return pd.DataFrame(columns=_LONG_COLUMNS)
     return pd.DataFrame(rows, columns=_LONG_COLUMNS)
-
-
-def aggregate_consensus(df_long: pd.DataFrame) -> pd.DataFrame:
-    """印ロング形式を (race_id, 馬番) ごとのコンセンサス特徴に集約する（リーク無し）。
-
-    予想家の顔ぶれはレースで変動するため、個別予想家列でなく集約量を作る:
-    - yoso_n_marks    : 印を付けた予想家数（注目度）
-    - yoso_n_honmei   : ◎の数
-    - yoso_score_sum  : 印スコア合計（◎5..☆1）
-    - yoso_score_mean : 印スコア平均（印を付けた予想家内での評価の高さ）
-    """
-    cols = ["race_id", "馬番", "yoso_n_marks", "yoso_n_honmei", "yoso_score_sum", "yoso_score_mean"]
-    if df_long is None or df_long.empty:
-        return pd.DataFrame(columns=cols)
-
-    g = df_long.groupby(["race_id", "馬番"])
-    out = g.agg(
-        yoso_n_marks=("mark_score", "size"),
-        yoso_score_sum=("mark_score", "sum"),
-        yoso_score_mean=("mark_score", "mean"),
-    )
-    out["yoso_n_honmei"] = (
-        df_long.assign(_h=(df_long["mark"] == "◎").astype(int))
-        .groupby(["race_id", "馬番"])["_h"]
-        .sum()
-    )
-    # 無料予想家のみの印数も併設（プレミアム除外の特徴を後で選べるように。最大スキーマの思想）
-    if "goods_kbn" in df_long.columns:
-        free = df_long[df_long["goods_kbn"].isin(FREE_GOODS_KBN)]
-        out["yoso_n_marks_free"] = (
-            free.groupby(["race_id", "馬番"]).size() if not free.empty else 0
-        )
-        out["yoso_n_marks_free"] = out["yoso_n_marks_free"].fillna(0).astype(int)
-        cols = cols + ["yoso_n_marks_free"]
-    return out.reset_index()[cols]
 
 
 def fetch_pro_yoso_marks(

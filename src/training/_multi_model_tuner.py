@@ -31,8 +31,8 @@ def _objective(trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_
     if model_name == "xgboost":
         try:
             import xgboost as xgb
-        except ImportError:
-            raise optuna.TrialPruned()
+        except ImportError as e:
+            raise optuna.TrialPruned() from e
 
         params = {
             k: _suggest(trial, k, v, _XGB_LOG_PARAMS, _XGB_INT_PARAMS)
@@ -56,8 +56,8 @@ def _objective(trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_
     elif model_name == "catboost":
         try:
             from catboost import CatBoostClassifier
-        except ImportError:
-            raise optuna.TrialPruned()
+        except ImportError as e:
+            raise optuna.TrialPruned() from e
 
         params = {
             k: _suggest(trial, k, v, _CAT_LOG_PARAMS, _CAT_INT_PARAMS)

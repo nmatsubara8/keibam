@@ -288,7 +288,6 @@ def _fukusho_payout(rp, race_id, umaban: int) -> float:
 def _build_return_table_df(rp, race_id) -> pd.DataFrame:
     """指定レースの全馬券種払戻を整理した DataFrame を返す。"""
     try:
-        from src.constants._bet_types import BetType
         from src.preprocessing._return_processor import _LABEL
         rows = []
         for bet_type, label in _LABEL.items():

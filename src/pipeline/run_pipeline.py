@@ -1562,6 +1562,8 @@ def _backtest(args: argparse.Namespace) -> None:
         }
         if edge_result is not None:
             out["edge_diagnostic"] = edge_result["summary"]
+            if edge_result.get("blend"):
+                out["delta_r2"] = edge_result["blend"]
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         print(format_report(result))
