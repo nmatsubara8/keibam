@@ -1287,6 +1287,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--edge-diagnostic", action="store_true",
         help="自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss を併せて出力",
     )
+    bt_p.add_argument(
+        "--no-odds-features", action="store_true",
+        help="retrain --no-odds-features で学習したモデルを評価する際に指定（featured から同じ"
+             "オッズ由来列を落として列を一致させる。学習=.values で位置一致が必要なため）",
+    )
 
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
@@ -1359,6 +1364,16 @@ def _backtest(args: argparse.Namespace) -> None:
     if featured.empty:
         logger.error("[backtest] 対象レースがありません（年フィルタが厳しすぎる可能性）")
         return
+
+    # --no-odds-features: retrain --no-odds-features モデルと列を一致させる。学習は
+    # X_train.values（位置ベース・generic 名）なので、評価側 featured からも同じオッズ由来
+    # 列を落とさないと列数/順序がズレて LightGBM が Fatal（features mismatch）になる。
+    if getattr(args, "no_odds_features", False):
+        from src.constants._feature_cols import ODDS_DERIVED_FEATURE_COLS
+
+        present = [c for c in ODDS_DERIVED_FEATURE_COLS if c in featured.columns]
+        featured = featured.drop(columns=present, errors="ignore")
+        logger.info("[backtest] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
 
     # 確定オッズ lookup（--no-final-odds なら単勝 Harville 推定にフォールバック）
     final_odds_lookup = None

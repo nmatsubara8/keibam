@@ -43,24 +43,6 @@ def _coerce_for_predict(frame: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _predict_proba_aligned(model, X_pred: pd.DataFrame):
-    """model.predict_proba を呼ぶ。列不一致時はモデルの feature 名へ reindex して再試行する。
-
-    学習特徴量が変わったモデル（例: retrain --no-odds-features の縮小モデルや、特徴量を
-    追加した新モデルで旧 X を渡す場合）でも、列の過不足を 0 補完で吸収して落ちないようにする。
-    """
-    try:
-        return model.predict_proba(X_pred)[:, 1]
-    except Exception:
-        feat_names = getattr(model, "feature_name_", None) or getattr(model, "feature_names_in_", None)
-        if feat_names is None and hasattr(model, "booster_"):
-            feat_names = model.booster_.feature_name()
-        if feat_names is None:
-            raise
-        X_pred = X_pred.reindex(columns=list(feat_names), fill_value=0)
-        return model.predict_proba(X_pred)[:, 1]
-
-
 # common funcs
 def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     score_table = X[ResultsCols.UMABAN].to_frame().copy()
@@ -186,9 +168,9 @@ class ExpectedValueScorePolicy(AbstractScorePolicy):
 
     @staticmethod
     def calc(model, X: pd.DataFrame) -> pd.DataFrame:
-        prob = _predict_proba_aligned(
-            model, _coerce_for_predict(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))
-        )
+        prob = model.predict_proba(
+            _coerce_for_predict(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))
+        )[:, 1]
         table = X[[ResultsCols.UMABAN]].copy()
         table[PROB] = prob
         table[CURRENT_ODDS] = X[ResultsCols.TANSHO_ODDS].astype(float)
