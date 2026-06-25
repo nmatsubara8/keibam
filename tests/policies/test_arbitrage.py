@@ -78,3 +78,42 @@ class TestArbitrage:
         exacta = {(1, 2): 10.0}  # (1,3) 欠損
         c = A.min_win_cost(1, win, exacta_odds=exacta, horses=[1, 2, 3])
         assert c == pytest.approx(0.5)  # 単勝 1/2.0
+
+
+class TestPoolImpactEV:
+    def test_effective_odds_decreases_with_size(self):
+        S, s = 5000, 50
+        o0 = A.odds_of(S, s, truncate=False)
+        small = A.effective_odds(o0, S, 10)
+        large = A.effective_odds(o0, S, 500)
+        assert small < o0          # 自己購入で低下
+        assert large < small       # 多く買うほど低下
+
+    def test_tiny_bet_near_current_odds(self):
+        S, s = 100000, 1000  # 厚いプール
+        o0 = A.odds_of(S, s, truncate=False)
+        assert A.effective_odds(o0, S, 1) == pytest.approx(o0, rel=1e-3)
+
+    def test_ev_with_impact_drops_with_size(self):
+        S, s = 3000, 30
+        o0 = A.odds_of(S, s, truncate=False)  # 高オッズ・薄プール
+        prob = 0.02
+        ev_small = A.ev_with_impact(prob, o0, S, 5)
+        ev_large = A.ev_with_impact(prob, o0, S, 300)
+        assert ev_small > ev_large
+
+    def test_max_profit_bet_interior_optimum(self):
+        S, s = 3000, 30
+        o0 = A.odds_of(S, s, truncate=False)
+        prob = 0.05  # prob·odds が 1 超で正 EV
+        assert prob * o0 - 1 > 0
+        k, profit = A.max_profit_bet(prob, o0, S, max_tickets=5000)
+        # 有限の内点最適（全部 or 1枚ではない）かつ利益>0
+        assert 0 < k < 5000
+        assert profit > 0
+
+    def test_max_profit_bet_zero_when_negative_ev(self):
+        S, s = 3000, 300
+        o0 = A.odds_of(S, s, truncate=False)  # 低オッズ
+        prob = 0.01  # prob·odds < 1
+        assert A.max_profit_bet(prob, o0, S) == (0, 0.0)

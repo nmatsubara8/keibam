@@ -92,10 +92,65 @@ def recover_pool_total(
 
 def odds_after_purchase(
     odds: float, pool_total: float, ticket_count: float, added: int,
+    *, base: float = ODDS_BASE, factor: float = FACTOR_CHIHO, truncate: bool = True,
+) -> float:
+    """この馬券を added 枚買い増した後のオッズ（同種総売上にも added を加算）。
+
+    truncate=False は EV モデリング用の生値（1桁切り捨ての tick ノイズを避ける）。
+    """
+    return odds_of(pool_total + added, ticket_count + added, base=base, factor=factor, truncate=truncate)
+
+
+def effective_odds(
+    odds: float, pool_total: float, added_tickets: int,
     *, base: float = ODDS_BASE, factor: float = FACTOR_CHIHO,
 ) -> float:
-    """この馬券を added 枚買い増した後のオッズ（同種総売上にも added を加算）。"""
-    return odds_of(pool_total + added, ticket_count + added, base=base, factor=factor)
+    """自分が added_tickets 枚買った後の確定オッズ（＝実際に受け取る配当倍率）。
+
+    パリミュチュエルでは払戻は確定オッズ基準なので、k 枚買うと全 k 枚がこの低下後の
+    オッズで払い戻される。現在オッズとプール S から当該馬券の枚数 s を逆算して適用する。
+    """
+    s = count_from_odds(odds, pool_total, base=base, factor=factor)
+    if s == float("inf"):
+        return odds
+    # EV モデリング用に生値（切り捨てなし）を使う
+    return odds_after_purchase(odds, pool_total, s, added_tickets, base=base, factor=factor, truncate=False)
+
+
+def ev_with_impact(
+    prob: float, odds: float, pool_total: float, added_tickets: int,
+    *, base: float = ODDS_BASE, factor: float = FACTOR_CHIHO,
+) -> float:
+    """自己購入のオッズ低下を織り込んだ期待値 EV = prob·確定オッズ − 1。
+
+    added_tickets を増やすほど確定オッズが下がり EV も下がる（プール影響）。
+    """
+    eo = effective_odds(odds, pool_total, added_tickets, base=base, factor=factor)
+    return prob * eo - 1.0
+
+
+def max_profit_bet(
+    prob: float, odds: float, pool_total: float,
+    *, base: float = ODDS_BASE, factor: float = FACTOR_CHIHO, max_tickets: int = 100_000,
+) -> tuple[int, float]:
+    """期待利益（= k·(prob·確定オッズ(k) − 1)）を最大化する購入枚数 k と利益（枚単位）。
+
+    オッズは k とともに低下するため、正の EV でも最適購入枚数は有限（芦谷/ベンターのプール影響）。
+    EV が最初から負なら (0, 0.0)。利益は 1 枚=1 単位（×100円で円換算）。
+    """
+    if ev_with_impact(prob, odds, pool_total, 1, base=base, factor=factor) <= 0:
+        return 0, 0.0
+    best_k, best_profit = 0, 0.0
+    k = 1
+    while k <= max_tickets:
+        eo = effective_odds(odds, pool_total, k, base=base, factor=factor)
+        profit = k * (prob * eo - 1.0)
+        if profit > best_profit:
+            best_profit, best_k = profit, k
+        elif profit < best_profit:
+            break  # 単峰（k とともにオッズ単調低下）なので下降に転じたら終了
+        k += 1
+    return best_k, best_profit
 
 
 def min_win_cost(
