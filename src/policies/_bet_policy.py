@@ -180,12 +180,22 @@ class ExpectedValueBetPolicy:
         ev_max: float = float("inf"),
         bet_type_params=None,
         direct_place_prob: bool = True,
+        place_exponents=None,
+        win_calibrator=None,
+        blend_weights=None,
     ) -> None:
         self._odds_provider = odds_provider
         self._thresholds = thresholds
         self._bet_types = list(bet_types) if bet_types is not None else list(thresholds.keys())
         self._risk = risk_limits
         self._ev_max = ev_max
+        # ベンター/芦谷スレッドの opt-in 配線（いずれも None で従来挙動を完全保持）:
+        # - place_exponents: 連系の順序確率を Benter べき乗補正 Harville で算出（§_harville）
+        # - win_calibrator: 勝率 r̂ をレース内 isotonic 較正（本命過小評価の是正・§_calibration）
+        # - blend_weights: モデル勝率と市場 implied を対数線形プール合成（ベンター2段目・§_blend）
+        self._place_exponents = place_exponents
+        self._win_calibrator = win_calibrator
+        self._blend_weights = blend_weights
         # Stage A: 複勝はモデルの top3 出力（place_prob_table もしくは PROB 列）を
         # **直接** 的中確率に使う（Harville 再導出しない）。Place ヘッドが top3 を
         # 直接予測しているため、これが本来の複勝確率。False で従来の Harville 経路。
@@ -250,9 +260,15 @@ class ExpectedValueBetPolicy:
             if pd.notna(p) and p > 0
         }
         # 複勝直接確率: place_prob_table 指定があればそれ、無ければ prob_table を流用
-        # （base モデルが top3 を予測している前提＝Stage A）。
+        # （base モデルが top3 を予測している前提＝Stage A）。place_probs は較正/合成前の
+        # 元の win_probs を使う（複勝/ワイドは Place ヘッド系で、勝率較正の対象外）。
         if place_probs is None:
             place_probs = dict(win_probs)
+        # 勝率較正 → 市場合成（連系 Harville に渡す勝率を整える。いずれも opt-in）。
+        if self._win_calibrator is not None:
+            win_probs = self._apply_calibration(win_probs)
+        if self._blend_weights is not None:
+            win_probs = self._apply_blend(race_id, win_probs)
         # 低確率帯のノイズを足切り（KB 7.3）
         eligible = [u for u, p in win_probs.items() if p >= self._risk.MIN_WIN_PROB]
 
@@ -288,7 +304,9 @@ class ExpectedValueBetPolicy:
                         continue
                     prob = pw * prob_scale
                 else:
-                    prob = harville.combo_probability(bet_type, bt_win_probs, combo) * prob_scale
+                    prob = harville.combo_probability(
+                        bet_type, bt_win_probs, combo, self._place_exponents
+                    ) * prob_scale
                 odds = self._odds_provider.get_odds(race_id, bet_type, combo)
                 # オッズ健全性ガード: NaN / <=0 / inf の異常オッズは EV 計算せずスキップ
                 if not (math.isfinite(odds) and odds > 0):
@@ -309,3 +327,32 @@ class ExpectedValueBetPolicy:
         # リスク管理: 1レースの投票枚数を上限未満に。期待値上位を採用（KB 7.3）。
         race_candidates.sort(key=lambda c: c.expected_value, reverse=True)
         return race_candidates[: self._risk.MAX_TICKETS_PER_RACE]
+
+    def _apply_calibration(self, win_probs: dict) -> dict:
+        """勝率を isotonic 較正してレース内で Σ=1 に再正規化する（本命過小評価の是正）。"""
+        umabans = list(win_probs.keys())
+        if not umabans:
+            return win_probs
+        cal = self._win_calibrator.predict([win_probs[u] for u in umabans])
+        total = float(sum(cal))
+        if total <= 0:
+            return win_probs
+        return {u: float(c) / total for u, c in zip(umabans, cal, strict=False)}
+
+    def _apply_blend(self, race_id, win_probs: dict) -> dict:
+        """モデル勝率と市場 implied 勝率（単勝オッズ由来）を対数線形プール合成する。"""
+        from src.policies._blend import combine_logpool
+
+        public: dict = {}
+        for u in win_probs:
+            o = self._odds_provider.get_odds(race_id, BetType.TANSHO, (u,))
+            if math.isfinite(o) and o > 0:
+                public[u] = 1.0 / o
+        total = float(sum(public.values()))
+        if total <= 0:
+            return win_probs  # 市場オッズが無ければ合成しない
+        public = {u: p / total for u, p in public.items()}
+        blended = combine_logpool(
+            win_probs, public, self._blend_weights.alpha, self._blend_weights.beta
+        )
+        return blended or win_probs

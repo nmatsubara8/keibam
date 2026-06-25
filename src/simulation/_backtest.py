@@ -124,6 +124,9 @@ def select_candidates(
     final_odds_lookup: Mapping | None = None,
     thresholds: dict | None = None,
     bet_type_params: dict | None = None,
+    place_exponents=None,
+    win_calibrator=None,
+    blend_weights=None,
     takeout=0.2,
 ) -> list:
     """2ヘッド予測 + 確定オッズで EV 選定し BetCandidate のリストを返す。
@@ -131,6 +134,9 @@ def select_candidates(
     run_prediction（app 層）の選定部だけを抜き出し、確信度/ケリー配分は行わない
     （バックテストはフラット 1 単位で回収率を測るため）。確定オッズが無い組合せは
     fallback（単勝からの Harville 推定）に委譲する。
+
+    place_exponents / win_calibrator / blend_weights は EV ポリシーへの opt-in 配線
+    （Benter べき乗補正 Harville / r̂ 較正 / 市場合成）。いずれも None で従来挙動を保持。
     """
     thresholds = thresholds or default_thresholds()
     table = ExpectedValueScorePolicy.calc(place_model, X)
@@ -147,7 +153,9 @@ def select_candidates(
         else fallback
     )
     policy = ExpectedValueBetPolicy(
-        provider, thresholds=thresholds, bet_type_params=bet_type_params
+        provider, thresholds=thresholds, bet_type_params=bet_type_params,
+        place_exponents=place_exponents, win_calibrator=win_calibrator,
+        blend_weights=blend_weights,
     )
     place_cols = table[[ResultsCols.UMABAN, PROB]]
     if win_table is not None:
@@ -166,6 +174,9 @@ def run_backtest(
     final_odds_lookup: Mapping | None = None,
     thresholds: dict | None = None,
     bet_type_params: dict | None = None,
+    place_exponents=None,
+    win_calibrator=None,
+    blend_weights=None,
     takeout=0.2,
     unit: int = 1,
 ) -> dict:
@@ -187,6 +198,9 @@ def run_backtest(
         final_odds_lookup=final_odds_lookup,
         thresholds=thresholds,
         bet_type_params=bet_type_params,
+        place_exponents=place_exponents,
+        win_calibrator=win_calibrator,
+        blend_weights=blend_weights,
         takeout=takeout,
     )
     per = settle_candidates(candidates, return_processor, unit=unit)
