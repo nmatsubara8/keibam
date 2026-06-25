@@ -183,6 +183,7 @@ class ExpectedValueBetPolicy:
         place_exponents=None,
         win_calibrator=None,
         blend_weights=None,
+        unratable_fallback: bool = False,
     ) -> None:
         self._odds_provider = odds_provider
         self._thresholds = thresholds
@@ -196,6 +197,9 @@ class ExpectedValueBetPolicy:
         self._place_exponents = place_exponents
         self._win_calibrator = win_calibrator
         self._blend_weights = blend_weights
+        # unratable（初出走・データ無し）馬に公衆 implied 勝率を割り当てる（ベンター §3）。
+        # True かつ select に unratable_by_race を渡したときのみ作動（初出走のみのレースは除外）。
+        self._unratable_fallback = unratable_fallback
         # Stage A: 複勝はモデルの top3 出力（place_prob_table もしくは PROB 列）を
         # **直接** 的中確率に使う（Harville 再導出しない）。Place ヘッドが top3 を
         # 直接予測しているため、これが本来の複勝確率。False で従来の Harville 経路。
@@ -205,19 +209,31 @@ class ExpectedValueBetPolicy:
         # （thresholds[券種] と ev_max、温度・較正なし）を完全に保持する。
         self._bet_type_params = dict(bet_type_params) if bet_type_params else {}
 
-    def select(self, prob_table: pd.DataFrame, place_prob_table: pd.DataFrame | None = None) -> list:
+    def select(
+        self,
+        prob_table: pd.DataFrame,
+        place_prob_table: pd.DataFrame | None = None,
+        unratable_by_race: dict | None = None,
+    ) -> list:
         """較正確率テーブルから BetCandidate のリストを返す。
 
         prob_table: race_id を index に持ち、列 [ResultsCols.UMABAN, "prob"] を含む DataFrame。
             連系の Harville 計算に使う「勝率」相当（Stage B では Win ヘッド出力）。
         place_prob_table: 複勝の top3 確率テーブル（同形式）。省略時は prob_table を流用
             （Place ヘッド単独運用＝base モデルが top3 を出している前提）。
+        unratable_by_race: {race_id: {初出走の馬番...}}。unratable_fallback=True のとき、
+            該当馬を公衆 implied 勝率で置換する（初出走のみのレースは除外）。
         """
         place_map = self._build_place_map(place_prob_table)
+        unr_map = unratable_by_race or {}
         candidates = []
         for race_id, race_df in prob_table.groupby(level=0):
             candidates.extend(
-                self._select_for_race(race_id, race_df, place_probs=place_map.get(race_id))
+                self._select_for_race(
+                    race_id, race_df,
+                    place_probs=place_map.get(race_id),
+                    unratable=unr_map.get(race_id),
+                )
             )
         return candidates
 
@@ -252,13 +268,26 @@ class ExpectedValueBetPolicy:
                     umaban_list.append(umaban)
         return bet_dict
 
-    def _select_for_race(self, race_id, race_df: pd.DataFrame, place_probs: dict | None = None) -> list:
+    def _select_for_race(
+        self,
+        race_id,
+        race_df: pd.DataFrame,
+        place_probs: dict | None = None,
+        unratable: set | None = None,
+    ) -> list:
         # 確率の健全性ガード: NaN/<=0 は Harville 正規化を汚染するため win_probs から除外する
         win_probs = {
             u: float(p)
             for u, p in zip(race_df[ResultsCols.UMABAN], race_df[PROB], strict=False)
             if pd.notna(p) and p > 0
         }
+        # unratable（初出走）馬の公衆フォールバック（ベンター §3・opt-in）。較正/合成より先に
+        # 適用し、初出走馬はモデル勝率でなく公衆 implied 勝率に置換する。初出走のみのレースは
+        # モデルが全く効かないため除外する（候補なし）。
+        if self._unratable_fallback and unratable:
+            win_probs = self._apply_unratable_fallback(race_id, win_probs, unratable)
+            if not win_probs:
+                return []
         # 複勝直接確率: place_prob_table 指定があればそれ、無ければ prob_table を流用
         # （base モデルが top3 を予測している前提＝Stage A）。place_probs は較正/合成前の
         # 元の win_probs を使う（複勝/ワイドは Place ヘッド系で、勝率較正の対象外）。
@@ -327,6 +356,21 @@ class ExpectedValueBetPolicy:
         # リスク管理: 1レースの投票枚数を上限未満に。期待値上位を採用（KB 7.3）。
         race_candidates.sort(key=lambda c: c.expected_value, reverse=True)
         return race_candidates[: self._risk.MAX_TICKETS_PER_RACE]
+
+    def _apply_unratable_fallback(self, race_id, win_probs: dict, unratable: set) -> dict:
+        """初出走馬を公衆 implied 勝率で置換する。初出走のみのレースは空 dict（除外）。"""
+        from src.policies._unratable import is_unratable_only, public_fallback
+
+        if is_unratable_only(win_probs.keys(), unratable):
+            return {}
+        public: dict = {}
+        for u in win_probs:
+            o = self._odds_provider.get_odds(race_id, BetType.TANSHO, (u,))
+            if math.isfinite(o) and o > 0:
+                public[u] = 1.0 / o
+        if not public:
+            return win_probs  # 公衆オッズが無ければ置換できない（モデル勝率を維持）
+        return public_fallback(win_probs, public, unratable)
 
     def _apply_calibration(self, win_probs: dict) -> dict:
         """勝率を isotonic 較正してレース内で Σ=1 に再正規化する（本命過小評価の是正）。"""

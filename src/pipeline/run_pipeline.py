@@ -193,7 +193,9 @@ def _build_odds_signal_frame(config):
         res["_tan"] = pd.to_numeric(res["単勝"], errors="coerce")
         win_by_race: dict = {}
         for rid, g in res.dropna(subset=["_um", "_tan"]).groupby("_rid"):
-            win_by_race[rid] = {int(u): float(o) for u, o in zip(g["_um"], g["_tan"]) if o > 0}
+            win_by_race[rid] = {
+                int(u): float(o) for u, o in zip(g["_um"], g["_tan"], strict=False) if o > 0
+            }
         frame = build_market_signal_frame(lookup, win_by_race)
         return frame if not frame.empty else None
     except Exception as e:  # noqa: BLE001 — オッズ特徴は任意。失敗してもパイプラインは継続
@@ -1397,6 +1399,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--blend", action="store_true",
         help="models/blend_weights.json の (α,β) で市場合成した勝率を使う",
     )
+    bt_p.add_argument(
+        "--unratable-fallback", action="store_true",
+        help="初出走馬(career_starts=0/NaN)を公衆 implied 勝率に置換し初出走のみのレースは除外（ベンター §3）",
+    )
 
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
@@ -1518,6 +1524,9 @@ def _backtest(args: argparse.Namespace) -> None:
 
         blend_weights = load_blend_weights(blend_weights_path("models"))
         logger.info("[backtest] 市場合成: %s", blend_weights or "ファイル無し→合成なし")
+    unratable_fallback = getattr(args, "unratable_fallback", False)
+    if unratable_fallback:
+        logger.info("[backtest] 初出走の公衆フォールバック: 有効（初出走のみのレースは除外）")
 
     return_processor, _ = _return_processor_db_first()
     result = run_backtest(
@@ -1530,6 +1539,7 @@ def _backtest(args: argparse.Namespace) -> None:
         place_exponents=place_exponents,
         win_calibrator=win_calibrator,
         blend_weights=blend_weights,
+        unratable_fallback=unratable_fallback,
     )
 
     # Edge/EV 診断（任意）: 自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss。

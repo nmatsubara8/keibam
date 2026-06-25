@@ -108,7 +108,9 @@ $$P(i\to j\to k) = \pi_i \cdot \frac{\sigma_j}{1-\sigma_i} \cdot \frac{\tau_k}{1
 - [x] **fit ジョブ + CLI**（`_calibrate.py` の `build_calibration_inputs`/`fit_all` ＋ `run_pipeline.py calibrate-ev`）。
       Win ヘッドの OOS 勝率→ `models/{place_exponents,win_calibrator,blend_weights}.json` を最尤推定で保存。
       `backtest --corrected-harville/--calibrate/--blend` で読み込んで評価。`--years` で OOS を切る
-- [ ] **unratable → 公衆フォールバック**
+- [x] **unratable → 公衆フォールバック**（`_unratable.public_fallback`／`build_unratable_by_race`。
+      初出走=career_starts 0/NaN を公衆 implied 勝率に置換、初出走のみのレースは除外。
+      `ExpectedValueBetPolicy(unratable_fallback=True)` ＋ live(`use_unratable_fallback`)/`backtest --unratable-fallback`）
 - [ ] **OOS 評価の実走**（データ投入後に `calibrate-ev --years <学習年より後>` を実行 → α,β/γ,δ/calibrator を確定し
       backtest で in/out を比較。Benter §5: 学習年<評価年を厳守。現状はツール完備・データ待ち）
 

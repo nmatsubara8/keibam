@@ -33,6 +33,14 @@ class OperationConfig:
     # オッズ力学モデルの予測確定オッズで EV を計算する（odds_watch の最新予測を使用。
     # 予測が無いレース/馬は現在オッズへ自動フォールバック）
     use_predicted_odds: bool = False
+    # EV 較正アーティファクト（calibrate-ev の出力）をライブ選定に適用する。
+    # models/{place_exponents,win_calibrator,blend_weights}.json を読み補正Harville/r̂較正/
+    # 市場合成を有効化（ファイルが無い項目は自動で従来挙動へフォールバック）。既定 False=無効。
+    # 注意: これらは OOS で fit したものを使うこと（in-sample は退化。Benter §5）。
+    use_ev_calibration: bool = False
+    # 初出走（データ無し）馬に公衆 implied 勝率を割り当てる（ベンター §3）。featured の
+    # career_starts==0/NaN を初出走と判定し、初出走のみのレースは選定から除外する。既定 False。
+    use_unratable_fallback: bool = False
     # 安全装置（損失ストップ / kill switch）
     kill_switch_enabled: bool = True       # 当日実現損失が上限超で推奨/記録を停止
     max_daily_loss_ratio: float = 0.3      # 当日実現損失が bankroll*この比率を超えたら停止

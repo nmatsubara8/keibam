@@ -127,6 +127,7 @@ def select_candidates(
     place_exponents=None,
     win_calibrator=None,
     blend_weights=None,
+    unratable_fallback=False,
     takeout=0.2,
 ) -> list:
     """2ヘッド予測 + 確定オッズで EV 選定し BetCandidate のリストを返す。
@@ -137,6 +138,7 @@ def select_candidates(
 
     place_exponents / win_calibrator / blend_weights は EV ポリシーへの opt-in 配線
     （Benter べき乗補正 Harville / r̂ 較正 / 市場合成）。いずれも None で従来挙動を保持。
+    unratable_fallback=True で初出走馬を公衆 implied 勝率に置換する（ベンター §3）。
     """
     thresholds = thresholds or default_thresholds()
     table = ExpectedValueScorePolicy.calc(place_model, X)
@@ -155,14 +157,20 @@ def select_candidates(
     policy = ExpectedValueBetPolicy(
         provider, thresholds=thresholds, bet_type_params=bet_type_params,
         place_exponents=place_exponents, win_calibrator=win_calibrator,
-        blend_weights=blend_weights,
+        blend_weights=blend_weights, unratable_fallback=unratable_fallback,
     )
+    unratable_by_race = None
+    if unratable_fallback:
+        from src.policies._unratable import build_unratable_by_race
+
+        unratable_by_race = build_unratable_by_race(X)
     place_cols = table[[ResultsCols.UMABAN, PROB]]
     if win_table is not None:
         return policy.select(
-            win_table[[ResultsCols.UMABAN, PROB]], place_prob_table=place_cols
+            win_table[[ResultsCols.UMABAN, PROB]], place_prob_table=place_cols,
+            unratable_by_race=unratable_by_race,
         )
-    return policy.select(place_cols)
+    return policy.select(place_cols, unratable_by_race=unratable_by_race)
 
 
 def run_backtest(
@@ -177,6 +185,7 @@ def run_backtest(
     place_exponents=None,
     win_calibrator=None,
     blend_weights=None,
+    unratable_fallback=False,
     takeout=0.2,
     unit: int = 1,
 ) -> dict:
@@ -201,6 +210,7 @@ def run_backtest(
         place_exponents=place_exponents,
         win_calibrator=win_calibrator,
         blend_weights=blend_weights,
+        unratable_fallback=unratable_fallback,
         takeout=takeout,
     )
     per = settle_candidates(candidates, return_processor, unit=unit)

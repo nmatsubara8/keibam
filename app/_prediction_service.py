@@ -55,6 +55,27 @@ def _load_live_takeout(takeout):
     return calib or 0.2
 
 
+def _load_ev_artifacts(models_dir: str = "models"):
+    """EV 較正アーティファクト（補正Harville/r̂較正/市場合成）を models/ から読み込む。
+
+    calibrate-ev が保存した3つの JSON を読み、(place_exponents, win_calibrator,
+    blend_weights) を返す。各ファイルが無ければ該当は None（= その補正を行わない）。
+    op_config.use_ev_calibration=True のときだけ呼ぶ（既定はライブ挙動を変えない）。
+    """
+    from src.policies._blend import load_blend_weights
+    from src.policies._calibration import load_calibrator
+    from src.policies._harville import load_place_exponents
+    from src.simulation._calibrate import blend_weights_path
+    from src.simulation._calibrate import place_exponents_path
+    from src.simulation._calibrate import win_calibrator_path
+
+    return (
+        load_place_exponents(place_exponents_path(models_dir)),
+        load_calibrator(win_calibrator_path(models_dir)),
+        load_blend_weights(blend_weights_path(models_dir)),
+    )
+
+
 def run_prediction(
     model,
     X: pd.DataFrame,
@@ -118,15 +139,31 @@ def run_prediction(
             pass
 
     # 3. EV 選定（券種別最適化パラメータがあれば温度・較正・閾値を反映）
-    policy = ExpectedValueBetPolicy(provider, thresholds=thresholds, bet_type_params=bet_type_params)
+    #    use_ev_calibration=True なら calibrate-ev の OOS 較正物を opt-in 適用（無い項目は None）。
+    place_exponents = win_calibrator = blend_weights = None
+    if getattr(op_config, "use_ev_calibration", False):
+        place_exponents, win_calibrator, blend_weights = _load_ev_artifacts()
+    # 初出走馬の公衆フォールバック（ベンター §3・opt-in）。featured から初出走集合を作る。
+    unratable_fallback = getattr(op_config, "use_unratable_fallback", False)
+    unratable_by_race = None
+    if unratable_fallback:
+        from src.policies._unratable import build_unratable_by_race
+
+        unratable_by_race = build_unratable_by_race(X)
+    policy = ExpectedValueBetPolicy(
+        provider, thresholds=thresholds, bet_type_params=bet_type_params,
+        place_exponents=place_exponents, win_calibrator=win_calibrator,
+        blend_weights=blend_weights, unratable_fallback=unratable_fallback,
+    )
     place_cols = table[[ResultsCols.UMABAN, PROB]]
     if win_table is not None:
         # 連系は Win ヘッドの勝率、複勝は Place ヘッドの top3 を直接使う
         candidates = policy.select(
-            win_table[[ResultsCols.UMABAN, PROB]], place_prob_table=place_cols
+            win_table[[ResultsCols.UMABAN, PROB]], place_prob_table=place_cols,
+            unratable_by_race=unratable_by_race,
         )
     else:
-        candidates = policy.select(place_cols)
+        candidates = policy.select(place_cols, unratable_by_race=unratable_by_race)
 
     # 検証済み戦略: オッズ上限フィルタ（既定 inf=無効）。3–15倍にエッジが集中し、
     # 15倍超は -EV な人気薄ジャンクのため除外する。

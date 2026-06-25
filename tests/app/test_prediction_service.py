@@ -145,6 +145,50 @@ class TestLiveTakeout:
         assert high < low
 
 
+class TestEvCalibrationWiring:
+    def test_load_ev_artifacts_all_none_when_absent(self, tmp_path):
+        from app._prediction_service import _load_ev_artifacts
+
+        assert _load_ev_artifacts(str(tmp_path)) == (None, None, None)
+
+    def test_disabled_by_default_does_not_load(self, monkeypatch):
+        """use_ev_calibration 既定 False では _load_ev_artifacts を呼ばない。"""
+        import app._prediction_service as ps
+
+        called = {"n": 0}
+
+        def _spy(*a, **k):
+            called["n"] += 1
+            return (None, None, None)
+
+        monkeypatch.setattr(ps, "_load_ev_artifacts", _spy)
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        ps.run_prediction(model, X, _default_op_config(), thresholds={BetType.TANSHO: 1.0})
+        assert called["n"] == 0
+
+    def test_enabled_loads_and_applies_calibrator(self, monkeypatch):
+        """use_ev_calibration=True で較正器を適用すると勝率（候補確率）が変わる。"""
+        import app._prediction_service as ps
+        from src.policies._calibration import IsotonicCalibrator
+
+        # 本命(高raw)を持ち上げる較正写像
+        cal = IsotonicCalibrator(x=(0.10, 0.65), y=(0.05, 0.95))
+        monkeypatch.setattr(ps, "_load_ev_artifacts", lambda *a, **k: (None, cal, None))
+
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        th = {BetType.TANSHO: 0.0}
+        base = ps.run_prediction(model, X, _default_op_config(), thresholds=th)
+        wired = ps.run_prediction(
+            model, X, _default_op_config(use_ev_calibration=True), thresholds=th
+        )
+        p_base = {c.combo: c.probability for c in base if c.bet_type == BetType.TANSHO}
+        p_wired = {c.combo: c.probability for c in wired if c.bet_type == BetType.TANSHO}
+        assert (1,) in p_base and (1,) in p_wired
+        assert p_wired[(1,)] != p_base[(1,)]  # 較正で勝率が変化
+
+
 def test_default_thresholds_covers_all_bet_types():
     th = default_thresholds()
     for bt in (BetType.TANSHO, BetType.FUKUSHO, BetType.UMAREN, BetType.UMATAN,
