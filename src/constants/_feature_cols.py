@@ -131,10 +131,12 @@ MARKET_SIGNAL_FEATURE_COLS: list = [
 ]
 
 # オッズ由来の派生特徴量（retrain --no-odds-features で学習から除外＝対市場エッジ A/B 用）。
-# 生の ``単勝`` は元から _DROP_FOR_TRAIN で除外済みだが、市場情報は派生列（単勝_log・市場歪み
-# overlay 群）とその _z を通じてモデルに入る。これらを落とすと「市場の写し」でない r̂ を作れる。
+# 生の ``単勝`` は **含めない**: 元から _DROP_FOR_TRAIN で学習特徴から除外済みだが、EV 計算・
+# オッズ供給（ExpectedValueScorePolicy.calc / ModelWrapper の X_test.drop(単勝)）が列の存在を
+# 前提にするため featured には残す必要がある。市場情報は派生列（単勝_log・市場歪み overlay 群）
+# とその _z を通じて入るので、それらだけを落として「市場の写し」でない r̂ を作る。
 ODDS_DERIVED_FEATURE_COLS: list = (
-    ["単勝", "単勝_log", "単勝_log_z"]
+    ["単勝_log", "単勝_log_z"]
     + MARKET_SIGNAL_FEATURE_COLS
     + [f"{c}_z" for c in MARKET_SIGNAL_FEATURE_COLS]
 )

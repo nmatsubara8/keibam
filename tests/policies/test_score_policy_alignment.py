@@ -13,12 +13,13 @@ from src.policies._score_policy import ExpectedValueScorePolicy
 class TestOddsDerivedCols:
     def test_contains_log_and_market_signals(self):
         assert "単勝_log" in ODDS_DERIVED_FEATURE_COLS
-        assert "単勝" in ODDS_DERIVED_FEATURE_COLS
         for c in MARKET_SIGNAL_FEATURE_COLS:
             assert c in ODDS_DERIVED_FEATURE_COLS
             assert f"{c}_z" in ODDS_DERIVED_FEATURE_COLS
 
-    def test_excludes_non_odds_derived(self):
+    def test_excludes_raw_tansho_and_non_odds(self):
+        # 生の単勝は EV/オッズ供給が列の存在を前提にするため除外リストに含めない
+        assert "単勝" not in ODDS_DERIVED_FEATURE_COLS
         # 斤量比・休み明け等は対市場ではないので含めない
         assert "kinryo_per_weight" not in ODDS_DERIVED_FEATURE_COLS
         assert "is_layoff" not in ODDS_DERIVED_FEATURE_COLS
