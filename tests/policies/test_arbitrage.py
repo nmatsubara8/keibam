@@ -29,7 +29,7 @@ class TestPoolRecovery:
         S = 4288
         counts = [3, 5, 8, 13, 21, 50, 100, 240]
         odds = [A.odds_of(S, s, truncate=False) for s in counts]
-        recovered = A.recover_pool_total(odds, max_pool=10000)
+        recovered = A.recover_pool_total(odds)
         assert recovered == S
 
     def test_count_from_odds_inverse(self):

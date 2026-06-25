@@ -57,34 +57,35 @@ def recover_pool_total(
     *,
     base: float = ODDS_BASE,
     factor: float = FACTOR_CHIHO,
-    max_pool: int = 300_000,
-    tol: float = 1e-3,
+    max_count: int = 1000,
+    tol: float = 0.5,
 ) -> int | None:
     """券種内の複数オッズから総売上枚数 S を逆算する（芦谷 2012 §3.2）。
 
-    各 s_i = S·factor/(odds_i-base) が整数に最も近くなる最小の S を探索する。
-    切り捨て誤差に頑健になるよう、整数からの距離の総和を最小化する。見つからなければ None。
+    最大オッズ（＝最小売上）の馬券の売上枚数 n を 1,2,… と仮定すると
+    ``S = n·(odds_max-base)/factor`` が定まる。各 n の S について
+    ``s_i = S·factor/(odds_i-base)`` が整数にどれだけ近いかを評価し、最も整合する S を返す。
+    観測された全馬券は売上≥1（オッズが付いている）＝ n≥1 なので小さな偽 S を自然に排除する。
+    切り捨て誤差があるため近似（厳密オッズなら厳密一致）。見つからなければ None。
     """
-    odds = [o for o in odds_values if o > base]
+    odds = sorted((o for o in odds_values if o > base), reverse=True)
     if not odds:
         return None
     ratios = [factor / (o - base) for o in odds]  # s_i = S * ratio_i
-
-    # 制約: 観測された馬券は全て 1 枚以上売れている（オッズが付いている＝売上≥1）。
-    # 最大オッズ（=最小売上）の馬券で S·min_ratio ≥ ~1 を満たす S 以上だけを探索する。
-    # これを課さないと「全枚数が 0 に丸まる」小さな S が誤って最良になる（高オッズ集合の罠）。
-    min_ratio = min(ratios)
-    s_start = max(1, int(0.9 / min_ratio))
+    r_max = ratios[0]  # 最大オッズ＝最小売上の馬券
 
     def frac_error(s: int) -> float:
         return sum(abs(s * r - round(s * r)) for r in ratios)  # 整数からの絶対距離の和
 
     best_s, best_err = None, float("inf")
-    for s in range(s_start, max_pool + 1):
+    for n in range(1, max_count + 1):
+        s = round(n / r_max)  # s_max = S·r_max = n → S = n / r_max
+        if s < 1:
+            continue
         e = frac_error(s)
         if e < best_err - 1e-12:
             best_err, best_s = e, s
-            if e < tol:  # 十分整合する最小の S を採用（倍数より小さい基本周期を返す）
+            if e < tol:
                 return s
     return best_s
 

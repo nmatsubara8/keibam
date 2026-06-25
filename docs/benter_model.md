@@ -96,6 +96,9 @@ $$P(i\to j\to k) = \pi_i \cdot \frac{\sigma_j}{1-\sigma_i} \cdot \frac{\tau_k}{1
 ## 6. 実装キュー（本ドキュメント由来の TODO）
 
 - [x] **三連単/三連複のべき乗補正 Harville**（`_harville.py`・テスト済み）
+- [x] **プール逆算（V_t 復元）をオッズ力学に配線**（芦谷 2012）: `_arbitrage.recover_pool_total`
+      ＋ `_odds_feature_builder.recover_pools_by_phase` / `build_training_frame(include_pool=True)` で
+      `pool_current` + `pool_log_ratio_<phase>`（出来高モメンタム）を特徴量化。「総投票量は観測不能」を解消
 - [ ] **(γ,δ) を自前データで MLE**（`fit_place_exponents` を OOS 着順で実行 → `models/place_exponents.json`）
 - [ ] EV パイプライン（`ExpectedValueBetPolicy` / `_backtest`）へ `exponents` を配線（opt-in）
 - [ ] **ΔR²（combined vs public）診断**を `_edge_diagnostic` に追加

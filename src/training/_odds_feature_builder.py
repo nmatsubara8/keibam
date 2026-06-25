@@ -20,6 +20,9 @@ import pandas as pd
 
 from src.constants._bet_types import BetType
 from src.constants._odds_phases import OddsPhase
+from src.policies._arbitrage import FACTOR_CHIHO
+from src.policies._arbitrage import ODDS_BASE
+from src.policies._arbitrage import recover_pool_total
 from src.preparing._odds_snapshot import OddsSnapshot
 from src.preparing._odds_snapshot import combo_to_str
 
@@ -69,10 +72,44 @@ def snapshots_to_phase_table(
     return wide
 
 
+def recover_pools_by_phase(
+    snapshots: Sequence[OddsSnapshot],
+    bet_type: str = BetType.SANRENTAN,
+    *,
+    base: float = ODDS_BASE,
+    factor: float = FACTOR_CHIHO,
+) -> dict[tuple[str, str], int]:
+    """各 (race_id, phase) のオッズ集合から総投票数 S(≒出来高 V_t) を逆算する（芦谷 2012）。
+
+    パリミュチュエル式 ``odds = base + (S/s)·factor`` を逆に解く。**価格系列だけの A_t では
+    観測できなかった「総投票量」を公開オッズから復元**する（オッズ力学の流動性/κ に使える）。
+
+    券種は組合せ数が多くオッズ分散が大きい**三連単/連単が逆算に好適**（既定 SANRENTAN）。
+    単勝はオッズ分散が小さく逆算が不安定（芦谷 §3.2）。pool 成長率（log_ratio）は factor の
+    取り方に依らず保存されるため、地方/JRA・控除率の差は成長特徴には影響しない。
+    """
+    wide = snapshots_to_phase_table(snapshots, bet_type)
+    pools: dict[tuple[str, str], int] = {}
+    if wide.empty:
+        return pools
+    for race_id, grp in wide.groupby(level=0):
+        for col in grp.columns:  # "odds_<phase>"
+            phase = col[len("odds_"):]
+            odds = [o for o in grp[col].tolist() if pd.notna(o)]
+            if len(odds) >= 2:  # 逆算には複数組合せが要る
+                s = recover_pool_total(odds, base=base, factor=factor)
+                if s:
+                    pools[(str(race_id), phase)] = s
+    return pools
+
+
 def build_training_frame(
     snapshots: Sequence[OddsSnapshot],
     bet_type: str = BetType.TANSHO,
     current_phase: str = OddsPhase.THIRTY_MIN,
+    *,
+    include_pool: bool = False,
+    pool_bet_type: str | None = None,
 ) -> tuple[pd.DataFrame, pd.Series, list[str]]:
     """学習用の (features, final_odds, feature_cols) を構築する（純粋関数）。
 
@@ -112,6 +149,28 @@ def build_training_frame(
             features[ratio_col] = 0.0
         feature_cols.append(ratio_col)
 
+    # 出来高（プール）特徴: パリミュチュエル式の逆算で総投票数 V_t を復元し、
+    # current の絶対量 + 過去フェーズからの成長率（資金流入の方向と強さ）を付与する。
+    # これは価格系列だけの log_ratio では観測できない「総投票量」の情報（芦谷 2012）。
+    if include_pool:
+        src_bt = pool_bet_type or bet_type
+        pools = recover_pools_by_phase(snapshots, src_bt)
+        races = features.index.get_level_values("race_id")
+
+        def _pool(phase: str) -> pd.Series:
+            return pd.Series([pools.get((str(r), phase), np.nan) for r in races], index=features.index)
+
+        cur_pool = _pool(current_phase)
+        features["pool_current"] = cur_pool.astype(float)
+        feature_cols.append("pool_current")
+        for phase in earlier_phases:
+            ratio_col = f"pool_log_ratio_{phase}"
+            earlier_pool = _pool(phase)
+            # log(現在プール / 過去プール): 正 = 資金流入加速（出来高モメンタム）
+            ratio = np.log(cur_pool.astype(float) / earlier_pool.astype(float))
+            features[ratio_col] = ratio.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+            feature_cols.append(ratio_col)
+
     final_odds = usable[target_col].astype(float)
     return features, final_odds, feature_cols
 
@@ -121,16 +180,24 @@ def train_odds_predictor(
     bet_type: str = BetType.TANSHO,
     current_phase: str = OddsPhase.THIRTY_MIN,
     min_rows: int = 100,
+    *,
+    include_pool: bool = False,
+    pool_bet_type: str | None = None,
     **lgb_params,
 ):
     """蓄積スナップショットから `LgbOddsPredictor` を学習して返す。
 
     学習可能な行数が min_rows 未満の場合は None を返す（呼び出し側は
-    `IdentityOddsPredictor` にフォールバックする想定）。
+    `IdentityOddsPredictor` にフォールバックする想定）。``include_pool=True`` で
+    プール逆算（V_t）由来の出来高特徴を加える（pool_bet_type 既定は三連単＝逆算に好適）。
     """
     from src.training._odds_predictor import LgbOddsPredictor
 
-    features, final_odds, feature_cols = build_training_frame(snapshots, bet_type, current_phase)
+    features, final_odds, feature_cols = build_training_frame(
+        snapshots, bet_type, current_phase,
+        include_pool=include_pool,
+        pool_bet_type=pool_bet_type or BetType.SANRENTAN,
+    )
     if len(features) < min_rows:
         logger.info(
             "train_odds_predictor: 学習データ不足 %d < %d 行（IdentityOddsPredictor を使用してください）",
