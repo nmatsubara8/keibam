@@ -1,6 +1,6 @@
 import logging
 
-from src.preparing.DataLoader import DataLoader
+from src.preparing._data_loader import DataLoader
 from src.preparing.modules import create_raw_horse_info
 from src.preparing.modules import create_raw_horse_ped
 from src.preparing.modules import create_raw_horse_results

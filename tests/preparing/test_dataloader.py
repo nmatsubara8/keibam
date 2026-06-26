@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from src.preparing import DataLoader
+from src.preparing import _data_loader as DataLoader
 
 
 @pytest.fixture

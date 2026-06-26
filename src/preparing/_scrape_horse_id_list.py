@@ -20,7 +20,7 @@ def scrape_horse_id_list(race_id_list=None, skip: bool = False):
     """
     from src.constants._url_paths import UrlPaths
     from src.preparing.url_loader import KaisaiDateLoader
-    from src.preparing.DataLoader import DataLoader
+    from src.preparing._data_loader import DataLoader
 
     url_paths = UrlPaths()
     hl = url_paths.HORSE_LIST_URL

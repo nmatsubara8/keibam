@@ -50,7 +50,7 @@ class DataLoader:
         self.from_date = from_date
         self.to_date = to_date
 
-    # プロジェクトルート（DataLoader.py の 3階層上）を絶対パスで保持
+    # プロジェクトルート（_data_loader.py の 3階層上）を絶対パスで保持
     _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     @classmethod

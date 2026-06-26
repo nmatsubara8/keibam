@@ -8,7 +8,7 @@ import os
 import pandas as pd
 import pytest
 
-from src.preparing.DataLoader import DataLoader
+from src.preparing._data_loader import DataLoader
 
 
 def _make_loader(tmp_path):
