@@ -150,6 +150,50 @@ class TestLatestFinalOddsLookup:
         assert latest_final_odds_lookup(None) == {}
 
 
+class TestStatusSummary:
+    def _snaps(self):
+        from src.constants._bet_types import BetType
+        from src.preparing._odds_snapshot import make_snapshot
+
+        post1 = dt.datetime(2026, 6, 7, 15, 40)
+        post2 = dt.datetime(2026, 6, 7, 16, 10)
+        snaps = []
+        # r1: 発走30分前と27分前の2ティック・3頭
+        for cap in (dt.datetime(2026, 6, 7, 15, 10), dt.datetime(2026, 6, 7, 15, 13)):
+            for u, o in [(1, 2.0), (2, 4.0), (3, 8.0)]:
+                snaps.append(make_snapshot("r1", BetType.TANSHO, [u], o, post1, cap))
+        # r2: 1ティック・2頭（発走は後）
+        for u, o in [(1, 3.0), (2, 5.0)]:
+            snaps.append(make_snapshot("r2", BetType.TANSHO, [u], o, post2, dt.datetime(2026, 6, 7, 15, 40)))
+        return snaps
+
+    def test_summary_counts_and_order(self):
+        from src.pipeline.odds_watch import summarize_status
+
+        rows = summarize_status(self._snaps(), bet_type="tansho")
+        by = {r["race_id"]: r for r in rows}
+        assert by["r1"]["n_ticks"] == 2 and by["r1"]["n_horses"] == 3
+        assert by["r2"]["n_ticks"] == 1 and by["r2"]["n_horses"] == 2
+        # r1 の最終取得は 15:13（発走30分前→27分前）→ last_mtp=27
+        assert by["r1"]["last_mtp"] == 27
+        # 発走順（r1 15:40 → r2 16:10）でソート
+        assert [r["race_id"] for r in rows] == ["r1", "r2"]
+
+    def test_date_filter(self):
+        from src.pipeline.odds_watch import summarize_status
+
+        rows = summarize_status(self._snaps(), on_date="20260607", bet_type="tansho")
+        assert len(rows) == 2
+        assert summarize_status(self._snaps(), on_date="20260608", bet_type="tansho") == []
+
+    def test_format_empty_and_nonempty(self):
+        from src.pipeline.odds_watch import format_status_report, summarize_status
+
+        assert "まだありません" in format_status_report([])
+        rep = format_status_report(summarize_status(self._snaps(), bet_type="tansho"))
+        assert "r1" in rep and "取得状況" in rep
+
+
 class TestRunOnce:
     def test_full_cycle_with_stub_source(self, tmp_path, monkeypatch):
         """スタブソースで 取得 → 永続化 → 再計算 → 予測保存 の 1 サイクルを検証。"""

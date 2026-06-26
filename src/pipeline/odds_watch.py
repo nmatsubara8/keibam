@@ -261,7 +261,72 @@ def run_once(
     }
 
 
+# ---------------------------------------------------------------------------
+# 取得状況サマリ（--status）
+# ---------------------------------------------------------------------------
+
+
+def summarize_status(snapshots, *, on_date: str | None = None, bet_type: str | None = None) -> list[dict]:
+    """蓄積スナップショットをレース単位の取得状況に要約する（純粋関数）。
+
+    on_date='YYYYMMDD' で captured_at の日付フィルタ、bet_type 指定で券種フィルタ
+    （ウォッチャは単勝=TANSHO のみ取得）。各レースについて取得ティック数・頭数・最新の
+    minutes_to_post・phase・取得時刻・推定発走時刻を集計し、発走順にソートして返す。
+    """
+    from collections import defaultdict
+
+    groups: dict[str, list] = defaultdict(list)
+    for s in snapshots:
+        if bet_type is not None and s.bet_type != bet_type:
+            continue
+        if on_date and s.captured_at.strftime("%Y%m%d") != on_date:
+            continue
+        groups[str(s.race_id)].append(s)
+
+    rows: list[dict] = []
+    for rid, snaps in groups.items():
+        ticks = sorted({s.captured_at for s in snaps})
+        last_cap = ticks[-1]
+        last_snaps = [s for s in snaps if s.captured_at == last_cap]
+        last_mtp = min(s.minutes_to_post for s in last_snaps)
+        rows.append({
+            "race_id": rid,
+            "n_ticks": len(ticks),
+            "n_horses": len({s.combo[0] for s in last_snaps if s.combo}),
+            "first_capture": ticks[0],
+            "last_capture": last_cap,
+            "last_mtp": last_mtp,
+            "last_phase": last_snaps[0].phase,
+            "est_post": last_cap + dt.timedelta(minutes=last_mtp),
+        })
+    rows.sort(key=lambda r: r["est_post"])
+    return rows
+
+
+def format_status_report(rows: list[dict], now: dt.datetime | None = None) -> str:
+    """summarize_status の結果を人が読める表に整形する。"""
+    now = now or dt.datetime.now()
+    if not rows:
+        return "（対象日の取得スナップショットはまだありません＝取得対象レース無し or 未起動）"
+    header = (
+        f"{'race_id':<14}{'取得回':>5}{'頭数':>5}{'最終mtp':>8}"
+        f"{'phase':>11}{'最終取得':>8}{'平均間隔':>7}{'経過分':>7}"
+    )
+    lines = [f"=== odds_watch 取得状況（{len(rows)} レース）===", header, "-" * len(header)]
+    for r in rows:
+        span = (r["last_capture"] - r["first_capture"]).total_seconds() / 60
+        avg = span / (r["n_ticks"] - 1) if r["n_ticks"] > 1 else 0.0
+        ago = (now - r["last_capture"]).total_seconds() / 60
+        lines.append(
+            f"{r['race_id']:<14}{r['n_ticks']:>5}{r['n_horses']:>5}{r['last_mtp']:>+8}"
+            f"{r['last_phase']:>11}{r['last_capture'].strftime('%H:%M'):>8}{avg:>6.1f}分{ago:>6.1f}分"
+        )
+    lines.append("\n（取得回=3分おきの取得回数 / 最終mtp=最後の取得時の締切まで分 / 経過分=最後の取得からの経過）")
+    return "\n".join(lines)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
+    from src.constants._bet_types import BetType
     from src.constants._logging_config import setup_logging
     from src.preparing._odds_source import create_odds_source
 
@@ -272,7 +337,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--once", action="store_true", help="1 サイクルだけ実行（cron 用）")
     parser.add_argument("--loop", action="store_true", help="常駐ループ実行")
     parser.add_argument("--interval", type=int, default=120, help="--loop 時の実行間隔（秒）")
+    parser.add_argument(
+        "--status", action="store_true",
+        help="本日（or --date）の取得状況をレース単位で一覧表示して終了（取得・ネットワークなし）",
+    )
     args = parser.parse_args(argv)
+
+    # --status: スクレイプせず蓄積スナップショットを要約するだけ（cron 監視・watch 用）
+    if args.status:
+        from src.preparing.odds_scheduler import load_snapshots
+
+        on_date = args.date or dt.datetime.now().strftime("%Y%m%d")
+        snaps = load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
+        rows = summarize_status(snaps, on_date=on_date, bet_type=BetType.TANSHO)
+        print(format_status_report(rows))
+        return
 
     source = create_odds_source(args.source)
     try:
