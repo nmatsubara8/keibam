@@ -11,8 +11,8 @@ import dataclasses
 
 import pandas as pd
 
-from src.constants._bet_thresholds import BetThresholds
 from src.constants._bet_types import BetType
+from src.policies._thresholds import bet_threshold_map
 from src.constants._results_cols import ResultsCols
 from src.operation._config import OperationConfig
 from src.policies._bet_policy import ExpectedValueBetPolicy
@@ -27,17 +27,8 @@ from src.portfolio._kelly import KellyPortfolioOptimizer
 
 
 def default_thresholds() -> dict:
-    """BetThresholds から全馬券種の EV 閾値 dict を返す。"""
-    th = BetThresholds()
-    return {
-        BetType.TANSHO: th.TANSHO,
-        BetType.FUKUSHO: th.FUKUSHO,
-        BetType.UMAREN: th.UMAREN,
-        BetType.UMATAN: th.UMATAN,
-        BetType.WIDE: th.WIDE,
-        BetType.SANRENPUKU: th.SANRENPUKU,
-        BetType.SANRENTAN: th.SANRENTAN,
-    }
+    """馬券種の EV 閾値 dict を返す（constants の単一ソースへ委譲）。"""
+    return bet_threshold_map()
 
 
 def _load_live_takeout(takeout):
