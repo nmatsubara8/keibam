@@ -94,7 +94,7 @@ def parse_umaban_map(html: str) -> dict[int, int]:
     soup = BeautifulSoup(html, "html.parser")
     out: dict[int, int] = {}
     for tr in soup.select("tr[id^=tr_]"):
-        m = re.match(r"tr_(\d+)$", tr.get("id", ""))
+        m = re.match(r"tr_(\d+)$", str(tr.get("id") or ""))
         if not m:
             continue
         umaban_td = tr.find("td", class_=re.compile("Umaban"))

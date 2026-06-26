@@ -25,10 +25,12 @@ def _soup(html: str) -> "BeautifulSoup":
     return BeautifulSoup(html or "", "html.parser")
 
 
-def _clean(s: str | None) -> str:
-    """セルテキストの空白を正規化する。"""
+def _clean(s: "str | list[str] | None") -> str:
+    """セル/属性テキストの空白を正規化する（多値属性=list はスペース連結）。"""
     if not s:
         return ""
+    if isinstance(s, list):
+        s = " ".join(s)
     return re.sub(r"\s+", " ", s).strip()
 
 
@@ -66,7 +68,7 @@ def summarize_tables(html: str, max_rows_scan: int = 3) -> list[dict[str, Any]]:
                 "index": i,
                 "summary": _clean(table.get("summary")),
                 "caption": _clean(caption.get_text()) if caption else "",
-                "class": " ".join(table.get("class", []) or []),
+                "class": " ".join(table.get("class") or []),
                 "id": _clean(table.get("id")),
                 "n_rows": len(rows),
                 "n_cols": n_cols,
@@ -97,7 +99,7 @@ def summarize_repeated_containers(
         for child in parent.find_all(recursive=False):
             if child.name not in ("div", "li", "tr", "a", "dl", "span"):
                 continue
-            key = (child.name, " ".join(child.get("class", []) or []))
+            key = (child.name, " ".join(child.get("class") or []))
             if not key[1]:
                 continue  # class 無しの子は対象外（ノイズ）
             groups.setdefault(key, []).append(child)
@@ -108,7 +110,7 @@ def summarize_repeated_containers(
             out.append(
                 {
                     "parent_tag": parent.name,
-                    "parent_class": " ".join(parent.get("class", []) or []),
+                    "parent_class": " ".join(parent.get("class") or []),
                     "parent_id": _clean(parent.get("id")),
                     "child_tag": child_tag,
                     "child_class": child_class,

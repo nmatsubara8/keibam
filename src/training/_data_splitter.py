@@ -291,6 +291,8 @@ class DataSplitter:
         """指定 split の NN ストリームを遅延 transform して返す（恒久保持しない）。"""
         if not self.has_nn_stream:
             return None
+        # has_nn_stream で両者 not None を保証済み（mypy はプロパティ越しに narrow できないため明示）
+        assert self.__nn_scaler is not None and self.__nn_raw is not None
         return self.__nn_scaler.transform(self.__nn_raw.loc[df.index.unique()])
 
     @property

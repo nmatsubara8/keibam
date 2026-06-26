@@ -14,7 +14,7 @@ class KeibaAIFactory:
 
     @staticmethod
     def create(
-        featured_data, peds_processor=None, test_size=0.3, valid_size=0.3, target_col="rank"
+        featured_data, test_size=0.3, valid_size=0.3, target_col="rank", *, peds_processor=None
     ) -> KeibaAI:
         """
         featured_data: PreparedFeatures DTO または plain pd.DataFrame。

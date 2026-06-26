@@ -145,7 +145,8 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = prepared_from_gbdt(featured_data)
         logger.info("[retrain] NN base 用に 2 系統 PreparedFeatures を構成しました")
 
-    job = RetrainJob(KeibaAIFactory, cfg)
+    # KeibaAIFactory は create/save が staticmethod のためインスタンスを渡す（AIFactory Protocol 適合）
+    job = RetrainJob(KeibaAIFactory(), cfg)
     result = job.run(
         featured_data,
         vname=args.version_name,
