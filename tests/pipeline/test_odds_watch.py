@@ -31,42 +31,46 @@ from src.pipeline.odds_watch import recalculate_predictions
 
 
 class TestSelectCheckpointRaces:
-    def test_selects_races_at_checkpoints(self):
+    def test_captures_every_race_within_30min(self):
+        # 発走30分前から毎ティック（cron */3 で3分おき）。30〜0分前は全て取得。
         now = dt.datetime(2026, 6, 7, 15, 0)
         pairs = [
             ("r30", dt.datetime(2026, 6, 7, 15, 30)),  # 30 分前 → thirty_min
+            ("r20", dt.datetime(2026, 6, 7, 15, 20)),  # 20 分前 → thirty_min（旧仕様では対象外だった）
             ("r10", dt.datetime(2026, 6, 7, 15, 10)),  # 10 分前 → t10
             ("r05", dt.datetime(2026, 6, 7, 15, 5)),   # 5 分前 → t5
             ("r01", dt.datetime(2026, 6, 7, 15, 1)),   # 1 分前 → t0
-            ("r20", dt.datetime(2026, 6, 7, 15, 20)),  # 20 分前 → 対象外
-            ("rpast", dt.datetime(2026, 6, 7, 14, 50)),  # 発走済み → 対象外
         ]
-        targets = select_checkpoint_races(pairs, now)
-        by_id = {rid: phase for rid, _, phase in targets}
+        by_id = {rid: phase for rid, _, phase in select_checkpoint_races(pairs, now)}
         assert by_id == {
             "r30": OddsPhase.THIRTY_MIN,
+            "r20": OddsPhase.THIRTY_MIN,
             "r10": OddsPhase.T10,
             "r05": OddsPhase.T5,
             "r01": OddsPhase.T0,
         }
 
-    def test_tolerance_window(self):
+    def test_over_30min_not_taken(self):
         now = dt.datetime(2026, 6, 7, 15, 0)
-        # 31 分前は ±1.5 分の許容内
-        targets = select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 31))], now)
-        assert targets[0][2] == OddsPhase.THIRTY_MIN
-        # 33 分前は許容外
-        assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 33))], now) == []
+        # 31 分前は密ウィンドウ(30)外、早期 sparse も既定で無効 → 取得しない。
+        assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 31))], now) == []
 
-    def test_dense_window_captures_every_tick_near_deadline(self):
-        # 締切直前（残り ≤ DENSE_WINDOW_MIN=15分）は離散チェックポイントでなくても取得される。
+    def test_grace_window_continues_past_post(self):
+        # 実締切の安全弁: 予定発走を過ぎても POST_GRACE_MIN(=10)分まで継続。負値の phase は T0。
         now = dt.datetime(2026, 6, 7, 15, 0)
-        # 8 分前は従来チェックポイント(30/10/5/1)に無いが、密ウィンドウ内なので取得対象。
-        targets = select_checkpoint_races([("r8", dt.datetime(2026, 6, 7, 15, 8))], now)
-        assert len(targets) == 1
-        assert targets[0][2] == OddsPhase.T10  # classify_phase(8) = t10
-        # 18 分前は密ウィンドウ外かつ疎チェックポイント(60/30)からも外れる → 取得しない。
-        assert select_checkpoint_races([("r18", dt.datetime(2026, 6, 7, 15, 18))], now) == []
+        # 5 分前に発走済み（mtp=-5）→ 猶予内で取得継続
+        t = select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 14, 55))], now)
+        assert len(t) == 1 and t[0][2] == OddsPhase.T0
+        # ちょうど +10 分（猶予境界）→ 取得
+        assert len(select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 14, 50))], now)) == 1
+        # +11 分（猶予超過）→ 取得しない
+        assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 14, 49))], now) == []
+
+    def test_confirmed_races_skipped(self):
+        now = dt.datetime(2026, 6, 7, 15, 0)
+        pairs = [("r1", dt.datetime(2026, 6, 7, 15, 10)), ("r2", dt.datetime(2026, 6, 7, 15, 10))]
+        out = select_checkpoint_races(pairs, now, confirmed={"r1"})
+        assert [rid for rid, _, _ in out] == ["r2"]  # 確定済み r1 は除外
 
 
 def _make_snapshots(race_id="202606070511"):
@@ -200,3 +204,49 @@ class TestRunOnce:
         result = run_once(_StubSource(), now=now)
         assert result["n_targets"] == 0
         assert result["n_predictions"] == 0
+
+    def test_empty_odds_past_post_marks_confirmed(self, tmp_path, monkeypatch):
+        """ライブ発走を過ぎてオッズが空（撤去）→ 締切確定として confirmed に追加。"""
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", str(tmp_path / "s.pkl"), raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        now = dt.datetime(2026, 6, 7, 15, 42)  # 発走(15:40)+2分
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("r1", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return []  # 締切後＝オッズ撤去
+
+            def close(self):
+                pass
+
+        confirmed: set[str] = set()
+        run_once(_StubSource(), now=now, confirmed=confirmed)
+        assert "r1" in confirmed
+
+    def test_empty_odds_before_post_not_confirmed(self, tmp_path, monkeypatch):
+        """発走前（遅延中）にオッズが一時的に空でも確定扱いしない（mtp>0）。"""
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", str(tmp_path / "s.pkl"), raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        now = dt.datetime(2026, 6, 7, 15, 38)  # 発走2分前（mtp=+2）
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("r1", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return []
+
+            def close(self):
+                pass
+
+        confirmed: set[str] = set()
+        result = run_once(_StubSource(), now=now, confirmed=confirmed)
+        assert "r1" not in confirmed and result["n_targets"] == 1

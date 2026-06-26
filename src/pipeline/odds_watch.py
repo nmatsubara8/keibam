@@ -1,9 +1,9 @@
 """時系列オッズの自動取得・自動再計算ウォッチャー（CLI エントリ）。
 
-タイマー（cron */2 分 or `--loop` 常駐）で起動し:
+タイマー（cron */3 分 or `--loop --interval 180` 常駐）で起動し:
 
 1. オッズソース（netkeiba / JRA-VAN）から本日の (race_id, 発走時刻) を取得
-2. チェックポイント（発走 30/10/5/1 分前 ± 許容幅）に入ったレースのオッズを取得
+2. 発走 30 分前〜実締切（+10分猶予 or 確定検知）のレースのオッズを毎ティック取得
 3. OddsSnapshot として冪等永続化（pickle + SQLite、既存 odds_scheduler.persist）
 4. 当該レースの全時点系列からオッズ力学モデル（Dirichlet / Kalman / Particle /
    Ensemble）で「次チェックポイントのシェア」「発走時の確定シェア・オッズ」を再計算
@@ -13,7 +13,7 @@
 
 使用例:
     python -m src.pipeline.odds_watch --once                # 1 サイクル（cron 用）
-    python -m src.pipeline.odds_watch --loop --interval 120 # 常駐
+    python -m src.pipeline.odds_watch --loop --interval 180 # 常駐（3分おき）
     python -m src.pipeline.odds_watch --once --source jravan
 """
 
@@ -194,8 +194,18 @@ def latest_final_odds_lookup(predictions: pd.DataFrame, model: str = "ensemble")
 # ---------------------------------------------------------------------------
 
 
-def run_once(source=None, now: dt.datetime | None = None, date_str: str | None = None) -> dict:
-    """取得 → 永続化 → 再計算 → 予測保存 の 1 サイクル。"""
+def run_once(
+    source=None,
+    now: dt.datetime | None = None,
+    date_str: str | None = None,
+    confirmed: "set[str] | None" = None,
+) -> dict:
+    """取得 → 永続化 → 再計算 → 予測保存 の 1 サイクル。
+
+    confirmed: 締切確定済み（オッズ撤去を検知）レース ID の集合。--loop 実行ではティック間で
+    引き継いで「確定したら以降取得しない」を実現する（cron --once では毎回空＝grace で打ち切り）。
+    本サイクルで新たに確定したレースは confirmed に追記される（呼び出し側で再利用可）。
+    """
     from src.preparing._odds_snapshot import make_snapshot
     from src.preparing._odds_source import NetkeibaOddsSource
     from src.preparing.odds_scheduler import load_snapshots
@@ -205,11 +215,12 @@ def run_once(source=None, now: dt.datetime | None = None, date_str: str | None =
     now = now or dt.datetime.now()
     date_str = date_str or now.strftime("%Y%m%d")
     source = source or NetkeibaOddsSource()
+    confirmed = confirmed if confirmed is not None else set()
 
     races = source.fetch_today_races(date_str)
-    targets = select_checkpoint_races(races, now)
-    logger.info("[odds_watch] %s: 開催 %d レース / チェックポイント到来 %d レース",
-                date_str, len(races), len(targets))
+    targets = select_checkpoint_races(races, now, confirmed=confirmed)
+    logger.info("[odds_watch] %s: 開催 %d レース / 取得対象 %d レース（確定済み %d 除外）",
+                date_str, len(races), len(targets), len(confirmed))
 
     captured = []
     from src.constants._bet_types import BetType
@@ -219,6 +230,13 @@ def run_once(source=None, now: dt.datetime | None = None, date_str: str | None =
             win_odds = source.fetch_win_odds(race_id)
         except Exception as e:  # noqa: BLE001
             logger.warning("[odds_watch] 取得失敗 %s: %s", race_id, e)
+            continue
+        if not win_odds:
+            # ライブ発走を過ぎてオッズが空＝投票締切確定（ページからオッズ撤去）。発走時刻が
+            # 遅延中なら post は未来（mtp>0）なので誤判定しない。確定したレースは以降スキップ。
+            if (post_time - now).total_seconds() <= 0:
+                confirmed.add(str(race_id))
+                logger.info("[odds_watch] %s 締切確定（オッズ撤去）→ 以降スキップ", race_id)
             continue
         for umaban, odds in win_odds:
             captured.append(make_snapshot(str(race_id), BetType.TANSHO, [umaban], odds, post_time, now))
@@ -239,6 +257,7 @@ def run_once(source=None, now: dt.datetime | None = None, date_str: str | None =
         "n_targets": len(targets),
         "n_snapshots": len(captured),
         "n_predictions": len(predictions),
+        "n_confirmed": len(confirmed),
     }
 
 
@@ -259,8 +278,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         if args.loop:
             logger.info("[odds_watch] 常駐モード開始 (interval=%ds)", args.interval)
+            # 締切確定レースをティック間で保持し、確定後は再取得しない（当日分の早期停止）。
+            confirmed: set[str] = set()
+            last_date: str | None = None
             while True:
-                result = run_once(source, date_str=args.date)
+                today = args.date or dt.datetime.now().strftime("%Y%m%d")
+                if today != last_date:
+                    confirmed = set()  # 日付が変わったら確定集合をリセット
+                    last_date = today
+                result = run_once(source, date_str=args.date, confirmed=confirmed)
                 logger.info("[odds_watch] %s", result)
                 time.sleep(args.interval)
         else:

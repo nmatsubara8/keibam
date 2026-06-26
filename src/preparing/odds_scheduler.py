@@ -177,30 +177,38 @@ def build_race_post_times(
 def select_checkpoint_races(
     pairs: Sequence[tuple[str, dt.datetime]],
     now: dt.datetime,
+    *,
+    confirmed: "Sequence[str] | set[str]" = (),
 ) -> list[tuple[str, dt.datetime, str]]:
     """いま取得すべきレースを返す（締切までの残り時間ベースの取得スケジュール）。
 
-    - 締切直前（残り ≤ DENSE_WINDOW_MIN 分）: 毎ティック取得して推移を密に記録する。
-    - それより前: SPARSE_CHECKPOINT_MINUTES（発走 N 分前 ±許容幅）でのみ取得（疎）。
+    - 発走 ≤ DENSE_WINDOW_MIN 分前（既定 30）: 毎ティック取得（起動間隔ごと＝cron */3 で3分おき）。
+    - 早期 SPARSE_CHECKPOINT_MINUTES（既定は空）: あれば発走 N 分前 ±許容幅でも取得。
+    - **予定発走を過ぎても POST_GRACE_MIN 分まで継続**（実締切の安全弁）。post は呼び出し側が
+      毎ティック再取得するので、公式の発走時刻変更（大遅延）は post の追従で吸収され、grace は
+      公式変更されない数分の輪乗り遅れだけを担保する。
+    - ``confirmed``: 既に締切確定（オッズ撤去を検知）したレース ID は取得対象から外す。
 
     Returns
     -------
-    list[(race_id, post_time, phase)] : phase は minutes_to_post から分類した識別子
-        （メタデータ。実保存時に make_snapshot が classify_phase で再付与する）。
-    無駄な全レース取得を避け、タイマー実行（cron */2 分等）のたびに「いま取るべき
-    レース」だけを返す純粋関数。
+    list[(race_id, post_time, phase)] : phase は minutes_to_post から分類（負値=締切超過は T0）。
+    無駄な全レース取得を避け、タイマー実行のたびに「いま取るべきレース」だけを返す純粋関数。
     """
     from src.constants._odds_dynamics import CHECKPOINT_TOLERANCE_MIN
     from src.constants._odds_dynamics import DENSE_WINDOW_MIN
+    from src.constants._odds_dynamics import POST_GRACE_MIN
     from src.constants._odds_dynamics import SPARSE_CHECKPOINT_MINUTES
     from src.constants._odds_phases import classify_phase
 
+    confirmed_set = set(confirmed)
     out: list[tuple[str, dt.datetime, str]] = []
     for race_id, post in pairs:
+        if race_id in confirmed_set:
+            continue  # 締切確定済み（オッズ撤去を検知）→ 取得しない
         mtp = (post - now).total_seconds() / 60
-        if mtp < 0:
-            continue  # 発走済みは対象外
-        take = mtp <= DENSE_WINDOW_MIN  # 締切直前は毎ティック密に取得
+        if mtp < -POST_GRACE_MIN:
+            continue  # 実締切＋猶予を過ぎた（発走後）→ 終了
+        take = mtp <= DENSE_WINDOW_MIN  # 発走30分前〜（猶予内の負値含む）は毎ティック取得
         if not take:
             take = any(abs(mtp - m) <= CHECKPOINT_TOLERANCE_MIN for m in SPARSE_CHECKPOINT_MINUTES)
         if take:
