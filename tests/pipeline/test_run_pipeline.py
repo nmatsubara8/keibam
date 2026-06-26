@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from src.pipeline.run_pipeline import _filter_final_odds_race_ids
+from src.pipeline.commands._evaluate import _filter_final_odds_race_ids
+from src.pipeline.commands._ingest import _scrape_new_horse_data
 from src.pipeline.run_pipeline import _parse_args
-from src.pipeline.run_pipeline import _scrape_new_horse_data
 
 
 class _RaisingSource:
@@ -204,7 +204,7 @@ class TestIngestSourceArg:
 
 class TestResolveDataSource:
     def test_cli_wins(self, monkeypatch):
-        from src.pipeline.run_pipeline import _resolve_data_source
+        from src.pipeline.commands._ingest import _resolve_data_source
 
         class _A:
             source = "jravan"
@@ -212,7 +212,7 @@ class TestResolveDataSource:
 
     def test_falls_back_to_saved(self, monkeypatch):
         import src.preparing._data_source as ds
-        from src.pipeline.run_pipeline import _resolve_data_source
+        from src.pipeline.commands._ingest import _resolve_data_source
 
         monkeypatch.setattr(ds, "load_selected_source", lambda *a, **k: "jravan")
 
@@ -244,15 +244,15 @@ class TestRebuildFeatured:
         import pandas as pd
 
         import src.pipeline._ingestion as ing
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline.commands._ingest as ingest_cmd
 
         featured = pd.DataFrame({"x": [1, 2]}, index=["r1", "r1"])
-        monkeypatch.setattr(rp, "_build_featured_data", lambda cfg: featured)
+        monkeypatch.setattr(ingest_cmd, "_build_featured_data", lambda cfg: featured)
         saved = {}
         monkeypatch.setattr(ing, "save_raw", lambda df, path: saved.setdefault("df", df))
         monkeypatch.setattr(ing, "_save_featured_phase2", lambda df, cfg: saved.setdefault("phase2", True))
 
-        rp._rebuild_featured(_parse_args(["rebuild-featured"]))
+        ingest_cmd._rebuild_featured(_parse_args(["rebuild-featured"]))
         assert saved["df"] is featured
         assert saved["phase2"] is True
 
@@ -261,13 +261,13 @@ class TestCalibrateTakeoutHandler:
     def _patch_common(self, monkeypatch):
         import pandas as pd
 
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline.commands._calibrate as cal
         import src.policies._takeout_calibration as tc
 
-        monkeypatch.setattr(rp, "_auto_migrate_db", lambda: None)
+        monkeypatch.setattr(cal, "_auto_migrate_db", lambda: None)
         results = pd.DataFrame({"馬番": [1, 2], "単勝": [2.0, 4.0]}, index=["r1", "r1"])
-        monkeypatch.setattr(rp, "_load_raw_db_first", lambda alias, path: (results, "db"))
-        monkeypatch.setattr(rp, "_return_processor_db_first", lambda: (object(), "db"))
+        monkeypatch.setattr(cal, "_load_raw_db_first", lambda alias, path: (results, "db"))
+        monkeypatch.setattr(cal, "_return_processor_db_first", lambda: (object(), "db"))
         monkeypatch.setattr(tc, "tansho_odds_by_race_from_table", lambda *a, **k: {"r1": {1: 2.0, 2: 4.0}})
         monkeypatch.setattr(tc, "payout_lookup_from_return_processor", lambda rpobj: {("r1", "umaren", "1-2"): 5.0})
         monkeypatch.setattr(
@@ -283,8 +283,8 @@ class TestCalibrateTakeoutHandler:
         saved = {}
         monkeypatch.setattr(tc, "save_takeout_calibration", lambda calib, path: saved.update(calib=calib, path=path))
 
-        import src.pipeline.run_pipeline as rp
-        rp._calibrate_takeout(_parse_args(["calibrate-takeout"]))
+        import src.pipeline.commands._calibrate as cal
+        cal._calibrate_takeout(_parse_args(["calibrate-takeout"]))
         assert "umaren" in saved["calib"]
 
     def test_dry_run_skips_save(self, monkeypatch):
@@ -294,8 +294,8 @@ class TestCalibrateTakeoutHandler:
         called = {"saved": False}
         monkeypatch.setattr(tc, "save_takeout_calibration", lambda *a, **k: called.update(saved=True))
 
-        import src.pipeline.run_pipeline as rp
-        rp._calibrate_takeout(_parse_args(["calibrate-takeout", "--dry-run"]))
+        import src.pipeline.commands._calibrate as cal
+        cal._calibrate_takeout(_parse_args(["calibrate-takeout", "--dry-run"]))
         assert called["saved"] is False
 
 
@@ -303,7 +303,7 @@ class TestLoadRawDbFirst:
     def test_prefers_db_when_rows_present(self, monkeypatch):
         import pandas as pd
 
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline._cli_common as cc
         import src.storage as storage
 
         db_df = pd.DataFrame({"x": [1, 2, 3]})
@@ -316,15 +316,15 @@ class TestLoadRawDbFirst:
                 return db_df
 
         monkeypatch.setattr(storage, "RawDataRepo", _Repo)
-        df, src = rp._load_raw_db_first("raw_results", "/nonexistent.pkl")
+        df, src = cc._load_raw_db_first("raw_results", "/nonexistent.pkl")
         assert src == "db"
         assert len(df) == 3
 
     def test_falls_back_to_pickle_when_db_empty(self, monkeypatch):
         import pandas as pd
 
+        import src.pipeline._cli_common as cc
         import src.pipeline._ingestion as ing
-        import src.pipeline.run_pipeline as rp
         import src.storage as storage
 
         class _Repo:
@@ -336,7 +336,7 @@ class TestLoadRawDbFirst:
 
         monkeypatch.setattr(storage, "RawDataRepo", _Repo)
         monkeypatch.setattr(ing, "load_raw", lambda path: pd.DataFrame({"y": [9]}))
-        df, src = rp._load_raw_db_first("raw_results", "/whatever.pkl")
+        df, src = cc._load_raw_db_first("raw_results", "/whatever.pkl")
         assert src == "pickle"
         assert df["y"].tolist() == [9]
 
@@ -347,7 +347,7 @@ class TestBackfillNotes:
     def _run(self, monkeypatch, results, training, argv):
         import src.pipeline._ingestion as ing
         import src.preparing._data_source as ds
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline.commands._backfill as bf
         from src.constants._local_paths import LocalPaths
 
         monkeypatch.setattr(
@@ -363,8 +363,8 @@ class TestBackfillNotes:
                 called["ids"] = list(ids)
 
         monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
-        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
-        rp._backfill_notes(rp._parse_args(argv))
+        monkeypatch.setattr(bf, "_resolve_data_source", lambda a: "netkeiba")
+        bf._backfill_notes(_parse_args(argv))
         return called.get("ids")
 
     def test_race_id_as_column_is_normalized(self, monkeypatch):
@@ -396,7 +396,7 @@ class TestBackfillPeds:
     def _run(self, monkeypatch, results, peds, argv):
         import src.pipeline._ingestion as ing
         import src.preparing._data_source as ds
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline.commands._backfill as bf
         from src.constants._local_paths import LocalPaths
 
         def fake_load(p):
@@ -416,8 +416,8 @@ class TestBackfillPeds:
                 called["ids"] = list(ids)
 
         monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
-        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
-        rp._backfill_peds(rp._parse_args(argv))
+        monkeypatch.setattr(bf, "_resolve_data_source", lambda a: "netkeiba")
+        bf._backfill_peds(_parse_args(argv))
         return called.get("ids")
 
     def test_dedup_and_skip_existing(self, monkeypatch):
@@ -443,7 +443,7 @@ class TestBackfillHorses:
     def _run(self, monkeypatch, results, horse_results, argv):
         import src.pipeline._ingestion as ing
         import src.preparing._data_source as ds
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline.commands._backfill as bf
         from src.constants._local_paths import LocalPaths
 
         def fake_load(p):
@@ -463,8 +463,8 @@ class TestBackfillHorses:
                 called["ids"] = list(ids)
 
         monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
-        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
-        rp._backfill_horses(rp._parse_args(argv))
+        monkeypatch.setattr(bf, "_resolve_data_source", lambda a: "netkeiba")
+        bf._backfill_horses(_parse_args(argv))
         return called.get("ids")
 
     def test_dedup_and_skip_existing(self, monkeypatch):
@@ -498,7 +498,7 @@ class TestBackfillYoso:
     def _run(self, monkeypatch, results, done_yoso, argv):
         import src.pipeline._ingestion as ing
         import src.preparing._data_source as ds
-        import src.pipeline.run_pipeline as rp
+        import src.pipeline.commands._backfill as bf
         from src.constants._local_paths import LocalPaths
 
         def fake_load(p):
@@ -514,8 +514,8 @@ class TestBackfillYoso:
                 called["ids"] = list(ids)
 
         monkeypatch.setattr(ds, "create_data_source", lambda kind="netkeiba": _Src())
-        monkeypatch.setattr(rp, "_resolve_data_source", lambda a: "netkeiba")
-        rp._backfill_yoso(rp._parse_args(argv))
+        monkeypatch.setattr(bf, "_resolve_data_source", lambda a: "netkeiba")
+        bf._backfill_yoso(_parse_args(argv))
         return called.get("ids")
 
     def test_race_id_column_normalized_and_skip(self, monkeypatch):
