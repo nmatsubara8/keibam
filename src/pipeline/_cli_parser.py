@@ -2,6 +2,7 @@
 
 `run_pipeline.py` の肥大化を避けるため、argparse のサブコマンド/オプション定義を本モジュールに
 分離する。ハンドラ実装には依存しない純粋な引数定義のみ（実行時 import 不要・テスト容易）。
+サブコマンドごとに ``_add_<name>(sub)`` へ分割し、``build_parser`` が順に呼んで組み立てる。
 """
 
 from __future__ import annotations
@@ -9,11 +10,8 @@ from __future__ import annotations
 import argparse
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """全サブコマンドを登録した ArgumentParser を返す。"""
-    parser = argparse.ArgumentParser(description="継続学習パイプライン")
-    sub = parser.add_subparsers(dest="job", required=True)
-
+def _add_ingest(sub: argparse._SubParsersAction) -> None:
+    """ingest サブコマンドを登録する。"""
     # ingest サブコマンド
     ingest_p = sub.add_parser("ingest", help="終了レースを日次取込")
     race_id_group = ingest_p.add_mutually_exclusive_group(required=True)
@@ -36,6 +34,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="データ取得元（netkeiba / jravan）。省略時は UI 選択 or 既定 netkeiba",
     )
 
+
+def _add_retrain(sub: argparse._SubParsersAction) -> None:
+    """retrain サブコマンドを登録する。"""
     # retrain サブコマンド
     retrain_p = sub.add_parser("retrain", help="全データで週次再学習")
     retrain_p.add_argument("--version-name", default=None, help="バージョン名（省略時は日付自動生成）")
@@ -93,12 +94,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="BaseModelsConfig JSON ファイルパス",
     )
 
+
+def _add_rebuild_featured(sub: argparse._SubParsersAction) -> None:
+    """rebuild-featured サブコマンドを登録する。"""
     # rebuild-featured サブコマンド（raw から featured を再生成。取得なし）
     sub.add_parser(
         "rebuild-featured",
         help="raw pickle から featured_data を再生成する（スクレイプなし。DB 復元後等に使用）",
     )
 
+
+def _add_backfill(sub: argparse._SubParsersAction) -> None:
+    """backfill-*（6コマンド） サブコマンドを登録する。"""
     # backfill-notes サブコマンド（既存 race_id の当日ノートのみを取得。コア取得と独立）
     bn_p = sub.add_parser(
         "backfill-notes",
@@ -156,10 +163,16 @@ def build_parser() -> argparse.ArgumentParser:
     bp_p.add_argument("--source", type=str, default=None, help="データソース名（既定: 選択保存 > netkeiba）")
     bp_p.add_argument("--no-skip-existing", action="store_true", help="取得済み horse_id も再取得する")
 
+
+def _add_evaluate_odds_dynamics(sub: argparse._SubParsersAction) -> None:
+    """evaluate-odds-dynamics サブコマンドを登録する。"""
     # evaluate-odds-dynamics サブコマンド
     eval_p = sub.add_parser("evaluate-odds-dynamics", help="オッズ力学モデルの比較評価（重力統計も更新）")
     eval_p.add_argument("--holdout-frac", type=float, default=0.2, help="検証に使う直近レースの割合")
 
+
+def _add_fetch_final_odds(sub: argparse._SubParsersAction) -> None:
+    """fetch-final-odds サブコマンドを登録する。"""
     # fetch-final-odds サブコマンド（過去レースの最終確定オッズを全券種で取得）
     fo_p = sub.add_parser(
         "fetch-final-odds",
@@ -191,6 +204,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="取得済みレースもスキップせず再取得する",
     )
 
+
+def _add_calibrate_takeout(sub: argparse._SubParsersAction) -> None:
+    """calibrate-takeout サブコマンドを登録する。"""
     # calibrate-takeout サブコマンド（払戻実績から券種別実効控除率を逆算）
     ct_p = sub.add_parser(
         "calibrate-takeout",
@@ -205,6 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="逆算結果をログ表示するのみで保存しない",
     )
 
+
+def _add_calibrate_ev(sub: argparse._SubParsersAction) -> None:
+    """calibrate-ev サブコマンドを登録する。"""
     # calibrate-ev サブコマンド（OOS で γ,δ / r̂較正 / α,β を fit して保存）
     ce_p = sub.add_parser(
         "calibrate-ev",
@@ -225,6 +244,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="fit 結果をログ表示するのみで保存しない",
     )
 
+
+def _add_backtest(sub: argparse._SubParsersAction) -> None:
+    """backtest サブコマンドを登録する。"""
     # backtest サブコマンド
     bt_p = sub.add_parser(
         "backtest",
@@ -274,6 +296,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="初出走馬(career_starts=0/NaN)を公衆 implied 勝率に置換し初出走のみのレースは除外（ベンター §3）",
     )
 
+
+def _add_doctor(sub: argparse._SubParsersAction) -> None:
+    """doctor サブコマンドを登録する。"""
     doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
     doctor_p.add_argument("--strict", action="store_true", help="WARN でも非0終了する")
@@ -285,4 +310,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="モデルを新しい順に KEEP 世代残して古い世代を削除する",
     )
 
+
+def build_parser() -> argparse.ArgumentParser:
+    """全サブコマンドを登録した ArgumentParser を返す。"""
+    parser = argparse.ArgumentParser(description="継続学習パイプライン")
+    sub = parser.add_subparsers(dest="job", required=True)
+    _add_ingest(sub)
+    _add_retrain(sub)
+    _add_rebuild_featured(sub)
+    _add_backfill(sub)
+    _add_evaluate_odds_dynamics(sub)
+    _add_fetch_final_odds(sub)
+    _add_calibrate_takeout(sub)
+    _add_calibrate_ev(sub)
+    _add_backtest(sub)
+    _add_doctor(sub)
     return parser
