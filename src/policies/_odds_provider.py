@@ -81,8 +81,7 @@ class HistoricalOddsProvider(AbstractOddsProvider):
     def _market_win_probs(self, race_id) -> dict[int, float]:
         """単勝オッズの逆数を控除率で正規化した市場勝率。"""
         odds_map = self._tansho_odds_by_race[race_id]
-        implied = {umaban: 1.0 / odds for umaban, odds in odds_map.items() if odds and odds > 0}
-        return harville.normalize(implied)
+        return harville.implied_from_odds(odds_map, normalized=True)
 
     def get_odds(self, race_id, bet_type: str, combo: Sequence[int]) -> float:
         combo = list(combo)
@@ -185,8 +184,7 @@ class PredictedOddsProvider(AbstractOddsProvider):
             return float(odds)
 
         # 連系: 予測単勝オッズ → 市場勝率 → Harville 組合せ確率 → 控除後オッズ
-        implied = {umaban: 1.0 / o for umaban, o in preds.items()}
-        win_probs = harville.normalize(implied)
+        win_probs = harville.implied_from_odds(preds, normalized=True)
         prob = harville.combo_probability(bet_type, win_probs, combo)
         if prob <= 0:
             return self._fallback.get_odds(race_id, bet_type, combo)

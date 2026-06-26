@@ -25,6 +25,7 @@ from src.constants._bet_thresholds import RiskLimits
 # preprocessing._market_signals も同じ実装を使い、レイヤ逆流（preprocessing→policies）を解消。
 # 再 export により既存の `harville.normalize` / `harville.prob_place` 呼び出しを温存する。
 from src.preprocessing._place_prob import _prob_in_top  # noqa: F401  （後方互換の再 export）
+from src.preprocessing._place_prob import implied_from_odds  # noqa: F401  （市場勝率の単一作成口）
 from src.preprocessing._place_prob import normalize
 from src.preprocessing._place_prob import prob_place
 

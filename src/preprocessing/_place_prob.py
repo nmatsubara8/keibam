@@ -26,6 +26,17 @@ def normalize(win_probs: Probabilities) -> dict[int, float]:
     return {umaban: float(prob) / total for umaban, prob in win_probs.items()}
 
 
+def implied_from_odds(odds_map: Mapping, *, normalized: bool = False) -> dict:
+    """オッズ map → implied 勝率 dict（``1/odds``）。非正・NaN・0 のオッズは除外する。
+
+    ``normalized=True`` でレース内 Σ=1 に正規化（控除抜きの市場勝率）。馬券 EV / Harville が
+    使う「単勝オッズ→市場勝率」の単一の作り方。キーは保持、値は float。各所に散っていた
+    ``{u: 1.0/o for ... if o and o > 0}`` の再実装を一本化する。
+    """
+    implied = {k: 1.0 / float(o) for k, o in odds_map.items() if o and float(o) > 0}
+    return normalize(implied) if normalized and implied else implied
+
+
 def prob_place(win_probs: Probabilities, horse: int, n_places: int = 3) -> float:
     """複勝（指定馬が n_places 着以内に入る）の確率。
 

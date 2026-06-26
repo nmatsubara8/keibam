@@ -58,8 +58,7 @@ def race_market_signals(
     horses = [h for h, o in win_odds.items() if o and float(o) > 0]
     if len(horses) < 3:
         return {}
-    win_implied = {h: 1.0 / float(win_odds[h]) for h in horses}
-    win_probs = _place_prob.normalize(win_implied)  # Σ_h = 1
+    win_probs = _place_prob.implied_from_odds(win_odds, normalized=True)  # Σ_h = 1
     place_p = {h: _place_prob.prob_place(win_probs, h, 3) for h in horses}  # Σ_h ≈ 3
 
     out: dict[int, dict[str, float]] = {h: {} for h in horses}

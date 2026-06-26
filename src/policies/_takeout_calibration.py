@@ -192,7 +192,7 @@ def winner_return_rate(
     odds_map = tansho_odds_by_race.get(race_id) or tansho_odds_by_race.get(str(race_id))
     if not odds_map or len(odds_map) < 2:
         return None
-    implied = {int(u): 1.0 / float(o) for u, o in odds_map.items() if o and float(o) > 0}
+    implied = harville.implied_from_odds({int(u): o for u, o in odds_map.items()})
     if len(implied) < 2:
         return None
     try:
