@@ -1,13 +1,13 @@
 import logging
 
 from src.preparing._data_loader import DataLoader
-from src.preparing.modules import create_raw_horse_info
-from src.preparing.modules import create_raw_horse_ped
-from src.preparing.modules import create_raw_horse_results
-from src.preparing.modules import create_raw_race_info
-from src.preparing.modules import create_raw_race_results
-from src.preparing.modules import create_raw_race_return
-from src.preparing.modules import process_bin_file
+from src.preparing._raw_parsers import create_raw_horse_info
+from src.preparing._raw_parsers import create_raw_horse_ped
+from src.preparing._raw_parsers import create_raw_horse_results
+from src.preparing._raw_parsers import create_raw_race_info
+from src.preparing._raw_parsers import create_raw_race_results
+from src.preparing._raw_parsers import create_raw_race_return
+from src.preparing._scrape_pages import process_bin_file
 
 logger = logging.getLogger(__name__)
 

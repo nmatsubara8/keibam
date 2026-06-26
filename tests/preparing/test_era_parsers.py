@@ -14,9 +14,9 @@ import pandas as pd
 import pytest
 
 from src.constants._master import Master
-from src.preparing.modules import create_raw_race_info
-from src.preparing.modules import create_raw_race_results
-from src.preparing.modules import create_raw_race_return
+from src.preparing._raw_parsers import create_raw_race_info
+from src.preparing._raw_parsers import create_raw_race_results
+from src.preparing._raw_parsers import create_raw_race_return
 
 # 旧年代ページの最小再現: レース結果 + 払戻 2 表 + 空テーブル（馬場情報）
 _OLD_RACE_HTML = """

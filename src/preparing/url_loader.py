@@ -1,17 +1,17 @@
 from src.constants._url_paths import UrlPaths
 from src.preparing._data_loader import DataLoader
-from src.preparing.modules import create_raw_horse_info
-from src.preparing.modules import create_raw_horse_ped
-from src.preparing.modules import create_raw_horse_results
-from src.preparing.modules import create_raw_race_return
-from src.preparing.modules import get_kaisai_date_list
-from src.preparing.modules import get_raw_horse_id_list
-from src.preparing.modules import process_bin_file
-from src.preparing.modules import process_pkl_file
-from src.preparing.modules import scrape_html_horse
-from src.preparing.modules import scrape_html_ped
-from src.preparing.modules import scrape_html_race
-from src.preparing.modules import scrape_race_id_list
+from src.preparing._raw_parsers import create_raw_horse_info
+from src.preparing._raw_parsers import create_raw_horse_ped
+from src.preparing._raw_parsers import create_raw_horse_results
+from src.preparing._raw_parsers import create_raw_race_return
+from src.preparing._scrape_pages import get_kaisai_date_list
+from src.preparing._scrape_pages import get_raw_horse_id_list
+from src.preparing._scrape_pages import process_bin_file
+from src.preparing._scrape_pages import process_pkl_file
+from src.preparing._scrape_pages import scrape_html_horse
+from src.preparing._scrape_pages import scrape_html_ped
+from src.preparing._scrape_pages import scrape_html_race
+from src.preparing._scrape_pages import scrape_race_id_list
 
 
 class KaisaiDateLoader(DataLoader):

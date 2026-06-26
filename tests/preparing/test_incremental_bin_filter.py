@@ -4,7 +4,7 @@ ingest が新規 race_id / horse_id の bin だけを再パースする（全 HT
 再パースを避ける）ことを担保する純粋関数の回帰テスト。
 """
 
-from src.preparing.modules import _filter_target_bins
+from src.preparing._scrape_pages import _filter_target_bins
 
 
 def test_none_returns_all():

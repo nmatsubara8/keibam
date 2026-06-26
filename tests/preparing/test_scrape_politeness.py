@@ -7,7 +7,7 @@ race/horse/ped の bin 取得は単一 fetch 経路（PlaywrightScraper.fetch �
 
 import pandas as pd
 
-from src.preparing import modules
+from src.preparing import _scrape_pages as modules
 
 
 class _FakeLoader:
