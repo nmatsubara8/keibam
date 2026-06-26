@@ -18,10 +18,10 @@ from tqdm.auto import tqdm
 from src.constants._feature_cols import (
     JOCKEY_RECENT_N,
     N_RACES_LIST,
-    SIRE_RECENT_YEARS,
 )
-from src.constants._horse_results_cols import HorseResultsCols as HRCols
 from src.preprocessing import _horse_features as _hf
+from src.preprocessing import _pedigree_features as _pf
+from src.preprocessing import _yoso_features as _yf
 from src.preprocessing._data_cleaner import convert_column_types
 from src.preprocessing._data_cleaner import dict_selector
 from src.preprocessing._horse_info_processor import HorseInfoProcessor
@@ -183,141 +183,13 @@ class DataMerger:
         self._results = left.drop(columns=["_umaban_key"]).set_index("race_id")
 
     def _merge_yoso_marks(self):
-        """予想印（ロング）を (race_id, 馬番) のコンセンサス特徴に集約して左結合する。
-
-        予想家の顔ぶれはレースで変動するため個別列でなく集約量（印数/◎数/スコア）を使う。
-        発走前確定＝リーク無し。未提供（空）はスキップ。
-        """
-        if self._yoso_marks is None or self._yoso_marks.empty:
-            return
-        if "馬番" not in self._results.columns:
-            return
-        from src.preprocessing._yoso_consensus import aggregate_consensus
-
-        long = self._yoso_marks.reset_index()
-        if "race_id" not in long.columns:
-            long = long.rename(columns={long.columns[0]: "race_id"})
-        if "馬番" not in long.columns:
-            return
-        long["race_id"] = long["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
-        consensus = aggregate_consensus(long)
-        if consensus.empty:
-            return
-        consensus["race_id"] = consensus["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
-        consensus["_umaban_key"] = pd.to_numeric(consensus["馬番"], errors="coerce").astype("Int64")
-        value_cols = [c for c in consensus.columns if c.startswith("yoso_")]
-        consensus = consensus[["race_id", "_umaban_key"] + value_cols].drop_duplicates(
-            ["race_id", "_umaban_key"]
-        )
-
-        base = self._results
-        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
-        base.index.name = "race_id"
-        left = base.reset_index()
-        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
-        merged = left.merge(consensus, on=["race_id", "_umaban_key"], how="left")
-        self._results = merged.drop(columns=["_umaban_key"]).set_index("race_id")
+        self._results = _yf.merge_yoso_marks(self._results, self._yoso_marks)
 
     def _add_yoso_predictor_skill(self):
-        """予想家の as-of ◎的中率で◎を加重した特徴を追加する（自前計算・リーク無し）。
-
-        取得済み yoso_marks（予想家の印）と results（着順）から、各予想家の「◎を付けた馬が
-        1着になった率」を**当該レース日より前**で expanding 集計（自分の当該行は除外）し、
-        ◎を付けた予想家の skill を馬ごとに合算/最大する。スクレイプ不要・追加取得なし。
-        - ``yoso_honmei_skill_sum`` : ◎を付けた予想家の as-of 的中率の合計（質×量）
-        - ``yoso_best_skill``       : 同・最大（最も当てる予想家が◎を付けたか）
-        skill 不明（履歴ゼロの予想家）の寄与は NaN（best）/0（sum・skipna）。
-        """
-        import numpy as np  # noqa: F401 — where 経由で利用
-
-        if self._yoso_marks is None or self._yoso_marks.empty:
-            return
-        if "馬番" not in self._results.columns or "着順" not in self._results.columns:
-            return
-        long = self._yoso_marks.reset_index()
-        if "race_id" not in long.columns:
-            long = long.rename(columns={long.columns[0]: "race_id"})
-        if not {"馬番", "predictor_yid", "mark"}.issubset(long.columns):
-            return
-        long["race_id"] = long["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
-        long["_umaban_key"] = pd.to_numeric(long["馬番"], errors="coerce").astype("Int64")
-
-        base = self._results
-        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
-        base.index.name = "race_id"
-        res = base.reset_index()
-        res["_umaban_key"] = pd.to_numeric(res["馬番"], errors="coerce").astype("Int64")
-        res["_chaku"] = pd.to_numeric(res["着順"], errors="coerce")
-        race_date = res.groupby("race_id")["date"].first() if "date" in res.columns else None
-
-        hon = long[long["mark"] == "◎"].copy()
-        if hon.empty or race_date is None:
-            return
-        hon = hon.merge(
-            res[["race_id", "_umaban_key", "_chaku"]], on=["race_id", "_umaban_key"], how="left"
-        )
-        hon["_date"] = hon["race_id"].map(race_date)
-        hon["_hit"] = (hon["_chaku"] == 1).astype(float)
-        hon = hon.sort_values(["_date", "race_id"])
-        grp = hon.groupby("predictor_yid")
-        n_prior = grp.cumcount()                       # 当該行より前の◎数
-        hits_prior = grp["_hit"].cumsum() - hon["_hit"]  # 当該行を除く的中数
-        hon["_skill"] = hits_prior / n_prior.where(n_prior > 0)  # 履歴ゼロは NaN
-
-        sk = hon.groupby(["race_id", "_umaban_key"]).agg(
-            yoso_honmei_skill_sum=("_skill", "sum"),
-            yoso_best_skill=("_skill", "max"),
-        ).reset_index()
-
-        merged = res.merge(sk, on=["race_id", "_umaban_key"], how="left")
-        self._results = merged.drop(
-            columns=["_umaban_key", "_chaku"], errors="ignore"
-        ).set_index("race_id")
+        self._results = _yf.add_yoso_predictor_skill(self._results, self._yoso_marks)
 
     def _add_yoso_profile_skill(self):
-        """予想家プロフィール由来スキル（prior）で◎を加重した特徴を追加する。
-
-        各予想家の profile_honmei_winrate（◎1着率の直近集計）を、◎を付けた馬ごとに合算/最大。
-        方式A（自前 as-of）が直近窓のみなのに対し、こちらは予想家自身のログ由来で広くカバー
-        （現時点スナップショット＝軽微リーク許容。ユーザー指定 B1）。未提供（空）はスキップ。
-        """
-        if self._yoso_predictor is None or self._yoso_predictor.empty:
-            return
-        if self._yoso_marks is None or self._yoso_marks.empty:
-            return
-        if "馬番" not in self._results.columns:
-            return
-        prior = self._yoso_predictor.reset_index()
-        if "predictor_yid" not in prior.columns:
-            prior = prior.rename(columns={prior.columns[0]: "predictor_yid"})
-        if "profile_honmei_winrate" not in prior.columns:
-            return
-        prior["predictor_yid"] = prior["predictor_yid"].astype(str)
-        skill = prior.set_index("predictor_yid")["profile_honmei_winrate"]
-
-        long = self._yoso_marks.reset_index()
-        if "race_id" not in long.columns:
-            long = long.rename(columns={long.columns[0]: "race_id"})
-        if not {"馬番", "predictor_yid", "mark"}.issubset(long.columns):
-            return
-        hon = long[long["mark"] == "◎"].copy()
-        if hon.empty:
-            return
-        hon["race_id"] = hon["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
-        hon["_umaban_key"] = pd.to_numeric(hon["馬番"], errors="coerce").astype("Int64")
-        hon["_sk"] = hon["predictor_yid"].astype(str).map(skill)
-        agg = hon.groupby(["race_id", "_umaban_key"]).agg(
-            yoso_profile_skill_sum=("_sk", "sum"),
-            yoso_profile_best=("_sk", "max"),
-        ).reset_index()
-
-        base = self._results
-        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
-        base.index.name = "race_id"
-        res = base.reset_index()
-        res["_umaban_key"] = pd.to_numeric(res["馬番"], errors="coerce").astype("Int64")
-        merged = res.merge(agg, on=["race_id", "_umaban_key"], how="left")
-        self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
+        self._results = _yf.add_yoso_profile_skill(self._results, self._yoso_marks, self._yoso_predictor)
 
     def _merge_odds_signals(self):
         """市場歪み特徴（複勝/三連複/三連単 overlay）を (race_id, 馬番) で左結合する。
@@ -674,80 +546,24 @@ class DataMerger:
     # ──────────────────────────────────────────
 
     def _add_sire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """種牡馬（父=peds_0）産駒の集計特徴量を追加（sire_win_rate / sire_avg_rank / sire_recent_win_rate）。"""
-        return self._add_pedigree_stats(results, target_date, "peds_0", "sire")
+        return _pf.add_sire_stats(
+            results, target_date,
+            hr_with_sire_dict=self._separated_hr_with_sire_dict, peds=self._peds,
+        )
 
     def _add_damsire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """母父（broodmare sire=peds_32）の産駒集計特徴量を追加（damsire_*）。
-
-        母父は距離・ダート適性に効く競馬の重要軸。父(sire)と同じく過去走の産駒成績で集計する。
-        血統表は行順フラット化のため母=peds_31・母父=peds_32（実データで検証済み。
-        peds_2 は父父父であり母父ではない）。
-        """
-        return self._add_pedigree_stats(results, target_date, "peds_32", "damsire")
+        return _pf.add_damsire_stats(
+            results, target_date,
+            hr_with_sire_dict=self._separated_hr_with_sire_dict, peds=self._peds,
+        )
 
     def _add_pedigree_stats(
         self, results: pd.DataFrame, target_date, peds_col: str, prefix: str
     ) -> pd.DataFrame:
-        """血統（peds_col）単位の産駒集計特徴量を追加する（父/母父で共用、リーク無し）。
-
-        _separated_hr_with_sire_dict は _separate_by_date() 内で peds_0/peds_2 を付与した
-        horse_results のサブセット（date < target_date）を保持する。
-        - ``{prefix}_win_rate``        : 産駒の全期間勝率
-        - ``{prefix}_avg_rank``        : 産駒の全期間平均相対着順（着順/頭数）
-        - ``{prefix}_recent_win_rate`` : 直近 SIRE_RECENT_YEARS 年の産駒勝率
-        """
-        if target_date not in self._separated_hr_with_sire_dict:
-            return results
-
-        phs = self._separated_hr_with_sire_dict[target_date]
-        rank_col = HRCols.RANK  # '着順'
-        n_horses_col = HRCols.N_HORSES  # '頭数'
-
-        if peds_col not in phs.columns or phs.empty or rank_col not in phs.columns:
-            return results
-
-        win_col, rank_name, recent_col = f"{prefix}_win_rate", f"{prefix}_avg_rank", f"{prefix}_recent_win_rate"
-
-        phs = phs.copy()
-        # category dtype の groupby 問題を避けるため血統キーは str 化する
-        phs["_ped_key"] = phs[peds_col].astype(str)
-        phs["_is_win"] = (phs[rank_col] == 1).astype(float)
-        if n_horses_col in phs.columns:
-            phs["_rel_rank"] = phs[rank_col] / phs[n_horses_col]
-
-        agg_dict: dict = {"_is_win": "mean"}
-        if "_rel_rank" in phs.columns:
-            agg_dict["_rel_rank"] = "mean"
-
-        ped_all = phs.groupby("_ped_key").agg(agg_dict)
-        ped_all.columns = [win_col if c == "_is_win" else rank_name for c in ped_all.columns]
-
-        # 直近 N 年
-        cutoff = pd.Timestamp(target_date) - pd.DateOffset(years=SIRE_RECENT_YEARS)
-        recent = phs[phs["date"] >= cutoff]
-        if not recent.empty:
-            ped_recent = recent.groupby("_ped_key")["_is_win"].mean().rename(recent_col)
-            ped_all = ped_all.join(ped_recent, how="left")
-        else:
-            ped_all[recent_col] = float("nan")
-
-        # 現役馬（出馬表）の血統キーを peds から引く
-        if peds_col not in self._peds.columns:
-            return results
-        horse_ped = self._peds[[peds_col]].reset_index()
-        horse_ped["_ped_key"] = horse_ped[peds_col].astype(str)
-
-        horse_ped_indexed = horse_ped[["horse_id", "_ped_key"]].set_index("horse_id")
-        # horse_id の型を揃える（results は str、peds 由来 index は DB 復元で Int64 になりうる）
-        horse_ped_indexed.index = horse_ped_indexed.index.astype(str)
-        results = results.copy()
-        results["horse_id"] = results["horse_id"].astype(str)
-        results = results.merge(horse_ped_indexed, left_on="horse_id", right_index=True, how="left")
-        results = results.merge(ped_all, left_on="_ped_key", right_index=True, how="left")
-        results = results.drop(columns=["_ped_key"], errors="ignore")
-
-        return results
+        return _pf.add_pedigree_stats(
+            results, target_date, peds_col, prefix,
+            hr_with_sire_dict=self._separated_hr_with_sire_dict, peds=self._peds,
+        )
 
     # ──────────────────────────────────────────
     # Core helpers
