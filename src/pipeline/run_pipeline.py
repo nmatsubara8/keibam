@@ -52,6 +52,28 @@ def _auto_migrate_db() -> None:
         logger.warning("[pipeline] DB auto-migrate 失敗 (non-fatal): %s", e)
 
 
+def _save_ratings_snapshot(merger) -> None:
+    """DataMerger が保持する Elo スナップショットを models/horse_ratings.json に保存する。
+
+    ライブ予測（出馬表）が各出走馬の現行レーティングを参照できるようにする。non-fatal。
+    """
+    snapshot = getattr(merger, "horse_ratings_snapshot", None)
+    if not snapshot:
+        return
+    try:
+        import json
+
+        from src.constants._local_paths import LocalPaths
+
+        os.makedirs(os.path.dirname(LocalPaths.HORSE_RATINGS_PATH), exist_ok=True)
+        with open(LocalPaths.HORSE_RATINGS_PATH, "w") as f:
+            json.dump(snapshot, f, ensure_ascii=False)
+        logger.info("[ratings] スナップショットを保存: %s (%d 頭)",
+                    LocalPaths.HORSE_RATINGS_PATH, len(snapshot))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[ratings] スナップショット保存失敗 (non-fatal): %s", e)
+
+
 def _scrape_new_race_data(race_ids: list) -> list:
     """新規 race_id のレース HTML を取得し、raw テーブルを増分更新する（Playwright 必須）。
 
@@ -236,6 +258,7 @@ def _ingest(args: argparse.Namespace) -> None:
                 group_cols=["騎手"],
             )
             merger.merge()
+            _save_ratings_snapshot(merger)
             fe = (
                 FeatureEngineering(merger)
                 .add_interval()
@@ -303,6 +326,7 @@ def _retrain(args: argparse.Namespace) -> None:
                     group_cols=["騎手"],
                 )
                 merger.merge()
+                _save_ratings_snapshot(merger)
                 return (
                     FeatureEngineering(merger)
                     .add_interval().add_agedays()
@@ -320,6 +344,25 @@ def _retrain(args: argparse.Namespace) -> None:
         logger.info("[retrain] featured_data.pkl を生成しました shape=%s", featured_data.shape)
     else:
         featured_data = pd.read_pickle(featured_path)
+
+    # Phase 1: --no-rating-features（On/Off アブレーション）。
+    # レーティング列（ELO_FEATURE_COLS とその _z 版）を学習前に落とし、
+    # 「レーティングを含まないモデル」variant を生成して A/B 比較できるようにする。
+    vname = args.version_name
+    if getattr(args, "no_rating_features", False):
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+        from src.pipeline._retrain import version_name
+
+        elo_set = set(ELO_FEATURE_COLS)
+        drop_cols = [
+            c for c in featured_data.columns
+            if c in elo_set or (c.endswith("_z") and c[:-2] in elo_set)
+        ]
+        featured_data = featured_data.drop(columns=drop_cols, errors="ignore")
+        logger.info("[retrain] --no-rating-features: レーティング列 %d 個を除外 %s",
+                    len(drop_cols), drop_cols)
+        if vname is None:
+            vname = version_name(prefix="keibam_norating")
 
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
@@ -353,7 +396,7 @@ def _retrain(args: argparse.Namespace) -> None:
     job = RetrainJob(KeibaAIFactory, cfg)
     result = job.run(
         featured_data,
-        vname=args.version_name,
+        vname=vname,
         with_tuning=args.with_tuning,
         lgb_params=lgb_params,
         params_rank=params_rank,
@@ -433,6 +476,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--use-selected-params",
         action="store_true",
         help="UI（モデルラボ）で選択・保存したパラメータ（models/selected_params.json）で学習する",
+    )
+    # Phase 1: レーティング特徴量の On/Off アブレーション（A/B 用に2 variant を学習）
+    retrain_p.add_argument(
+        "--no-rating-features",
+        action="store_true",
+        help="Elo レーティング特徴量を除外して学習する（含むモデルとの A/B 比較用）",
     )
 
     # evaluate-odds-dynamics サブコマンド

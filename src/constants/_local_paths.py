@@ -38,6 +38,11 @@ class LocalPaths:
     ### pickle が消えても DB から再生成できるように、scrape 結果をここに upsert する。
     DB_PATH: str = os.path.join(DATA_DIR, "keibam.db")
 
+    ### modelsディレクトリのパス（学習済みモデル・各種スナップショットの保存先）
+    MODELS_DIR: str = os.path.join(BASE_DIR, "models")
+    ### Phase 1: ペアワイズ Elo レーティングの最新スナップショット（ライブ予測で参照）
+    HORSE_RATINGS_PATH: str = os.path.join(MODELS_DIR, "horse_ratings.json")
+
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")

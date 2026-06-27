@@ -71,6 +71,10 @@ class ResultsProcessor(AbstractDataProcessor):
         # race_id がインデックスにあり列にない場合（pickle 再保存後の状態）は列に復元する
         if "race_id" not in df.columns and df.index.name == "race_id":
             df = df.reset_index()
+        # 着差は古い/不完全な raw では欠落しうる。Elo 着差補正は欠損時 K 一定へ
+        # フォールバックするため、列が無ければ NaN で補って選択を壊さない。
+        if Cols.RANK_DIFF not in df.columns:
+            df[Cols.RANK_DIFF] = pd.NA
         df = df[
             [
                 "race_id",
@@ -82,7 +86,8 @@ class ResultsProcessor(AbstractDataProcessor):
                 Cols.KINRYO,  # 斤量
                 # Cols.JOCKEY, # 騎手
                 # Cols.TIME # タイム
-                # Cols.RANK_DIFF # 着差
+                Cols.RANK_DIFF,  # 着差 (Phase 1: ペアワイズ Elo の着差補正に使用。
+                #                  学習入力からは _data_splitter で除外する)
                 Cols.TANSHO_ODDS,  # 単勝
                 # Cols.POPULARITY, # 人気
                 # Cols.WEIGHT_AND_DIFF, # 馬体重

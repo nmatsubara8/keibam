@@ -108,3 +108,46 @@ class ShutubaDataMerger(DataMerger):
         self._merge_horse_results()
         self._merge_horse_info()
         self._merge_peds()
+        self._merge_horse_ratings()
+
+    def _merge_horse_ratings(self):
+        """ライブ経路: models/horse_ratings.json のスナップショットを馬ごとに付与する。
+
+        未来レース（出馬表）は実着順が無く as-of ウォークができないため、学習時に
+        保存した最新スナップショットの現行レーティングを参照する。フィールド強度
+        （elo_field_mean / elo_vs_field）は当該レース出走馬内で計算する。
+        スナップショットが無い馬は初期レーティングへフォールバックする。
+        """
+        import json
+        import os
+
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+        from src.constants._feature_cols import ELO_INITIAL_RATING
+        from src.constants._local_paths import LocalPaths
+        from src.constants._results_cols import ResultsCols
+
+        md = self._merged_data
+        if md.empty or "horse_id" not in md.columns or ResultsCols.UMABAN not in md.columns:
+            return
+
+        snapshot: dict = {}
+        path = LocalPaths.HORSE_RATINGS_PATH
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    snapshot = json.load(f)
+            except (OSError, ValueError) as e:
+                logger.warning("[ratings] スナップショット読込失敗 (初期値で継続): %s", e)
+
+        md = md.copy()
+        hids = md["horse_id"].astype(str)
+        md["elo_rating"] = hids.map(
+            lambda h: float(snapshot.get(h, {}).get("rating", ELO_INITIAL_RATING))
+        )
+        md["elo_n_races"] = hids.map(lambda h: float(snapshot.get(h, {}).get("n_races", 0)))
+        # フィールド強度はレース（race_id インデックス）内で算出する
+        md["elo_field_mean"] = md.groupby(level=0)["elo_rating"].transform("mean")
+        md["elo_vs_field"] = md["elo_rating"] - md["elo_field_mean"]
+        self._merged_data = md
+        logger.info("[ratings] ライブ Elo 特徴量 %d 列を付与（snapshot=%d 頭）",
+                    len(ELO_FEATURE_COLS), len(snapshot))

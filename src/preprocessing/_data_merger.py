@@ -57,6 +57,8 @@ class DataMerger:
         self._separated_results_dict: dict = {}
         self._separated_horse_results_dict: dict = {}
         self._separated_hr_with_sire_dict: dict = {}
+        # Phase 1: 最新レーティングのスナップショット（horse_id -> {rating, n_races, last_date}）
+        self.horse_ratings_snapshot: dict = {}
 
     def merge(self):
         self._merge_race_info()
@@ -69,6 +71,9 @@ class DataMerger:
         logger.debug("merge_horse_info\n%s", self._merged_data.sort_values(by="horse_id").head().T)
 
         self._merge_peds()
+
+        self._merge_horse_ratings()
+
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
         self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
@@ -360,6 +365,33 @@ class DataMerger:
         self._merged_data = self._merged_data.merge(
             peds, left_on="horse_id", right_index=True, how="left"
         )
+
+    def _merge_horse_ratings(self):
+        """§2k: ペアワイズ Elo レーティング（着差補正つき）を as-of 結合する。
+
+        全レースを日付昇順に走査し、各出走の「出走前レーティング」特徴量
+        （ELO_FEATURE_COLS）を行順を保って付与する。当該レース結果による更新は
+        特徴量確定後に行うためリークしない。最新スナップショットを
+        self.horse_ratings_snapshot に保持する（ライブ予測で参照）。
+        """
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._ratings import compute_rating_history
+
+        md = self._merged_data
+        required = {"horse_id", ResultsCols.UMABAN, ResultsCols.RANK, "date"}
+        missing = required - set(md.columns)
+        if md.empty or missing:
+            logger.warning("[ratings] 必要列が不足のためレーティング特徴量をスキップ: %s", missing)
+            return
+
+        features, snapshot = compute_rating_history(md)
+        self.horse_ratings_snapshot = snapshot
+        # features は md と同じ行順・インデックス。位置代入で安全に付与する。
+        for col in ELO_FEATURE_COLS:
+            self._merged_data[col] = features[col].to_numpy()
+        logger.info("[ratings] Elo 特徴量 %d 列を付与（%d 頭のスナップショット）",
+                    len(ELO_FEATURE_COLS), len(snapshot))
 
     @property
     def merged_data(self):

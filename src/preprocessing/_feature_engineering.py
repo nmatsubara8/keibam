@@ -207,6 +207,7 @@ class FeatureEngineering:
         from src.constants._feature_cols import (
             AGG_STATS,
             COURSE_CONDITION_FEATURE_COLS,
+            ELO_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             N_RACES_LIST,
             PACE_FEATURE_COLS,
@@ -225,12 +226,15 @@ class FeatureEngineering:
                         if col not in zscore_cols:
                             zscore_cols.append(col)
 
-        # §2c/2d/2e/2j named feature columns
+        # §2c/2d/2e/2j named feature columns（+ §2k Elo: field_mean はレース内一定の
+        # ため z-score 対象から除外。rating/n_races/vs_field のレース内相対値を素性化）
+        elo_zscore_cols = [c for c in ELO_FEATURE_COLS if c != "elo_field_mean"]
         named_feature_cols = (
             JOCKEY_TRAINER_FEATURE_COLS
             + PACE_FEATURE_COLS
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
+            + elo_zscore_cols
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:
