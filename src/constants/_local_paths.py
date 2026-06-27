@@ -46,6 +46,8 @@ class LocalPaths:
     HORSE_TRUESKILL_PATH: str = os.path.join(MODELS_DIR, "horse_trueskill.json")
     ### Phase 3: 条件別 TrueSkill（horse×次元×バケット）の最新スナップショット
     HORSE_COND_TRUESKILL_PATH: str = os.path.join(MODELS_DIR, "horse_cond_trueskill.json")
+    ### Phase 4: 能力 Kalman（局所線形トレンド）の最新スナップショット
+    HORSE_ABILITY_KF_PATH: str = os.path.join(MODELS_DIR, "horse_ability_kf.json")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

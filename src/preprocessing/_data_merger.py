@@ -63,6 +63,8 @@ class DataMerger:
         self.horse_trueskill_snapshot: dict = {}
         # Phase 3: 条件別 TrueSkill スナップショット（horse_id -> {dim: {bucket: {...}}}）
         self.horse_cond_trueskill_snapshot: dict = {}
+        # Phase 4: 能力 Kalman スナップショット（horse_id -> {level, trend, ...}）
+        self.horse_ability_kf_snapshot: dict = {}
 
     def merge(self):
         self._merge_race_info()
@@ -79,6 +81,7 @@ class DataMerger:
         self._merge_horse_ratings()
         self._merge_horse_trueskill()
         self._merge_horse_conditional_trueskill()
+        self._merge_horse_ability_kalman()
 
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
@@ -452,6 +455,31 @@ class DataMerger:
             self._merged_data[col] = features[col].to_numpy()
         logger.info("[cond-trueskill] 条件別 TrueSkill 特徴量 %d 列を付与（%d 頭）",
                     len(COND_TS_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_ability_kalman(self):
+        """§2n: 能力 Kalman（局所線形トレンド・成長/疲労）を as-of 結合する。
+
+        observe y_t にフィールド強度（ts_field_mean、§2l で付与済み）を使うため
+        _merge_horse_trueskill の後に呼ぶこと。出走前の予測能力（KF_FEATURE_COLS）を
+        行順を保って付与し、最新スナップショットを self.horse_ability_kf_snapshot に保持する。
+        """
+        from src.constants._feature_cols import KF_FEATURE_COLS
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._ability_kalman import compute_ability_kalman_history
+
+        md = self._merged_data
+        required = {"horse_id", ResultsCols.UMABAN, ResultsCols.RANK, "date"}
+        missing = required - set(md.columns)
+        if md.empty or missing:
+            logger.warning("[ability-kf] 必要列が不足のため能力 Kalman をスキップ: %s", missing)
+            return
+
+        features, snapshot = compute_ability_kalman_history(md)
+        self.horse_ability_kf_snapshot = snapshot
+        for col in KF_FEATURE_COLS:
+            self._merged_data[col] = features[col].to_numpy()
+        logger.info("[ability-kf] 能力 Kalman 特徴量 %d 列を付与（%d 頭）",
+                    len(KF_FEATURE_COLS), len(snapshot))
 
     @property
     def merged_data(self):

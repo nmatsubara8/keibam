@@ -32,9 +32,11 @@ from app._model_eval import compute_stacking_auc
 from src.constants._feature_cols import COND_DIMENSIONS
 from src.constants._feature_cols import COND_TS_FEATURE_COLS
 from src.constants._feature_cols import ELO_FEATURE_COLS
+from src.constants._feature_cols import KF_FEATURE_COLS
 from src.constants._feature_cols import TS_FEATURE_COLS
 from src.constants._local_paths import LocalPaths
 from src.constants._results_cols import ResultsCols
+from src.preprocessing._ability_kalman import ability_win_probabilities
 from src.preprocessing._ratings import elo_win_probabilities
 from src.preprocessing._trueskill import trueskill_win_probabilities
 
@@ -58,6 +60,12 @@ _FAMILIES = {
         "feature_cols": TS_FEATURE_COLS,
         "primary": "ts_conservative",
         "snap_sort": "mu",
+    },
+    "能力Kalman": {
+        "path": LocalPaths.HORSE_ABILITY_KF_PATH,
+        "feature_cols": KF_FEATURE_COLS,
+        "primary": "kf_level",
+        "snap_sort": "level",
     },
 }
 _COND_FAMILY = "条件別TrueSkill"  # ネスト snapshot のため特別扱い
@@ -183,6 +191,12 @@ with tab1:
             if family == "Elo":
                 view["win_prob"] = elo_win_probabilities(view["elo_rating"].to_numpy(dtype=float))
                 st.caption("win_prob は p_i ∝ 10^(rating/400) の Elo 式勝率（モデル予測とは独立）。")
+            elif family == "能力Kalman":
+                view["win_prob"] = ability_win_probabilities(view["kf_level"].to_numpy(dtype=float))
+                st.caption(
+                    "win_prob は能力 level の softmax 近似（kf_trend は成長率、kf_workload は"
+                    "疲労指標。モデル予測とは独立）。"
+                )
             else:
                 view["win_prob"] = trueskill_win_probabilities(
                     view["ts_mu"].to_numpy(dtype=float), view["ts_sigma"].to_numpy(dtype=float)
@@ -239,6 +253,8 @@ with tab2:
             tags.append("TS")
         if any(c in names for c in COND_TS_FEATURE_COLS):
             tags.append("Cond")
+        if any(c in names for c in KF_FEATURE_COLS):
+            tags.append("KF")
         return "+".join(tags) if tags else "なし"
 
     if featured is None:

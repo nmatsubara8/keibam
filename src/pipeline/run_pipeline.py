@@ -66,6 +66,7 @@ def _save_ratings_snapshot(merger) -> None:
         ("horse_ratings_snapshot", LocalPaths.HORSE_RATINGS_PATH, "ratings"),
         ("horse_trueskill_snapshot", LocalPaths.HORSE_TRUESKILL_PATH, "trueskill"),
         ("horse_cond_trueskill_snapshot", LocalPaths.HORSE_COND_TRUESKILL_PATH, "cond-trueskill"),
+        ("horse_ability_kf_snapshot", LocalPaths.HORSE_ABILITY_KF_PATH, "ability-kf"),
     ):
         snapshot = getattr(merger, attr, None)
         if not snapshot:
@@ -356,6 +357,7 @@ def _retrain(args: argparse.Namespace) -> None:
     vname = args.version_name
     from src.constants._feature_cols import COND_TS_FEATURE_COLS
     from src.constants._feature_cols import ELO_FEATURE_COLS
+    from src.constants._feature_cols import KF_FEATURE_COLS
     from src.constants._feature_cols import RATING_FEATURE_COLS
     from src.constants._feature_cols import TS_FEATURE_COLS
 
@@ -374,6 +376,9 @@ def _retrain(args: argparse.Namespace) -> None:
         if getattr(args, "no_conditional_features", False):
             drop_base |= set(COND_TS_FEATURE_COLS)
             suffixes.append("nocond")
+        if getattr(args, "no_ability_features", False):
+            drop_base |= set(KF_FEATURE_COLS)
+            suffixes.append("noability")
 
     if drop_base:
         from src.pipeline._retrain import version_name
@@ -520,6 +525,11 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-conditional-features",
         action="store_true",
         help="条件別 TrueSkill 特徴量のみ除外して学習する",
+    )
+    retrain_p.add_argument(
+        "--no-ability-features",
+        action="store_true",
+        help="能力 Kalman 特徴量のみ除外して学習する",
     )
 
     # evaluate-odds-dynamics サブコマンド

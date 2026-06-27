@@ -129,11 +129,39 @@ COND_TS_FEATURE_COLS: list = [
 ]
 
 # ──────────────────────────────────────────
+# §2n: 能力 Kalman（局所線形トレンド・成長/疲労）— Phase 4
+# ──────────────────────────────────────────
+
+KF_INIT_LEVEL: float = 0.0        # 初期能力（TS 保守的スキルの prior と同じ 0 起点）
+KF_INIT_TREND: float = 0.0        # 初期成長率
+KF_INIT_VAR_LEVEL: float = 1.0    # 初期 level 分散（事前不確実性）
+KF_INIT_VAR_TREND: float = 0.1    # 初期 trend 分散
+KF_Q_LEVEL: float = 0.05          # level プロセスノイズ
+KF_Q_TREND: float = 0.005         # trend プロセスノイズ
+KF_R_OBS: float = 1.0             # 観測ノイズ
+KF_TREND_DECAY: float = 0.9       # 成長率の平均回帰係数 ρ（<1）
+KF_PERF_SCALE: float = 1.0        # 観測 y における着順正規スコアのスケール
+KF_INTERVAL_REF_DAYS: float = 180.0  # 間隔→プロセスノイズ変調の基準日数（休養=不確実性増）
+KF_WORKLOAD_HALFLIFE_DAYS: float = 60.0  # 疲労 workload の半減期（連戦指標の減衰）
+KF_WINPROB_SCALE: float = 2.0     # Rating Lab の能力式勝率 softmax スケール
+
+# 列順は compute_ability_kalman_history の出力配列と一致させること。
+KF_FEATURE_COLS: list = [
+    "kf_level",          # 出走前の予測能力（1 ステップ先予測）
+    "kf_trend",          # 成長率（正=上昇期 / 負=下降期）
+    "kf_level_vs_field",  # kf_level - レース内平均（相対能力）
+    "kf_sigma",          # 能力推定の不確実性（状態標準偏差）
+    "kf_workload",       # 疲労指標（直近の連戦度・減衰加重出走数）
+]
+
+# ──────────────────────────────────────────
 # レーティング特徴量の集約（On/Off アブレーション用）
 # ──────────────────────────────────────────
 
-# 全レーティングファミリー（Phase 4-5 で追加したらここに連結する）。
-RATING_FEATURE_COLS: list = ELO_FEATURE_COLS + TS_FEATURE_COLS + COND_TS_FEATURE_COLS
+# 全レーティングファミリー（Phase 5 で追加したらここに連結する）。
+RATING_FEATURE_COLS: list = (
+    ELO_FEATURE_COLS + TS_FEATURE_COLS + COND_TS_FEATURE_COLS + KF_FEATURE_COLS
+)
 
 # ──────────────────────────────────────────
 # §2g: レース内 Z-score 対象列

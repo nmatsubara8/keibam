@@ -111,6 +111,7 @@ class ShutubaDataMerger(DataMerger):
         self._merge_horse_ratings()
         self._merge_horse_trueskill()
         self._merge_horse_conditional_trueskill()
+        self._merge_horse_ability_kalman()
 
     def _merge_horse_ratings(self):
         """ライブ経路: models/horse_ratings.json のスナップショットを馬ごとに付与する。
@@ -251,3 +252,69 @@ class ShutubaDataMerger(DataMerger):
         self._merged_data = md
         logger.info("[cond-trueskill] ライブ条件別 TrueSkill 特徴量 %d 列を付与（snapshot=%d 頭）",
                     len(COND_TS_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_ability_kalman(self):
+        """ライブ経路: models/horse_ability_kf.json から 1 ステップ先予測の能力を付与。
+
+        スナップショットの (level, trend) から kf_level=level+trend を予測し、kf_workload は
+        last_date→当該レース日の間隔で減衰させる。未知の馬は prior（level=0 等）。
+        """
+        import json
+        import os
+
+        import pandas as pd
+
+        from src.constants._feature_cols import KF_FEATURE_COLS
+        from src.constants._feature_cols import KF_INIT_LEVEL
+        from src.constants._feature_cols import KF_INIT_TREND
+        from src.constants._feature_cols import KF_INIT_VAR_LEVEL
+        from src.constants._feature_cols import KF_Q_LEVEL
+        from src.constants._feature_cols import KF_TREND_DECAY
+        from src.constants._feature_cols import KF_WORKLOAD_HALFLIFE_DAYS
+        from src.constants._local_paths import LocalPaths
+        from src.constants._results_cols import ResultsCols
+
+        md = self._merged_data
+        if md.empty or "horse_id" not in md.columns or ResultsCols.UMABAN not in md.columns:
+            return
+
+        snapshot: dict = {}
+        path = LocalPaths.HORSE_ABILITY_KF_PATH
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    snapshot = json.load(f)
+            except (OSError, ValueError) as e:
+                logger.warning("[ability-kf] スナップショット読込失敗 (初期値で継続): %s", e)
+
+        md = md.copy()
+        race_date = pd.to_datetime(md["date"], errors="coerce").iloc[0] if "date" in md.columns else None
+        levels, trends, sigmas, workloads = [], [], [], []
+        for _, row in md.iterrows():
+            rec = snapshot.get(str(row["horse_id"]), {})
+            if rec:
+                trend = float(rec.get("trend", KF_INIT_TREND))
+                level = float(rec.get("level", KF_INIT_LEVEL)) + trend  # 1 ステップ予測
+                var_level = float(rec.get("var_level", KF_INIT_VAR_LEVEL)) + KF_Q_LEVEL
+                workload = float(rec.get("workload", 0.0))
+                last_date = pd.to_datetime(rec.get("last_date"), errors="coerce")
+                if race_date is not None and pd.notna(last_date) and KF_WORKLOAD_HALFLIFE_DAYS > 0:
+                    gap = max(0.0, (race_date - last_date).days)
+                    workload *= 0.5 ** (gap / KF_WORKLOAD_HALFLIFE_DAYS)
+                trend *= KF_TREND_DECAY
+            else:
+                level, trend = KF_INIT_LEVEL + KF_INIT_TREND, KF_INIT_TREND
+                var_level, workload = KF_INIT_VAR_LEVEL + KF_Q_LEVEL, 0.0
+            levels.append(level)
+            trends.append(trend)
+            sigmas.append(var_level ** 0.5)
+            workloads.append(workload)
+        md["kf_level"] = levels
+        md["kf_trend"] = trends
+        field_mean = md.groupby(level=0)["kf_level"].transform("mean")
+        md["kf_level_vs_field"] = md["kf_level"] - field_mean
+        md["kf_sigma"] = sigmas
+        md["kf_workload"] = workloads
+        self._merged_data = md
+        logger.info("[ability-kf] ライブ能力 Kalman 特徴量 %d 列を付与（snapshot=%d 頭）",
+                    len(KF_FEATURE_COLS), len(snapshot))
