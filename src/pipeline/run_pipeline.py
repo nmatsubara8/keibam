@@ -688,6 +688,22 @@ def _retrain(args: argparse.Namespace) -> None:
     else:
         featured_data = pd.read_pickle(featured_path)
 
+    # --holdout-years: 指定年を学習データから完全に除外する。backtest --years <同年> で
+    # out-of-sample（リーク無し）の券種別 ROI を測るための分離。除外しない年で学習する。
+    holdout_years = getattr(args, "holdout_years", None)
+    if holdout_years:
+        yset = {str(y) for y in holdout_years}
+        before = len(featured_data)
+        rid = featured_data.index.astype(str)
+        featured_data = featured_data[~rid.str[:4].isin(yset)]
+        logger.info(
+            "[retrain] --holdout-years %s を学習から除外: %d→%d 行（backtest 用に分離）",
+            sorted(yset), before, len(featured_data),
+        )
+        if featured_data.empty:
+            logger.error("[retrain] 除外後の学習データが空です（holdout-years が広すぎ）")
+            return
+
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
     lgb_params = None
@@ -1087,6 +1103,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Win ヘッド(1着予測, <version>__win.pickle)の併行学習を行わない（Place ヘッドのみ）",
     )
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
+    retrain_p.add_argument(
+        "--holdout-years", type=int, nargs="+", default=None, metavar="YYYY",
+        help="指定年を学習から除外（out-of-sample 評価用）。例: --holdout-years 2025 → backtest --years 2025",
+    )
     retrain_p.add_argument(
         "--params-rank",
         type=int,

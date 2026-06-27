@@ -28,6 +28,12 @@ def test_skip_horses_env_skips_fetch(monkeypatch):
     assert _scrape_new_horse_data(source=_RaisingSource()) == 0
 
 
+def test_retrain_holdout_years_parsed():
+    a = _parse_args(["retrain", "--version-name", "t", "--holdout-years", "2024", "2025"])
+    assert a.holdout_years == [2024, 2025]
+    assert _parse_args(["retrain"]).holdout_years is None
+
+
 # ---------------------------------------------------------------------------
 # ingest
 # ---------------------------------------------------------------------------
