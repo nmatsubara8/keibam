@@ -87,6 +87,22 @@ def _retrain(args: argparse.Namespace) -> None:
     else:
         featured_data = pd.read_pickle(featured_path)
 
+    # --holdout-years: 指定年を学習データから完全に除外する。backtest --years <同年> で
+    # out-of-sample（リーク無し）の券種別 ROI を測るための分離。除外しない年で学習する。
+    holdout_years = getattr(args, "holdout_years", None)
+    if holdout_years:
+        yset = {str(y) for y in holdout_years}
+        before = len(featured_data)
+        rid = featured_data.index.astype(str)
+        featured_data = featured_data[~rid.str[:4].isin(yset)]
+        logger.info(
+            "[retrain] --holdout-years %s を学習から除外: %d→%d 行（backtest 用に分離）",
+            sorted(yset), before, len(featured_data),
+        )
+        if featured_data.empty:
+            logger.error("[retrain] 除外後の学習データが空です（holdout-years が広すぎ）")
+            return
+
     # --no-odds-features: オッズ由来の派生特徴（単勝_log・市場歪み overlay 等）を学習から
     # 除外する。マーケット・エコー検証（r̂ が市場の写しでないかの A/B）用。Place/Win 両ヘッドに
     # 適用される（この時点では DataFrame なので prepared_from_gbdt 変換の前に落とす）。

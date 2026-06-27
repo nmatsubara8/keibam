@@ -51,6 +51,10 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
     )
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
     retrain_p.add_argument(
+        "--holdout-years", type=int, nargs="+", default=None, metavar="YYYY",
+        help="指定年を学習から除外（out-of-sample 評価用）。例: --holdout-years 2025 → backtest --years 2025",
+    )
+    retrain_p.add_argument(
         "--params-rank",
         type=int,
         default=None,

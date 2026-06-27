@@ -46,3 +46,10 @@ def test_parse_args_dispatches_known_jobs():
         args = rp._parse_args(argv)
         assert args.job == name
         assert name in rp.HANDLERS
+
+
+def test_retrain_holdout_years_parsed():
+    """retrain --holdout-years が複数年を受け取り int リストになる（既定 None）。"""
+    p = build_parser()
+    assert p.parse_args(["retrain", "--holdout-years", "2024", "2025"]).holdout_years == [2024, 2025]
+    assert p.parse_args(["retrain"]).holdout_years is None
