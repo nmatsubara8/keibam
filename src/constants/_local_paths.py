@@ -42,6 +42,8 @@ class LocalPaths:
     MODELS_DIR: str = os.path.join(BASE_DIR, "models")
     ### Phase 1: ペアワイズ Elo レーティングの最新スナップショット（ライブ予測で参照）
     HORSE_RATINGS_PATH: str = os.path.join(MODELS_DIR, "horse_ratings.json")
+    ### Phase 2: TrueSkill（μ/σ）の最新スナップショット（ライブ予測で参照）
+    HORSE_TRUESKILL_PATH: str = os.path.join(MODELS_DIR, "horse_trueskill.json")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

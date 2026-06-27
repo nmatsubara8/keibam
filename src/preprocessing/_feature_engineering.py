@@ -213,6 +213,7 @@ class FeatureEngineering:
             PACE_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
             SIRE_FEATURE_COLS,
+            TS_FEATURE_COLS,
         )
 
         # Start with G1 static list
@@ -226,15 +227,18 @@ class FeatureEngineering:
                         if col not in zscore_cols:
                             zscore_cols.append(col)
 
-        # §2c/2d/2e/2j named feature columns（+ §2k Elo: field_mean はレース内一定の
-        # ため z-score 対象から除外。rating/n_races/vs_field のレース内相対値を素性化）
+        # §2c/2d/2e/2j named feature columns（+ §2k Elo / §2l TrueSkill: field_mean は
+        # レース内一定のため z-score 対象から除外。rating/μ/σ/n_races/vs_field の
+        # レース内相対値を素性化）
         elo_zscore_cols = [c for c in ELO_FEATURE_COLS if c != "elo_field_mean"]
+        ts_zscore_cols = [c for c in TS_FEATURE_COLS if c != "ts_field_mean"]
         named_feature_cols = (
             JOCKEY_TRAINER_FEATURE_COLS
             + PACE_FEATURE_COLS
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
             + elo_zscore_cols
+            + ts_zscore_cols
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:

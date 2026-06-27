@@ -109,6 +109,7 @@ class ShutubaDataMerger(DataMerger):
         self._merge_horse_info()
         self._merge_peds()
         self._merge_horse_ratings()
+        self._merge_horse_trueskill()
 
     def _merge_horse_ratings(self):
         """ライブ経路: models/horse_ratings.json のスナップショットを馬ごとに付与する。
@@ -151,3 +152,45 @@ class ShutubaDataMerger(DataMerger):
         self._merged_data = md
         logger.info("[ratings] ライブ Elo 特徴量 %d 列を付与（snapshot=%d 頭）",
                     len(ELO_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_trueskill(self):
+        """ライブ経路: models/horse_trueskill.json のスナップショットを馬ごとに付与する。
+
+        未来レースは実着順が無いため、学習時に保存した最新 (μ, σ) を参照する。
+        保守的スキル（μ-3σ）のフィールド強度は当該レース出走馬内で算出する。
+        スナップショットが無い馬は初期 μ/σ へフォールバックする。
+        """
+        import json
+        import os
+
+        from src.constants._feature_cols import TS_CONSERVATIVE_K
+        from src.constants._feature_cols import TS_FEATURE_COLS
+        from src.constants._feature_cols import TS_MU
+        from src.constants._feature_cols import TS_SIGMA
+        from src.constants._local_paths import LocalPaths
+        from src.constants._results_cols import ResultsCols
+
+        md = self._merged_data
+        if md.empty or "horse_id" not in md.columns or ResultsCols.UMABAN not in md.columns:
+            return
+
+        snapshot: dict = {}
+        path = LocalPaths.HORSE_TRUESKILL_PATH
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    snapshot = json.load(f)
+            except (OSError, ValueError) as e:
+                logger.warning("[trueskill] スナップショット読込失敗 (初期値で継続): %s", e)
+
+        md = md.copy()
+        hids = md["horse_id"].astype(str)
+        md["ts_mu"] = hids.map(lambda h: float(snapshot.get(h, {}).get("mu", TS_MU)))
+        md["ts_sigma"] = hids.map(lambda h: float(snapshot.get(h, {}).get("sigma", TS_SIGMA)))
+        md["ts_conservative"] = md["ts_mu"] - TS_CONSERVATIVE_K * md["ts_sigma"]
+        md["ts_n_races"] = hids.map(lambda h: float(snapshot.get(h, {}).get("n_races", 0)))
+        md["ts_field_mean"] = md.groupby(level=0)["ts_conservative"].transform("mean")
+        md["ts_vs_field"] = md["ts_conservative"] - md["ts_field_mean"]
+        self._merged_data = md
+        logger.info("[trueskill] ライブ TrueSkill 特徴量 %d 列を付与（snapshot=%d 頭）",
+                    len(TS_FEATURE_COLS), len(snapshot))

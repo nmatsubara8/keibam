@@ -53,25 +53,29 @@ def _auto_migrate_db() -> None:
 
 
 def _save_ratings_snapshot(merger) -> None:
-    """DataMerger が保持する Elo スナップショットを models/horse_ratings.json に保存する。
+    """DataMerger が保持するレーティングスナップショットを models/ に保存する。
 
+    Phase 1 Elo → horse_ratings.json、Phase 2 TrueSkill → horse_trueskill.json。
     ライブ予測（出馬表）が各出走馬の現行レーティングを参照できるようにする。non-fatal。
     """
-    snapshot = getattr(merger, "horse_ratings_snapshot", None)
-    if not snapshot:
-        return
-    try:
-        import json
+    import json
 
-        from src.constants._local_paths import LocalPaths
+    from src.constants._local_paths import LocalPaths
 
-        os.makedirs(os.path.dirname(LocalPaths.HORSE_RATINGS_PATH), exist_ok=True)
-        with open(LocalPaths.HORSE_RATINGS_PATH, "w") as f:
-            json.dump(snapshot, f, ensure_ascii=False)
-        logger.info("[ratings] スナップショットを保存: %s (%d 頭)",
-                    LocalPaths.HORSE_RATINGS_PATH, len(snapshot))
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[ratings] スナップショット保存失敗 (non-fatal): %s", e)
+    for attr, path, label in (
+        ("horse_ratings_snapshot", LocalPaths.HORSE_RATINGS_PATH, "ratings"),
+        ("horse_trueskill_snapshot", LocalPaths.HORSE_TRUESKILL_PATH, "trueskill"),
+    ):
+        snapshot = getattr(merger, attr, None)
+        if not snapshot:
+            continue
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(snapshot, f, ensure_ascii=False)
+            logger.info("[%s] スナップショットを保存: %s (%d 頭)", label, path, len(snapshot))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[%s] スナップショット保存失敗 (non-fatal): %s", label, e)
 
 
 def _scrape_new_race_data(race_ids: list) -> list:
@@ -345,24 +349,38 @@ def _retrain(args: argparse.Namespace) -> None:
     else:
         featured_data = pd.read_pickle(featured_path)
 
-    # Phase 1: --no-rating-features（On/Off アブレーション）。
-    # レーティング列（ELO_FEATURE_COLS とその _z 版）を学習前に落とし、
-    # 「レーティングを含まないモデル」variant を生成して A/B 比較できるようにする。
+    # レーティング特徴量の On/Off アブレーション（A/B 比較用に variant を生成）。
+    # --no-rating-features: 全ファミリー（Elo + TrueSkill）/ --no-elo-features: Elo のみ /
+    # --no-trueskill-features: TrueSkill のみ を学習前に落とす（各 _z 版も含む）。
     vname = args.version_name
+    from src.constants._feature_cols import ELO_FEATURE_COLS
+    from src.constants._feature_cols import RATING_FEATURE_COLS
+    from src.constants._feature_cols import TS_FEATURE_COLS
+
+    drop_base: set = set()
+    suffixes: list = []
     if getattr(args, "no_rating_features", False):
-        from src.constants._feature_cols import ELO_FEATURE_COLS
+        drop_base |= set(RATING_FEATURE_COLS)
+        suffixes.append("norating")
+    else:
+        if getattr(args, "no_elo_features", False):
+            drop_base |= set(ELO_FEATURE_COLS)
+            suffixes.append("noelo")
+        if getattr(args, "no_trueskill_features", False):
+            drop_base |= set(TS_FEATURE_COLS)
+            suffixes.append("nots")
+
+    if drop_base:
         from src.pipeline._retrain import version_name
 
-        elo_set = set(ELO_FEATURE_COLS)
         drop_cols = [
             c for c in featured_data.columns
-            if c in elo_set or (c.endswith("_z") and c[:-2] in elo_set)
+            if c in drop_base or (c.endswith("_z") and c[:-2] in drop_base)
         ]
         featured_data = featured_data.drop(columns=drop_cols, errors="ignore")
-        logger.info("[retrain] --no-rating-features: レーティング列 %d 個を除外 %s",
-                    len(drop_cols), drop_cols)
+        logger.info("[retrain] アブレーション: 特徴量 %d 列を除外 %s", len(drop_cols), drop_cols)
         if vname is None:
-            vname = version_name(prefix="keibam_norating")
+            vname = version_name(prefix="keibam_" + "_".join(suffixes))
 
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
@@ -477,11 +495,21 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="UI（モデルラボ）で選択・保存したパラメータ（models/selected_params.json）で学習する",
     )
-    # Phase 1: レーティング特徴量の On/Off アブレーション（A/B 用に2 variant を学習）
+    # レーティング特徴量の On/Off アブレーション（A/B 用に variant を学習）
     retrain_p.add_argument(
         "--no-rating-features",
         action="store_true",
-        help="Elo レーティング特徴量を除外して学習する（含むモデルとの A/B 比較用）",
+        help="全レーティング特徴量（Elo + TrueSkill）を除外して学習する（A/B 比較用）",
+    )
+    retrain_p.add_argument(
+        "--no-elo-features",
+        action="store_true",
+        help="Elo レーティング特徴量のみ除外して学習する",
+    )
+    retrain_p.add_argument(
+        "--no-trueskill-features",
+        action="store_true",
+        help="TrueSkill 特徴量のみ除外して学習する",
     )
 
     # evaluate-odds-dynamics サブコマンド

@@ -59,6 +59,8 @@ class DataMerger:
         self._separated_hr_with_sire_dict: dict = {}
         # Phase 1: 最新レーティングのスナップショット（horse_id -> {rating, n_races, last_date}）
         self.horse_ratings_snapshot: dict = {}
+        # Phase 2: TrueSkill スナップショット（horse_id -> {mu, sigma, n_races, last_date}）
+        self.horse_trueskill_snapshot: dict = {}
 
     def merge(self):
         self._merge_race_info()
@@ -73,6 +75,7 @@ class DataMerger:
         self._merge_peds()
 
         self._merge_horse_ratings()
+        self._merge_horse_trueskill()
 
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
@@ -392,6 +395,31 @@ class DataMerger:
             self._merged_data[col] = features[col].to_numpy()
         logger.info("[ratings] Elo 特徴量 %d 列を付与（%d 頭のスナップショット）",
                     len(ELO_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_trueskill(self):
+        """§2l: TrueSkill（多頭順位対応 μ/σ）を as-of 結合する。
+
+        Elo と同じく日付昇順 1 パスで「出走前 (μ, σ)」特徴量（TS_FEATURE_COLS）を
+        行順を保って付与し、最新スナップショットを self.horse_trueskill_snapshot に
+        保持する（ライブ予測で参照）。
+        """
+        from src.constants._feature_cols import TS_FEATURE_COLS
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._trueskill import compute_trueskill_history
+
+        md = self._merged_data
+        required = {"horse_id", ResultsCols.UMABAN, ResultsCols.RANK, "date"}
+        missing = required - set(md.columns)
+        if md.empty or missing:
+            logger.warning("[trueskill] 必要列が不足のため TrueSkill 特徴量をスキップ: %s", missing)
+            return
+
+        features, snapshot = compute_trueskill_history(md)
+        self.horse_trueskill_snapshot = snapshot
+        for col in TS_FEATURE_COLS:
+            self._merged_data[col] = features[col].to_numpy()
+        logger.info("[trueskill] TrueSkill 特徴量 %d 列を付与（%d 頭のスナップショット）",
+                    len(TS_FEATURE_COLS), len(snapshot))
 
     @property
     def merged_data(self):
