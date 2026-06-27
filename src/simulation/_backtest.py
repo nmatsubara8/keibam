@@ -21,6 +21,7 @@ from typing import Mapping, Sequence
 import pandas as pd
 
 from src.constants._bet_types import BetType
+from src.constants._bet_thresholds import MIN_BETS_FOR_RELIABLE_STAT
 from src.policies._thresholds import bet_threshold_map
 from src.constants._results_cols import ResultsCols
 from src.policies._bet_policy import ExpectedValueBetPolicy
@@ -48,6 +49,7 @@ class BetTypeStats:
     n_hits: int = 0
     stake: float = 0.0
     returned: float = 0.0
+    max_return: float = 0.0  # 単一の的中の最大払戻（フロック=ファットテール検知用）
 
     @property
     def roi(self) -> float:
@@ -63,6 +65,28 @@ class BetTypeStats:
     def profit(self) -> float:
         return self.returned - self.stake
 
+    @property
+    def reliable(self) -> bool:
+        """的中数が統計的に十分か（MIN_BETS_FOR_RELIABLE_STAT 以上）。
+
+        的中が数件しかない券種の回収率は万馬券1本で激変する（ファットテール）ため、
+        見出し指標に含めるべきでない。これが False の行は「参考値」。
+        """
+        return self.n_hits >= MIN_BETS_FOR_RELIABLE_STAT
+
+    @property
+    def roi_ex_top(self) -> float:
+        """最大の単一払戻 1 点を除いた回収率（フロック感度）。
+
+        roi との差が大きいほど「1本の万馬券に依存した回収率」であることを示す。
+        """
+        return (self.returned - self.max_return) / self.stake if self.stake else 0.0
+
+    @property
+    def top_share(self) -> float:
+        """全払戻に占める最大単一払戻の割合（1.0 に近いほどフロック依存）。"""
+        return self.max_return / self.returned if self.returned else 0.0
+
     def as_dict(self) -> dict:
         return {
             "bet_type": self.bet_type,
@@ -73,6 +97,10 @@ class BetTypeStats:
             "returned": self.returned,
             "profit": self.profit,
             "roi": self.roi,
+            "reliable": self.reliable,
+            "max_return": self.max_return,
+            "roi_ex_top": self.roi_ex_top,
+            "top_share": self.top_share,
         }
 
 
@@ -100,6 +128,8 @@ def settle_candidates(
         s.stake += bet_amount
         s.returned += returned
         s.n_hits += 1 if returned > 0 else 0
+        if returned > s.max_return:
+            s.max_return = returned  # 最大単一払戻（ファットテール検知）
     return stats
 
 
@@ -202,46 +232,81 @@ def run_backtest(
     )
     per = settle_candidates(candidates, return_processor, unit=unit)
     overall = BetTypeStats("ALL")
+    reliable = BetTypeStats("ALL(信頼)")  # 的中≥閾値の券種のみ集計（万馬券フロックを除外）
     for s in per.values():
         overall.n_bets += s.n_bets
         overall.n_hits += s.n_hits
         overall.stake += s.stake
         overall.returned += s.returned
+        overall.max_return = max(overall.max_return, s.max_return)
+        if s.reliable:
+            reliable.n_bets += s.n_bets
+            reliable.n_hits += s.n_hits
+            reliable.stake += s.stake
+            reliable.returned += s.returned
+            reliable.max_return = max(reliable.max_return, s.max_return)
     return {
         "per_bet_type": per,
         "overall": overall,
+        "reliable_overall": reliable,
         "n_races": len({c.race_id for c in candidates}),
         "n_candidates": len(candidates),
     }
 
 
 def format_report(result: dict) -> str:
-    """run_backtest の結果を人が読める表に整形する。"""
+    """run_backtest の結果を人が読める表に整形する。
+
+    的中数が MIN_BETS_FOR_RELIABLE_STAT 未満の券種は「参考」印を付け、見出しは
+    信頼できる券種のみ集計した ALL(信頼) を併記する。さらに最大単一払戻の占有率と
+    それを除いた回収率を注記し、万馬券 1 本に依存した回収率（フロック）を可視化する。
+    """
     lines = []
-    header = f"{'馬券種':<12}{'点数':>7}{'的中':>6}{'的中率':>8}{'投票':>9}{'払戻':>11}{'回収率':>9}"
+    header = (
+        f"{'馬券種':<12}{'点数':>7}{'的中':>6}{'的中率':>8}{'投票':>9}"
+        f"{'払戻':>11}{'回収率':>9}{'除外後':>9}  信頼"
+    )
     lines.append(header)
-    lines.append("-" * len(header))
+    lines.append("-" * (len(header) + 2))
     order = [
         BetType.TANSHO, BetType.FUKUSHO, BetType.WAKUREN, BetType.UMAREN,
         BetType.UMATAN, BetType.WIDE, BetType.SANRENPUKU, BetType.SANRENTAN,
     ]
     per = result["per_bet_type"]
+
+    def _row(label: str, s) -> str:
+        mark = "✓" if s.reliable else f"参考(的中<{MIN_BETS_FOR_RELIABLE_STAT})"
+        return (
+            f"{label:<12}{s.n_bets:>7d}{s.n_hits:>6d}{s.hit_rate:>7.1%}"
+            f"{s.stake:>9.0f}{s.returned:>11.1f}{s.roi:>8.1%}{s.roi_ex_top:>8.1%}  {mark}"
+        )
+
     for bt in order:
         s = per.get(bt)
         if s is None:
             continue
-        lines.append(
-            f"{str(bt):<12}{s.n_bets:>7d}{s.n_hits:>6d}{s.hit_rate:>7.1%}"
-            f"{s.stake:>9.0f}{s.returned:>11.1f}{s.roi:>8.1%}"
-        )
+        lines.append(_row(str(bt), s))
+
     o = result["overall"]
-    lines.append("-" * len(header))
-    lines.append(
-        f"{'ALL':<12}{o.n_bets:>7d}{o.n_hits:>6d}{o.hit_rate:>7.1%}"
-        f"{o.stake:>9.0f}{o.returned:>11.1f}{o.roi:>8.1%}"
-    )
-    lines.append(
+    rel = result.get("reliable_overall")
+    lines.append("-" * (len(header) + 2))
+    lines.append(_row("ALL", o))
+    if rel is not None and rel.n_bets:
+        lines.append(_row("ALL(信頼)", rel))
+
+    note = (
         f"\nレース数={result['n_races']}  買い目総数={result['n_candidates']}"
         f"  損益={o.profit:+.1f}（単位券）"
     )
+    # フロック注記: 最大単一払戻が全体に占める割合と、それを除いた回収率。
+    if o.returned > 0 and o.max_return > 0:
+        note += (
+            f"\n⚠ 最大単一払戻={o.max_return:.0f}（全払戻の{o.top_share:.0%}）"
+            f" → これを除くと全体回収率 {o.roi:.1%}→{o.roi_ex_top:.1%}"
+        )
+    note += (
+        "\n※「回収率」は万馬券1本で激変しうる。的中<"
+        f"{MIN_BETS_FOR_RELIABLE_STAT}の券種は参考値、ALL(信頼)と除外後ROIで判断すること。"
+    )
+    lines.append(note)
     return "\n".join(lines)

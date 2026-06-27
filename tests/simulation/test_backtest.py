@@ -118,6 +118,29 @@ def test_settle_skips_race_absent_from_return_table():
     assert stats == {}
 
 
+def test_max_return_and_fluke_metrics():
+    # 1点だけ巨大払戻（万馬券）の券種: roi は高いが reliable=False、除外後ROIは0。
+    tansho = _df({"win_0": [9], "return_0": [100000]}, index=["1"])  # 馬9が単勝・払戻100000
+    rp = _FakeReturnProcessor(tansho=tansho)
+    # 馬9（勝ち）に1点 + 馬10〜58（外れ）に49点 → 的中1・外れ49
+    cands = [_cand("1", BetType.TANSHO, (9,))] + [_cand("1", BetType.TANSHO, (k,)) for k in range(10, 59)]
+    stats = settle_candidates(cands, rp)
+    s = stats[BetType.TANSHO]
+    assert s.n_hits == 1                      # 1点だけ的中
+    assert s.max_return == pytest.approx(1000.0)  # 100000/100
+    assert s.reliable is False                # 的中1 < 30
+    assert s.roi_ex_top == pytest.approx(0.0)  # 最大払戻を除くと0回収
+    assert s.top_share == pytest.approx(1.0)   # 全払戻が1本由来
+
+
+def test_reliable_overall_excludes_low_hit_types():
+    from src.simulation._backtest import BetTypeStats, MIN_BETS_FOR_RELIABLE_STAT
+    s = BetTypeStats("fukusho", n_bets=100, n_hits=MIN_BETS_FOR_RELIABLE_STAT, stake=100, returned=80)
+    assert s.reliable is True
+    s2 = BetTypeStats("sanrentan", n_bets=100, n_hits=1, stake=100, returned=500)
+    assert s2.reliable is False
+
+
 def test_settle_groups_by_bet_type():
     tansho = _df({"win_0": [1], "return_0": [500]}, index=["1"])
     fukusho = _df({"win_0": [2], "return_0": [150]}, index=["1"])

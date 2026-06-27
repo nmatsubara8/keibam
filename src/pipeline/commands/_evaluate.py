@@ -306,6 +306,9 @@ def _backtest(args: argparse.Namespace) -> None:
             "n_races": result["n_races"],
             "n_candidates": result["n_candidates"],
             "overall": result["overall"].as_dict(),
+            "reliable_overall": result["reliable_overall"].as_dict()
+            if result.get("reliable_overall") is not None
+            else None,
             "per_bet_type": {str(k): v.as_dict() for k, v in result["per_bet_type"].items()},
         }
         if edge_result is not None:
