@@ -206,6 +206,7 @@ class FeatureEngineering:
         """
         from src.constants._feature_cols import (
             AGG_STATS,
+            COND_TS_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
             ELO_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
@@ -239,6 +240,7 @@ class FeatureEngineering:
             + SIRE_FEATURE_COLS
             + elo_zscore_cols
             + ts_zscore_cols
+            + COND_TS_FEATURE_COLS  # 条件別 TrueSkill（vs_field 含むがレース内 z も有用）
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:

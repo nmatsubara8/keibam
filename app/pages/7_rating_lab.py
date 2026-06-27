@@ -29,6 +29,8 @@ from app._data_loader import load_model_from_path
 from app._model_eval import compute_calib_curves
 from app._model_eval import compute_full_backtest
 from app._model_eval import compute_stacking_auc
+from src.constants._feature_cols import COND_DIMENSIONS
+from src.constants._feature_cols import COND_TS_FEATURE_COLS
 from src.constants._feature_cols import ELO_FEATURE_COLS
 from src.constants._feature_cols import TS_FEATURE_COLS
 from src.constants._local_paths import LocalPaths
@@ -37,13 +39,13 @@ from src.preprocessing._ratings import elo_win_probabilities
 from src.preprocessing._trueskill import trueskill_win_probabilities
 
 st.set_page_config(page_title="レーティング・ラボ — KeibaAM", page_icon="📊", layout="wide")
-st.title("📊 レーティング・ラボ（Elo / TrueSkill）")
+st.title("📊 レーティング・ラボ（Elo / TrueSkill / 条件別）")
 st.caption(
     "各馬の地力を対戦結果から推定するレーティング（Phase 1: ペアワイズ Elo・着差補正 / "
-    "Phase 2: TrueSkill μ/σ）の照会と、特徴量 On/Off の A/B 比較。"
+    "Phase 2: TrueSkill μ/σ / Phase 3: 条件別 TrueSkill）の照会と、特徴量 On/Off の A/B 比較。"
 )
 
-# レーティングファミリーの定義（Phase 3-5 で追加したらここに足す）。
+# フラットなスナップショットを持つレーティングファミリー。
 _FAMILIES = {
     "Elo": {
         "path": LocalPaths.HORSE_RATINGS_PATH,
@@ -58,6 +60,7 @@ _FAMILIES = {
         "snap_sort": "mu",
     },
 }
+_COND_FAMILY = "条件別TrueSkill"  # ネスト snapshot のため特別扱い
 
 
 # ------------------------------------------------------------------
@@ -95,66 +98,104 @@ tab1, tab2 = st.tabs(["🔎 レーティング照会", "⚖️ On/Off A/B"])
 # タブ1: レーティング照会（再学習不要・即時）
 # ==================================================================
 with tab1:
-    family = st.radio("レーティングモデル", list(_FAMILIES.keys()), horizontal=True)
-    fam = _FAMILIES[family]
-    snapshot = _load_snapshot(fam["path"])
+    family = st.radio(
+        "レーティングモデル", [*_FAMILIES.keys(), _COND_FAMILY], horizontal=True
+    )
 
-    st.subheader(f"最新スナップショット — {family}")
-    if not snapshot:
-        st.info(
-            f"{family} のスナップショット（`{os.path.basename(fam['path'])}`）がありません。"
-            "`run_pipeline ingest` または `retrain` を実行すると生成されます。"
+    if family == _COND_FAMILY:
+        # 条件別: snapshot がネスト構造のため、選択レースの条件別レーティングを表示。
+        st.subheader("レース内 条件別 TrueSkill（即時・再学習不要）")
+        st.caption(
+            "各次元（surface=芝/ダ・distance=距離帯・around=回り）について、当該レース条件"
+            "での保守的スキル（μ-3σ）とフィールド相対値を表示します。"
         )
-    else:
-        snap_df = (
-            pd.DataFrame.from_dict(snapshot, orient="index")
-            .rename_axis("horse_id")
-            .reset_index()
-        )
-        sort_col = fam["snap_sort"] if fam["snap_sort"] in snap_df.columns else snap_df.columns[1]
-        snap_df = snap_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
-        c1, c2, c3 = st.columns(3)
-        c1.metric("登録頭数", f"{len(snap_df):,}")
-        c2.metric(f"最高 {sort_col}", f"{snap_df[sort_col].max():.2f}")
-        c3.metric(f"中央値 {sort_col}", f"{snap_df[sort_col].median():.2f}")
-        top_n = st.slider("表示件数（上位）", 10, 200, 50, step=10)
-        st.dataframe(snap_df.head(top_n), use_container_width=True, hide_index=True)
-
-    st.divider()
-    st.subheader(f"レース内 {family}・式勝率（即時・再学習不要）")
-    primary = fam["primary"]
-    if featured is None:
-        st.info("featured_data.pkl がありません。先に取込/学習を実行してください。")
-    elif primary not in featured.columns:
-        st.warning(
-            f"featured_data に {primary} 列がありません。{family} 列を含めて特徴量を再生成"
-            "してください（最新コードで ingest/retrain を実行）。"
-        )
-    else:
-        race_ids = sorted(featured.index.astype(str).unique().tolist(), reverse=True)
-        race_id = st.selectbox("レースを選択（race_id）", race_ids, key=f"race_{family}")
-        race_df = featured.loc[[race_id]] if race_id in featured.index else featured.loc[
-            featured.index.astype(str) == race_id
-        ]
-        cols = [c for c in [ResultsCols.UMABAN, "horse_id", *fam["feature_cols"]]
-                if c in race_df.columns]
-        view = race_df[cols].copy()
-        if family == "Elo":
-            view["win_prob"] = elo_win_probabilities(view["elo_rating"].to_numpy(dtype=float))
-            st.caption("win_prob は p_i ∝ 10^(rating/400) の Elo 式勝率（モデル予測とは独立）。")
+        cond_primary = COND_TS_FEATURE_COLS[0] if COND_TS_FEATURE_COLS else None
+        if featured is None:
+            st.info("featured_data.pkl がありません。先に取込/学習を実行してください。")
+        elif cond_primary not in featured.columns:
+            st.warning(
+                "featured_data に条件別 TrueSkill 列がありません。最新コードで "
+                "ingest/retrain を実行して特徴量を再生成してください。"
+            )
         else:
-            view["win_prob"] = trueskill_win_probabilities(
-                view["ts_mu"].to_numpy(dtype=float), view["ts_sigma"].to_numpy(dtype=float)
+            race_ids = sorted(featured.index.astype(str).unique().tolist(), reverse=True)
+            race_id = st.selectbox("レースを選択（race_id）", race_ids, key="race_cond")
+            race_df = featured.loc[[race_id]] if race_id in featured.index else featured.loc[
+                featured.index.astype(str) == race_id
+            ]
+            cols = [c for c in [ResultsCols.UMABAN, "horse_id", *COND_TS_FEATURE_COLS]
+                    if c in race_df.columns]
+            view = race_df[cols].copy()
+            sort_key = f"ts_{COND_DIMENSIONS[0]}_conservative"
+            if sort_key in view.columns:
+                view = view.sort_values(sort_key, ascending=False)
+            num_cols = [c for c in view.columns if c not in (ResultsCols.UMABAN, "horse_id")]
+            st.dataframe(
+                view.style.format({c: "{:+.2f}" if c.endswith("vs_field") else "{:.2f}"
+                                   for c in num_cols}),
+                use_container_width=True,
+                hide_index=True,
             )
-            st.caption(
-                "win_prob は μ/σ から算出した TrueSkill 近似勝率（Thurstone 型 softmax、"
-                "モデル予測とは独立）。"
+    else:
+        fam = _FAMILIES[family]
+        snapshot = _load_snapshot(fam["path"])
+
+        st.subheader(f"最新スナップショット — {family}")
+        if not snapshot:
+            st.info(
+                f"{family} のスナップショット（`{os.path.basename(fam['path'])}`）がありません。"
+                "`run_pipeline ingest` または `retrain` を実行すると生成されます。"
             )
-        view = view.sort_values("win_prob", ascending=False)
-        num_cols = [c for c in view.columns if c not in (ResultsCols.UMABAN, "horse_id")]
-        fmt = {c: "{:.2f}" for c in num_cols}
-        fmt["win_prob"] = "{:.1%}"
-        st.dataframe(view.style.format(fmt), use_container_width=True, hide_index=True)
+        else:
+            snap_df = (
+                pd.DataFrame.from_dict(snapshot, orient="index")
+                .rename_axis("horse_id")
+                .reset_index()
+            )
+            sort_col = fam["snap_sort"] if fam["snap_sort"] in snap_df.columns else snap_df.columns[1]
+            snap_df = snap_df.sort_values(sort_col, ascending=False).reset_index(drop=True)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("登録頭数", f"{len(snap_df):,}")
+            c2.metric(f"最高 {sort_col}", f"{snap_df[sort_col].max():.2f}")
+            c3.metric(f"中央値 {sort_col}", f"{snap_df[sort_col].median():.2f}")
+            top_n = st.slider("表示件数（上位）", 10, 200, 50, step=10)
+            st.dataframe(snap_df.head(top_n), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.subheader(f"レース内 {family}・式勝率（即時・再学習不要）")
+        primary = fam["primary"]
+        if featured is None:
+            st.info("featured_data.pkl がありません。先に取込/学習を実行してください。")
+        elif primary not in featured.columns:
+            st.warning(
+                f"featured_data に {primary} 列がありません。{family} 列を含めて特徴量を再生成"
+                "してください（最新コードで ingest/retrain を実行）。"
+            )
+        else:
+            race_ids = sorted(featured.index.astype(str).unique().tolist(), reverse=True)
+            race_id = st.selectbox("レースを選択（race_id）", race_ids, key=f"race_{family}")
+            race_df = featured.loc[[race_id]] if race_id in featured.index else featured.loc[
+                featured.index.astype(str) == race_id
+            ]
+            cols = [c for c in [ResultsCols.UMABAN, "horse_id", *fam["feature_cols"]]
+                    if c in race_df.columns]
+            view = race_df[cols].copy()
+            if family == "Elo":
+                view["win_prob"] = elo_win_probabilities(view["elo_rating"].to_numpy(dtype=float))
+                st.caption("win_prob は p_i ∝ 10^(rating/400) の Elo 式勝率（モデル予測とは独立）。")
+            else:
+                view["win_prob"] = trueskill_win_probabilities(
+                    view["ts_mu"].to_numpy(dtype=float), view["ts_sigma"].to_numpy(dtype=float)
+                )
+                st.caption(
+                    "win_prob は μ/σ から算出した TrueSkill 近似勝率（Thurstone 型 softmax、"
+                    "モデル予測とは独立）。"
+                )
+            view = view.sort_values("win_prob", ascending=False)
+            num_cols = [c for c in view.columns if c not in (ResultsCols.UMABAN, "horse_id")]
+            fmt = {c: "{:.2f}" for c in num_cols}
+            fmt["win_prob"] = "{:.1%}"
+            st.dataframe(view.style.format(fmt), use_container_width=True, hide_index=True)
 
 # ==================================================================
 # タブ2: On/Off A/B（レーティング有無 2 モデルの比較）
@@ -196,6 +237,8 @@ with tab2:
             tags.append("Elo")
         if any(c in names for c in TS_FEATURE_COLS):
             tags.append("TS")
+        if any(c in names for c in COND_TS_FEATURE_COLS):
+            tags.append("Cond")
         return "+".join(tags) if tags else "なし"
 
     if featured is None:

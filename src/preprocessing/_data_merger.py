@@ -61,6 +61,8 @@ class DataMerger:
         self.horse_ratings_snapshot: dict = {}
         # Phase 2: TrueSkill スナップショット（horse_id -> {mu, sigma, n_races, last_date}）
         self.horse_trueskill_snapshot: dict = {}
+        # Phase 3: 条件別 TrueSkill スナップショット（horse_id -> {dim: {bucket: {...}}}）
+        self.horse_cond_trueskill_snapshot: dict = {}
 
     def merge(self):
         self._merge_race_info()
@@ -76,6 +78,7 @@ class DataMerger:
 
         self._merge_horse_ratings()
         self._merge_horse_trueskill()
+        self._merge_horse_conditional_trueskill()
 
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
@@ -420,6 +423,35 @@ class DataMerger:
             self._merged_data[col] = features[col].to_numpy()
         logger.info("[trueskill] TrueSkill 特徴量 %d 列を付与（%d 頭のスナップショット）",
                     len(TS_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_conditional_trueskill(self):
+        """§2m: 条件別 TrueSkill（芝/ダ・距離・回り）を as-of 結合する。
+
+        各馬の「条件次元 × バケット」別 TrueSkill から、当該レース条件での出走前値を
+        特徴量（COND_TS_FEATURE_COLS）として行順を保って付与し、ネストした最新
+        スナップショットを self.horse_cond_trueskill_snapshot に保持する。
+        """
+        from src.constants._feature_cols import COND_TS_FEATURE_COLS
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._conditional_trueskill import (
+            compute_conditional_trueskill_history,
+        )
+
+        md = self._merged_data
+        required = {"horse_id", ResultsCols.UMABAN, ResultsCols.RANK, "date"}
+        missing = required - set(md.columns)
+        if md.empty or missing:
+            logger.warning(
+                "[cond-trueskill] 必要列が不足のため条件別 TrueSkill をスキップ: %s", missing
+            )
+            return
+
+        features, snapshot = compute_conditional_trueskill_history(md)
+        self.horse_cond_trueskill_snapshot = snapshot
+        for col in COND_TS_FEATURE_COLS:
+            self._merged_data[col] = features[col].to_numpy()
+        logger.info("[cond-trueskill] 条件別 TrueSkill 特徴量 %d 列を付与（%d 頭）",
+                    len(COND_TS_FEATURE_COLS), len(snapshot))
 
     @property
     def merged_data(self):

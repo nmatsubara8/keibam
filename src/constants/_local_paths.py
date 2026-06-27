@@ -44,6 +44,8 @@ class LocalPaths:
     HORSE_RATINGS_PATH: str = os.path.join(MODELS_DIR, "horse_ratings.json")
     ### Phase 2: TrueSkill（μ/σ）の最新スナップショット（ライブ予測で参照）
     HORSE_TRUESKILL_PATH: str = os.path.join(MODELS_DIR, "horse_trueskill.json")
+    ### Phase 3: 条件別 TrueSkill（horse×次元×バケット）の最新スナップショット
+    HORSE_COND_TRUESKILL_PATH: str = os.path.join(MODELS_DIR, "horse_cond_trueskill.json")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

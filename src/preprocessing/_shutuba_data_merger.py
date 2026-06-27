@@ -110,6 +110,7 @@ class ShutubaDataMerger(DataMerger):
         self._merge_peds()
         self._merge_horse_ratings()
         self._merge_horse_trueskill()
+        self._merge_horse_conditional_trueskill()
 
     def _merge_horse_ratings(self):
         """ライブ経路: models/horse_ratings.json のスナップショットを馬ごとに付与する。
@@ -194,3 +195,59 @@ class ShutubaDataMerger(DataMerger):
         self._merged_data = md
         logger.info("[trueskill] ライブ TrueSkill 特徴量 %d 列を付与（snapshot=%d 頭）",
                     len(TS_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_conditional_trueskill(self):
+        """ライブ経路: models/horse_cond_trueskill.json から当該レース条件の μ/σ を付与。
+
+        各次元（surface/distance/around）について現レースのバケットを解決し、
+        snapshot[horse][dim][bucket] を参照する（無ければ初期 μ/σ）。保守的スキルの
+        フィールド相対は当該レース出走馬内で算出する。
+        """
+        import json
+        import os
+
+        from src.constants._feature_cols import COND_DIMENSIONS
+        from src.constants._feature_cols import COND_TS_FEATURE_COLS
+        from src.constants._feature_cols import TS_CONSERVATIVE_K
+        from src.constants._feature_cols import TS_MU
+        from src.constants._feature_cols import TS_SIGMA
+        from src.constants._local_paths import LocalPaths
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._conditional_trueskill import race_buckets
+
+        md = self._merged_data
+        if md.empty or "horse_id" not in md.columns or ResultsCols.UMABAN not in md.columns:
+            return
+
+        snapshot: dict = {}
+        path = LocalPaths.HORSE_COND_TRUESKILL_PATH
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    snapshot = json.load(f)
+            except (OSError, ValueError) as e:
+                logger.warning("[cond-trueskill] スナップショット読込失敗 (初期値で継続): %s", e)
+
+        md = md.copy()
+        prior_cons = TS_MU - TS_CONSERVATIVE_K * TS_SIGMA
+        for dim in COND_DIMENSIONS:
+            cons_vals = []
+            n_vals = []
+            for _, row in md.iterrows():
+                bucket = race_buckets(row).get(dim)
+                rec = (
+                    snapshot.get(str(row["horse_id"]), {}).get(dim, {}).get(bucket, {})
+                    if bucket is not None
+                    else {}
+                )
+                mu = float(rec.get("mu", TS_MU))
+                sigma = float(rec.get("sigma", TS_SIGMA))
+                cons_vals.append(mu - TS_CONSERVATIVE_K * sigma if rec else prior_cons)
+                n_vals.append(float(rec.get("n_races", 0)))
+            md[f"ts_{dim}_conservative"] = cons_vals
+            md[f"ts_{dim}_n_races"] = n_vals
+            field_mean = md.groupby(level=0)[f"ts_{dim}_conservative"].transform("mean")
+            md[f"ts_{dim}_vs_field"] = md[f"ts_{dim}_conservative"] - field_mean
+        self._merged_data = md
+        logger.info("[cond-trueskill] ライブ条件別 TrueSkill 特徴量 %d 列を付与（snapshot=%d 頭）",
+                    len(COND_TS_FEATURE_COLS), len(snapshot))

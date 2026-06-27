@@ -104,11 +104,36 @@ TS_FEATURE_COLS: list = [
 ]
 
 # ──────────────────────────────────────────
+# §2m: 条件別 TrueSkill（芝/ダ・距離・回り）— Phase 3
+# ──────────────────────────────────────────
+
+# 条件次元と参照列（merged_data の生値列。dummify 前に結合するため生値で参照可能）。
+COND_DIMENSIONS: list = ["surface", "distance", "around"]
+COND_DIMENSION_COLUMN: dict = {
+    "surface": "race_type",   # 芝 / ダート / 障害
+    "distance": "course_len",  # 100m 単位（meters // 100）
+    "around": "around",        # 右 / 左 / 直線
+}
+
+# 距離バケット境界（course_len = 100m 単位）。<14:短距離 / 14-17:マイル /
+# 18-21:中距離 / >=22:長距離。
+COND_DISTANCE_BIN_UNITS: list = [14, 18, 22]
+COND_DISTANCE_LABELS: list = ["sprint", "mile", "middle", "long"]
+
+# 各次元の特徴量列（保守的スキル / 当該条件の出走数 / フィールド相対）。
+# 列順は compute_conditional_trueskill_history の出力配列と一致させること。
+COND_TS_FEATURE_COLS: list = [
+    f"ts_{d}_{suffix}"
+    for d in COND_DIMENSIONS
+    for suffix in ("conservative", "n_races", "vs_field")
+]
+
+# ──────────────────────────────────────────
 # レーティング特徴量の集約（On/Off アブレーション用）
 # ──────────────────────────────────────────
 
-# 全レーティングファミリー（Phase 3-5 で追加したらここに連結する）。
-RATING_FEATURE_COLS: list = ELO_FEATURE_COLS + TS_FEATURE_COLS
+# 全レーティングファミリー（Phase 4-5 で追加したらここに連結する）。
+RATING_FEATURE_COLS: list = ELO_FEATURE_COLS + TS_FEATURE_COLS + COND_TS_FEATURE_COLS
 
 # ──────────────────────────────────────────
 # §2g: レース内 Z-score 対象列
