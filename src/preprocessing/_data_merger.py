@@ -65,6 +65,8 @@ class DataMerger:
         self.horse_cond_trueskill_snapshot: dict = {}
         # Phase 4: 能力 Kalman スナップショット（horse_id -> {level, trend, ...}）
         self.horse_ability_kf_snapshot: dict = {}
+        # Phase 5: 階層ベイズの種牡馬群 as-of 平均（peds_0 -> {mean, count}）
+        self.horse_hier_bayes_groups: dict = {}
 
     def merge(self):
         self._merge_race_info()
@@ -82,6 +84,7 @@ class DataMerger:
         self._merge_horse_trueskill()
         self._merge_horse_conditional_trueskill()
         self._merge_horse_ability_kalman()
+        self._merge_horse_hier_bayes()
 
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
@@ -480,6 +483,31 @@ class DataMerger:
             self._merged_data[col] = features[col].to_numpy()
         logger.info("[ability-kf] 能力 Kalman 特徴量 %d 列を付与（%d 頭）",
                     len(KF_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_hier_bayes(self):
+        """§2o: 階層ベイズ TrueSkill（市場オッズ事前・3 段）を as-of 結合する。
+
+        個体（ts_mu/ts_sigma、§2l で付与済み）⊕市場（単勝 de-vig）⊕群（種牡馬産駒
+        as-of 平均）の精度加重事後を特徴量化する。_merge_horse_trueskill の後に呼ぶこと。
+        種牡馬群の as-of 平均を self.horse_hier_bayes_groups に保持する（ライブ用）。
+        """
+        from src.constants._feature_cols import HB_FEATURE_COLS
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._hier_bayes_trueskill import compute_hier_bayes_history
+
+        md = self._merged_data
+        required = {"horse_id", ResultsCols.UMABAN, "date", "ts_mu", "ts_sigma"}
+        missing = required - set(md.columns)
+        if md.empty or missing:
+            logger.warning("[hier-bayes] 必要列が不足のため階層ベイズをスキップ: %s", missing)
+            return
+
+        features, groups = compute_hier_bayes_history(md)
+        self.horse_hier_bayes_groups = groups
+        for col in HB_FEATURE_COLS:
+            self._merged_data[col] = features[col].to_numpy()
+        logger.info("[hier-bayes] 階層ベイズ特徴量 %d 列を付与（群 %d 件）",
+                    len(HB_FEATURE_COLS), len(groups))
 
     @property
     def merged_data(self):

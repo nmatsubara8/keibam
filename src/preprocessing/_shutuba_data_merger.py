@@ -112,6 +112,7 @@ class ShutubaDataMerger(DataMerger):
         self._merge_horse_trueskill()
         self._merge_horse_conditional_trueskill()
         self._merge_horse_ability_kalman()
+        self._merge_horse_hier_bayes()
 
     def _merge_horse_ratings(self):
         """ライブ経路: models/horse_ratings.json のスナップショットを馬ごとに付与する。
@@ -318,3 +319,63 @@ class ShutubaDataMerger(DataMerger):
         self._merged_data = md
         logger.info("[ability-kf] ライブ能力 Kalman 特徴量 %d 列を付与（snapshot=%d 頭）",
                     len(KF_FEATURE_COLS), len(snapshot))
+
+    def _merge_horse_hier_bayes(self):
+        """ライブ経路: 種牡馬群 as-of 平均（snapshot）＋現在オッズ＋ライブ ts_mu/σ から
+        階層ベイズ特徴量を都度計算する。
+
+        個体（ts_mu/ts_sigma は §2l ライブ override で付与済み）⊕市場（単勝があれば）
+        ⊕群（snapshot の種牡馬平均、無ければ全体平均）の精度加重事後。
+        """
+        import json
+        import os
+
+        from src.constants._feature_cols import HB_FEATURE_COLS
+        from src.constants._local_paths import LocalPaths
+        from src.constants._results_cols import ResultsCols
+        from src.preprocessing._hier_bayes_trueskill import combine_levels
+        from src.preprocessing._hier_bayes_trueskill import market_skills
+
+        md = self._merged_data
+        if md.empty or "horse_id" not in md.columns or "ts_mu" not in md.columns:
+            return
+
+        groups: dict = {}
+        path = LocalPaths.HIER_BAYES_GROUPS_PATH
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    groups = json.load(f)
+            except (OSError, ValueError) as e:
+                logger.warning("[hier-bayes] 群スナップショット読込失敗 (全体平均で継続): %s", e)
+        global_mean = groups.get("__global__", {}).get("mean")
+
+        md = md.copy()
+        odds = md[ResultsCols.TANSHO_ODDS].tolist() if ResultsCols.TANSHO_ODDS in md.columns else None
+        has_sire = "peds_0" in md.columns
+
+        skills, vs_markets, shrinks = [], [], []
+        # 市場スキルはレース（race_id インデックス）ごとに de-vig するのが正しいが、
+        # ライブは通常 1 レースのため全体で算出（複数レース時もインデックス内で中心化）。
+        m_all = market_skills(odds) if odds is not None else [float("nan")] * len(md)
+        mus = md["ts_mu"].tolist()
+        sigmas = md["ts_sigma"].tolist()
+        sires = md["peds_0"].astype(str).tolist() if has_sire else [None] * len(md)
+        for k in range(len(md)):
+            sire = sires[k]
+            g_skill = groups.get(sire, {}).get("mean") if sire is not None else None
+            if g_skill is None:
+                g_skill = global_mean
+            m = m_all[k] if m_all[k] == m_all[k] else None
+            post, shrink = combine_levels(float(mus[k]), float(sigmas[k]), m, g_skill)
+            skills.append(post)
+            vs_markets.append((float(mus[k]) - m_all[k]) if m_all[k] == m_all[k] else 0.0)
+            shrinks.append(shrink)
+        md["hb_skill"] = skills
+        md["hb_vs_market"] = vs_markets
+        field_mean = md.groupby(level=0)["hb_skill"].transform("mean")
+        md["hb_vs_field"] = md["hb_skill"] - field_mean
+        md["hb_shrinkage"] = shrinks
+        self._merged_data = md
+        logger.info("[hier-bayes] ライブ階層ベイズ特徴量 %d 列を付与（群 %d 件）",
+                    len(HB_FEATURE_COLS), len(groups))

@@ -155,12 +155,33 @@ KF_FEATURE_COLS: list = [
 ]
 
 # ──────────────────────────────────────────
+# §2o: 階層ベイズ TrueSkill（市場オッズ事前分布・3段）— Phase 5
+# ──────────────────────────────────────────
+
+HB_TAU_MARKET: float = 4.0     # 市場事前のスキル標準偏差（小さいほど市場を強く信頼）
+HB_TAU_GROUP: float = 6.0      # 群（種牡馬産駒）事前の標準偏差
+HB_MARKET_SCALE: float = 3.0   # logit(implied 勝率) → μ スケールへの換算係数
+HB_SIGMA_FLOOR: float = 0.5    # 個体精度 1/σ² の発散防止（ts_sigma の下限）
+
+# 列順は compute_hier_bayes_history の出力配列と一致させること。
+HB_FEATURE_COLS: list = [
+    "hb_skill",       # 3段階層ベイズ事後平均（個体⊕市場⊕種牡馬群の精度加重）
+    "hb_vs_market",   # ts_mu - 市場推定スキル（＝エッジ: 我々が市場より高評価する度合い）
+    "hb_vs_field",    # hb_skill のレース内相対
+    "hb_shrinkage",   # 事前（市場+群）への依存度 ∈[0,1]（コールドスタート指標）
+]
+
+# ──────────────────────────────────────────
 # レーティング特徴量の集約（On/Off アブレーション用）
 # ──────────────────────────────────────────
 
-# 全レーティングファミリー（Phase 5 で追加したらここに連結する）。
+# 全レーティングファミリー（Phase 1-5 の全列）。
 RATING_FEATURE_COLS: list = (
-    ELO_FEATURE_COLS + TS_FEATURE_COLS + COND_TS_FEATURE_COLS + KF_FEATURE_COLS
+    ELO_FEATURE_COLS
+    + TS_FEATURE_COLS
+    + COND_TS_FEATURE_COLS
+    + KF_FEATURE_COLS
+    + HB_FEATURE_COLS
 )
 
 # ──────────────────────────────────────────

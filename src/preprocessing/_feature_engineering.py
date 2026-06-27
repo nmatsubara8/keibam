@@ -209,6 +209,7 @@ class FeatureEngineering:
             COND_TS_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
             ELO_FEATURE_COLS,
+            HB_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             KF_FEATURE_COLS,
             N_RACES_LIST,
@@ -235,6 +236,7 @@ class FeatureEngineering:
         elo_zscore_cols = [c for c in ELO_FEATURE_COLS if c != "elo_field_mean"]
         ts_zscore_cols = [c for c in TS_FEATURE_COLS if c != "ts_field_mean"]
         kf_zscore_cols = [c for c in KF_FEATURE_COLS if c != "kf_level_vs_field"]
+        hb_zscore_cols = [c for c in HB_FEATURE_COLS if c != "hb_vs_field"]
         named_feature_cols = (
             JOCKEY_TRAINER_FEATURE_COLS
             + PACE_FEATURE_COLS
@@ -244,6 +246,7 @@ class FeatureEngineering:
             + ts_zscore_cols
             + COND_TS_FEATURE_COLS  # 条件別 TrueSkill（vs_field 含むがレース内 z も有用）
             + kf_zscore_cols        # 能力 Kalman（vs_field は既に相対のため除外）
+            + hb_zscore_cols        # 階層ベイズ（vs_field は既に相対のため除外）
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:

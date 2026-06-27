@@ -48,6 +48,8 @@ class LocalPaths:
     HORSE_COND_TRUESKILL_PATH: str = os.path.join(MODELS_DIR, "horse_cond_trueskill.json")
     ### Phase 4: 能力 Kalman（局所線形トレンド）の最新スナップショット
     HORSE_ABILITY_KF_PATH: str = os.path.join(MODELS_DIR, "horse_ability_kf.json")
+    ### Phase 5: 階層ベイズの種牡馬群 as-of 平均スナップショット（ライブの群事前用）
+    HIER_BAYES_GROUPS_PATH: str = os.path.join(MODELS_DIR, "hier_bayes_groups.json")
 
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")

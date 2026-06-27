@@ -32,6 +32,7 @@ from app._model_eval import compute_stacking_auc
 from src.constants._feature_cols import COND_DIMENSIONS
 from src.constants._feature_cols import COND_TS_FEATURE_COLS
 from src.constants._feature_cols import ELO_FEATURE_COLS
+from src.constants._feature_cols import HB_FEATURE_COLS
 from src.constants._feature_cols import KF_FEATURE_COLS
 from src.constants._feature_cols import TS_FEATURE_COLS
 from src.constants._local_paths import LocalPaths
@@ -69,6 +70,7 @@ _FAMILIES = {
     },
 }
 _COND_FAMILY = "条件別TrueSkill"  # ネスト snapshot のため特別扱い
+_HB_FAMILY = "階層ベイズ"  # 市場/レース依存のため race-view のみ
 
 
 # ------------------------------------------------------------------
@@ -107,10 +109,40 @@ tab1, tab2 = st.tabs(["🔎 レーティング照会", "⚖️ On/Off A/B"])
 # ==================================================================
 with tab1:
     family = st.radio(
-        "レーティングモデル", [*_FAMILIES.keys(), _COND_FAMILY], horizontal=True
+        "レーティングモデル", [*_FAMILIES.keys(), _COND_FAMILY, _HB_FAMILY], horizontal=True
     )
 
-    if family == _COND_FAMILY:
+    if family == _HB_FAMILY:
+        st.subheader("レース内 階層ベイズ（市場オッズ事前・3 段）")
+        st.caption(
+            "hb_skill=個体⊕市場⊕種牡馬群の事後 / hb_vs_market=我々と市場の差（エッジ：正なら"
+            "市場より高評価）/ hb_shrinkage=事前依存度（コールドスタート指標）。"
+        )
+        hb_primary = HB_FEATURE_COLS[0] if HB_FEATURE_COLS else None
+        if featured is None:
+            st.info("featured_data.pkl がありません。先に取込/学習を実行してください。")
+        elif hb_primary not in featured.columns:
+            st.warning(
+                "featured_data に階層ベイズ列がありません。最新コードで ingest/retrain を"
+                "実行して特徴量を再生成してください。"
+            )
+        else:
+            race_ids = sorted(featured.index.astype(str).unique().tolist(), reverse=True)
+            race_id = st.selectbox("レースを選択（race_id）", race_ids, key="race_hb")
+            race_df = featured.loc[[race_id]] if race_id in featured.index else featured.loc[
+                featured.index.astype(str) == race_id
+            ]
+            cols = [c for c in [ResultsCols.UMABAN, "horse_id", *HB_FEATURE_COLS]
+                    if c in race_df.columns]
+            view = race_df[cols].copy().sort_values("hb_skill", ascending=False)
+            num_cols = [c for c in view.columns if c not in (ResultsCols.UMABAN, "horse_id")]
+            st.dataframe(
+                view.style.format({c: "{:+.2f}" if c.endswith(("vs_market", "vs_field"))
+                                   else "{:.3f}" if c == "hb_shrinkage" else "{:.2f}"
+                                   for c in num_cols}),
+                use_container_width=True, hide_index=True,
+            )
+    elif family == _COND_FAMILY:
         # 条件別: snapshot がネスト構造のため、選択レースの条件別レーティングを表示。
         st.subheader("レース内 条件別 TrueSkill（即時・再学習不要）")
         st.caption(
@@ -255,6 +287,8 @@ with tab2:
             tags.append("Cond")
         if any(c in names for c in KF_FEATURE_COLS):
             tags.append("KF")
+        if any(c in names for c in HB_FEATURE_COLS):
+            tags.append("HB")
         return "+".join(tags) if tags else "なし"
 
     if featured is None:
