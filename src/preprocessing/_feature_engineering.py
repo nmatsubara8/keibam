@@ -309,6 +309,7 @@ class FeatureEngineering:
             APTITUDE_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
             DAMSIRE_FEATURE_COLS,
+            ELO_FEATURE_COLS,
             GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             MARKET_SIGNAL_FEATURE_COLS,
@@ -352,6 +353,8 @@ class FeatureEngineering:
             + SPEED_FIGURE_FEATURE_COLS
             + OPPONENT_STRENGTH_FEATURE_COLS
             + DAMSIRE_FEATURE_COLS
+            # elo_field_mean はレース内一定（z は定数0）なので除外し、変動する Elo 列のみ相対化
+            + [c for c in ELO_FEATURE_COLS if c != "elo_field_mean"]
             + YOSO_FEATURE_COLS
             + PERSON_YEARLY_FEATURE_COLS
             + MARKET_SIGNAL_FEATURE_COLS

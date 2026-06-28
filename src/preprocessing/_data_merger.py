@@ -52,6 +52,7 @@ class DataMerger:
         person_yearly_df: Optional[pd.DataFrame] = None,
         yoso_predictor_df: Optional[pd.DataFrame] = None,
         odds_signals_df: Optional[pd.DataFrame] = None,
+        rating_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
@@ -70,6 +71,8 @@ class DataMerger:
         self._yoso_predictor = yoso_predictor_df if yoso_predictor_df is not None else pd.DataFrame()
         # 市場歪み特徴（(race_id, 馬番) × overlay 群）。未提供なら空＝マージは no-op。
         self._odds_signals = odds_signals_df if odds_signals_df is not None else pd.DataFrame()
+        # Elo レーティング特徴（(race_id, 馬番) × ELO_FEATURE_COLS）。未提供なら空＝マージは no-op。
+        self._ratings = rating_df if rating_df is not None else pd.DataFrame()
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -96,6 +99,7 @@ class DataMerger:
         _step("yoso_skill", self._add_yoso_predictor_skill)
         _step("yoso_profile", self._add_yoso_profile_skill)
         _step("odds_signals", self._merge_odds_signals)
+        _step("horse_ratings", self._merge_horse_ratings)
         _step("person_yearly", self._merge_person_yearly)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
@@ -220,6 +224,38 @@ class DataMerger:
         left = base.reset_index()
         left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
         merged = left.merge(sig, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
+
+    def _merge_horse_ratings(self):
+        """ペアワイズ Elo 特徴（elo_rating 等）を (race_id, 馬番) で左結合する。
+
+        各値は「そのレースの**出走前**」レーティング（preprocessing._ratings が日付昇順で
+        構築済み・リーク無し）。run_pipeline 側で `build_rating_frame` により事前計算された
+        DataFrame を受け取り、値列のみ左結合する。未提供（空）はスキップ。
+        _merge_odds_signals と同じ (race_id, 馬番) join パターン。
+        """
+        if self._ratings is None or self._ratings.empty:
+            return
+        if "馬番" not in self._results.columns:
+            return
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+
+        rt = self._ratings.copy()
+        if "race_id" not in rt.columns or "馬番" not in rt.columns:
+            return
+        rt["race_id"] = rt["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        rt["_umaban_key"] = pd.to_numeric(rt["馬番"], errors="coerce").astype("Int64")
+        value_cols = [c for c in ELO_FEATURE_COLS if c in rt.columns]
+        rt = rt[["race_id", "_umaban_key", *value_cols]].drop_duplicates(
+            ["race_id", "_umaban_key"]
+        )
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+        merged = left.merge(rt, on=["race_id", "_umaban_key"], how="left")
         self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
 
     # 人物年度別成績から featured に乗せる統計（前年=as-of 結合）

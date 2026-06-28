@@ -234,6 +234,15 @@ def _backtest(args: argparse.Namespace) -> None:
         featured = featured.drop(columns=present, errors="ignore")
         logger.info("[backtest] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
 
+    # --no-rating-features: retrain --no-rating-features モデルと列を一致させる（Elo 由来列を除外）。
+    if getattr(args, "no_rating_features", False):
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+
+        rating_cols = ELO_FEATURE_COLS + [f"{c}_z" for c in ELO_FEATURE_COLS]
+        present = [c for c in rating_cols if c in featured.columns]
+        featured = featured.drop(columns=present, errors="ignore")
+        logger.info("[backtest] --no-rating-features: Elo 由来 %d 列を除外: %s", len(present), present)
+
     # 確定オッズ lookup（--no-final-odds なら単勝 Harville 推定にフォールバック）
     final_odds_lookup = None
     if not getattr(args, "no_final_odds", False):

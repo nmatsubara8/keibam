@@ -113,6 +113,16 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = featured_data.drop(columns=present, errors="ignore")
         logger.info("[retrain] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
 
+    # --no-rating-features: Elo レーティング由来の特徴（elo_* と その _z）を学習から除外する。
+    # レーティング効果の A/B（--no-rating-features 有無で別モデルを学習し backtest 比較）用。
+    if getattr(args, "no_rating_features", False):
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+
+        rating_cols = ELO_FEATURE_COLS + [f"{c}_z" for c in ELO_FEATURE_COLS]
+        present = [c for c in rating_cols if c in featured_data.columns]
+        featured_data = featured_data.drop(columns=present, errors="ignore")
+        logger.info("[retrain] --no-rating-features: Elo 由来 %d 列を除外: %s", len(present), present)
+
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
     lgb_params = None

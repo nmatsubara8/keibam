@@ -108,3 +108,47 @@ class ShutubaDataMerger(DataMerger):
         self._merge_horse_results()
         self._merge_horse_info()
         self._merge_peds()
+        self._merge_live_ratings()
+
+    def _merge_live_ratings(self) -> None:
+        """ライブ予測用に Elo スナップショットから出走馬のレーティング特徴を付与する。
+
+        学習時（build_rating_frame の as-of 書き出し）と同一の _field_features を再現するため、
+        最新スナップショット（HORSE_RATINGS_PATH）を読み、出走馬の現行レーティングで特徴量を作る。
+        スナップショット無し/horse_id 欠如時はスキップ（予測時の reindex で 0 埋めにフォールバック）。
+        """
+        import json
+        import os
+
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+        from src.constants._local_paths import LocalPaths
+        from src.preprocessing._ratings import features_from_snapshot
+
+        path = LocalPaths.HORSE_RATINGS_PATH
+        if not path or not os.path.isfile(path):
+            return
+        if "horse_id" not in self._results.columns or "馬番" not in self._results.columns:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                snapshot = json.load(f)
+        except Exception:  # noqa: BLE001
+            return
+        if not snapshot:
+            return
+
+        base = self._results.reset_index()
+        rid_col = "race_id" if "race_id" in base.columns else base.columns[0]
+        rows: list[dict] = []
+        for rid, g in base.groupby(rid_col):
+            feats = features_from_snapshot(list(g["horse_id"]), snapshot)
+            for _, row in g.iterrows():
+                uma = pd.to_numeric(row["馬番"], errors="coerce")
+                if pd.isna(uma):
+                    continue
+                rows.append({"race_id": str(rid), "馬番": int(uma), **feats.get(row["horse_id"], {})})
+        self._ratings = (
+            pd.DataFrame(rows, columns=["race_id", "馬番", *ELO_FEATURE_COLS])
+            if rows else pd.DataFrame()
+        )
+        self._merge_horse_ratings()

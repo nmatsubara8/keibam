@@ -46,6 +46,10 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
         help="オッズ由来の派生特徴(単勝_log・市場歪み overlay 等)を除外して学習（対市場エッジの A/B 検証用）",
     )
     retrain_p.add_argument(
+        "--no-rating-features", action="store_true",
+        help="Elo レーティング由来の特徴(elo_* と その _z)を除外して学習（レーティング効果の A/B 検証用）",
+    )
+    retrain_p.add_argument(
         "--no-win-head", action="store_true",
         help="Win ヘッド(1着予測, <version>__win.pickle)の併行学習を行わない（Place ヘッドのみ）",
     )
@@ -282,6 +286,11 @@ def _add_backtest(sub: argparse._SubParsersAction) -> None:
         "--no-odds-features", action="store_true",
         help="retrain --no-odds-features で学習したモデルを評価する際に指定（featured から同じ"
              "オッズ由来列を落として列を一致させる。学習=.values で位置一致が必要なため）",
+    )
+    bt_p.add_argument(
+        "--no-rating-features", action="store_true",
+        help="retrain --no-rating-features で学習したモデルを評価する際に指定（featured から同じ"
+             "Elo 由来列を落として列を一致させる）",
     )
     bt_p.add_argument(
         "--corrected-harville", action="store_true",

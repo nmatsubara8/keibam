@@ -177,6 +177,55 @@ def _build_odds_signal_frame(config):
         return None
 
 
+def _build_rating_frame(config):
+    """着順履歴からペアワイズ Elo 特徴の (race_id,馬番) フレームを作り、最新値を保存する。
+
+    raw results（着順/馬番/horse_id/着差）＋ race_info（date）を日付昇順で 1 パスし、各レースの
+    **出走前**レーティングを書き出す（リーク無し as-of）。最新スナップショットは
+    HORSE_RATINGS_PATH に保存し、ライブ予測（predict_upcoming）が参照する。
+    結果列が無い／失敗時は None（マージは no-op）。
+    """
+    import json
+    import os
+
+    from src.constants._local_paths import LocalPaths
+
+    try:
+        from src.pipeline._ingestion import load_raw
+        from src.preprocessing._race_info_processor import RaceInfoProcessor
+        from src.preprocessing._ratings import build_rating_frame
+
+        res = load_raw(config.raw_results_path)
+        if res.empty:
+            return None
+        res = res.reset_index()
+        rid_col = "race_id" if "race_id" in res.columns else res.columns[0]
+        res = res.rename(columns={rid_col: "race_id"})
+        if not {"着順", "馬番", "horse_id"}.issubset(res.columns):
+            return None
+        res["race_id"] = res["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+
+        # date は race_info（開催日）から as-of の時系列順序付けに使う
+        ri = RaceInfoProcessor(config.raw_race_info_path).preprocessed_data.reset_index()
+        ri["race_id"] = ri["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        date_map = dict(zip(ri["race_id"], ri["date"], strict=False))
+        res["date"] = res["race_id"].map(date_map)
+
+        frame, snapshot = build_rating_frame(res)
+        # 最新スナップショットを保存（ライブ予測用）。失敗は non-fatal。
+        try:
+            os.makedirs(os.path.dirname(LocalPaths.HORSE_RATINGS_PATH), exist_ok=True)
+            with open(LocalPaths.HORSE_RATINGS_PATH, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False)
+            logger.info("[featured] Elo スナップショット %d 頭を保存", len(snapshot))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[featured] Elo スナップショット保存に失敗 (non-fatal): %s", e)
+        return frame if not frame.empty else None
+    except Exception as e:  # noqa: BLE001 — レーティングは任意。失敗してもパイプラインは継続
+        logger.warning("[featured] Elo レーティング特徴の構築に失敗（スキップ）: %s", e)
+        return None
+
+
 def _build_featured_data(config):
     """raw pickle 群から DataMerger + FeatureEngineering で featured_data を生成する。
 
@@ -221,6 +270,7 @@ def _build_featured_data(config):
         person_yearly_df=_read_optional_pickle(LocalPaths.RAW_PERSON_YEARLY_PATH),
         yoso_predictor_df=_read_optional_pickle(LocalPaths.RAW_YOSO_PREDICTOR_PATH),
         odds_signals_df=_build_odds_signal_frame(config),
+        rating_df=_build_rating_frame(config),
     )
     merger.merge()
     fe = (

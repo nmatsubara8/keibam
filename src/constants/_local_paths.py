@@ -37,6 +37,9 @@ class LocalPaths:
     RAW_YOSO_PREDICTOR_PATH: str = os.path.join(RAW_DIR, "yoso_predictor.pkl")
     ### 段階オッズ スナップショットの集約 pickle（Layer2 学習データの蓄積先）
     RAW_ODDS_SNAPSHOT_PATH: str = os.path.join(RAW_DIR, "odds_snapshots.pkl")
+    ### 馬の Elo レーティングの最新スナップショット（horse_id→{rating,n_races}）。
+    ### featured 構築時に書き出し、ライブ予測（未来レース）の特徴量再現に使う。
+    HORSE_RATINGS_PATH: str = os.path.join(RAW_DIR, "horse_ratings.json")
     ### オッズ力学モデルの予測テーブル（チェックポイント別の次時点/確定予測）
     RAW_ODDS_PREDICTIONS_PATH: str = os.path.join(RAW_DIR, "odds_predictions.pkl")
     ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）

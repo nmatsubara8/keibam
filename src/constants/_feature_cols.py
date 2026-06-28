@@ -95,6 +95,17 @@ DAMSIRE_FEATURE_COLS: list = [
     "damsire_recent_win_rate",  # 直近N年の母父産駒勝率
 ]
 
+# ペアワイズ Elo レーティング（DataMerger._merge_horse_ratings）。馬の地力を着順履歴から
+# 推定した as-of 値（出走前の現行レーティング）。リーク無し（preprocessing._ratings が日付昇順で
+# 構築し、結果更新は次レース以降にのみ反映）。retrain --no-rating-features で学習から除外＝A/B 用。
+ELO_FEATURE_COLS: list = [
+    "elo_rating",      # 出走前の現行レーティング（初出走は 1500）
+    "elo_n_races",     # それまでの出走数（レーティングの信頼度の代理）
+    "elo_field_mean",  # 当該レース出走馬の平均レーティング（レース内一定）
+    "elo_vs_field",    # elo_rating − elo_field_mean（フィールド内の相対地力）
+    "elo_win_prob",    # Elo 強度比のレース内正規化勝率（スタンドアロン勝率）
+]
+
 # 予想印コンセンサス（DataMerger._merge_yoso_marks）。発走前確定・リーク無し。
 YOSO_FEATURE_COLS: list = [
     "yoso_n_marks",            # 印を付けた予想家数（注目度）
