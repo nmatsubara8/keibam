@@ -79,13 +79,28 @@ def main() -> None:
     logger.info("入力: featured %d 行 / 券種=%s / objective=%s / min_bets=%d",
                 len(featured), args.bet_types or "全件", args.objective, args.min_bets)
 
-    from app._bet_type_optimizer import optimize_all
+    # optimize_all は最後まで無言なので、券種ごとにループして進捗を出す（中身は等価）。
+    from app._bet_type_optimizer import default_grid
+    from app._bet_type_optimizer import optimize_bet_type
+    from src.policies._bet_type_params import OPTIMIZABLE_BET_TYPES
+    from src.policies._bet_type_params import default_params
 
-    params_map, metrics_map, _ = optimize_all(
-        ai, featured, rp,
-        bet_types=args.bet_types, objective=args.objective,
-        min_bets=args.min_bets, takeout=args.takeout,
-    )
+    g = default_grid()
+    grid_size = len(g["ev_thresholds"]) * len(g["temperatures"]) * len(g.get("prob_scales", [1.0]))
+    targets = list(args.bet_types) if args.bet_types else list(OPTIMIZABLE_BET_TYPES)
+    params_map: dict = {}
+    metrics_map: dict = {}
+    for i, bt in enumerate(targets, 1):
+        logger.info("[%d/%d] %s 最適化中…（%d通り × %d行）", i, len(targets), bt, grid_size, len(featured))
+        res = optimize_bet_type(ai, featured, rp, bt, objective=args.objective,
+                                min_bets=args.min_bets, takeout=args.takeout)
+        params_map[bt] = res["best_params"] or default_params(bt)
+        metrics_map[bt] = res["best_summary"]
+        m = res["best_summary"] or {}
+        rr = m.get("return_rate")
+        logger.info("[%d/%d] %s 完了: n_bets=%s 回収率=%s", i, len(targets), bt,
+                    m.get("n_bets", "—"),
+                    f"{rr:.3f}" if isinstance(rr, (int, float)) else "—")
 
     # 結果サマリ（券種ごとのベスト param と主要指標）。
     print(f"\n■ 券種別最適化結果（objective={args.objective}, min_bets={args.min_bets}）")
