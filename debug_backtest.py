@@ -68,10 +68,57 @@ def _probe(ai, featured, rp, bet_type, ev_threshold, temperature, takeout=0.2):
               f"ratio={row['ratio']:.1f} n_bets={row['n_bets']:.0f}")
 
 
+def _detail(ai, featured, rp, bet_type, ev, temp, n=12, takeout=0.2):
+    """賭けた馬と実際の勝ち馬を突き合わせて漏洩か払戻バグかを確定する。"""
+    from app._bet_type_optimizer import backtest_bet_type  # noqa: F401 (副作用 import 安定化)
+    from src.constants._results_cols import ResultsCols
+    from src.policies._bet_policy import ExpectedValueBetPolicy
+    from src.policies._bet_type_params import BetTypeParams
+    from src.policies._odds_provider import HistoricalOddsProvider
+    from src.policies._score_policy import CURRENT_ODDS, PROB, ExpectedValueScorePolicy
+
+    score_table = ai.calc_score(featured, ExpectedValueScorePolicy)
+    op = HistoricalOddsProvider.from_score_table(score_table, ResultsCols.UMABAN, CURRENT_ODDS, takeout=takeout)
+    params = BetTypeParams(ev_threshold=ev, temperature=temp, prob_scale=1.0)
+    policy = ExpectedValueBetPolicy(op, {bet_type: ev}, bet_types=[bet_type], bet_type_params={bet_type: params})
+    actions = policy.judge(score_table)
+    win_tbl = rp.preprocessed_data.get(bet_type)
+    win_idx = set(map(str, win_tbl.index)) if win_tbl is not None else set()
+
+    print("=" * 72)
+    print(f"詳細 [{bet_type}] EV={ev} 温度={temp}: 賭け馬 vs 勝ち馬（先頭{n}レース）")
+    print(f"  {'race_id':>14} {'賭け馬番':>8} {'勝率':>7} {'オッズ':>8} | {'勝ち馬番':>8} {'払戻/100':>9} {'一致':>5}")
+    shown = 0
+    for rid, bets in actions.items():
+        umas = bets.get(bet_type) or []
+        if not umas:
+            continue
+        rid_s = str(rid)
+        try:
+            race_rows = score_table.loc[[rid]]
+            pm = {int(r[ResultsCols.UMABAN]): (float(r[PROB]), float(r[CURRENT_ODDS])) for _, r in race_rows.iterrows()}
+        except Exception:  # noqa: BLE001
+            pm = {}
+        won, payout = "?", "?"
+        if rid_s in win_idx:
+            wr = win_tbl.loc[rid_s]
+            if hasattr(wr, "iloc") and "win_0" in win_tbl.columns:
+                won = wr["win_0"] if not hasattr(wr["win_0"], "iloc") else wr["win_0"].iloc[0]
+                payout = wr["return_0"] if not hasattr(wr["return_0"], "iloc") else wr["return_0"].iloc[0]
+        for u in umas:
+            pr, od = pm.get(int(u), (float("nan"), float("nan")))
+            match = "○" if str(won) == str(u) else ""
+            print(f"  {rid_s:>14} {u:>8} {pr:>7.3f} {od:>8.1f} | {str(won):>8} {str(payout):>9} {match:>5}")
+        shown += 1
+        if shown >= n:
+            break
+
+
 def main():
     ap = argparse.ArgumentParser(description="券種別バックテスト指標の診断")
     ap.add_argument("--bet-type", default="tansho")
     ap.add_argument("--test-frac", type=float, default=0.2)
+    ap.add_argument("--detail", type=int, default=0, help="温度1.6点の賭け馬vs勝ち馬を N レース表示")
     args = ap.parse_args()
 
     ai, featured, rp = _load(test_frac=args.test_frac)
@@ -79,6 +126,8 @@ def main():
     # 検証済み近傍（健全値が出るはず）と、optimizer が選んだ degenerate 点。
     _probe(ai, featured, rp, args.bet_type, 1.1, 1.0)
     _probe(ai, featured, rp, args.bet_type, 1.5, 1.6)
+    if args.detail > 0:
+        _detail(ai, featured, rp, args.bet_type, 1.5, 1.6, n=args.detail)
 
 
 if __name__ == "__main__":
