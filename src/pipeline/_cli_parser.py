@@ -251,6 +251,15 @@ def _add_calibrate_ev(sub: argparse._SubParsersAction) -> None:
         "--dry-run", dest="dry_run", action="store_true",
         help="fit 結果をログ表示するのみで保存しない",
     )
+    ce_p.add_argument(
+        "--no-odds-features", action="store_true",
+        help="retrain --no-odds-features で学習したモデルを較正する際に指定（featured から同じ"
+             "オッズ由来列を落として列を一致させる。backtest --no-odds-features と対）",
+    )
+    ce_p.add_argument(
+        "--no-rating-features", action="store_true",
+        help="retrain --no-rating-features で学習したモデルを較正する際に指定（Elo 由来列を除外）",
+    )
 
 
 def _add_backtest(sub: argparse._SubParsersAction) -> None:

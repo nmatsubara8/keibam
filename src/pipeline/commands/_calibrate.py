@@ -127,6 +127,21 @@ def _calibrate_ev(args: argparse.Namespace) -> None:
         logger.warning(
             "[calibrate-ev] --years 未指定。学習年を含むと楽観バイアスになります（OOS 推奨）"
         )
+    # --no-odds-features / --no-rating-features: retrain で同フラグを使ったモデルと列を一致させる
+    # （backtest と同じ列除外。落とさないと特徴量数が不一致で predict_proba が Fatal になる）。
+    if getattr(args, "no_odds_features", False):
+        from src.constants._feature_cols import ODDS_DERIVED_FEATURE_COLS
+
+        present = [c for c in ODDS_DERIVED_FEATURE_COLS if c in featured.columns]
+        featured = featured.drop(columns=present, errors="ignore")
+        logger.info("[calibrate-ev] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
+    if getattr(args, "no_rating_features", False):
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+
+        present = [c for c in ELO_FEATURE_COLS if c in featured.columns]
+        featured = featured.drop(columns=present, errors="ignore")
+        logger.info("[calibrate-ev] --no-rating-features: Elo 由来 %d 列を除外: %s", len(present), present)
+
     if featured.empty:
         logger.error("[calibrate-ev] 対象レースがありません（年フィルタが厳しすぎる可能性）")
         return
