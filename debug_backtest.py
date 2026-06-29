@@ -83,7 +83,10 @@ def _detail(ai, featured, rp, bet_type, ev, temp, n=12, takeout=0.2):
     policy = ExpectedValueBetPolicy(op, {bet_type: ev}, bet_types=[bet_type], bet_type_params={bet_type: params})
     actions = policy.judge(score_table)
     win_tbl = rp.preprocessed_data.get(bet_type)
-    win_idx = set(map(str, win_tbl.index)) if win_tbl is not None else set()
+    if win_tbl is not None:
+        win_tbl = win_tbl.copy()
+        win_tbl.index = win_tbl.index.astype(str)  # index 型を str に正規化（int/str 混在対策）
+    win_idx = set(win_tbl.index) if win_tbl is not None else set()
 
     print("=" * 72)
     print(f"詳細 [{bet_type}] EV={ev} 温度={temp}: 賭け馬 vs 勝ち馬（先頭{n}レース）")
@@ -100,11 +103,12 @@ def _detail(ai, featured, rp, bet_type, ev, temp, n=12, takeout=0.2):
         except Exception:  # noqa: BLE001
             pm = {}
         won, payout = "?", "?"
-        if rid_s in win_idx:
+        if rid_s in win_idx and "win_0" in win_tbl.columns:
             wr = win_tbl.loc[rid_s]
-            if hasattr(wr, "iloc") and "win_0" in win_tbl.columns:
-                won = wr["win_0"] if not hasattr(wr["win_0"], "iloc") else wr["win_0"].iloc[0]
-                payout = wr["return_0"] if not hasattr(wr["return_0"], "iloc") else wr["return_0"].iloc[0]
+            if hasattr(wr, "to_frame"):  # Series（単一行）
+                won, payout = wr.get("win_0", "?"), wr.get("return_0", "?")
+            else:  # DataFrame（重複 index）→ 先頭行
+                won, payout = wr["win_0"].iloc[0], wr["return_0"].iloc[0]
         for u in umas:
             pr, od = pm.get(int(u), (float("nan"), float("nan")))
             match = "○" if str(won) == str(u) else ""
