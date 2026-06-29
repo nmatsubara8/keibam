@@ -38,6 +38,8 @@ def main():
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--takeout", type=float, default=0.2)
     ap.add_argument("--stacking", action="store_true", help="本番同等スタッキングで学習（既定は単一LightGBM）")
+    ap.add_argument("--by-odds", action="store_true",
+                    help="全fold プールの OOS 回収率をオッズ帯別に出す（『中人気にエッジ』の honest 検証）")
     args = ap.parse_args()
 
     import pandas as pd
@@ -67,6 +69,16 @@ def main():
 
     params = BetTypeParams(ev_threshold=args.ev_floor, temperature=args.temperature,
                            prob_scale=1.0, ev_max=args.ev_max)
+
+    # --by-odds: kelly_backtest の検証済み候補選択・決済を再利用して全 fold をオッズ帯別に集計。
+    ODDS_BUCKETS = [(1.0, 3.0), (3.0, 7.0), (7.0, 15.0), (15.0, 50.0), (50.0, float("inf"))]
+    band_acc = settle = None
+    if args.by_odds:
+        from kelly_backtest import _make_settle_fn
+        from src.simulation._betting_tickets import BettingTickets
+        band_acc = {b: {"n": 0, "hit": 0, "stake": 0.0, "ret": 0.0} for b in ODDS_BUCKETS}
+        settle = _make_settle_fn(BettingTickets(rp))
+
     mode = "スタッキング" if args.stacking else "単一LightGBM"
     print("=" * 78)
     print(f"walk-forward OOS / 券種={args.bet_type} / EV[{args.ev_floor},{args.ev_max}] "
@@ -107,6 +119,26 @@ def main():
         print(f"  {label:<26}{len(set(train_races)):>9}{len(set(eval_races)):>9}{nb:>8}"
               f"{_fmt(hr):>8}{_fmt(rr):>8}{profit:>10,.0f}")
 
+        # この fold の OOS 候補をオッズ帯別に集計（プールに加算）。
+        if args.by_odds:
+            from kelly_backtest import _candidates_by_race
+            from src.policies._score_policy import ExpectedValueScorePolicy
+            st = ai.calc_score(fold, ExpectedValueScorePolicy)
+            for rid, cands in _candidates_by_race(st, args.ev_floor, args.ev_max, float("inf")):
+                for c in cands:
+                    ba, ra = settle(rid, c.combo[0], 100)
+                    if ba <= 0:
+                        continue
+                    for lo, hi in ODDS_BUCKETS:
+                        if lo <= c.odds < hi:
+                            a = band_acc[(lo, hi)]
+                            a["n"] += 1
+                            a["stake"] += ba
+                            a["ret"] += ra
+                            if ra > 0:
+                                a["hit"] += 1
+                            break
+
     print("-" * 78)
     pooled = tot_ret / tot_bet if tot_bet else 0.0
     print(f"  通算（プールOOS）: 投資 {tot_bet:,.0f} / 払戻 {tot_ret:,.0f} / "
@@ -117,6 +149,22 @@ def main():
         n_neg = sum(1 for r in fold_rrs if r <= 1.0)
         print(f"  → {n_neg}/{len(fold_rrs)} fold で回収率≤1、通算 {pooled:.3f}。"
               "honest なエッジは確認されない")
+
+    if args.by_odds:
+        print("\n[オッズ帯別 OOS（全 fold プール・フラット100円）]")
+        print(f"  {'オッズ帯':<12}{'買い目':>9}{'的中率':>9}{'回収率':>9}")
+        any_edge = False
+        for lo, hi in ODDS_BUCKETS:
+            a = band_acc[(lo, hi)]
+            if a["n"] == 0:
+                continue
+            hr_b = a["hit"] / a["n"]
+            rr_b = a["ret"] / a["stake"] if a["stake"] > 0 else 0.0
+            any_edge = any_edge or rr_b > 1.0
+            hi_s = "∞" if hi == float("inf") else f"{hi:.0f}"
+            mark = " ◎" if rr_b > 1.0 else ""
+            print(f"  {f'{lo:.0f}–{hi_s}':<12}{a['n']:>9}{_fmt(hr_b):>9}{_fmt(rr_b):>9}{mark}")
+        print("  ※ ◎(回収率>1)の帯があれば、そこに OOS エッジの候補。全て≤1なら exploitable な帯は無い。")
     print("=" * 78)
 
 
