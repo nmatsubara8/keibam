@@ -206,16 +206,23 @@ def _print_by_year(groups, settle_fn, flat_unit: float):
     print(f"\n[年度別頑健性] フラット{int(flat_unit)}円・オッズ絞り後")
     print(f"  {'年度':<8}{'レース':>8}{'買い目':>9}{'的中率':>9}{'回収率':>9}")
     print("  " + "-" * 43)
+    year_rates = []
     for y in sorted(years):
         a = years[y]
         if a["n"] == 0:
             continue
         hr = a["hit"] / a["n"]
         rr = a["ret"] / a["stake"] if a["stake"] > 0 else 0.0
+        year_rates.append(rr)
         mark = " ◎" if rr > 1.0 else ""
         print(f"  {y:<8}{len(a['races']):>8}{a['n']:>9}{_fmt(hr):>9}{_fmt(rr):>9}{mark}")
     print("  " + "-" * 43)
-    print("  どの年度でも回収率>1(◎) → 時系列に頑健な本物のエッジ")
+    # 判定は実数に基づく（回収率に関わらず「本物のエッジ」と誤表示しない）。
+    if year_rates and all(r > 1.0 for r in year_rates):
+        print("  → 全年度で回収率>1 → 時系列に頑健なエッジの可能性（要 walk-forward 確認）")
+    else:
+        n_neg = sum(1 for r in year_rates if r <= 1.0)
+        print(f"  → {n_neg}/{len(year_rates)} 年度で回収率≤1（負け）。時系列に頑健なエッジは確認されない")
 
 
 def main() -> None:
