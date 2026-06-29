@@ -13,10 +13,12 @@ logger = logging.getLogger(__name__)
 # - RANK('着順'): 当該レースの実着順。rank = (着順 < 4) の元データであり、
 #   特徴量に残すと目的変数リーク。§2c/2j 集計のため ResultsProcessor が選択するが
 #   学習入力からは必ず除外する。
-_DROP_FOR_TRAIN = ["rank", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
+# - rank_win: 当該レースの勝ち馬フラグ（着順==1）。拡張パイプラインが生成し特徴量に
+#   紛れていた目的変数リーク（held-out で単独 AUC=1.0 と判明）。必ず除外する。
+_DROP_FOR_TRAIN = ["rank", "rank_win", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
 
 # テスト入力用: EV 計算のため TANSHO_ODDS('単勝') は残し、実着順 RANK は除外する。
-_DROP_FOR_TEST = ["rank", "date", "horse_id", ResultsCols.RANK]
+_DROP_FOR_TEST = ["rank", "rank_win", "date", "horse_id", ResultsCols.RANK]
 
 
 class DataSplitter:
