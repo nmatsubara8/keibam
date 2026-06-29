@@ -23,9 +23,16 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import warnings
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# 推論を numpy 配列で大量に回すため LightGBM/sklearn が毎回出す無害な警告を抑止する
+# （モデルは列名つきで学習済み。バックテストの予測結果には影響しない）。
+warnings.filterwarnings(
+    "ignore", message="X does not have valid feature names", category=UserWarning,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("optimize_bet_types")
