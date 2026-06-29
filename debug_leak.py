@@ -24,7 +24,6 @@ def main():
     ap.add_argument("--test-frac", type=float, default=0.2)
     args = ap.parse_args()
 
-    import numpy as np
     import pandas as pd
     from sklearn.metrics import roc_auc_score
 
