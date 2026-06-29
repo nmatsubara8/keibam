@@ -371,6 +371,17 @@ def _retrain(args: argparse.Namespace) -> None:
     else:
         featured_data = pd.read_pickle(featured_path)
 
+    # 目的変数リーク列が featured に混入していたら警告（モデル入力からは DROP リストで除外
+    # されるが、生成源＝拡張パイプライン側で除去すべき。§3-42）。
+    from src.constants._results_cols import TARGET_LEAK_COLS
+
+    _leaks = [c for c in TARGET_LEAK_COLS if c in getattr(featured_data, "columns", [])]
+    if _leaks:
+        logger.warning(
+            "[retrain] featured_data に目的変数リーク列 %s を検出。モデル入力からは除外されるが、"
+            "生成源（特徴量パイプライン）で作らない/落とすべき（§3-42）。", _leaks,
+        )
+
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
     lgb_params = None

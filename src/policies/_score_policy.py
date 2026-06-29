@@ -4,6 +4,7 @@ from typing import Callable
 
 import pandas as pd
 
+from src.constants._results_cols import TARGET_LEAK_COLS
 from src.constants._results_cols import ResultsCols
 
 # const
@@ -13,12 +14,11 @@ PROB = "prob"
 CURRENT_ODDS = "current_odds"
 
 # predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ・ID）。
-# 学習時の _DROP_FOR_TRAIN（rank/date/horse_id/単勝/着順）と列数を揃える必要がある。
+# 学習時の _DROP_FOR_TRAIN（rank/date/horse_id/単勝/着順 + TARGET_LEAK_COLS）と揃える必要がある。
 # horse_id を除外し損ねると特徴量が 1 列多くなり LightGBM が
 # "number of features ... is not the same as ... training data" で失敗する。
-# rank_win（着順==1 の勝ち馬フラグ）は拡張パイプライン由来の目的変数リーク。学習側
-# _DROP_FOR_TRAIN と揃えて推論でも必ず除外する（残すと学習時と列数も合わない）。
-_DROP_FOR_PREDICT = ["horse_id", ResultsCols.TANSHO_ODDS, "rank", "rank_win", "date", ResultsCols.RANK]
+# TARGET_LEAK_COLS（rank_win 等）は結果を符号化した漏洩列の単一定義元（_results_cols）。
+_DROP_FOR_PREDICT = ["horse_id", ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK, *TARGET_LEAK_COLS]
 
 # score_policy が参照する非特徴量列（枠番・馬番 + 除外列）。モデルの特徴量ではないが
 # 推論時に X へ残す必要がある列の単一の定義元（KeibaAI.calc_score が参照する）。
