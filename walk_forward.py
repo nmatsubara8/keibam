@@ -29,6 +29,102 @@ def _fmt(x):
     return f"{x:.3f}" if isinstance(x, (int, float)) else str(x)
 
 
+def _score_predictors(edge):
+    """edge_df（p_mkt/r_hat/p_blend/won）から各予測器の (勝logloss, Brier, ECE, AUC) を返す。"""
+    import numpy as np
+
+    from predict_quality import _ece
+    from src.simulation._edge_diagnostic import _win_logloss
+
+    out = {}
+    won = edge["won"]
+    for name, col in [("市場", "p_mkt"), ("モデル", "r_hat"), ("companion", "p_blend")]:
+        p = edge[col]
+        ll = _win_logloss(p, won)
+        brier = float(np.nanmean((p.to_numpy() - won.to_numpy()) ** 2))
+        ece = _ece(p, won)
+        try:
+            from sklearn.metrics import roc_auc_score
+            auc = float(roc_auc_score(won, p))
+        except Exception:  # noqa: BLE001
+            auc = float("nan")
+        out[name] = (ll, brier, ece, auc)
+    return out
+
+
+def _quality_walk_forward(featured, chunks, factory, args):
+    """各 fold: 過去のみ学習→直前 fold で合成(α,β)を fit→評価 fold で市場/モデル/companion を OOS 評価。"""
+    import pandas as pd
+
+    from predict_quality import _blend_series
+    from src.policies._blend import fit_blend
+    from src.policies._score_policy import ExpectedValueScorePolicy
+    from src.simulation._edge_diagnostic import build_edge_frame
+
+    def _won(sl):
+        return (pd.to_numeric(sl["着順"], errors="coerce") == 1).astype(float)
+
+    def _edge(ai, race_ids):
+        sl = featured.loc[race_ids]
+        st = ExpectedValueScorePolicy.calc(ai.effective_model, sl)
+        return build_edge_frame(st, _won(sl).to_numpy())
+
+    print("=" * 74)
+    print(f"予測品質 walk-forward（市場 vs モデル vs companion / {args.folds}分割 / "
+          f"学習={'スタッキング' if args.stacking else '単一LightGBM'}）")
+    print(f"  {'評価fold期間':<22}{'予測器':<11}{'勝logloss':>11}{'Brier':>10}{'ECE':>9}")
+    print("-" * 74)
+    pooled = []
+    for k in range(2, args.folds):
+        train_races = [r for c in chunks[:k - 1] for r in c]  # chunks[0..k-2]
+        try:
+            ai = factory.create(featured.loc[train_races], test_size=0.1, valid_size=0.2)
+            if args.stacking:
+                ai.train_with_stacking(with_tuning=False)
+            else:
+                ai.train_without_tuning()
+            ebf = _edge(ai, chunks[k - 1])  # 直前 fold で合成 fit
+            races = []
+            for _rid, g in ebf.groupby(level=0):
+                pf = {int(u): float(p) for u, p in zip(g["umaban"], g["r_hat"], strict=False) if p == p and p > 0}
+                pp = {int(u): float(p) for u, p in zip(g["umaban"], g["p_mkt"], strict=False) if p == p and p > 0}
+                w = g[g["won"] == 1]["umaban"]
+                if len(w) == 1 and pf and pp:
+                    races.append((pf, pp, int(w.iloc[0])))
+            bw = fit_blend(races) if races else None
+            a, b = (bw.alpha, bw.beta) if bw else (0.0, 1.0)
+            ev = _edge(ai, chunks[k])  # 評価 fold（モデル・合成とも OOS）
+            ev["p_blend"] = _blend_series(ev, a, b).to_numpy()
+        except Exception as e:  # noqa: BLE001
+            print(f"  fold{k} 失敗: {e}")
+            continue
+        d0 = pd.to_datetime(featured.loc[chunks[k]]["date"]).min().date()
+        d1 = pd.to_datetime(featured.loc[chunks[k]]["date"]).max().date()
+        label = f"{d0}〜{d1}(α{a:.2f}β{b:.2f})"
+        for i, (name, (ll, br, ece, _auc)) in enumerate(_score_predictors(ev).items()):
+            print(f"  {(label if i == 0 else ''):<22}{name:<11}{ll:>11.4f}{br:>10.5f}{ece:>9.4f}")
+        print("  " + "-" * 70)
+        pooled.append(ev)
+    if not pooled:
+        print("  評価できる fold がありません（--folds を増やすか件数を確認）")
+        return
+    allev = pd.concat(pooled)
+    print(f"\n[通算プールOOS] レース={allev.index.nunique()} / 馬={len(allev)}")
+    print(f"  {'予測器':<11}{'勝logloss':>11}{'Brier':>10}{'ECE':>9}{'AUC':>8}")
+    sc = _score_predictors(allev)
+    for name, (ll, br, ece, auc) in sc.items():
+        print(f"  {name:<11}{ll:>11.4f}{br:>10.5f}{ece:>9.4f}{auc:>8.4f}")
+    mkt, comp = sc["市場"], sc["companion"]
+    print("-" * 74)
+    if comp[0] <= mkt[0] and comp[2] <= mkt[2]:
+        print(f"  → companion ≤ 市場（logloss {comp[0]:.4f}≤{mkt[0]:.4f}・ECE {comp[2]:.4f}≤{mkt[2]:.4f}）"
+              "＝多時点で安定。market-companion 達成。")
+    else:
+        print(f"  → companion は市場を安定して上回らない（logloss {comp[0]:.4f} vs {mkt[0]:.4f}・"
+              f"ECE {comp[2]:.4f} vs {mkt[2]:.4f}）。単年の微小な勝ちはノイズの可能性。")
+    print("=" * 74)
+
+
 def main():
     ap = argparse.ArgumentParser(description="walk-forward OOS バックテスト（時系列 honest 評価）")
     ap.add_argument("--folds", type=int, default=5, help="時間チャンク数（既定5＝4回評価）")
@@ -40,6 +136,9 @@ def main():
     ap.add_argument("--stacking", action="store_true", help="本番同等スタッキングで学習（既定は単一LightGBM）")
     ap.add_argument("--by-odds", action="store_true",
                     help="全fold プールの OOS 回収率をオッズ帯別に出す（『中人気にエッジ』の honest 検証）")
+    ap.add_argument("--quality", action="store_true",
+                    help="予測品質モード: 各fold(過去のみ学習→直前foldで合成fit→評価foldでOOS)で"
+                         "市場 vs モデル vs companion の勝logloss/Brier/ECEを集計（market-companion 安定性確認）")
     args = ap.parse_args()
 
     import pandas as pd
@@ -66,6 +165,10 @@ def main():
         return
     bounds = [round(i * n / args.folds) for i in range(args.folds + 1)]
     chunks = [ordered[bounds[i]:bounds[i + 1]] for i in range(args.folds)]
+
+    if args.quality:
+        _quality_walk_forward(featured, chunks, KeibaAIFactory, args)
+        return
 
     params = BetTypeParams(ev_threshold=args.ev_floor, temperature=args.temperature,
                            prob_scale=1.0, ev_max=args.ev_max)
