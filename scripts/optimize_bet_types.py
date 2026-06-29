@@ -64,6 +64,9 @@ def main() -> None:
     ap.add_argument("--save", action="store_true", help="結果を bet_type_params.json に保存（既定はドライラン）")
     ap.add_argument("--objective", default="return_rate",
                     help="目的関数（return_rate / hit_rate / sharpe_ratio など。既定 return_rate）")
+    ap.add_argument("--test-frac", type=float, default=0.2,
+                    help="日付末尾のこの割合のレースだけで最適化（モデル未学習の検証区間。既定 0.2）。"
+                         "1.0 で全データ＝学習データ漏洩のため非推奨")
     ap.add_argument("--min-bets", type=int, default=10, help="採用に必要な最小ベット数（既定 10）")
     ap.add_argument("--takeout", type=float, default=0.2, help="控除率（既定 0.2）")
     ap.add_argument("--bet-types", nargs="+", default=None,
@@ -75,9 +78,18 @@ def main() -> None:
     if loaded is None:
         logger.error("実行できません: %s", err)
         sys.exit(2)
-    ai, featured, rp = loaded
-    logger.info("入力: featured %d 行 / 券種=%s / objective=%s / min_bets=%d",
-                len(featured), args.bet_types or "全件", args.objective, args.min_bets)
+    ai, featured_all, rp = loaded
+    # モデルが学習に使っていない直近区間だけで最適化する（全データはin-sample漏洩で
+    # 的中率が非現実的に跳ね上がる。UIモデルラボと同じ recent_race_slice を使用）。
+    from app._model_compare import recent_race_slice
+
+    featured = recent_race_slice(featured_all, args.test_frac) if args.test_frac < 1.0 else featured_all
+    if featured is None or len(featured) == 0:
+        logger.error("検証区間が空です（--test-frac=%.2f）", args.test_frac)
+        sys.exit(2)
+    logger.info("入力: featured 全%d行 → 検証区間%d行（直近%.0f%%・%dレース）/ 券種=%s / objective=%s / min_bets=%d",
+                len(featured_all), len(featured), args.test_frac * 100,
+                featured.index.nunique(), args.bet_types or "全件", args.objective, args.min_bets)
 
     # optimize_all は最後まで無言なので、券種ごとにループして進捗を出す（中身は等価）。
     from app._bet_type_optimizer import default_grid
