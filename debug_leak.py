@@ -84,7 +84,8 @@ def main():
         flag = "  ← 漏洩疑い" if auc > 0.9 else ("  ← 要確認" if auc > 0.85 else "")
         print(f"{col:<40}{auc:>12.4f}{tgt:>7}{flag}")
     n_leak = sum(1 for _, a, _ in rows if a > 0.9)
-    print(f"\n（AUC≈0.5 無情報 / 0.85超=要確認 / 0.9超=漏洩源最有力。0.9超は {n_leak} 列 / 全{len(rows)}列中上位{args.top}）")
+    print(f"\n（AUC≈0.5 無情報 / 0.85超=要確認 / 0.9超=漏洩源最有力。"
+          f"0.9超は {n_leak} 列 / 全{len(rows)}列中上位{args.top}）")
     print("※ 市場オッズ由来（単勝_log 等）は事前既知なので漏洩ではない。"
           "結果(着順)から作った集計が現在レースを含む場合のみ漏洩。")
 
