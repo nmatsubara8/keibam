@@ -21,6 +21,7 @@ from src.constants._feature_cols import (
 )
 from src.preprocessing import _horse_features as _hf
 from src.preprocessing import _pedigree_features as _pf
+from src.constants._results_cols import ResultsCols
 from src.preprocessing import _yoso_features as _yf
 from src.preprocessing._data_cleaner import convert_column_types
 from src.preprocessing._data_cleaner import dict_selector
@@ -101,6 +102,7 @@ class DataMerger:
         _step("odds_signals", self._merge_odds_signals)
         _step("horse_ratings", self._merge_horse_ratings)
         _step("person_yearly", self._merge_person_yearly)
+        _step("person_te", self._merge_person_target_encoding)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -326,6 +328,37 @@ class DataMerger:
             res = res.merge(sub.drop_duplicates([idcol, "_pry"]), on=[idcol, "_pry"], how="left")
 
         self._results = res.drop(columns=["_pry", "_breeder_tmp"], errors="ignore").set_index("race_id")
+
+    def _merge_person_target_encoding(self):
+        """騎手/調教師/馬主(×context) の全履歴 expanding target-encoding を付与する（PyCon A1/A2）。
+
+        `_merge_person_yearly`（前年の年度集計）より細粒度で、results 履歴から
+        **当該レースより厳密に過去（date<自分・同日も除外）** の勝率/複勝率を集計しスムージング
+        （少数カテゴリを全体平均へ縮小）する。学習・推論で同一計算・リーク無し（`_target_encoding`
+        の単体テストで担保）。列（context 含む）が無い spec は自動スキップ。
+
+        env: ``KEIBA_DISABLE_PERSON_TE=1`` で無効化 / ``KEIBA_TE_ALPHA`` でスムージング強度（既定20）。
+        ライブ推論は別途スナップショット経路が要る（未整備なので backtest 特徴として先行導入）。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_PERSON_TE") == "1":
+            return
+        if "date" not in self._results.columns or ResultsCols.RANK not in self._results.columns:
+            return
+        from src.preprocessing._target_encoding import build_person_form_features
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = build_person_form_features(
+            self._results, date_col="date", rank_col=ResultsCols.RANK, alpha=alpha
+        )
+        if feats.shape[1] == 0:
+            logger.info("[person_te] 付与できる列がありません（entity/context 列不足）")
+            return
+        # feats は self._results と同一行順（positional）。重複 index に強い to_numpy 代入。
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[person_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。
