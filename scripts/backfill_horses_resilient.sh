@@ -16,13 +16,18 @@
 #   KEIBA_SCRAPE_DELAY            リクエスト間隔秒（既定 6.0）
 #   KEIBA_MAX_REQUESTS_PER_HOUR  時間あたり上限（既定 300）
 #   KEIBA_SKIP_PEDS              血統を分離（既定 1。peds は後で backfill-peds）
-#   KEIBA_SCRAPE_BACKOFF        run 内ブロック時の基準バックオフ秒（既定 30 → 30,60,120,...）
-#   KEIBA_SCRAPE_MAX_RETRY      run 内の同一馬リトライ回数（既定 5）
-#   KEIBA_SCRAPE_ABORT_AFTER    連続ブロックで run 中断する閾値（既定 12。従来 5 より高め）
-#   COOLDOWN_BASE_SEC           run 中断後のクールダウン基準秒（既定 300=5分）
-#   COOLDOWN_MAX_SEC            クールダウン上限秒（既定 1800=30分）
+#   KEIBA_SCRAPE_BACKOFF        run 内ブロック時の基準バックオフ秒（既定 5。長い待機はラッパー側に集約）
+#   KEIBA_SCRAPE_MAX_RETRY      run 内の同一馬リトライ回数（既定 1。BAN中に1頭を粘っても無駄なので即諦める）
+#   KEIBA_SCRAPE_ABORT_AFTER    連続ブロックで run 中断する閾値（既定 4。BANを速く検知しラッパーの長休憩へ）
+#   COOLDOWN_BASE_SEC           run 中断後のクールダウン基準秒（既定 1800=30分。ソフトBANを跨ぐ）
+#   COOLDOWN_MAX_SEC            クールダウン上限秒（既定 7200=2時間）
 #   MAX_ITERS                   ラッパーの最大反復回数（既定 200。無限ループ保険）
 #   STALL_LIMIT                 残頭数が減らない連続回数の許容上限（既定 6）。超えたら中止。
+#
+# 設計方針（重要）: netkeiba のソフトBANは1リクエストの間隔ではなく「短時間の累積量」で発動し、
+# 解除に数十分かかる。ページ自体は正常なので、BAN中に同一馬をリトライしても無意味。
+# よって「1頭は即諦め(MAX_RETRY=1)、連続ブロックを速く検知(ABORT_AFTER=4)して run を抜け、
+# ラッパーが長く(30分〜)休んでから再開」する。長い待機は run 内ではなくラッパー側が持つ。
 
 set -uo pipefail
 
@@ -42,12 +47,12 @@ fi
 export KEIBA_SCRAPE_DELAY="${KEIBA_SCRAPE_DELAY:-6.0}"
 export KEIBA_MAX_REQUESTS_PER_HOUR="${KEIBA_MAX_REQUESTS_PER_HOUR:-300}"
 export KEIBA_SKIP_PEDS="${KEIBA_SKIP_PEDS:-1}"
-export KEIBA_SCRAPE_BACKOFF="${KEIBA_SCRAPE_BACKOFF:-30}"
-export KEIBA_SCRAPE_MAX_RETRY="${KEIBA_SCRAPE_MAX_RETRY:-5}"
-export KEIBA_SCRAPE_ABORT_AFTER="${KEIBA_SCRAPE_ABORT_AFTER:-12}"
+export KEIBA_SCRAPE_BACKOFF="${KEIBA_SCRAPE_BACKOFF:-5}"
+export KEIBA_SCRAPE_MAX_RETRY="${KEIBA_SCRAPE_MAX_RETRY:-1}"
+export KEIBA_SCRAPE_ABORT_AFTER="${KEIBA_SCRAPE_ABORT_AFTER:-4}"
 
-COOLDOWN_BASE_SEC="${COOLDOWN_BASE_SEC:-300}"
-COOLDOWN_MAX_SEC="${COOLDOWN_MAX_SEC:-1800}"
+COOLDOWN_BASE_SEC="${COOLDOWN_BASE_SEC:-1800}"
+COOLDOWN_MAX_SEC="${COOLDOWN_MAX_SEC:-7200}"
 MAX_ITERS="${MAX_ITERS:-200}"
 STALL_LIMIT="${STALL_LIMIT:-6}"
 
