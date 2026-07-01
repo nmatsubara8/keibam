@@ -63,8 +63,8 @@ def _fit_conditional_logit(X, race_ids, y_win, l2):
     from scipy.optimize import minimize
 
     order = np.argsort(race_ids.astype(str), kind="stable")
-    Xs = np.ascontiguousarray(X[order])
-    ys = y_win[order].astype(float)
+    Xs = np.ascontiguousarray(X[order], dtype="float64")
+    ys = y_win[order].astype("float64")
     race_sorted = race_ids.astype(str)[order]
     _, starts = np.unique(race_sorted, return_index=True)
     starts = np.sort(starts)
@@ -168,8 +168,9 @@ def main():
     med, mean, std = med[keep], mean[keep], std[keep]
 
     def _design(df):
-        z = (df[keep].fillna(med) - mean) / std
-        return z.fillna(0.0).to_numpy()
+        # nullable 型（Int64/Float64）が混ざると object 配列になり np.exp が落ちるため float64 に明示変換
+        z = (df[keep].astype("float64").fillna(med) - mean) / std
+        return z.fillna(0.0).to_numpy(dtype="float64")
 
     # 学習: 勝ち馬のあるレースのみ
     y_tr = _actual_win(tr).to_numpy()
