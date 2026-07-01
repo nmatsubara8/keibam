@@ -147,7 +147,7 @@ def main():
     head = "win-head" if win_ai is not None else "place-head"
 
     won = _actual_win(oos)
-    table = ExpectedValueScorePolicy.calc(score_model, oos)
+    table = CL.calc_score_table(score_model, oos)
     edge = build_edge_frame(table, won.to_numpy())
     edge["p_ranker"] = [rank_map.get((str(r), int(u)), np.nan)
                         for r, u in zip(edge.index.astype(str), edge["umaban"])]

@@ -27,6 +27,27 @@ sys.path.insert(0, str(Path(__file__).parent))
 warnings.filterwarnings("ignore", message="X does not have valid feature names", category=UserWarning)
 
 
+def calc_score_table(score_model, X):
+    """ExpectedValueScorePolicy.calc を呼び、特徴数不一致は retrain を促す明確なメッセージに変換する。
+
+    rebuild-featured で featured の列が増える/減ると、学習済みモデルの期待特徴数とズレて
+    predict_proba が ValueError になる。その場合は「retrain が必要」と案内して終了する。
+    """
+    from src.policies._score_policy import ExpectedValueScorePolicy
+
+    try:
+        return ExpectedValueScorePolicy.calc(score_model, X)
+    except ValueError as e:  # noqa: BLE001
+        if "features" in str(e):
+            raise SystemExit(
+                f"特徴数不一致: {e}\n"
+                "→ rebuild-featured で featured の列が変わっています。先に retrain してください:\n"
+                "   python -m src.pipeline.run_pipeline retrain --holdout-years <OOS年>\n"
+                "  （例: --holdout-years 2026 → その後この評価を再実行）"
+            ) from e
+        raise
+
+
 def _ece(prob, won, n_bins=10):
     """Expected Calibration Error（等頻度ビンで |平均予測 − 実勝率| を加重平均）。"""
     import numpy as np
@@ -212,7 +233,7 @@ def main():
     head = "win-head" if win_ai is not None else "place-head"
 
     won = _actual_win(oos)
-    table = ExpectedValueScorePolicy.calc(score_model, oos)
+    table = calc_score_table(score_model, oos)
     edge = build_edge_frame(table, won.to_numpy())
     edge["p_clogit"] = [clogit_map.get((str(r), int(u)), np.nan)
                         for r, u in zip(edge.index.astype(str), edge["umaban"])]
