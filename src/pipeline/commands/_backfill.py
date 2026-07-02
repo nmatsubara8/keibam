@@ -182,7 +182,16 @@ def _backfill_horses(args: argparse.Namespace) -> None:
     """
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import load_raw
+    from src.pipeline._single_instance import AlreadyRunning, acquire_scrape_lock
     from src.preparing._data_source import create_data_source
+
+    # 多重起動防止: 別の netkeiba 取得処理が稼働中なら中止（二重アクセスは BAN の主因）。
+    # _scrape_lock は関数終了まで保持し続けること（fd が閉じるとロック解放）。
+    try:
+        _scrape_lock = acquire_scrape_lock("backfill-horses")  # noqa: F841
+    except AlreadyRunning as e:
+        logger.error("[backfill-horses] %s", e)
+        return
 
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
     if res.empty or "horse_id" not in res.columns:
@@ -220,7 +229,15 @@ def _backfill_peds(args: argparse.Namespace) -> None:
     """
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import load_raw
+    from src.pipeline._single_instance import AlreadyRunning, acquire_scrape_lock
     from src.preparing._data_source import create_data_source
+
+    # 多重起動防止（backfill-horses と共有のロック。netkeiba への同時アクセスを一本化）。
+    try:
+        _scrape_lock = acquire_scrape_lock("backfill-peds")  # noqa: F841
+    except AlreadyRunning as e:
+        logger.error("[backfill-peds] %s", e)
+        return
 
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
     if res.empty or "horse_id" not in res.columns:

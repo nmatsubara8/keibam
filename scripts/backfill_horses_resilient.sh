@@ -60,6 +60,19 @@ TS() { date '+%Y-%m-%d %H:%M:%S'; }
 RUN_LOG="$LOG_DIR/backfill_horses_$(date '+%Y%m%d_%H%M%S').log"
 say() { echo "[$(TS)] $*" | tee -a "$RUN_LOG"; }
 
+# --- 多重起動防止（ラッパー同士）---
+# ラッパーの二重起動を fd 9 の flock で弾く。実際の netkeiba 取得の排他は Python 側
+# (src/pipeline/_single_instance.py) が別ロックで担保するので、両方あって二重に安全。
+# flock が無い環境（稀）はこの事前チェックを飛ばし、Python 側ロックに委ねる。
+WRAPPER_LOCK="${KEIBA_WRAPPER_LOCK:-/tmp/keibam_backfill_wrapper.lock}"
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"$WRAPPER_LOCK"
+    if ! flock -n 9; then
+        echo "[$(TS)] 別の backfill ラッパーが稼働中です（lock: $WRAPPER_LOCK）。二重起動を防止して終了します。" | tee -a "$RUN_LOG"
+        exit 1
+    fi
+fi
+
 # Ctrl-C で即座に止める（クールダウン sleep 中でも抜ける）
 INTERRUPTED=0
 trap 'INTERRUPTED=1; say "中断シグナル受信。停止します。"; exit 130' INT TERM
