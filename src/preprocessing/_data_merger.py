@@ -372,6 +372,29 @@ class DataMerger:
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
+        # KEIBA_FORM_FROM_RESULTS=1: 馬ページ未取得の馬の form を results 自己結合で補完する。
+        # 率・適性・距離・馬場系が scraping 無しで埋まる（速度/脚質/クラス系はページ固有列が
+        # 無いため既存ガードで自動スキップ）。リーク回避は下段の date スライスに委譲。
+        import os as _os
+
+        if _os.environ.get("KEIBA_FORM_FROM_RESULTS") == "1":
+            from src.preprocessing._horse_features import build_horse_results_from_results
+
+            scraped_ids = (
+                set(self._horse_results.index.astype(str))
+                if not self._horse_results.empty else set()
+            )
+            recon = build_horse_results_from_results(self._results)
+            if not recon.empty:
+                recon = recon[~recon.index.astype(str).isin(scraped_ids)]  # 未取得馬のみ（二重計上回避）
+            if not recon.empty:
+                before = len(self._horse_results)
+                self._horse_results = pd.concat([self._horse_results, recon])
+                logger.info(
+                    "[form-from-results] 未取得馬 %d 頭・%d 行を results から補完（%d→%d 行）",
+                    recon.index.nunique(), len(recon), before, len(self._horse_results),
+                )
+
         # peds_0=父(sire), peds_32=母父(broodmare sire)。実データ検証で母=peds_31(各馬ほぼ固有)、
         # その次の peds_32 が母父(199ユニーク・父と12%重複)と確認。存在する血統列を horse_results に
         # 付与し、過去走の産駒成績から sire/damsire 集計に使う。

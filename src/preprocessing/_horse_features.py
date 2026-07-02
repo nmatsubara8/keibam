@@ -22,6 +22,55 @@ def filter_horse_results(horse_results: pd.DataFrame, n_races: int) -> pd.DataFr
     return horse_results.sort_values("date", ascending=False).groupby(level=0).head(n_races)
 
 
+def build_horse_results_from_results(results: pd.DataFrame) -> pd.DataFrame:
+    """results（race_info マージ済み）から horse_results 相当フレームを再構成する（index=horse_id）。
+
+    馬ページ(horse_results)を取得できていない馬の form を、既存の results 履歴だけから埋めるための
+    アダプタ。着順/頭数/馬場/開催/course_len/race_type/斤量/騎手(=jockey_id)/date を
+    HorseResultsCols 名で持つ（各行＝その馬の1過去走）。
+
+    通過(CORNER)/タイム(speed_figure)/賞金(PRIZE)/レース名(RACE_NAME) は results に無いため付けない。
+    → `add_pace_stats`/`add_speed_figure_stats`/`add_race_class_stats`/`add_opponent_strength_stats`
+    は列不在で自動スキップし、率・適性・距離・馬場系のみが計算される（既存ガードに委譲）。
+
+    リーク回避は呼び出し側の date スライス（date<target を searchsorted）に委ねる。ここでは
+    純粋に「results の各行を過去走レコードへ写像」するだけ（着順という結果は過去走の事実であり、
+    当該レースは date スライスで除外されるため漏れない）。
+    """
+    from src.constants._master import Master
+    from src.constants._results_cols import ResultsCols
+
+    if results is None or results.empty or "horse_id" not in results.columns:
+        return pd.DataFrame()
+
+    df = results.reset_index(drop=False) if results.index.name else results.copy()
+    n = len(df)
+    out = pd.DataFrame(index=range(n))
+    out["horse_id"] = df["horse_id"].astype(str).str.replace(r"\.0$", "", regex=True).to_numpy()
+    out["date"] = pd.to_datetime(df.get("date"), errors="coerce").to_numpy()
+    out[HRCols.RANK] = pd.to_numeric(df.get(ResultsCols.RANK), errors="coerce").to_numpy()
+    if "n_horses" in df.columns:
+        out[HRCols.N_HORSES] = pd.to_numeric(df["n_horses"], errors="coerce").to_numpy()
+    for src_col, dst in (("course_len", "course_len"), ("race_type", "race_type"),
+                         (ResultsCols.KINRYO, HRCols.KINRYO), ("開催", HRCols.PLACE)):
+        if src_col in df.columns:
+            out[dst] = df[src_col].to_numpy()
+    if "jockey_id" in df.columns:  # 乗替判定(jockey_change)の代理
+        out[HRCols.JOCKEY] = df["jockey_id"].astype(str).to_numpy()
+
+    # 実効馬場: 芝は ground_state1、ダートは ground_state2（add_type_ground_stats と同規約）
+    gs1 = df["ground_state1"] if "ground_state1" in df.columns else None
+    gs2 = df["ground_state2"] if "ground_state2" in df.columns else None
+    ground = gs1 if gs1 is not None else gs2
+    if gs1 is not None and gs2 is not None and "race_type" in df.columns:
+        ground = gs1.where(df["race_type"] != Master.RACE_TYPE_DIRT, gs2)
+    if ground is not None:
+        out[HRCols.GROUND_STATE] = ground.to_numpy()
+
+    out = out.dropna(subset=["horse_id", "date", HRCols.RANK])
+    return out.set_index("horse_id")
+
+
 def summarize(horse_results: pd.DataFrame, target_cols: list) -> pd.DataFrame:
     """§2i: horse_id ごとに target_cols を AGG_STATS で多統計量集計する。
 
