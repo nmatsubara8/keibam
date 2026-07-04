@@ -43,6 +43,21 @@ warnings.filterwarnings(
 
 logger = logging.getLogger(__name__)
 
+# LightGBM の [Warning]（tuned params が feature_fraction 等の native 名で colsample_bytree 等の
+# sklearn 別名を上書き→無害な警告）を予測ごとに大量出力するのを抑制する。ERROR だけ残す。
+try:  # pragma: no cover - ログ設定のみ
+    import lightgbm as _lgb
+
+    _lgb_logger = logging.getLogger("lightgbm")
+    _lgb_logger.setLevel(logging.ERROR)
+    _lgb.register_logger(_lgb_logger)
+except Exception:  # noqa: BLE001 — lightgbm 未導入/旧版でも予測本体は動かす
+    pass
+
+# ライブ推論は form-from-results を既定 ON にする（学習が form 込みのため。未設定だと serve で
+# 率系 form が 0 埋めされ train/serve skew になる）。明示的に 0 を指定した場合のみ無効化。
+os.environ.setdefault("KEIBA_FORM_FROM_RESULTS", "1")
+
 
 _ORANGE = "38;5;208"  # オレンジ: 消滅可能性が高い（推奨中だが EV が閾値近接＆下落中）
 _GRAY = "90"          # グレー: 既に消滅（推奨から外れた・参考表示）
