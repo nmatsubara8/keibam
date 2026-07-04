@@ -158,6 +158,8 @@ class ShutubaDataMerger(DataMerger):
         self._merge_yoso_shutuba()    # 予想印の consensus 特徴（当該レースの印から）
         self._merge_live_ratings()
         self._merge_horse_results()
+        self._merge_horse_info()
+        self._merge_peds()
 
     def _merge_yoso_shutuba(self) -> None:
         """予想印の consensus 特徴（yoso_score_sum / yoso_n_marks 等）を当該レースの印から付与する。
@@ -178,8 +180,6 @@ class ShutubaDataMerger(DataMerger):
             logger.info("[yoso-serve] consensus %d 列を付与: %s", len(added), added)
         except Exception as e:  # noqa: BLE001 — yoso 失敗で予測全体を止めない
             logger.warning("[yoso-serve] 失敗（0埋めにフォールバック）: %s", e)
-        self._merge_horse_info()
-        self._merge_peds()
 
     def _merge_person_target_encoding_shutuba(self) -> None:
         """ライブ推論で person_te（騎手/調教師/馬主×context）を履歴スナップショットから as-of 再計算する。
