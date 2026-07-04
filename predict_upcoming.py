@@ -490,6 +490,17 @@ def _align_features(featured, model):
     extra = [c for c in featured.columns if c not in names and c not in meta]
     if missing or extra:
         logger.info("列整合: 不足%d列を0埋め / 余分%d列を除外", len(missing), len(extra))
+        # KEIBA_DUMP_MISSING_FEATURES=<path> で不足列名を全て書き出す（serve/train skew 診断用）。
+        import os as _os
+
+        dump = _os.environ.get("KEIBA_DUMP_MISSING_FEATURES")
+        if dump and missing:
+            try:
+                with open(dump, "w", encoding="utf-8") as _f:
+                    _f.write("\n".join(missing))
+                logger.info("列整合: 不足列名を書き出し → %s", dump)
+            except Exception as _e:  # noqa: BLE001
+                logger.warning("列整合: 不足列ダンプ失敗: %s", _e)
     x_feat = featured.reindex(columns=feat, fill_value=0)
     out = pd.concat([featured[meta], x_feat], axis=1)
     out.index = featured.index
