@@ -68,6 +68,23 @@ class ShutubaDataMerger(DataMerger):
         self._history_results: pd.DataFrame | None = self._load_serve_history()
         # form-from-results の再構成元（基底 _merge_horse_results が参照）。serve は履歴から。
         self._form_history_results = self._history_results
+        # 前年の人物年度別成績（jockey_py_* 等）。学習時と同じ RAW_PERSON_YEARLY_PATH を読む。
+        self._person_yearly = self._load_person_yearly()
+
+    @staticmethod
+    def _load_person_yearly():
+        import os
+
+        from src.constants._local_paths import LocalPaths
+
+        path = LocalPaths.RAW_PERSON_YEARLY_PATH
+        if not path or not os.path.isfile(path):
+            return pd.DataFrame()
+        try:
+            df = pd.read_pickle(path)
+            return df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+        except Exception:  # noqa: BLE001
+            return pd.DataFrame()
 
     @staticmethod
     def _load_serve_history():
@@ -131,6 +148,7 @@ class ShutubaDataMerger(DataMerger):
         # **_merge_horse_results より前**に実行しないと merged_data に載らず 0 埋めされる
         # （学習時は person_te/horse_ratings が horse_results ステップより前なので載る）。
         self._merge_person_target_encoding_shutuba()
+        self._merge_person_yearly()   # jockey_py_* 等（前年集計）。horse_results より前で merged_data に載せる
         self._merge_live_ratings()
         self._merge_horse_results()
         self._merge_horse_info()
