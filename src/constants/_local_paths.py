@@ -40,6 +40,8 @@ class LocalPaths:
     ### 馬の Elo レーティングの最新スナップショット（horse_id→{rating,n_races}）。
     ### featured 構築時に書き出し、ライブ予測（未来レース）の特徴量再現に使う。
     HORSE_RATINGS_PATH: str = os.path.join(RAW_DIR, "horse_ratings.json")
+    ### ライブ推論用 履歴スナップショット（results 履歴由来の person_te / form を serve で再計算する）
+    SERVE_HISTORY_PATH: str = os.path.join(RAW_DIR, "serve_history.pkl")
     ### オッズ力学モデルの予測テーブル（チェックポイント別の次時点/確定予測）
     RAW_ODDS_PREDICTIONS_PATH: str = os.path.join(RAW_DIR, "odds_predictions.pkl")
     ### 前処理済み特徴量データ（FeatureEngineering 出力、再学習の入力）

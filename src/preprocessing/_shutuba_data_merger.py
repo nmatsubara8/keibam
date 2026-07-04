@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from src.constants._results_cols import ResultsCols
 from src.preprocessing._horse_info_processor import HorseInfoProcessor
 from src.preprocessing._horse_results_processor import HorseResultsProcessor
 from src.preprocessing._peds_processor import PedsProcessor
@@ -62,6 +63,26 @@ class ShutubaDataMerger(DataMerger):
         self._race_info: pd.DataFrame | None = (
             race_info_processor.preprocessed_data if race_info_processor is not None else None
         )
+        # ライブ推論用 履歴スナップショット（results 履歴由来の person_te / form を serve で再計算）。
+        # 学習時に _write_serve_history が保存したもの。無ければ None（従来どおり 0 埋めにフォールバック）。
+        self._history_results: pd.DataFrame | None = self._load_serve_history()
+        # form-from-results の再構成元（基底 _merge_horse_results が参照）。serve は履歴から。
+        self._form_history_results = self._history_results
+
+    @staticmethod
+    def _load_serve_history():
+        import os
+
+        from src.constants._local_paths import LocalPaths
+
+        path = LocalPaths.SERVE_HISTORY_PATH
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            df = pd.read_pickle(path)
+            return df if isinstance(df, pd.DataFrame) and not df.empty else None
+        except Exception:  # noqa: BLE001
+            return None
 
     def _merge_race_info_shutuba(self) -> None:
         """shutuba パイプライン専用の race_info 結合。
@@ -106,9 +127,43 @@ class ShutubaDataMerger(DataMerger):
                 len(self._race_info.columns),
             )
         self._merge_horse_results()
+        self._merge_person_target_encoding_shutuba()
         self._merge_horse_info()
         self._merge_peds()
         self._merge_live_ratings()
+
+    def _merge_person_target_encoding_shutuba(self) -> None:
+        """ライブ推論で person_te（騎手/調教師/馬主×context）を履歴スナップショットから as-of 再計算する。
+
+        学習時 `_merge_person_target_encoding` と同じ `build_person_form_features` を、履歴＋出馬表の
+        結合に適用し出馬表行の encoding を取り出す（train/serve skew ゼロ）。履歴/日付が無ければスキップ
+        （従来どおり 0 埋めにフォールバック）。env `KEIBA_DISABLE_PERSON_TE=1` で無効化。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_PERSON_TE") == "1":
+            return
+        hist = self._history_results
+        if hist is None or hist.empty or ResultsCols.RANK not in hist.columns:
+            return
+        if "date" not in self._results.columns:
+            logger.info("[person_te-serve] 出馬表に date 列が無く as-of 計算不可のためスキップ")
+            return
+        race_date = pd.to_datetime(self._results["date"], errors="coerce").dropna().max()
+        if pd.isna(race_date):
+            return
+        from src.preprocessing._target_encoding import person_te_for_upcoming
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = person_te_for_upcoming(
+            hist, self._results, race_date, date_col="date", rank_col=ResultsCols.RANK, alpha=alpha
+        )
+        if feats.shape[1] == 0:
+            return
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[person_te-serve] %d 列を付与（α=%.0f）: %s",
+                    feats.shape[1], alpha, list(feats.columns))
 
     def _merge_live_ratings(self) -> None:
         """ライブ予測用に Elo スナップショットから出走馬のレーティング特徴を付与する。

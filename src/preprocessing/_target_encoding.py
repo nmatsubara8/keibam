@@ -142,3 +142,31 @@ def build_person_form_features(
             base, keys=keys, target=target, date_col=date_col, alpha=alpha
         )
     return out
+
+
+def person_te_for_upcoming(
+    history_results: pd.DataFrame,
+    upcoming: pd.DataFrame,
+    race_date,
+    specs: list[dict] | None = None,
+    date_col: str = "date",
+    rank_col: str = "着順",
+    alpha: float = 20.0,
+) -> pd.DataFrame:
+    """ライブ推論: 履歴(着順あり)＋出馬表(着順NaN・date=race_date)を結合し、`build_person_form_features`
+    で **出馬表行の as-of encoding だけ** を返す（index=upcoming.index）。
+
+    学習と同一の `expanding_target_encode`（厳密過去）を通すため train/serve skew が出ない。
+    出馬表行の date は発走日にそろえ、履歴（発走日より前）のみが集計対象になる。
+    """
+    hist = history_results.copy()
+    up = upcoming.copy()
+    up[rank_col] = pd.NA
+    up[date_col] = pd.to_datetime(race_date)
+    combined = pd.concat([hist, up], ignore_index=True)
+    feats = build_person_form_features(
+        combined, specs=specs, date_col=date_col, rank_col=rank_col, alpha=alpha
+    )
+    up_feats = feats.iloc[len(hist):].copy()
+    up_feats.index = upcoming.index
+    return up_feats

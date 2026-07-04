@@ -106,6 +106,7 @@ class DataMerger:
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
+        _step("serve_history", self._write_serve_history)
 
         # 旧実装にあった巨大データ(数十万行)の debug CSV ダンプは to_csv だけで数分かかる
         # ため既定で無効化（純粋なサンドボックス用）。KEIBA_DUMP_MERGE_CSV=1 でのみ書き出す。
@@ -329,6 +330,43 @@ class DataMerger:
 
         self._results = res.drop(columns=["_pry", "_breeder_tmp"], errors="ignore").set_index("race_id")
 
+    # ライブ推論(ShutubaDataMerger)が person_te / form-from-results を serve で再計算するために
+    # 必要な results 履歴の列（着順・date・entity・context）。FeatureEngineering で改名/dummy化される
+    # 前の生列をここで確保して永続化する。
+    _SERVE_HISTORY_COLS: ClassVar[tuple] = (
+        "horse_id", "jockey_id", "trainer_id", "owner_id", "着順", "n_horses",
+        "date", "course_len", "race_type", "ground_state1", "ground_state2", "開催", "斤量",
+    )
+
+    def _write_serve_history(self) -> None:
+        """ライブ推論用の履歴スナップショット（slim）を保存する（学習時のみ）。
+
+        merge 済み self._merged_data から person_te / form 再構成に必要な列だけを抜き出し、
+        SERVE_HISTORY_PATH に保存。ShutubaDataMerger が読み、train と同じ関数で serve 特徴を
+        再計算する（train/serve skew ゼロ）。失敗は non-fatal。
+        """
+        import os
+
+        from src.constants._local_paths import LocalPaths
+
+        df = self._merged_data
+        if df is None or df.empty:
+            return
+        cols = [c for c in self._SERVE_HISTORY_COLS if c in df.columns]
+        if not {"horse_id", "着順", "date"}.issubset(cols):
+            logger.warning("[serve-history] 必要列不足のためスキップ（horse_id/着順/date）")
+            return
+        try:
+            snap = df[cols].copy()
+            os.makedirs(os.path.dirname(LocalPaths.SERVE_HISTORY_PATH), exist_ok=True)
+            snap.to_pickle(LocalPaths.SERVE_HISTORY_PATH)
+            logger.info(
+                "[serve-history] %d 行・%d 列を保存: %s",
+                len(snap), len(cols), LocalPaths.SERVE_HISTORY_PATH,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[serve-history] 保存失敗(non-fatal): %s", e)
+
     def _merge_person_target_encoding(self):
         """騎手/調教師/馬主(×context) の全履歴 expanding target-encoding を付与する（PyCon A1/A2）。
 
@@ -384,7 +422,12 @@ class DataMerger:
                 set(self._horse_results.index.astype(str))
                 if not self._horse_results.empty else set()
             )
-            recon = build_horse_results_from_results(self._results)
+            # 学習は self._results（＝全レース履歴）から。ライブ推論(ShutubaDataMerger)は
+            # self._results が出馬表（着順なし）なので、注入された履歴スナップショットから再構成する。
+            recon_source = getattr(self, "_form_history_results", None)
+            if recon_source is None:
+                recon_source = self._results
+            recon = build_horse_results_from_results(recon_source)
             if not recon.empty:
                 recon = recon[~recon.index.astype(str).isin(scraped_ids)]  # 未取得馬のみ（二重計上回避）
             if not recon.empty:
