@@ -126,11 +126,15 @@ class ShutubaDataMerger(DataMerger):
                 "[ShutubaDataMerger] race_info joined: %d cols added",
                 len(self._race_info.columns),
             )
-        self._merge_horse_results()
+        # person_te / Elo は self._results に列を足す。FeatureEngineering は merged_data を読み、
+        # merged_data は _merge_horse_results で self._results から確定される。よって両者は
+        # **_merge_horse_results より前**に実行しないと merged_data に載らず 0 埋めされる
+        # （学習時は person_te/horse_ratings が horse_results ステップより前なので載る）。
         self._merge_person_target_encoding_shutuba()
+        self._merge_live_ratings()
+        self._merge_horse_results()
         self._merge_horse_info()
         self._merge_peds()
-        self._merge_live_ratings()
 
     def _merge_person_target_encoding_shutuba(self) -> None:
         """ライブ推論で person_te（騎手/調教師/馬主×context）を履歴スナップショットから as-of 再計算する。
