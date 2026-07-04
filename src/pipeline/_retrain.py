@@ -218,9 +218,19 @@ class RetrainJob:
 
         # Win ヘッド（target=rank_win=1着）を併せて学習・保存（Stage B）。
         # Place ヘッド（top3）の保存後に行い、失敗しても本体 retrain は壊さない。
+        # Win ヘッドは Optuna を再実行しない設計なので、--with-tuning 時は Place 側で探索した
+        # best params を流用する（無いと Win ヘッドだけ既定パラメータのまま＝評価/Benter 合成が
+        # 使う Win 勝率にチューニング効果が全く反映されない）。明示 lgb_params 優先。
+        win_lgb_params = lgb_params
+        if not win_lgb_params and with_tuning and study is not None:
+            try:
+                win_lgb_params = dict(study.best_params)
+                logger.info("[retrain] Win ヘッドに Place 探索の best params を流用します")
+            except Exception as e:  # noqa: BLE001 — 取得失敗時は既定にフォールバック
+                logger.warning("[retrain] best params 取得失敗、Win ヘッドは既定で学習: %s", e)
         if self._cfg.train_win_head:
             win_metrics = self._train_and_save_win_head(
-                featured_data, vname, lgb_params, base_models_config
+                featured_data, vname, win_lgb_params, base_models_config
             )
             if win_metrics is not None:
                 meta["win_head"] = win_metrics

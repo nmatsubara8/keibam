@@ -305,6 +305,77 @@ def test_retrain_trains_and_saves_win_head(tmp_path):
     assert "win_head" in meta and "auc_test" in meta["win_head"]
 
 
+def test_retrain_win_head_reuses_tuned_params(tmp_path):
+    """--with-tuning 時、Place 探索の best_params が Win ヘッドにも流用される（既定パラメータのままにしない）。"""
+    tuned = {"num_leaves": 15, "learning_rate": 0.0076, "path_smooth": 18.0}
+
+    class _FakeStudy:
+        best_params = tuned
+        trials: list = []
+
+    class _ParamHeadAI(_LightAI):
+        def __init__(self, target_col):
+            super().__init__(target_col)
+            self.injected_params = None
+            if target_col == "rank":  # Place ヘッドだけが探索結果 study を持つ
+                self.tuning_study_ = _FakeStudy()
+
+        def set_lgb_params(self, params):
+            self.injected_params = params
+
+    class _ParamTwoHeadFactory(_TwoHeadFactory):
+        def __init__(self):
+            super().__init__()
+            self.ais: dict = {}
+
+        def create(self, featured_data, test_size, valid_size, target_col="rank"):
+            self.created.append(target_col)
+            ai = _ParamHeadAI(target_col)
+            self.ais[target_col] = ai
+            return ai
+
+    factory = _ParamTwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    job.run(_make_featured(), vname="v_tuned", with_tuning=True)
+
+    # Win ヘッドが Place 探索の best_params を受け取っている（既定パラメータのままではない）
+    assert factory.ais["rank_win"].injected_params == tuned
+    # Place ヘッドは探索経由なので set_lgb_params は呼ばれない
+    assert factory.ais["rank"].injected_params is None
+
+
+def test_retrain_win_head_prefers_explicit_lgb_params(tmp_path):
+    """明示 lgb_params 指定時は（tuning より）そちらを Win ヘッドへ注入する。"""
+    explicit = {"num_leaves": 31}
+
+    class _ParamHeadAI(_LightAI):
+        def __init__(self, target_col):
+            super().__init__(target_col)
+            self.injected_params = None
+
+        def set_lgb_params(self, params):
+            self.injected_params = params
+
+    class _ParamTwoHeadFactory(_TwoHeadFactory):
+        def __init__(self):
+            super().__init__()
+            self.ais: dict = {}
+
+        def create(self, featured_data, test_size, valid_size, target_col="rank"):
+            self.created.append(target_col)
+            ai = _ParamHeadAI(target_col)
+            self.ais[target_col] = ai
+            return ai
+
+    factory = _ParamTwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    job.run(_make_featured(), vname="v_expl", lgb_params=explicit, params_rank=1)
+
+    assert factory.ais["rank_win"].injected_params == explicit
+
+
 def test_retrain_skips_win_head_when_disabled(tmp_path):
     factory = _TwoHeadFactory()
     cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=False)
