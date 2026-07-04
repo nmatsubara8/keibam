@@ -290,6 +290,7 @@ def _build_featured(shutuba_df):
         return (
             FeatureEngineering(merger)
             .add_interval().add_agedays()
+            .add_derived_features()      # 単勝_log(最有力) 等: 暫定オッズ/斤量/interval から serve でも算出
             .add_date_cyclical()
             .add_interaction_features().add_race_level_zscore()
             .dumminize_kaisai().dumminize_sex().dumminize_weather()
