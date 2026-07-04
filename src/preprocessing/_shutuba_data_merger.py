@@ -70,6 +70,12 @@ class ShutubaDataMerger(DataMerger):
         self._form_history_results = self._history_results
         # 前年の人物年度別成績（jockey_py_* 等）。学習時と同じ RAW_PERSON_YEARLY_PATH を読む。
         self._person_yearly = self._load_person_yearly()
+        # 予想印（yoso）: 当該レースの印は predict_upcoming が set_upcoming_yoso_marks で注入する。
+        self._upcoming_yoso_marks = None
+
+    def set_upcoming_yoso_marks(self, marks) -> None:
+        """当該レースの予想印（fetch_pro_yoso_marks の戻り値・ロング形式）を注入する。"""
+        self._upcoming_yoso_marks = marks
 
     @staticmethod
     def _load_person_yearly():
@@ -149,8 +155,29 @@ class ShutubaDataMerger(DataMerger):
         # （学習時は person_te/horse_ratings が horse_results ステップより前なので載る）。
         self._merge_person_target_encoding_shutuba()
         self._merge_person_yearly()   # jockey_py_* 等（前年集計）。horse_results より前で merged_data に載せる
+        self._merge_yoso_shutuba()    # 予想印の consensus 特徴（当該レースの印から）
         self._merge_live_ratings()
         self._merge_horse_results()
+
+    def _merge_yoso_shutuba(self) -> None:
+        """予想印の consensus 特徴（yoso_score_sum / yoso_n_marks 等）を当該レースの印から付与する。
+
+        当該レースの印（set_upcoming_yoso_marks で注入）だけで算出できる集約系を、学習と同じ
+        `_yoso_features.merge_yoso_marks` で self._results に結合する（horse_results より前なので
+        merged_data に載る）。予想家スキル/プロフィール（履歴の印＋着順 as-of / predictor プロフィール）
+        は別途。印が無ければ何もしない（従来どおり 0 埋め）。全て guarded（失敗時も予測を止めない）。
+        """
+        marks = self._upcoming_yoso_marks
+        if marks is None or getattr(marks, "empty", True):
+            return
+        try:
+            from src.preprocessing import _yoso_features as _yf
+
+            self._results = _yf.merge_yoso_marks(self._results, marks)
+            added = [c for c in self._results.columns if c.startswith("yoso_")]
+            logger.info("[yoso-serve] consensus %d 列を付与: %s", len(added), added)
+        except Exception as e:  # noqa: BLE001 — yoso 失敗で予測全体を止めない
+            logger.warning("[yoso-serve] 失敗（0埋めにフォールバック）: %s", e)
         self._merge_horse_info()
         self._merge_peds()
 

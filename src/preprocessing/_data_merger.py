@@ -334,7 +334,7 @@ class DataMerger:
     # 必要な results 履歴の列（着順・date・entity・context）。FeatureEngineering で改名/dummy化される
     # 前の生列をここで確保して永続化する。
     _SERVE_HISTORY_COLS: ClassVar[tuple] = (
-        "horse_id", "jockey_id", "trainer_id", "owner_id", "着順", "n_horses",
+        "horse_id", "jockey_id", "trainer_id", "owner_id", "馬番", "着順", "n_horses",
         "date", "course_len", "race_type", "ground_state1", "ground_state2", "開催", "斤量",
     )
 

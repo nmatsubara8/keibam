@@ -244,6 +244,36 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     return pd.concat(frames), post_of
 
 
+def _scrape_upcoming_yoso_marks(race_ids):
+    """発走前の予想印を race_id ごとに取得しロング形式で結合する（yoso consensus 特徴用）。
+
+    `fetch_pro_yoso_marks` は uma_id→馬番 変換込み・取得失敗は空を返す（非致命）。ポライトネスの
+    間隔を1件ごとに挟む。全滅（誰の印も無い/非公開）なら None を返し、呼び出し側は yoso をスキップ。
+    """
+    import time
+
+    import pandas as pd
+
+    from src.preparing._rate_limiter import polite_interval
+    from src.preparing._yoso_marks import fetch_pro_yoso_marks
+
+    frames = []
+    for i, rid in enumerate(race_ids):
+        if i > 0:
+            iv = polite_interval()
+            if iv > 0:
+                time.sleep(iv)
+        try:
+            df = fetch_pro_yoso_marks(str(rid))
+            if df is not None and not df.empty:
+                frames.append(df)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("予想印取得失敗 race_id=%s: %s", rid, e)
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+
 def _build_featured(shutuba_df):
     """出馬表 DataFrame → 学習と同じ特徴量セットの featured_data を構築する。
 
@@ -286,6 +316,13 @@ def _build_featured(shutuba_df):
             group_cols=["騎手"],
             race_info_processor=RaceInfoProcessor(paths.RAW_RACE_INFO_PATH),
         )
+        # 予想印（yoso consensus 特徴）を発走前に取得して注入する。取得失敗は空で無害。
+        try:
+            marks = _scrape_upcoming_yoso_marks(list(shutuba_df.index.unique()))
+            if marks is not None and not marks.empty:
+                merger.set_upcoming_yoso_marks(marks)
+        except Exception as e:  # noqa: BLE001 — yoso 取得失敗で予測を止めない
+            logger.warning("予想印の取得に失敗（yoso をスキップ）: %s", e)
         merger.merge()
         return (
             FeatureEngineering(merger)
