@@ -105,6 +105,18 @@ def run_prediction(
         thresholds = {**thresholds, BetType.TANSHO: op_config.tansho_ev_threshold}
     takeout = _load_live_takeout(takeout)
 
+    # 0. 無効オッズ馬の除外（発走前で単勝未確定・取消馬など）。単勝が欠損/非正の馬を残すと、
+    #    Harville/連系が馬番キーで KeyError になり **レース全体の予測が落ちる**。betting 対象に
+    #    ならない馬なので入口で除外し、残る馬だけで予測する。backtest（全馬に確定オッズ）では
+    #    除外0＝無影響。残り<2頭なら選定不能で空を返す。
+    if ResultsCols.TANSHO_ODDS in X.columns:
+        _odds = pd.to_numeric(X[ResultsCols.TANSHO_ODDS], errors="coerce")
+        _valid = _odds > 0
+        if not bool(_valid.all()):
+            X = X[_valid.to_numpy()]
+    if len(X) < 2:
+        return []
+
     # 1. 較正確率 + 現在オッズのテーブル（Place ヘッド=top3 予測）
     table = ExpectedValueScorePolicy.calc(model, X)
     # Stage B: Win ヘッドがあれば、連系の Harville に渡す「勝率」テーブルを別途作る。

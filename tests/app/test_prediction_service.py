@@ -96,6 +96,33 @@ def test_run_prediction_returns_empty_when_no_ev():
     assert result == []
 
 
+class _RowStub:
+    """x の行数に追従して確率を返すスタブ（除外で行数が変わっても shape が合う）。"""
+
+    def predict_proba(self, x):
+        n = len(x)
+        p = np.linspace(0.30, 0.08, n) if n > 1 else np.array([0.2])
+        return np.column_stack([1.0 - p, p])
+
+
+def test_run_prediction_drops_invalid_odds_horse_without_crashing():
+    """単勝が欠損(NaN)/非正の馬がいてもレース全体の予測は落ちず、その馬は買い目に出ない。"""
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3),
+                       (4, 4, float("nan"), 0.25), (5, 5, 0.0, 0.15)])
+    th = {BetType.TANSHO: 1.0, BetType.UMAREN: 1.0, BetType.SANRENPUKU: 1.0}
+    result = run_prediction(_RowStub(), X, _default_op_config(), thresholds=th)
+    assert isinstance(result, list)
+    # 欠損(4)・0倍(5)の馬は組み合わせに一切現れない
+    assert all(4 not in c.combo and 5 not in c.combo for c in result)
+
+
+def test_run_prediction_empty_when_fewer_than_two_valid_odds():
+    """有効オッズ馬が2頭未満なら選定不能で空（クラッシュしない）。"""
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, float("nan"), 0.2)])
+    result = run_prediction(_RowStub(), X, _default_op_config(), thresholds={BetType.TANSHO: 0.0})
+    assert result == []
+
+
 def test_run_prediction_confidence_in_range():
     X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
     model = _StubModel([0.65, 0.25, 0.10])
