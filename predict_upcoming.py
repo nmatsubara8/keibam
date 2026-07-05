@@ -137,13 +137,60 @@ def _fetch_win_odds_map(race_id, odds_source, retries: int = 1, backoff: float =
     return {}
 
 
-def _augment_win_odds(df, race_id, odds_source, delay: float):
+def _fetch_win_and_place(race_id, odds_source, retries: int = 1, backoff: float = 3.0):
+    """b1 ページを 1 回取得し ({馬番: 単勝}, [(馬番, 複勝), ...]) を返す（追加リクエストなし）。
+
+    単勝と複勝は netkeiba の b1 ページに同居するため、1 回の取得で両方得られる（ポライトネス）。
+    単勝が空（Ajax 未描画）なら backoff 秒おいて retries 回まで再取得（_fetch_win_odds_map と同方針）。
+    複勝はその成功取得ぶんから同時に拾う。複勝を返せないソースは place を空で返す。
+    """
+    import time as _time
+
+    fetch = getattr(odds_source, "fetch_win_and_place_odds", None)
+    last_empty = False
+    for attempt in range(retries + 1):
+        try:
+            if fetch is not None:
+                win_rows, place_rows = fetch(str(race_id))
+            else:
+                win_rows, place_rows = odds_source.fetch_win_odds(str(race_id)), []
+        except Exception as e:  # noqa: BLE001 — オッズページ取得失敗は当該レースのみスキップ
+            logger.warning("オッズページ取得失敗 race_id=%s (試行%d): %s", race_id, attempt + 1, e)
+            win_rows, place_rows = [], []
+
+        def _pairs(rows):
+            out = []
+            for umaban, odds in rows:
+                try:
+                    if float(odds) > 0:
+                        out.append((int(umaban), float(odds)))
+                except (TypeError, ValueError):
+                    continue
+            return out
+
+        win = dict(_pairs(win_rows))
+        if win:
+            return win, _pairs(place_rows)
+        last_empty = True
+        if attempt < retries:
+            logger.info("オッズページが空（未描画?）。%.0f秒後に再取得 race_id=%s", backoff, race_id)
+            _time.sleep(backoff)
+    if last_empty:
+        logger.warning("オッズページが単勝を返さない race_id=%s（throttle/未描画の可能性。"
+                       "KEIBA_ODDS_DEBUG=1 で生HTMLを診断可）", race_id)
+    return {}, []
+
+
+def _augment_win_odds(df, race_id, odds_source, delay: float, place_sink: dict | None = None):
     """出馬表の欠損単勝を、オッズ専用ページの単勝で補完する（馬番でマージ）。
 
     netkeiba の出馬表ページは午後（発走 30〜0 分前）になると単勝を JS/Ajax で描画するため、
     静的スクレイプでは欠損する。オッズ専用ページは JS 描画完了を待って取得するため確実。
     全馬に有効オッズが揃っている（=前売り時間帯で出馬表に単勝が載っている）場合は余分な
     取得をしない（ポライトネス）。取得が必要なときのみ 1 拍おいてからアクセスする。
+
+    place_sink を渡すと、b1 を取得したその 1 回ぶんから複勝も拾って place_sink[race_id] に
+    格納する（overlay 蓄積用。追加リクエストなし）。オッズページを取得しなかった回は複勝も無し。
     """
     import time as _time
 
@@ -166,7 +213,9 @@ def _augment_win_odds(df, race_id, odds_source, delay: float):
     wait = polite_interval(delay)
     if wait > 0:
         _time.sleep(wait)
-    odds_map = _fetch_win_odds_map(race_id, odds_source)
+    odds_map, place_pairs = _fetch_win_and_place(race_id, odds_source)
+    if place_sink is not None and place_pairs:
+        place_sink[str(race_id)] = place_pairs
     if not odds_map:
         return df
     df = df.copy()
@@ -180,9 +229,10 @@ def _augment_win_odds(df, race_id, odds_source, delay: float):
 
 
 def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
-    """開催日の出馬表（暫定オッズ込み）をスクレイプし、(結合DataFrame, 発走時刻dict) を返す。
+    """開催日の出馬表（暫定オッズ込み）をスクレイプし、(結合DataFrame, 発走時刻dict, 複勝dict) を返す。
 
     race_ids 未指定なら当日の全レースを自動検出する。取得失敗レースはスキップ。
+    複勝dict は {race_id: [(馬番, 複勝), ...]}（b1 を取得した回のぶんのみ。overlay 蓄積用）。
     """
     import pandas as pd
 
@@ -194,7 +244,7 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     all_ids, all_times = scrape_race_id_race_time_list(date_yyyymmdd)
     if not all_ids:
         logger.error("開催レースが見つかりません: %s（非開催日 or 出馬表未公開）", date_yyyymmdd)
-        return None, {}
+        return None, {}, {}
     post_of = {str(r): t for r, t in zip(all_ids, all_times, strict=False)}
     ids = [str(r) for r in race_ids] if race_ids else [str(r) for r in all_ids]
 
@@ -222,6 +272,7 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     # 出馬表に単勝が載らない午後は、オッズ専用ページから補完する（同一インスタンスを使い回す）。
     odds_source = NetkeibaOddsSource()
     frames = []
+    place_by_race: dict = {}  # {race_id: [(馬番, 複勝), ...]}（overlay 蓄積用。b1 取得回のみ）
     try:
         for i, rid in enumerate(ids, 1):
             pdt = _post_dt(rid)
@@ -239,7 +290,7 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
                     tmp = tf.name
                 scrape_shutuba_table(rid, date_str, tmp)
                 df = pd.read_pickle(tmp)
-                df = _augment_win_odds(df, rid, odds_source, delay)
+                df = _augment_win_odds(df, rid, odds_source, delay, place_by_race)
                 frames.append(df)
                 print(f"  [{i:2d}/{len(ids)}] {label} [{rid}]  ✓ 取得済み（{len(df)}頭）", flush=True)
             except Exception as e:  # noqa: BLE001 — 1レースの失敗で全体を止めない
@@ -255,8 +306,8 @@ def _scrape_shutuba_day(date_yyyymmdd: str, race_ids: list[str] | None):
     finally:
         odds_source.close()  # Playwright ブラウザを解放
     if not frames:
-        return None, post_of
-    return pd.concat(frames), post_of
+        return None, post_of, place_by_race
+    return pd.concat(frames), post_of, place_by_race
 
 
 def _scrape_upcoming_yoso_marks(race_ids):
@@ -366,6 +417,37 @@ def _minutes_to_post(date_yyyymmdd, post_s, now):
         return int((pdt - now).total_seconds() // 60)
     except (ValueError, TypeError):
         return None
+
+
+def _save_place_snapshots(place_by_race, post_of, date_yyyymmdd, captured_at):
+    """取得した複勝オッズを OddsSnapshot として odds_snapshots.pkl に永続化する（overlay 蓄積）。
+
+    b1 を取得したその 1 回ぶんから拾った複勝を、feature 再構築時の place_overlay
+    （複勝市場 implied − 単勝Harville）の元データにする。overlay の win 側は results の
+    確定単勝から作られるため、ここでは複勝（FUKUSHO）だけ永続化すれば十分で、単勝の
+    odds-dynamics（TANSHO フィルタ）には一切影響しない。追加のネットワーク取得はしない。
+    """
+    if not place_by_race:
+        return
+    from src.constants._bet_types import BetType
+    from src.constants._local_paths import LocalPaths
+    from src.preparing._odds_snapshot import make_snapshot
+    from src.preparing.odds_scheduler import persist
+
+    snaps = []
+    for rid, pairs in place_by_race.items():
+        post_s = post_of.get(str(rid), "")
+        try:
+            post_time = dt.datetime.strptime(f"{date_yyyymmdd} {post_s}", "%Y%m%d %H:%M")
+        except (ValueError, TypeError):
+            post_time = captured_at
+        for umaban, odds in pairs:
+            snaps.append(make_snapshot(str(rid), BetType.FUKUSHO, [int(umaban)],
+                                       float(odds), post_time, captured_at))
+    if snaps:
+        persist(snaps, LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
+        logger.info("複勝スナップショット蓄積: %d 件を %s に追記（overlay 用）",
+                    len(snaps), LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
 
 
 def _save_live_odds(shutuba_df, post_of, date_yyyymmdd, captured_at):
@@ -598,15 +680,18 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
     from app._prediction_service import run_prediction
 
     captured_at = dt.datetime.now()
+    place_by_race: dict = {}
     if shutuba_pkl:
         shutuba_df, post_of = pd.read_pickle(shutuba_pkl), {}
     else:
-        shutuba_df, post_of = _scrape_shutuba_day(date_yyyymmdd, race_ids)
+        shutuba_df, post_of, place_by_race = _scrape_shutuba_day(date_yyyymmdd, race_ids)
     if shutuba_df is None or shutuba_df.empty:
         logger.error("出馬表が空のため予測スキップ")
         return 0, 0.0
     if save_odds:
         _save_live_odds(shutuba_df, post_of, date_yyyymmdd, captured_at)
+        # 複勝オッズを snapshots に永続化（overlay の元データ蓄積。b1 取得ぶんのみ・追加取得なし）。
+        _save_place_snapshots(place_by_race, post_of, date_yyyymmdd, captured_at)
     featured = _build_featured(shutuba_df)
     if featured is None or featured.empty:
         logger.error("featured が空のため予測スキップ")
