@@ -226,6 +226,70 @@ class TestRunOnce:
         assert not preds.empty
         assert (preds["checkpoint"] == OddsPhase.THIRTY_MIN).all()
 
+    def test_captures_place_odds_when_source_supports_it(self, tmp_path, monkeypatch):
+        """複勝を返せるソースなら、同一サイクルで FUKUSHO スナップショットも永続化する。"""
+        from src.constants._bet_types import BetType
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+        from src.preparing.odds_scheduler import load_snapshots
+
+        snap_path = str(tmp_path / "s.pkl")
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", snap_path, raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        monkeypatch.delenv("KEIBA_ODDS_CAPTURE_PLACE", raising=False)  # 既定ON
+        now = dt.datetime(2026, 6, 7, 15, 10)
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("202606070511", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)]
+
+            def fetch_win_and_place_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)], [(1, 1.1), (2, 1.8), (3, 3.2)]
+
+            def close(self):
+                pass
+
+        result = run_once(_StubSource(), now=now)
+        assert result["n_snapshots"] == 6  # 単勝3 + 複勝3
+        snaps = load_snapshots(snap_path)
+        fuku = [s for s in snaps if s.bet_type == BetType.FUKUSHO]
+        assert len(fuku) == 3
+        assert {int(s.combo[0]) for s in fuku} == {1, 2, 3}
+
+    def test_place_capture_disabled_by_env(self, tmp_path, monkeypatch):
+        """KEIBA_ODDS_CAPTURE_PLACE=0 なら複勝を捕捉せず単勝のみ（従来挙動）。"""
+        from src.constants._bet_types import BetType
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+        from src.preparing.odds_scheduler import load_snapshots
+
+        snap_path = str(tmp_path / "s.pkl")
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", snap_path, raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        monkeypatch.setenv("KEIBA_ODDS_CAPTURE_PLACE", "0")
+        now = dt.datetime(2026, 6, 7, 15, 10)
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("202606070511", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)]
+
+            def fetch_win_and_place_odds(self, race_id):
+                raise AssertionError("CAPTURE_PLACE=0 では複勝経路を使わない")
+
+            def close(self):
+                pass
+
+        result = run_once(_StubSource(), now=now)
+        assert result["n_snapshots"] == 3
+        snaps = load_snapshots(snap_path)
+        assert all(s.bet_type == BetType.TANSHO for s in snaps)
+
     def test_no_checkpoint_is_cheap_noop(self, tmp_path, monkeypatch):
         from src.constants._local_paths import LocalPaths
         from src.pipeline.odds_watch import run_once

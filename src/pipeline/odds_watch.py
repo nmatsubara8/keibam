@@ -225,9 +225,18 @@ def run_once(
     captured = []
     from src.constants._bet_types import BetType
 
+    # 複勝も同一 b1 ページから追加リクエストなしで捕捉し、market overlay（複勝 vs 単勝）の
+    # 蓄積を進める。KEIBA_ODDS_CAPTURE_PLACE=0 で従来どおり単勝のみ。複勝を返せるソース
+    # （fetch_win_and_place_odds を持つ）だけで有効。持たないソース/スタブは単勝のみに自動フォールバック。
+    capture_place = os.environ.get("KEIBA_ODDS_CAPTURE_PLACE", "1") not in ("0", "false", "False", "")
+    combined = getattr(source, "fetch_win_and_place_odds", None) if capture_place else None
+
     for race_id, post_time, _phase in targets:
         try:
-            win_odds = source.fetch_win_odds(race_id)
+            if combined is not None:
+                win_odds, place_odds = combined(race_id)
+            else:
+                win_odds, place_odds = source.fetch_win_odds(race_id), []
         except Exception as e:  # noqa: BLE001
             logger.warning("[odds_watch] 取得失敗 %s: %s", race_id, e)
             continue
@@ -240,6 +249,9 @@ def run_once(
             continue
         for umaban, odds in win_odds:
             captured.append(make_snapshot(str(race_id), BetType.TANSHO, [umaban], odds, post_time, now))
+        # 複勝（単勝が取れたレースだけ）。overlay の元データ。勝率動力学は TANSHO フィルタ済で無影響。
+        for umaban, odds in place_odds:
+            captured.append(make_snapshot(str(race_id), BetType.FUKUSHO, [umaban], odds, post_time, now))
 
     if captured:
         persist(captured, LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
