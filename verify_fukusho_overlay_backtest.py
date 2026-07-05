@@ -166,6 +166,25 @@ def run(args) -> int:
               "学習年と重なる年は楽観バイアス（リーク）になるため、"
               "本番判定では学習年より後の年だけを --years で指定してください。")
 
+    # overlay カバレッジ診断: place_overlay は「複勝確定オッズ vs 単勝Harville」の差であり、
+    # 定義上、複勝確定オッズを捕捉した行にしか存在しない（単勝だけからは作れない）。
+    # ここで年別の非null率を先に出し、ゲートで買い目が消えたのが「市場ズレ無し」なのか
+    # 「そもそも overlay 未収載（カバレッジ不足）」なのかを取り違えないようにする。
+    if overlay_lookup is not None and _OVERLAY_COL in featured.columns:
+        print("[overlay カバレッジ] place_overlay の年別 非null 率（低いとゲートが機能しない）:")
+        rid_all = featured.index.astype(str)
+        for y in (years or []):
+            g = featured[rid_all.str[:4] == str(y)]
+            if g.empty:
+                continue
+            ov = pd.to_numeric(g[_OVERLAY_COL], errors="coerce")
+            nn = int(ov.notna().sum())
+            pos = int((ov > 0).sum())
+            share = (pos / nn * 100) if nn else 0.0
+            flag = "  ← ほぼ空。overlay 検証は不能（複勝確定オッズの蓄積が必要）" if nn < 30 else ""
+            print(f"    {y}: rows={len(g):>6}  非null={nn:>6}({nn/len(g)*100:4.1f}%)  "
+                  f"うち>0={pos:>5}({share:4.1f}%){flag}")
+
     ev_thr = args.ev_threshold if args.ev_threshold is not None else default_thresholds().get(BetType.FUKUSHO, 1.0)
     thresholds = {BetType.FUKUSHO: ev_thr}
     gate_desc = "payout≥%.2f" % args.min_odds + ("" if overlay_lookup is None else " かつ overlay>0")
