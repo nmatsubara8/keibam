@@ -76,19 +76,33 @@ class _SeedReturnProcessor:
         }
 
 
-def _load_model(version: str | None):
-    from app._data_loader import find_model_paths, load_model_from_path, load_win_head_for
+def _load_model(version: str | None, model_path: str | None = None):
+    """seed モデル(models/<date>/<version>.pickle)を読む。
 
-    paths = find_model_paths("models")
-    for p in paths:
-        if version is None or version in os.path.basename(p):
-            return load_model_from_path(p), load_win_head_for(p), p
-    # 見つからない: 利用可能なモデルを表示して切り分ける
-    print("[NG] モデルが見つからない。利用可能なモデル（models/*/*_keibam.pickle）:")
-    for p in paths:
-        print(f"    {p}  →  --version に含められる名前: {os.path.basename(p).replace('_keibam.pickle','')}")
-    if not paths:
-        print("    （0件。retrain の保存先を確認。models/ 直下に <version>/<version>_keibam.pickle があるか）")
+    KeibaAIFactory は models/<yyyymmdd>/<version_name>.pickle に保存する。--version-name を
+    明示指定した seed モデルは `_keibam` 接尾辞が付かないため find_model_paths では拾えない。
+    ここは Place ヘッド pickle（`__win`/`__` 付きサブヘッドを除く）を広く探索し version 名で照合する。
+    """
+    import glob
+
+    from app._data_loader import load_model_from_path, load_win_head_for
+
+    if model_path:
+        return load_model_from_path(model_path), load_win_head_for(model_path), model_path
+
+    all_pkls = glob.glob(os.path.join("models", "*", "*.pickle"))
+    # Place ヘッド候補: サブヘッド(__win 等)と補助 pickle(basemodel_/tansho/fukusho 等)を除外
+    heads = [p for p in all_pkls
+             if "__" not in os.path.basename(p)
+             and not os.path.basename(p).startswith(("basemodel", "selected"))]
+    exact = [p for p in heads if os.path.basename(p) in (f"{version}.pickle", f"{version}_keibam.pickle")]
+    match = exact or [p for p in heads if version and version in os.path.basename(p)]
+    if match:
+        p = sorted(match)[-1]  # 最新の日付ディレクトリを優先
+        return load_model_from_path(p), load_win_head_for(p), p
+    print("[NG] モデルが見つからない。利用可能な Place ヘッド pickle:")
+    for p in sorted(heads):
+        print(f"    {p}  →  --version {os.path.basename(p).replace('.pickle','')}")
     return None, None, None
 
 
@@ -105,7 +119,7 @@ def run(args) -> int:
         return 2
 
     featured = pd.read_pickle(args.featured)
-    place_ai, win_ai, mpath = _load_model(args.version)
+    place_ai, win_ai, mpath = _load_model(args.version, args.model_path)
     if place_ai is None:
         print("[NG] モデルが見つからない（models/）。--version を確認。")
         return 2
@@ -158,6 +172,7 @@ def main() -> int:
     ap.add_argument("odds", help="odds.csv（払戻表）")
     ap.add_argument("--featured", default="data/raw/seed_featured_data.pkl")
     ap.add_argument("--version", default=None, help="seed モデル版（部分一致・例 seed35y_ho）")
+    ap.add_argument("--model-path", default=None, help="Place ヘッド pickle を直接指定（例 models/20260706/seed35y_ho.pickle）")
     ap.add_argument("--years", type=int, nargs="+", default=None, help="評価年（学習除外年＝OOS）")
     ap.add_argument("--ev-threshold", type=float, default=None, help="複勝 EV 閾値の上書き")
     ap.add_argument("--takeout", type=float, default=0.2, help="推定複勝オッズの控除率")
