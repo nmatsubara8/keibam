@@ -63,12 +63,22 @@ def run(args) -> int:
     from src.pipeline.commands._ingest import _build_featured_data
 
     tmp = tempfile.mkdtemp(prefix="seed_featured_")
-    hr = os.path.join(tmp, "horse_results.pkl")
     hi = os.path.join(tmp, "horse_info.pkl")
     pe = os.path.join(tmp, "peds.pkl")
-    _empty_horse_results(hr)
-    _empty_horse_info(hi)
+    _empty_horse_info(hi)      # 生年月日/血統は CSV に無い → 空（馬齢・血統系は NaN）
     _empty_peds(pe)
+
+    # horse_results: seed_from_csv が本物を出していればそれを使う（脚質/speed/賞金が有効化）。
+    # 無ければ空 + form-from-results で results から再構成（率/適性/距離/馬場のみ）。
+    if args.horse_results and os.path.isfile(args.horse_results):
+        hr = args.horse_results
+        os.environ["KEIBA_FORM_FROM_RESULTS"] = "0"  # 本物があるので再構成は不要
+        print(f"  horse_results: {hr}（本物・脚質/speed/賞金あり）")
+    else:
+        hr = os.path.join(tmp, "horse_results.pkl")
+        _empty_horse_results(hr)
+        os.environ["KEIBA_FORM_FROM_RESULTS"] = "1"
+        print("  horse_results: 空 + form-from-results 再構成（率/適性/距離/馬場のみ）")
 
     cfg = IngestConfig(
         raw_results_path=args.results,
@@ -107,6 +117,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="seed だけから featured_data を組む（検証用）")
     ap.add_argument("--results", default="data/raw/seed_results.pkl")
     ap.add_argument("--race-info", default="data/raw/seed_race_info.pkl")
+    ap.add_argument("--horse-results", default="data/raw/seed_horse_results.pkl",
+                    help="本物の horse_results（seed_from_csv 出力）。無ければ form-from-results 再構成")
     ap.add_argument("--out", default="data/raw/seed_featured_data.pkl")
     return run(ap.parse_args())
 
