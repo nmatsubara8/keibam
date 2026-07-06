@@ -1,8 +1,14 @@
-"""複勝 overlay を 35年（1986-2021）で検証する — odds.csv の複勝オッズ × seed_results。
+"""【重要・撤回】複勝 overlay を odds.csv で検証しようとしたが、odds.csv は事前オッズではなく
+「複勝払戻表（着順≤3に入った馬とその確定払戻）」だった。よって本スクリプトの overlay 判定は
+**look-ahead（当たった馬だけを賭け対象にしていた）で無効**。的中率が全帯 100% になるのがその証拠。
 
-以前「複勝確定オッズのカバレッジ ~2%(478行) で検証不能」だった複勝 overlay 仮説を、
-odds.csv（複勝の人気上位オッズ・35年）で初めて大規模に検証する（favorites 限定）。
+事前の全頭複勝オッズが存在しない以上、35年 overlay は原理的に検証不能。overlay 用途では使わないこと。
+このファイルは実質 seed の複勝/単勝/連系「払戻表」であり、正当な用途は「Place ヘッドが事前選定
+→ 実払戻で決済」する複勝 EV バックテスト（本スクリプトではなく src.simulation._backtest 経路）。
 
+以下は当初の（誤った）overlay 検証コード。実行すると look-ahead を検出して警告を出す。
+
+--- 当初の設計（無効。記録用）---
 overlay の定義（market_signals と同思想）:
   p_mkt   = 複勝市場の implied 3着内確率 = (1-takeout) / (複勝倍率)      ← odds.csv
   p_harv  = 単勝オッズ由来 Harville の 3着内確率                        ← seed_results 単勝
@@ -119,6 +125,15 @@ def run(args) -> int:
         return 2
     R = pd.DataFrame(rows, columns=["year", "overlay", "mult", "top3", "ret"])
     print(f"突合済み候補={len(R):,}\n")
+
+    # look-ahead 検出: 的中率が ~100% なら odds.csv は事前オッズでなく「払戻表」（当たった馬のみ）。
+    hit_all = R["top3"].mean()
+    if hit_all > 0.995:
+        print("!" * 82)
+        print("【無効】的中率が %.1f%% ＝ 複勝で当たった馬だけが対象。odds.csv は事前オッズでなく" % (hit_all * 100))
+        print("『複勝払戻表（着順≤3の馬とその払戻）』。以下の ROI は look-ahead で無意味。overlay 検証は不能。")
+        print("正当な用途: この払戻表で seed の複勝 EV バックテスト（Place ヘッドで事前選定→実払戻決済）。")
+        print("!" * 82 + "\n")
 
     def _report(sub: pd.DataFrame, label: str):
         if sub.empty:
