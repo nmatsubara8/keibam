@@ -79,9 +79,16 @@ class _SeedReturnProcessor:
 def _load_model(version: str | None):
     from app._data_loader import find_model_paths, load_model_from_path, load_win_head_for
 
-    for p in find_model_paths("models"):
+    paths = find_model_paths("models")
+    for p in paths:
         if version is None or version in os.path.basename(p):
             return load_model_from_path(p), load_win_head_for(p), p
+    # 見つからない: 利用可能なモデルを表示して切り分ける
+    print("[NG] モデルが見つからない。利用可能なモデル（models/*/*_keibam.pickle）:")
+    for p in paths:
+        print(f"    {p}  →  --version に含められる名前: {os.path.basename(p).replace('_keibam.pickle','')}")
+    if not paths:
+        print("    （0件。retrain の保存先を確認。models/ 直下に <version>/<version>_keibam.pickle があるか）")
     return None, None, None
 
 
