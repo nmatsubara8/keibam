@@ -184,8 +184,15 @@ def build_race_info(df: pd.DataFrame) -> pd.DataFrame:
     out["date"] = d.dt.strftime("%Y年%m月%d日")
     out["time"] = g[C_POST]
     out["race_type"] = g.apply(_race_type, axis=1)
-    ar = g[C_AROUND].astype(str).str.strip()
-    out["around"] = ar.map(lambda x: "直線" if x.startswith("直") else (x if x in ("右", "左") else x))
+
+    def _around(x):
+        # 欠損（pyarrow バックエンドでは float NaN で渡る）を安全に処理。
+        if pd.isna(x):
+            return None
+        s = str(x).strip()
+        return "直線" if s.startswith("直") else s
+
+    out["around"] = g[C_AROUND].map(_around)
     out["course_len"] = pd.to_numeric(g[C_DIST], errors="coerce")
     out["weather"] = g[C_WEATHER]
     gs1 = g[C_GS1]
