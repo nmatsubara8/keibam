@@ -40,7 +40,10 @@ def _retrain(args: argparse.Namespace) -> None:
         train_win_head=not getattr(args, "no_win_head", False),
     )
 
-    featured_path = LocalPaths.FEATURED_DATA_PATH
+    # --featured-path 指定時はその featured で学習（seed など別コーパスの検証用）。既定は本番 featured。
+    featured_path = getattr(args, "featured_path", None) or LocalPaths.FEATURED_DATA_PATH
+    if getattr(args, "featured_path", None):
+        logger.info("[retrain] featured_path 上書き: %s", featured_path)
     if not os.path.exists(featured_path):
         logger.info("[retrain] featured_data.pkl が見つからないため自動生成します")
         from src.pipeline._ingestion import IngestConfig

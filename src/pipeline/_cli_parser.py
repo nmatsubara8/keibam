@@ -40,6 +40,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
     # retrain サブコマンド
     retrain_p = sub.add_parser("retrain", help="全データで週次再学習")
     retrain_p.add_argument("--version-name", default=None, help="バージョン名（省略時は日付自動生成）")
+    retrain_p.add_argument(
+        "--featured-path", default=None, metavar="PATH",
+        help="学習に使う featured_data を明示指定（既定は FEATURED_DATA_PATH）。"
+             "seed（別コーパス）で学習・比較する検証用: --featured-path data/raw/seed_featured_data.pkl",
+    )
     retrain_p.add_argument("--no-stacking", action="store_true", help="スタッキングを使わない（LightGBM のみ）")
     retrain_p.add_argument(
         "--no-odds-features", action="store_true",
