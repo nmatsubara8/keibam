@@ -276,6 +276,11 @@ def _add_backtest(sub: argparse._SubParsersAction) -> None:
     )
     bt_p.add_argument("--version", default=None, help="評価するモデルのバージョン名（省略時は最新）")
     bt_p.add_argument(
+        "--featured-path", default=None, metavar="PATH",
+        help="評価に使う featured_data を明示指定（既定は FEATURED_DATA_PATH）。"
+             "seed モデルの edge-diagnostic 用: --featured-path data/raw/seed_featured_data.pkl",
+    )
+    bt_p.add_argument(
         "--years", type=int, nargs="+", default=None, metavar="YYYY",
         help="評価対象を race_id の年で絞る（例: 2024 2025）。学習年と重ねないこと",
     )

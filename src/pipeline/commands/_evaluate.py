@@ -209,8 +209,11 @@ def _backtest(args: argparse.Namespace) -> None:
         os.path.basename(place_path), "あり" if win_ai is not None else "なし",
     )
 
-    # ホールドアウト featured を年でフィルタ
-    featured = load_raw(LocalPaths.FEATURED_DATA_PATH)
+    # ホールドアウト featured を年でフィルタ（--featured-path 指定時は seed 等の別 featured を評価）
+    featured_path = getattr(args, "featured_path", None) or LocalPaths.FEATURED_DATA_PATH
+    if getattr(args, "featured_path", None):
+        logger.info("[backtest] featured_path 上書き: %s", featured_path)
+    featured = load_raw(featured_path)
     if featured is None or featured.empty:
         logger.error("[backtest] featured_data がありません。先に rebuild-featured を実行してください")
         return
