@@ -175,3 +175,5 @@ logs/*.log
 
 # CatBoost 学習時の作業ディレクトリ
 catboost_info/
+data/**/*.json
+data/*.json
