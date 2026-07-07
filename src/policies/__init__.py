@@ -20,8 +20,24 @@ from src.policies._bet_policy import (
     BetPolicyUmatanNagashi,
     ExpectedValueBetPolicy,
 )
+from src.policies._loss_minimization import (
+    GateResult,
+    LossMinimizationConfig,
+    LossMinimizingPolicy,
+    evaluate_candidate,
+    expected_loss,
+    filter_candidates,
+    turnover_cap_for_loss_budget,
+)
 
 __all__ = [
+    "LossMinimizationConfig",
+    "LossMinimizingPolicy",
+    "GateResult",
+    "evaluate_candidate",
+    "filter_candidates",
+    "expected_loss",
+    "turnover_cap_for_loss_budget",
     "AbstractScorePolicy",
     "BasicScorePolicy",
     "StdScorePolicy",
