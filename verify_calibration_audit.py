@@ -50,22 +50,23 @@ def _ece(prob, won, n_bins=10):
 
 def _crossfit_recal_ece(edge_df, n_bins=10):
     """race 2-fold cross-fit で isotonic 再較正 → out-of-fold の ECE を返す(生 vs 再較正)。"""
-    from src.policies._calibration import (calibrate_within_race,
-                                           fit_isotonic_calibrator)
+    from src.policies._calibration import fit_isotonic_calibrator
 
     rids = edge_df.index.astype(str)
     uniq = pd.Index(sorted(rids.unique()))
     fold = pd.Series(np.arange(len(uniq)) % 2, index=uniq)
     f = rids.map(fold).to_numpy()
+    rh = edge_df["r_hat"].to_numpy()
+    wn = edge_df["won"].to_numpy()
     recal = np.full(len(edge_df), np.nan)
     for k in (0, 1):
         tr, te = f != k, f == k
         if tr.sum() == 0 or te.sum() == 0:
             continue
-        cal = fit_isotonic_calibrator(edge_df["r_hat"].to_numpy()[tr], edge_df["won"].to_numpy()[tr])
-        recal[te] = calibrate_within_race(
-            rids.to_numpy()[te], edge_df["r_hat"].to_numpy()[te], cal
-        )
+        cal = fit_isotonic_calibrator(rh[tr], wn[tr])
+        # cal.predict は要素ごと単調写像で順序を保つ（calibrate_within_race は groupby で並びを
+        # 変え代入がズレて ECE が壊れる。ECE 測定に within-race 正規化は不要）。
+        recal[te] = cal.predict(rh[te])
     ok = ~np.isnan(recal)
     ece_raw = _ece(edge_df["r_hat"].to_numpy()[ok], edge_df["won"].to_numpy()[ok], n_bins)
     ece_recal = _ece(recal[ok], edge_df["won"].to_numpy()[ok], n_bins)
@@ -110,16 +111,9 @@ def run(args) -> int:
     print(f"  市場 p_mkt ECE = {ece_mkt:.4f}")
     print(f"  → {'モデルが市場より良い' if ece_m < ece_mkt else '市場と同等/劣る'}（差 {ece_m-ece_mkt:+.4f}）")
 
-    # 2. レジーム別 ECE（局所 mis-calibration の発見）: featured の属性を umaban で結合
-    meta = featured.reset_index()
-    meta["_rid"] = meta[featured.index.name or "race_id"].astype(str)
-    umacol = "馬番" if "馬番" in meta.columns else None
+    # 2. レジーム別 ECE（局所 mis-calibration の発見）。頭数は edge から直接カウント（merge 不要で堅牢）。
     edge = edge.copy()
-    edge["_rid"] = edge.index.astype(str)
-    if umacol and "umaban" in edge.columns:
-        m = meta[["_rid", umacol, "n_horses"]].copy()
-        m["umaban"] = pd.to_numeric(m[umacol], errors="coerce")
-        edge = edge.merge(m[["_rid", "umaban", "n_horses"]], on=["_rid", "umaban"], how="left")
+    edge["n_horses"] = edge.groupby(level=0)["r_hat"].transform("size")
 
     def _regime_report(label, series):
         print(f"\n【{label}別 ECE】(件数≥2000 のみ、モデル/市場)")
