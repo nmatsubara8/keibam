@@ -61,12 +61,28 @@ def run(args) -> int:
     print("③ pace 特徴（過去走の相対脚・前半ペース）を leak-free で付与")
     print("=" * 78)
 
+    import numpy as np
+
     res = _read_csv(args.results_csv)
     hid = build_synthetic_horse_id(res)  # seed_results と同一の合成 horse_id
-    lap = _read_csv(args.laptime_csv, cols=[C_RACE_ID, LAP_ZENHAN, LAP_AGARI])
+    lap = _read_csv(args.laptime_csv)
     lap[C_RACE_ID] = lap[C_RACE_ID].astype("Int64").astype(str)
-    lap_z = dict(zip(lap[C_RACE_ID], pd.to_numeric(lap[LAP_ZENHAN], errors="coerce")))
-    lap_a = dict(zip(lap[C_RACE_ID], pd.to_numeric(lap[LAP_AGARI], errors="coerce")))
+    # CSV の要約列(前半3ハロン/上がり3ハロン)は一部で1ハロン目の値になっており不正確。
+    # 生ラップ(ラップタイム1..N)から正しく再計算する: 前半3F=先頭3本和、上がり3F=末尾3本(非null)和。
+    lapcols = [c for c in lap.columns if str(c).startswith("ラップタイム")]
+    L = lap[lapcols].apply(pd.to_numeric, errors="coerce")
+    zenhan3 = L.iloc[:, :3].sum(axis=1, min_count=3)   # 先頭3本が揃うときのみ
+    arr = L.to_numpy()
+
+    def _last3(row):
+        v = row[~np.isnan(row)]
+        return float(v[-3:].sum()) if v.size >= 3 else np.nan
+
+    agari3 = pd.Series([_last3(r) for r in arr], index=lap.index)
+    print(f"生ラップから再計算: 前半3F mean={zenhan3.mean():.1f}s / 上がり3F mean={agari3.mean():.1f}s "
+          f"（要約列バグ回避。~34-38s が正常）")
+    lap_z = dict(zip(lap[C_RACE_ID], zenhan3))
+    lap_a = dict(zip(lap[C_RACE_ID], agari3))
 
     d = pd.DataFrame({
         "race_id": res[C_RACE_ID].astype("Int64").astype(str),
