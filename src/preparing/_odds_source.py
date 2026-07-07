@@ -62,6 +62,14 @@ class AbstractOddsSource(ABC):
         """
         return self.fetch_win_odds(race_id), []
 
+    def capture_bet_types(self, race_id: str, bet_types, post_time, captured_at):
+        """連系(馬連/三連複 等)を OddsSnapshot 群として返す。既定は空（対応ソースが override）。
+
+        連系 ΔR² 検証用の事前オッズ蓄積。単勝/複勝(b1)と違い各券種は別ページ＝**追加リクエスト**
+        なので odds_watch では既定 OFF、env で明示有効化して使う。
+        """
+        return []
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -117,6 +125,21 @@ class NetkeibaOddsSource(AbstractOddsSource):
         """b1 を 1 回取得して単勝・複勝を同時に返す（追加リクエストなし）。"""
         win, place = self._parse_b1(race_id)
         return self._to_pairs(win), self._to_pairs(place)
+
+    def capture_bet_types(self, race_id: str, bet_types, post_time, captured_at):
+        """指定券種(馬連=b4/三連複=b7 等)を各ページから捕捉し OddsSnapshot 群を返す。
+
+        OddsSnapshotScraper.capture が券種→ページ(ODDS_PAGE_TYPE)を解決する。各券種＝1ページ
+        取得（追加リクエスト）。失敗券種はスキップ（当該レースの他券種・他レースは止めない）。
+        """
+        scraper = self._ensure_scraper()
+        out: list = []
+        for bt in bet_types:
+            try:
+                out.extend(scraper.capture(str(race_id), bt, post_time, captured_at))
+            except Exception as e:  # noqa: BLE001 — 1券種の失敗で全体を止めない
+                logger.warning("[odds_source] %s 捕捉失敗 race=%s: %s", bt, race_id, e)
+        return out
 
     def close(self) -> None:
         if self._scraper is not None and getattr(self._scraper, "_scraper", None) is not None:

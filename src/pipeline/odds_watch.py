@@ -231,6 +231,14 @@ def run_once(
     capture_place = os.environ.get("KEIBA_ODDS_CAPTURE_PLACE", "1") not in ("0", "false", "False", "")
     combined = getattr(source, "fetch_win_and_place_odds", None) if capture_place else None
 
+    # 連系(馬連/三連複)は別ページ＝**追加リクエスト**のため既定 OFF。連系 ΔR² 検証用に事前オッズを
+    # 貯めるときだけ KEIBA_ODDS_CAPTURE_EXOTIC="umaren,sanrenpuku" 等で有効化する（各券種で 1 fetch 増）。
+    exotic_env = os.environ.get("KEIBA_ODDS_CAPTURE_EXOTIC", "").strip()
+    exotic_types = [t.strip() for t in exotic_env.split(",") if t.strip()]
+    capture_exotic = getattr(source, "capture_bet_types", None) if exotic_types else None
+    if exotic_types:
+        logger.info("[odds_watch] 連系オッズも捕捉: %s（各券種で追加取得）", exotic_types)
+
     for race_id, post_time, _phase in targets:
         try:
             if combined is not None:
@@ -252,6 +260,9 @@ def run_once(
         # 複勝（単勝が取れたレースだけ）。overlay の元データ。勝率動力学は TANSHO フィルタ済で無影響。
         for umaban, odds in place_odds:
             captured.append(make_snapshot(str(race_id), BetType.FUKUSHO, [umaban], odds, post_time, now))
+        # 連系（有効化時のみ・単勝が取れたライブレースだけ）。連系 ΔR² 検証用の事前オッズ蓄積。
+        if capture_exotic is not None:
+            captured.extend(capture_exotic(race_id, exotic_types, post_time, now))
 
     if captured:
         persist(captured, LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
