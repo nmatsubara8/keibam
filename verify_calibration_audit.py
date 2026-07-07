@@ -74,7 +74,6 @@ def _crossfit_recal_ece(edge_df, n_bins=10):
 
 def run(args) -> int:
     from src.constants._local_paths import LocalPaths
-    from src.simulation._edge_diagnostic import run_edge_diagnostic
 
     featured_path = args.featured or LocalPaths.FEATURED_DATA_PATH
     if not os.path.isfile(featured_path):
@@ -83,7 +82,7 @@ def run(args) -> int:
     place_ai, win_ai, mpath = _load_model(args.version, args.model_path)
     if place_ai is None:
         return 2
-    model = (win_ai or place_ai).effective_model
+    ai = win_ai or place_ai  # KeibaAI ラッパ。calc_score が feature_names_ で列を自動整合する
     print("=" * 80)
     print(f"較正監査  model={os.path.basename(mpath)}  ヘッド={'Win' if win_ai else 'Place'}")
     print("=" * 80)
@@ -94,7 +93,14 @@ def run(args) -> int:
         featured = featured[rid.str[:4].isin({str(y) for y in args.years})]
     print(f"評価: {len(featured):,} 行 / {featured.index.nunique():,} レース")
 
-    edge = run_edge_diagnostic(model, featured)["edge_df"].dropna(subset=["r_hat", "p_mkt", "won"])
+    # KeibaAI.calc_score が学習列(feature_names_)へ自動整合するため、featured の列数差があっても動く
+    # （effective_model を直接使う run_edge_diagnostic は整合しないので calc_score 経由にする）。
+    from src.policies._score_policy import ExpectedValueScorePolicy
+    from src.simulation._edge_diagnostic import _actual_win, build_edge_frame
+
+    table = ai.calc_score(featured, ExpectedValueScorePolicy)
+    won = _actual_win(featured)
+    edge = build_edge_frame(table, won.to_numpy()).dropna(subset=["r_hat", "p_mkt", "won"])
 
     # 1. 全体 ECE(モデル vs 市場)
     ece_m = _ece(edge["r_hat"], edge["won"])
