@@ -13,10 +13,28 @@ from src.simulation._plot import (
 )
 from src.simulation._popularity_baseline import PopularityBaselineSimulator
 from src.simulation._simulator import Simulator
+from src.simulation._efficient_market import (
+    ContextualBandit,
+    MarketConfig,
+    Races,
+    market_baseline,
+    regime_strategy,
+    run_futility_experiment,
+    simulate_market,
+    train_bandit,
+)
 
 __all__ = [
     "Simulator",
     "PopularityBaselineSimulator",
+    "MarketConfig",
+    "Races",
+    "ContextualBandit",
+    "simulate_market",
+    "market_baseline",
+    "regime_strategy",
+    "train_bandit",
+    "run_futility_experiment",
     "plot_single_threshold",
     "plot_calibration",
     "plot_ev_threshold_sweep",
