@@ -70,6 +70,127 @@ def _train_ai(ai, args):
         ai.train_without_tuning()
 
 
+def _tansho_oos_walk_forward(featured, chunks, factory, args):
+    """単勝 OOS 回収率を featured だけで自己完結して測る（return_tables 不要）。
+
+    単勝の払戻は「単勝オッズ × stake（的中時）」で確定する。的中＝そのレースで着順1位。
+    どちらも featured（着順・単勝）から復元できるため、払戻テーブル（return_tables.pkl）が
+    無くても honest な OOS 回収率を出せる。backtest_bet_type/Simulator は連系まで含む
+    汎用決済のため return_tables を要求し、seed corpus に payoff が無いと「買い目0」になる。
+    ここでは券種=単勝に限って payoff をデータ非依存に再構成し、その 0買い目 問題を回避する。
+    """
+    import pandas as pd
+
+    from kelly_backtest import _candidates_by_race
+    from src.constants._results_cols import ResultsCols
+    from src.policies._score_policy import ExpectedValueScorePolicy
+
+    ODDS_BUCKETS = [(1.0, 3.0), (3.0, 7.0), (7.0, 15.0), (15.0, 50.0), (50.0, float("inf"))]
+    band = {b: {"n": 0, "hit": 0, "stake": 0.0, "ret": 0.0} for b in ODDS_BUCKETS}
+
+    def _winners(sl):
+        """{str(race_id): {着順1位の馬番集合}} を返す。"""
+        r = sl[[ResultsCols.UMABAN, ResultsCols.RANK]].copy()
+        r["rank"] = pd.to_numeric(r[ResultsCols.RANK], errors="coerce")
+        r["umaban"] = pd.to_numeric(r[ResultsCols.UMABAN], errors="coerce")
+        win = r[r["rank"] == 1]
+        out: dict = {}
+        for rid, u in zip(win.index.astype(str), win["umaban"], strict=False):
+            if u == u:  # not NaN
+                out.setdefault(str(rid), set()).add(int(u))
+        return out
+
+    mode = "スタッキング" if args.stacking else "単一LightGBM"
+    if args.with_tuning:
+        mode += "+Optuna探索"
+    print("=" * 78)
+    print(f"単勝 OOS 回収率 walk-forward（featured 自己完結・return_tables 不要）/ "
+          f"EV[{args.ev_floor},{args.ev_max}] / 学習={mode} / {args.folds}分割")
+    print(f"  {'評価fold期間':<26}{'学習R':>8}{'評価R':>8}{'買い目':>8}"
+          f"{'的中率':>8}{'回収率':>8}{'損益':>10}")
+    print("-" * 78)
+
+    tot_bet = tot_ret = 0.0
+    fold_rrs = []
+    for k in range(1, args.folds):
+        train_races = [r for c in chunks[:k] for r in c]
+        eval_races = chunks[k]
+        train = featured.loc[train_races]
+        fold = featured.loc[eval_races]
+        win_map = _winners(fold)
+        d0 = pd.to_datetime(fold["date"]).min().date()
+        d1 = pd.to_datetime(fold["date"]).max().date()
+        label = f"{d0}〜{d1}"
+        try:
+            ai = factory.create(train, test_size=0.1, valid_size=0.2)
+            _train_ai(ai, args)
+            st = ai.calc_score(fold, ExpectedValueScorePolicy)
+        except Exception as e:  # noqa: BLE001
+            print(f"  {label:<26}  学習/評価失敗: {e}")
+            continue
+
+        nb = hit = 0
+        fb = fr = 0.0
+        for rid, cands in _candidates_by_race(st, args.ev_floor, args.ev_max, float("inf")):
+            winners = win_map.get(str(rid), set())
+            for c in cands:
+                umaban = int(c.combo[0])
+                stake = 100.0
+                won = umaban in winners
+                ret = stake * float(c.odds) if won else 0.0
+                nb += 1
+                fb += stake
+                fr += ret
+                if won:
+                    hit += 1
+                for lo, hi in ODDS_BUCKETS:
+                    if lo <= c.odds < hi:
+                        a = band[(lo, hi)]
+                        a["n"] += 1
+                        a["stake"] += stake
+                        a["ret"] += ret
+                        if won:
+                            a["hit"] += 1
+                        break
+
+        rr = fr / fb if fb else 0.0
+        hr = hit / nb if nb else 0.0
+        tot_bet += fb
+        tot_ret += fr
+        if nb:
+            fold_rrs.append(rr)
+        print(f"  {label:<26}{len(set(train_races)):>9}{len(set(eval_races)):>9}{nb:>8}"
+              f"{_fmt(hr):>8}{_fmt(rr):>8}{fr - fb:>10,.0f}")
+
+    print("-" * 78)
+    pooled = tot_ret / tot_bet if tot_bet else 0.0
+    print(f"  通算（プールOOS）: 投資 {tot_bet:,.0f} / 払戻 {tot_ret:,.0f} / "
+          f"回収率 {pooled:.3f} / 損益 {tot_ret - tot_bet:,.0f}")
+    if not fold_rrs:
+        print("  → 買い目0。EV下限が高すぎる可能性（--ev-floor を下げる）か、"
+              "featured に着順/単勝が無い。データ側を確認。")
+    elif all(r > 1.0 for r in fold_rrs) and pooled > 1.0:
+        print("  → 全 fold かつ通算で回収率>1 → 時系列に頑健なエッジの可能性（要件数・分散も確認）")
+    else:
+        n_neg = sum(1 for r in fold_rrs if r <= 1.0)
+        print(f"  → {n_neg}/{len(fold_rrs)} fold で回収率≤1、通算 {pooled:.3f}。"
+              "honest なエッジは確認されない（控除≈20%ぶんの負けに収束）")
+
+    print("\n[オッズ帯別 OOS（全 fold プール・フラット100円・単勝）]")
+    print(f"  {'オッズ帯':<12}{'買い目':>9}{'的中率':>9}{'回収率':>9}")
+    for lo, hi in ODDS_BUCKETS:
+        a = band[(lo, hi)]
+        if a["n"] == 0:
+            continue
+        hr_b = a["hit"] / a["n"]
+        rr_b = a["ret"] / a["stake"] if a["stake"] > 0 else 0.0
+        hi_s = "∞" if hi == float("inf") else f"{hi:.0f}"
+        mark = " ◎" if rr_b > 1.0 else ""
+        print(f"  {f'{lo:.0f}–{hi_s}':<12}{a['n']:>9}{_fmt(hr_b):>9}{_fmt(rr_b):>9}{mark}")
+    print("  ※ ◎(回収率>1)の帯があれば OOS エッジ候補。全て≤1なら exploitable な帯は無い。")
+    print("=" * 78)
+
+
 def _quality_walk_forward(featured, chunks, factory, args):
     """各 fold: 過去のみ学習→直前 fold で合成(α,β)を fit→評価 fold で市場/モデル/companion を OOS 評価。"""
     import pandas as pd
@@ -143,8 +264,9 @@ def _quality_walk_forward(featured, chunks, factory, args):
 def main():
     ap = argparse.ArgumentParser(description="walk-forward OOS バックテスト（時系列 honest 評価）")
     ap.add_argument("--folds", type=int, default=5, help="時間チャンク数（既定5＝4回評価）")
-    ap.add_argument("--limit", type=int, default=None,
-                    help="直近 N レースだけで実行（動作確認・高速化用。featured 再構築は不要）")
+    ap.add_argument("--limit", type=int, nargs="?", const=2000, default=None,
+                    help="直近 N レースだけで実行（動作確認・高速化用。featured 再構築は不要）。"
+                         "値を省いて --limit だけ渡すと直近2000レース")
     ap.add_argument("--bet-type", default="tansho")
     ap.add_argument("--ev-floor", type=float, default=1.1, help="賭ける EV 下限（既定1.1）")
     ap.add_argument("--ev-max", type=float, default=100.0, help="賭ける EV 上限（既定100）")
@@ -218,6 +340,13 @@ def main():
 
     if args.quality:
         _quality_walk_forward(featured, chunks, KeibaAIFactory, args)
+        return
+
+    # --by-odds かつ 単勝: 払戻を featured（着順×単勝）から自己完結で復元し、return_tables
+    # （seed corpus に無い payoff テーブル）依存を回避する。汎用 Simulator 経路だと払戻
+    # テーブル欠如で全レース skip＝「買い目0」になるため。
+    if args.by_odds and args.bet_type == "tansho":
+        _tansho_oos_walk_forward(featured, chunks, KeibaAIFactory, args)
         return
 
     params = BetTypeParams(ev_threshold=args.ev_floor, temperature=args.temperature,
