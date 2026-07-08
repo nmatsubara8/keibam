@@ -13,7 +13,15 @@ from dataclasses import field
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_MODELS = ("lightgbm", "xgboost", "catboost", "nn")
+SUPPORTED_MODELS = ("lightgbm", "xgboost", "catboost", "nn", "kernel")
+
+# kernel: Random Fourier Features(RBF近似) + ロジスティック回帰 = 線形時間の近似カーネルロジ回帰。
+# 厳密カーネルは O(n²) で 163万行では不可能なため RFF で近似（数百万行でもスケール）。
+DEFAULT_KERNEL_PARAMS = {
+    "n_components": 500,   # RFF 次元（大=近似精度↑・メモリ n×n_components）
+    "gamma": 0.1,          # RBF バンド幅（標準化後の特徴に対して）。要チューニング
+    "C": 1.0,              # ロジ回帰の逆正則化強度
+}
 
 DEFAULT_XGB_PARAMS = {
     "objective": "binary:logistic",
@@ -103,6 +111,7 @@ class BaseModelsConfig:
     xgboost_params: dict = field(default_factory=lambda: dict(DEFAULT_XGB_PARAMS))
     catboost_params: dict = field(default_factory=lambda: dict(DEFAULT_CATBOOST_PARAMS))
     nn_params: dict = field(default_factory=lambda: dict(DEFAULT_NN_PARAMS))
+    kernel_params: dict = field(default_factory=lambda: dict(DEFAULT_KERNEL_PARAMS))
     xgboost_search_space: dict = field(default_factory=lambda: dict(DEFAULT_XGB_SEARCH_SPACE))
     catboost_search_space: dict = field(default_factory=lambda: dict(DEFAULT_CATBOOST_SEARCH_SPACE))
     nn_search_space: dict = field(default_factory=lambda: dict(DEFAULT_NN_SEARCH_SPACE))
@@ -140,6 +149,7 @@ def from_dict(raw: dict) -> BaseModelsConfig:
         ("xgboost_params", DEFAULT_XGB_PARAMS),
         ("catboost_params", DEFAULT_CATBOOST_PARAMS),
         ("nn_params", DEFAULT_NN_PARAMS),
+        ("kernel_params", DEFAULT_KERNEL_PARAMS),
         ("xgboost_search_space", DEFAULT_XGB_SEARCH_SPACE),
         ("catboost_search_space", DEFAULT_CATBOOST_SEARCH_SPACE),
         ("nn_search_space", DEFAULT_NN_SEARCH_SPACE),

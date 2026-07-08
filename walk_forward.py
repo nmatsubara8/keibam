@@ -61,8 +61,9 @@ def _train_ai(ai, args):
     - どちらも無し:        単一 LightGBM（探索なし・従来の既定）
     """
     tc = getattr(args, "tuning_config_obj", None)  # --tuning-config で読み込んだ TuningConfig（無ければ None）
+    bm = getattr(args, "base_models_obj", None)     # --base-models の BaseModelsConfig（無ければ既定=LGBMのみ）
     if args.stacking:
-        ai.train_with_stacking(with_tuning=args.with_tuning, tuning_config=tc)
+        ai.train_with_stacking(with_tuning=args.with_tuning, tuning_config=tc, base_models_config=bm)
     elif args.with_tuning:
         ai.train_with_tuning(tuning_config=tc)
     else:
@@ -154,6 +155,12 @@ def main():
     ap.add_argument("--tuning-config", default=None,
                     help="探索設定 JSON（例 configs/tuning_config.example.json）。"
                          "省略時は LightGBMTuner の自動段階探索。--with-tuning と併用")
+    ap.add_argument("--base-models", default=None,
+                    help="スタッキングの base 学習器をカンマ区切りで指定"
+                         "（例 'lightgbm,xgboost,catboost,nn,kernel'）。--stacking と併用。"
+                         "省略時は LightGBM のみ（＝多モデルにするには明示指定が必要）")
+    ap.add_argument("--tune-per-model", action="store_true",
+                    help="xgboost/catboost/nn を各モデル個別に Optuna 探索する（--base-models と併用）")
     ap.add_argument("--by-odds", action="store_true",
                     help="全fold プールの OOS 回収率をオッズ帯別に出す（『中人気にエッジ』の honest 検証）")
     ap.add_argument("--quality", action="store_true",
@@ -166,6 +173,17 @@ def main():
     if args.with_tuning and args.tuning_config:
         from src.training._tuning_config import load_tuning_config
         args.tuning_config_obj = load_tuning_config(args.tuning_config)
+
+    # --base-models を指定していれば BaseModelsConfig を作る（スタッキングの base 学習器の顔ぶれ）。
+    args.base_models_obj = None
+    if args.stacking and args.base_models:
+        from src.training._base_models_config import SUPPORTED_MODELS, BaseModelsConfig
+        models = tuple(m.strip() for m in args.base_models.split(",") if m.strip())
+        bad = [m for m in models if m not in SUPPORTED_MODELS]
+        if bad:
+            ap.error(f"未対応の base モデル: {bad}（対応: {SUPPORTED_MODELS}）")
+        args.base_models_obj = BaseModelsConfig(models=models, tune_per_model=args.tune_per_model)
+        print(f"[base学習器] {models}  tune_per_model={args.tune_per_model}")
 
     import pandas as pd
 

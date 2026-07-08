@@ -63,6 +63,52 @@ class _NumericArrayAdapter:
         return self._model.feature_importances_
 
 
+class RFFLogisticClassifier:
+    """Random Fourier Features(RBF 近似) + ロジスティック回帰 = 線形時間の近似カーネルロジ回帰。
+
+    厳密カーネル法は O(n²)〜O(n³) のグラム行列が要り 163万行では非現実的。RFF は RBF カーネルを
+    ``n_components`` 次元のランダム特徴で線形時間近似するため、数百万行でもスケールする。
+    sklearn 互換（fit / predict_proba）。前段で欠損補完・標準化（カーネルは NaN・スケール非対応）。
+    sample_weight は最終段のロジ回帰へ委譲する。
+    """
+
+    def __init__(self, n_components=500, gamma=0.1, C=1.0, class_weight=None, random_state=100):
+        self.n_components = int(n_components)
+        self.gamma = float(gamma)
+        self.C = float(C)
+        self.class_weight = class_weight
+        self.random_state = random_state
+
+    def _make_imputer(self):
+        from sklearn.impute import SimpleImputer
+        try:  # 全 NaN 列（category 由来）でも列数を保つ
+            return SimpleImputer(strategy="median", keep_empty_features=True)
+        except TypeError:  # 古い sklearn
+            return SimpleImputer(strategy="median")
+
+    def fit(self, x, y, sample_weight=None):
+        from sklearn.kernel_approximation import RBFSampler
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import StandardScaler
+
+        self.pipe_ = Pipeline([
+            ("impute", self._make_imputer()),
+            ("scale", StandardScaler()),
+            ("rff", RBFSampler(gamma=self.gamma, n_components=self.n_components,
+                               random_state=self.random_state)),
+            ("logit", LogisticRegression(C=self.C, max_iter=1000, class_weight=self.class_weight)),
+        ])
+        if sample_weight is not None:
+            self.pipe_.fit(x, y, logit__sample_weight=sample_weight)
+        else:
+            self.pipe_.fit(x, y)
+        return self
+
+    def predict_proba(self, x):
+        return self.pipe_.predict_proba(x)
+
+
 def build_base_models(
     cfg,
     lgb_params: dict,
@@ -114,6 +160,16 @@ def build_base_models(
                 ))
             except ImportError:
                 logger.warning("catboost 未導入のためスキップ")
+        elif m == "kernel":
+            params = dict(getattr(cfg, "kernel_params", None) or {})
+            kmodel = RFFLogisticClassifier(
+                n_components=params.get("n_components", 500),
+                gamma=params.get("gamma", 0.1),
+                C=params.get("C", 1.0),
+                class_weight={0: 1.0, 1: scale_pos_weight},
+            )
+            # _NumericArrayAdapter で category 型を float に正規化（RFF は数値のみ）
+            specs.append(BaseModelSpec(_NumericArrayAdapter(kmodel), name="KernelRFF"))
         elif m == "nn":
             # NN base は専用ストリーム（nn_scaler/cardinalities）が必要なため
             # train_with_stacking 側で構築する（ここでは何もしない）。

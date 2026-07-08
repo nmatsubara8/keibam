@@ -31,21 +31,30 @@ python seed_from_csv.py <csv> --limit 200000 && python build_seed_featured.py &&
 
 ## 2. 最強構成で OOS 実測
 
+> **重要**: `--stacking` 単体は base 学習器が **LightGBM のみ**（既定 `models=("lightgbm",)`）。
+> 多モデル・アンサンブルにするには **`--base-models` で顔ぶれを明示**する必要がある。
+> `kernel` = Random Fourier Features + ロジ回帰（大規模で不可な厳密カーネルの線形時間近似）。
+
 ### (A) 対市場 ΔR²（本命の判定）
 ```
 python walk_forward.py --quality --stacking --with-tuning \
+    --base-models lightgbm,xgboost,catboost,nn,kernel --tune-per-model \
     --tuning-config configs/tuning_config.example.json --folds 5
 ```
-- 各 fold: 過去のみで **4モデル×Optuna→スタッキング**を学習 → 直前 fold で合成 (α,β) を fit →
-  評価 fold で **市場 / モデル / companion（α·log f＋β·log π）** の OOS logloss・Brier・ECE を集計。
+- 各 fold: 過去のみで **5モデル（GBDT×3＋NN＋カーネル）×Optuna→スタッキング**を学習 → 直前 fold で
+  合成 (α,β) を fit → 評価 fold で **市場 / モデル / companion（α·log f＋β·log π）** の OOS
+  logloss・Brier・ECE を集計。
 - **判定**: 通算プールで **companion が「市場」を logloss・ECE ともに安定して下回れば edge**
-  （market-companion 達成）。下回らなければ **チューニング＋アンサンブル込みでも NO-GO** を確定。
+  （market-companion 達成）。下回らなければ **チューニング＋アンサンブル＋カーネル込みでも NO-GO** を確定。
 
 ### (B) OOS 回収率（オッズ帯別）
 ```
 python walk_forward.py --stacking --with-tuning \
+    --base-models lightgbm,xgboost,catboost,nn,kernel --tune-per-model \
     --tuning-config configs/tuning_config.example.json --by-odds --folds 5
 ```
+
+> まず軽く通すなら base を絞る: `--base-models lightgbm,kernel`（カーネルの寄与だけ見たいとき）。
 - 単勝の OOS 回収率を全 fold プールで算出。1.0 を安定超えなければ黒字化せず。
 
 ## 3. 探索設定（`--tuning-config`）
