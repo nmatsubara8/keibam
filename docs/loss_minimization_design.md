@@ -55,9 +55,17 @@ JRA 標準控除率は券種で異なる。**単勝/複勝 20%** が最小、三
 | `tests/policies/test_loss_minimization.py` | 21 ケース（全パス） |
 | `verify_loss_minimization.py` | データ不要の数値デモ（`python verify_loss_minimization.py`） |
 
-既存資産との接続:
-- `policies/_takeout_calibration.py`: 払戻実績から実効控除率を逆算（Harville バイアス込み）。
-  本表の標準値の代わりに実測 t_eff を使うと更に正確。
+既存資産との接続（配線済み）:
+- **`policies/_takeout_calibration.py` → 損失最小化（接続済み）**: 払戻実績から逆算した実効控除率
+  t_eff を控除率関数として差し込める。`calibrated_takeout_fn({券種: t_eff})` で控除率関数を作り、
+  `load_effective_takeout_fn(path)` が `models/takeout_calibration.json` を読んで生成（無ければ公称に
+  フォールバック）。`expected_loss` / `turnover_cap_for_loss_budget` / `evaluate_candidate`（max_takeout
+  判定）/ `LossMinimizingPolicy` の全てが `takeout_of=` を受け取り、公称の代わりに実効控除で判定・配分
+  できる（例: 実効較正で複勝が 0.234 に上がれば max_takeout 0.22 を超えて自動で弾く）。
+- **`predict_upcoming.py` → 損失最小化ゲート（配線済み）**: `--loss-min` で run_prediction の**後段**に
+  第2の関門を挿す。`_apply_loss_min_gate` が候補を `filter_candidates` に通し、券種/実効控除/EV安全余裕/
+  OOS閾値必須で見送り（理由は INFO ログ）。実効控除率は上記 loader から自動取得。既定オフ・非破壊。
+  `--loss-min-in-sample` を付けると閾値を非OOS扱いにして全件見送り＝後付け最適化の禁止を実演。
 - `operation/_risk_guard.py`: 当日実現損失の kill switch（レバー2 の実運用側の停止装置）。
 - `portfolio/_kelly.py`: `kelly_fraction` は EV≤1 で 0 を返す（エッジ無し→賭けない）。
 

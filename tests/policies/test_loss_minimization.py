@@ -15,11 +15,13 @@ from src.policies._loss_minimization import (
     GateResult,
     LossMinimizationConfig,
     LossMinimizingPolicy,
+    calibrated_takeout_fn,
     cheapest_bet_types,
     evaluate_candidate,
     expected_loss,
     expected_pnl_rate,
     filter_candidates,
+    load_effective_takeout_fn,
     market_loss_rate,
     prefer_lowest_takeout_per_race,
     required_ev,
@@ -205,3 +207,61 @@ def test_cheapest_bet_types_subset():
     ranked = cheapest_bet_types((BetType.SANRENTAN, BetType.TANSHO))
     assert ranked[0][0] == BetType.TANSHO
     assert ranked[1][0] == BetType.SANRENTAN
+
+
+# --- _takeout_calibration との接続（実効控除率の差し込み）-----------------------
+
+
+def test_calibrated_takeout_fn_overrides_and_falls_back():
+    # 複勝は較正値、単勝は較正対象外→公称にフォールバック
+    eff = calibrated_takeout_fn({BetType.FUKUSHO: 0.234})
+    assert eff(BetType.FUKUSHO) == 0.234
+    assert eff(BetType.TANSHO) == 0.200  # 未較正→公称
+    assert calibrated_takeout_fn(None)(BetType.TANSHO) == 0.200  # 空マップも安全
+
+
+def test_expected_loss_uses_effective_takeout():
+    eff = calibrated_takeout_fn({BetType.FUKUSHO: 0.234})
+    # 公称は 0.20、実効 0.234
+    assert expected_loss(10000, BetType.FUKUSHO) == 2000.0
+    assert math.isclose(expected_loss(10000, BetType.FUKUSHO, takeout_of=eff), 2340.0)
+    assert math.isclose(market_loss_rate(BetType.FUKUSHO, takeout_of=eff), 0.234)
+
+
+def test_turnover_cap_uses_effective_takeout():
+    eff = calibrated_takeout_fn({BetType.FUKUSHO: 0.25})
+    # 実効控除が高いほど、同予算で回せる回転量は小さくなる
+    nominal = turnover_cap_for_loss_budget(2000, BetType.FUKUSHO)
+    effective = turnover_cap_for_loss_budget(2000, BetType.FUKUSHO, takeout_of=eff)
+    assert effective < nominal
+    assert math.isclose(effective, 8000.0)
+
+
+def test_gate_denies_when_effective_takeout_exceeds_cap():
+    # 公称 0.20 なら通るが、実効較正で 0.234 に上がると max_takeout 0.22 を超えて弾く
+    eff = calibrated_takeout_fn({BetType.FUKUSHO: 0.234})
+    cfg = LossMinimizationConfig(
+        allowed_bet_types=(BetType.TANSHO, BetType.FUKUSHO), max_takeout=0.22
+    )
+    c = _cand(bet_type=BetType.FUKUSHO, ev=1.3, prob=0.5)
+    assert evaluate_candidate(c, cfg, threshold_is_oos=True).allowed is True  # 公称0.20で通過
+    res = evaluate_candidate(c, cfg, threshold_is_oos=True, takeout_of=eff)
+    assert res.allowed is False and "控除率" in res.reason  # 実効で弾く
+
+
+def test_policy_uses_effective_takeout_in_report():
+    eff = calibrated_takeout_fn({BetType.FUKUSHO: 0.234})
+    pol = LossMinimizingPolicy(
+        LossMinimizationConfig(allowed_bet_types=(BetType.TANSHO, BetType.FUKUSHO)),
+        takeout_of=eff,
+    )
+    rows = {r["bet_type"]: r["takeout"] for r in pol.loss_budget_report(2000)}
+    assert rows[BetType.TANSHO] == 0.200
+    assert rows[BetType.FUKUSHO] == 0.234
+
+
+def test_load_effective_takeout_fn_missing_file_returns_nominal():
+    # 較正 JSON が無ければ公称テーブル（takeout）をそのまま返す（安全側）
+    fn = load_effective_takeout_fn("/nonexistent/path/takeout_calibration.json")
+    assert fn(BetType.TANSHO) == 0.200
+    assert fn(BetType.SANRENTAN) == 0.275

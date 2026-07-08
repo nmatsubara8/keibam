@@ -668,8 +668,28 @@ def _in_window(schedule, now, lo: float, hi: float):
     return [rid for _, rid in sorted(out)]
 
 
+def _apply_loss_min_gate(race_id, candidates, loss_min_gate):
+    """run_prediction の候補に損失最小化ゲートを適用（無効時はそのまま返す）。
+
+    loss_min_gate = (LossMinimizationConfig, takeout_of, threshold_is_oos) or None。
+    見送りは理由つきで INFO ログに残す（後付け最適化・高控除・EV不足・テールを構造的に排除）。
+    """
+    if loss_min_gate is None:
+        return candidates
+    from src.policies._loss_minimization import filter_candidates
+    cfg, takeout_of, is_oos = loss_min_gate
+    kept, records = filter_candidates(candidates, cfg, threshold_is_oos=is_oos, takeout_of=takeout_of)
+    for c, res in records:
+        if not res.allowed:
+            umaban = c.combo[0] if getattr(c, "combo", None) else "?"
+            logger.info("損失最小化ゲート 見送り race=%s 馬番=%s (%s): %s",
+                        race_id, umaban, c.bet_type, res.reason)
+    return kept
+
+
 def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, unit=100,
-                       save_odds=False, counts=None, prev_ev=None, gone_shown=None):
+                       save_odds=False, counts=None, prev_ev=None, gone_shown=None,
+                       loss_min_gate=None):
     """指定レース（race_ids、None で全レース）を予測し推奨を表示。(推奨数, 投資合計) を返す。
 
     save_odds=True なら、スクレイプした全馬の暫定オッズ（data/live/odds_*.csv）と推奨買い目
@@ -734,6 +754,7 @@ def _predict_for_races(date_yyyymmdd, race_ids, shutuba_pkl, model, op_config, u
             except Exception:  # noqa: BLE001
                 logger.warning("予測失敗 race_id=%s: %s", race_id, e)
             continue
+        candidates = _apply_loss_min_gate(race_id, candidates, loss_min_gate)
         spent, placed = _print_recommendations(race_id, candidates, op_config.bankroll, unit,
                                                 post_of, counts, odds_by_race.get(str(race_id)),
                                                 prev_ev, gone_shown)
@@ -777,6 +798,17 @@ def main() -> None:
                     help="取得した全馬の暫定オッズと推奨買い目を data/live/ に追記蓄積する")
     ap.add_argument("--shutuba-pkl", default=None,
                     help="スクレイプ済み出馬表 pickle を使う（ネット不要。予測部の確認用）")
+    # --- 損失最小化ゲート（既定オフ・非破壊。有効化で run_prediction の後段に第2の関門を挿す）---
+    ap.add_argument("--loss-min", action="store_true",
+                    help="損失最小化ゲートを適用（低控除券種・EV安全余裕・OOS閾値必須の構造的関門）")
+    ap.add_argument("--loss-min-ev-margin", type=float, default=0.0,
+                    help="EV下限への上乗せ安全余裕（必要EV=1.0+この値）。既定0.0")
+    ap.add_argument("--loss-min-min-prob", type=float, default=0.0,
+                    help="極小確率テールを除外する的中確率の下限。既定0.0")
+    ap.add_argument("--loss-min-max-takeout", type=float, default=0.20,
+                    help="許容する実効控除率の上限（既定0.20=単勝/複勝相当）")
+    ap.add_argument("--loss-min-in-sample", action="store_true",
+                    help="閾値を非OOS扱いにする（require_oos_threshold により全件見送り＝後付け最適化の禁止を実演）")
     args = ap.parse_args()
 
     from app._data_loader import load_latest_model
@@ -798,6 +830,27 @@ def main() -> None:
     header = (f"EV下限={op_config.tansho_ev_threshold or 'BetThresholds既定'} / オッズ上限={odds_cap}"
               f" / ケリー×{op_config.kelly_fraction_ratio} / bankroll={int(op_config.bankroll):,}円")
 
+    # 損失最小化ゲート（--loss-min で有効化）。実効控除率は models/takeout_calibration.json から
+    # 読み（無ければ公称）、券種選択・最大控除・EV安全余裕・OOS閾値必須を run_prediction の後段に課す。
+    loss_min_gate = None
+    if args.loss_min:
+        from src.constants._bet_types import BetType
+        from src.policies._loss_minimization import (
+            LossMinimizationConfig,
+            load_effective_takeout_fn,
+        )
+        lm_cfg = LossMinimizationConfig(
+            allowed_bet_types=(BetType.TANSHO, BetType.FUKUSHO),
+            max_takeout=args.loss_min_max_takeout,
+            ev_safety_margin=args.loss_min_ev_margin,
+            min_probability=args.loss_min_min_prob,
+            require_oos_threshold=True,
+        )
+        loss_min_gate = (lm_cfg, load_effective_takeout_fn(), not args.loss_min_in_sample)
+        header += (f" ｜ 損失最小化ゲートON(必要EV≥{1.0 + args.loss_min_ev_margin:.2f}"
+                   f"/控除≤{args.loss_min_max_takeout:.0%}"
+                   f"/OOS={'否' if args.loss_min_in_sample else '要'})")
+
     def _run_once(race_ids, counts=None, prev_ev=None, gone_shown=None):
         print("=" * 70)
         print(f"予測（{date_yyyymmdd}） — 検証済み単勝戦略  {header}")
@@ -806,7 +859,7 @@ def main() -> None:
         print("=" * 70)
         n, total = _predict_for_races(date_yyyymmdd, race_ids, args.shutuba_pkl, model,
                                       op_config, args.unit, args.save_odds, counts, prev_ev,
-                                      gone_shown)
+                                      gone_shown, loss_min_gate)
         print("\n" + "=" * 70)
         if n == 0:
             print("推奨馬券なし（EV>閾値 かつ オッズ≤上限 を満たす馬がいない）")

@@ -30,7 +30,10 @@ import dataclasses
 from collections import defaultdict
 
 from src.constants._bet_types import BetType
-from src.constants._takeout import rank_by_takeout, takeout
+from src.constants._takeout import TAKEOUT, rank_by_takeout, takeout
+
+# 券種の全集合（実効控除率で並べ替えるときの走査対象）。
+TAKEOUT_ALL = tuple(TAKEOUT.keys())
 
 # ---------------------------------------------------------------------------
 # レバー1・2: 期待損失と回転量予算（純粋な算術）
@@ -42,31 +45,43 @@ def expected_pnl_rate(expected_value: float) -> float:
     return float(expected_value) - 1.0
 
 
-def market_loss_rate(bet_type: str) -> float:
-    """市場並走（エッジ無し, EV≈1−控除率）での期待損失率 = 控除率。"""
-    return takeout(bet_type)
+def market_loss_rate(bet_type: str, takeout_of=takeout) -> float:
+    """市場並走（エッジ無し, EV≈1−控除率）での期待損失率 = 控除率。
+
+    ``takeout_of`` を差し替えると公称控除率の代わりに実効控除率（払戻実績から較正した
+    ``_takeout_calibration`` の値）を使える。既定は公称テーブル。
+    """
+    return takeout_of(bet_type)
 
 
-def expected_loss(turnover: float, bet_type: str) -> float:
+def expected_loss(turnover: float, bet_type: str, takeout_of=takeout) -> float:
     """市場並走で回転量 ``turnover`` を賭けたときの期待損失（正の数）。"""
-    return float(turnover) * takeout(bet_type)
+    return float(turnover) * takeout_of(bet_type)
 
 
-def turnover_cap_for_loss_budget(loss_budget: float, bet_type: str) -> float:
+def turnover_cap_for_loss_budget(loss_budget: float, bet_type: str, takeout_of=takeout) -> float:
     """許容期待損失 ``loss_budget`` を超えない上限回転量 = 予算 / 控除率。
 
     例: 単勝(控除0.2)で「期待損失 ¥2,000 まで許容」→ 上限回転量 ¥10,000。
     三連単(0.275)なら同予算で ¥7,273 しか回せない（高コストゆえ回転を抑える）。
+    ``takeout_of`` に較正済み実効控除率を渡すと予算配分がより実態に沿う。
     """
-    t = takeout(bet_type)
+    t = takeout_of(bet_type)
     if t <= 0:
         return float("inf")
     return float(loss_budget) / t
 
 
-def cheapest_bet_types(bet_types=None) -> list[tuple[str, float]]:
-    """控除率の昇順（損失が小さい順）の (券種, 控除率)。単勝/複勝が先頭。"""
-    return rank_by_takeout(bet_types)
+def cheapest_bet_types(bet_types=None, takeout_of=takeout) -> list[tuple[str, float]]:
+    """控除率の昇順（損失が小さい順）の (券種, 控除率)。単勝/複勝が先頭。
+
+    ``takeout_of`` が既定（公称テーブル）なら ``rank_by_takeout`` に委譲。差し替え時は
+    その控除率関数で並べ替える（実効控除率での券種選択）。
+    """
+    if takeout_of is takeout:
+        return rank_by_takeout(bet_types)
+    items = TAKEOUT_ALL if bet_types is None else bet_types
+    return sorted(((bt, takeout_of(bt)) for bt in items), key=lambda kv: (kv[1], kv[0]))
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +131,7 @@ def evaluate_candidate(
     config: LossMinimizationConfig,
     *,
     threshold_is_oos: bool,
+    takeout_of=takeout,
 ) -> GateResult:
     """単一 BetCandidate を損失最小化ゲートに通す（既定は DENY）。
 
@@ -124,6 +140,8 @@ def evaluate_candidate(
     candidate : BetCandidate（bet_type/probability/odds/expected_value を持つ）。
     threshold_is_oos : この候補を採用した閾値/パラメータが OOS 検証済みか。
         False かつ config.require_oos_threshold なら無条件で賭けない。
+    takeout_of : 券種→控除率。既定は公称テーブル。``_takeout_calibration`` の実効控除率を
+        渡すと max_takeout 判定が実態に沿う（例: 実効較正で 0.20 を僅かに超える券種を弾ける）。
 
     順に検査し、最初に外れた理由で DENY。全通過で ALLOW。
     """
@@ -135,8 +153,9 @@ def evaluate_candidate(
     if bt not in config.allowed_bet_types:
         return GateResult(False, f"許可券種外（{bt}）→ 低控除券種に限定")
 
-    if takeout(bt) > config.max_takeout:
-        return GateResult(False, f"控除率 {takeout(bt):.1%} > 上限 {config.max_takeout:.1%}")
+    t = takeout_of(bt)
+    if t > config.max_takeout:
+        return GateResult(False, f"控除率 {t:.1%} > 上限 {config.max_takeout:.1%}")
 
     if candidate.probability < config.min_probability:
         return GateResult(
@@ -149,7 +168,7 @@ def evaluate_candidate(
             False, f"EV {candidate.expected_value:.3f} ≤ 必要 {need:.3f}（期待損失ゆえ賭けない）"
         )
 
-    return GateResult(True, f"通過: EV {candidate.expected_value:.3f} > {need:.3f}, 控除 {takeout(bt):.1%}")
+    return GateResult(True, f"通過: EV {candidate.expected_value:.3f} > {need:.3f}, 控除 {t:.1%}")
 
 
 def filter_candidates(
@@ -157,18 +176,19 @@ def filter_candidates(
     config: LossMinimizationConfig,
     *,
     threshold_is_oos: bool,
+    takeout_of=takeout,
 ) -> tuple[list, list[tuple[object, GateResult]]]:
     """候補群をゲートに通し、(採用リスト, [(候補, 判定)] の全記録) を返す。"""
     allowed, records = [], []
     for c in candidates:
-        res = evaluate_candidate(c, config, threshold_is_oos=threshold_is_oos)
+        res = evaluate_candidate(c, config, threshold_is_oos=threshold_is_oos, takeout_of=takeout_of)
         records.append((c, res))
         if res.allowed:
             allowed.append(c)
     return allowed, records
 
 
-def prefer_lowest_takeout_per_race(candidates) -> list:
+def prefer_lowest_takeout_per_race(candidates, takeout_of=takeout) -> list:
     """レースごとに、通過候補のうち控除率が最小の券種だけを残す（同点は EV 最大）。
 
     損失最小化のタイブレーク: 同じ賭ける機会なら、より低コストの券種 1 本に集約する。
@@ -180,8 +200,8 @@ def prefer_lowest_takeout_per_race(candidates) -> list:
 
     out: list = []
     for _race, cs in by_race.items():
-        min_t = min(takeout(c.bet_type) for c in cs)
-        best = [c for c in cs if takeout(c.bet_type) == min_t]
+        min_t = min(takeout_of(c.bet_type) for c in cs)
+        best = [c for c in cs if takeout_of(c.bet_type) == min_t]
         best.sort(key=lambda c: c.expected_value, reverse=True)
         out.extend(best)
     return out
@@ -201,22 +221,68 @@ class LossMinimizingPolicy:
     """
 
     config: LossMinimizationConfig = LossMinimizationConfig()
+    takeout_of: object = takeout  # 券種→控除率。既定は公称。較正済み実効控除率を差し込める。
 
     def select(self, candidates, *, threshold_is_oos: bool) -> list:
         """賭けるべき候補を返す（既定は空=賭けない）。"""
-        allowed, _ = filter_candidates(candidates, self.config, threshold_is_oos=threshold_is_oos)
-        return prefer_lowest_takeout_per_race(allowed)
+        allowed, _ = filter_candidates(
+            candidates, self.config, threshold_is_oos=threshold_is_oos, takeout_of=self.takeout_of
+        )
+        return prefer_lowest_takeout_per_race(allowed, takeout_of=self.takeout_of)
 
     def loss_budget_report(self, loss_budget: float) -> list[dict]:
         """許容損失予算に対する券種別の上限回転量と控除率の一覧（意思決定支援）。"""
         rows = []
-        for bt, t in cheapest_bet_types(self.config.allowed_bet_types):
+        for bt, t in cheapest_bet_types(self.config.allowed_bet_types, takeout_of=self.takeout_of):
             rows.append(
                 {
                     "bet_type": bt,
                     "takeout": t,
-                    "turnover_cap": turnover_cap_for_loss_budget(loss_budget, bt),
+                    "turnover_cap": turnover_cap_for_loss_budget(loss_budget, bt, takeout_of=self.takeout_of),
                     "expected_loss_at_cap": loss_budget,
                 }
             )
         return rows
+
+
+# ---------------------------------------------------------------------------
+# _takeout_calibration との接続: 実効控除率の控除率関数を組み立てる
+# ---------------------------------------------------------------------------
+
+
+def calibrated_takeout_fn(effective_map):
+    """{券種: 実効控除率} から控除率関数を作る（未較正券種は公称テーブルにフォールバック）。
+
+    ``_takeout_calibration.latest_takeout_map`` の出力（払戻実績から逆算した t_eff）を
+    そのまま渡せる。単勝は較正対象外なので常に公称 0.20 に落ちる。
+    """
+    m = dict(effective_map or {})
+
+    def _takeout_of(bet_type: str) -> float:
+        v = m.get(bet_type)
+        return float(v) if v is not None else takeout(bet_type)
+
+    return _takeout_of
+
+
+def load_effective_takeout_fn(path=None):
+    """``models/takeout_calibration.json`` を読み、較正済み控除率関数を返す。
+
+    ファイルが無い/空/読めない場合は公称テーブル（``takeout``）をそのまま返す（安全側）。
+    ``_takeout_calibration`` は遅延 import（本モジュールを軽く保つ）。
+    """
+    try:
+        from src.policies._takeout_calibration import (
+            latest_takeout_map,
+            takeout_calibration_path,
+        )
+    except Exception:
+        return takeout
+    p = path or takeout_calibration_path("models")
+    try:
+        eff = latest_takeout_map(p)
+    except Exception:
+        eff = None
+    if not eff:
+        return takeout
+    return calibrated_takeout_fn(eff)

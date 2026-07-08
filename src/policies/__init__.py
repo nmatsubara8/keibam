@@ -24,9 +24,11 @@ from src.policies._loss_minimization import (
     GateResult,
     LossMinimizationConfig,
     LossMinimizingPolicy,
+    calibrated_takeout_fn,
     evaluate_candidate,
     expected_loss,
     filter_candidates,
+    load_effective_takeout_fn,
     turnover_cap_for_loss_budget,
 )
 
@@ -38,6 +40,8 @@ __all__ = [
     "filter_candidates",
     "expected_loss",
     "turnover_cap_for_loss_budget",
+    "calibrated_takeout_fn",
+    "load_effective_takeout_fn",
     "AbstractScorePolicy",
     "BasicScorePolicy",
     "StdScorePolicy",
