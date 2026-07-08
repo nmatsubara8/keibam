@@ -60,10 +60,11 @@ def _train_ai(ai, args):
     - stacking のみ:      スタッキング（探索なし）
     - どちらも無し:        単一 LightGBM（探索なし・従来の既定）
     """
+    tc = getattr(args, "tuning_config_obj", None)  # --tuning-config で読み込んだ TuningConfig（無ければ None）
     if args.stacking:
-        ai.train_with_stacking(with_tuning=args.with_tuning)
+        ai.train_with_stacking(with_tuning=args.with_tuning, tuning_config=tc)
     elif args.with_tuning:
-        ai.train_with_tuning()
+        ai.train_with_tuning(tuning_config=tc)
     else:
         ai.train_without_tuning()
 
@@ -150,12 +151,21 @@ def main():
     ap.add_argument("--with-tuning", action="store_true",
                     help="Optuna ハイパラ探索を有効化（--stacking と併用で4モデル×探索→スタッキング=本番最強構成）。"
                          "『チューニングでも市場を出し抜けるか』の OOS 実測用。学習は重くなる")
+    ap.add_argument("--tuning-config", default=None,
+                    help="探索設定 JSON（例 configs/tuning_config.example.json）。"
+                         "省略時は LightGBMTuner の自動段階探索。--with-tuning と併用")
     ap.add_argument("--by-odds", action="store_true",
                     help="全fold プールの OOS 回収率をオッズ帯別に出す（『中人気にエッジ』の honest 検証）")
     ap.add_argument("--quality", action="store_true",
                     help="予測品質モード: 各fold(過去のみ学習→直前foldで合成fit→評価foldでOOS)で"
                          "市場 vs モデル vs companion の勝logloss/Brier/ECEを集計（market-companion 安定性確認）")
     args = ap.parse_args()
+
+    # --tuning-config を指定していれば TuningConfig を読み込み、_train_ai から使えるようにする。
+    args.tuning_config_obj = None
+    if args.with_tuning and args.tuning_config:
+        from src.training._tuning_config import load_tuning_config
+        args.tuning_config_obj = load_tuning_config(args.tuning_config)
 
     import pandas as pd
 
