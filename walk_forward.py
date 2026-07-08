@@ -52,6 +52,22 @@ def _score_predictors(edge):
     return out
 
 
+def _train_ai(ai, args):
+    """args に応じて学習方法を選ぶ。--with-tuning で Optuna ハイパラ探索を有効化する。
+
+    - stacking + tuning: 本番同等（4モデル×Optuna→スタッキング）
+    - tuning のみ:        単一モデルの Optuna 探索
+    - stacking のみ:      スタッキング（探索なし）
+    - どちらも無し:        単一 LightGBM（探索なし・従来の既定）
+    """
+    if args.stacking:
+        ai.train_with_stacking(with_tuning=args.with_tuning)
+    elif args.with_tuning:
+        ai.train_with_tuning()
+    else:
+        ai.train_without_tuning()
+
+
 def _quality_walk_forward(featured, chunks, factory, args):
     """各 fold: 過去のみ学習→直前 fold で合成(α,β)を fit→評価 fold で市場/モデル/companion を OOS 評価。"""
     import pandas as pd
@@ -70,8 +86,8 @@ def _quality_walk_forward(featured, chunks, factory, args):
         return build_edge_frame(st, _won(sl).to_numpy())
 
     print("=" * 74)
-    print(f"予測品質 walk-forward（市場 vs モデル vs companion / {args.folds}分割 / "
-          f"学習={'スタッキング' if args.stacking else '単一LightGBM'}）")
+    _learn = ("スタッキング" if args.stacking else "単一LightGBM") + ("+Optuna探索" if args.with_tuning else "")
+    print(f"予測品質 walk-forward（市場 vs モデル vs companion / {args.folds}分割 / 学習={_learn}）")
     print(f"  {'評価fold期間':<22}{'予測器':<11}{'勝logloss':>11}{'Brier':>10}{'ECE':>9}")
     print("-" * 74)
     pooled = []
@@ -79,10 +95,7 @@ def _quality_walk_forward(featured, chunks, factory, args):
         train_races = [r for c in chunks[:k - 1] for r in c]  # chunks[0..k-2]
         try:
             ai = factory.create(featured.loc[train_races], test_size=0.1, valid_size=0.2)
-            if args.stacking:
-                ai.train_with_stacking(with_tuning=False)
-            else:
-                ai.train_without_tuning()
+            _train_ai(ai, args)
             ebf = _edge(ai, chunks[k - 1])  # 直前 fold で合成 fit
             races = []
             for _rid, g in ebf.groupby(level=0):
@@ -134,6 +147,9 @@ def main():
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--takeout", type=float, default=0.2)
     ap.add_argument("--stacking", action="store_true", help="本番同等スタッキングで学習（既定は単一LightGBM）")
+    ap.add_argument("--with-tuning", action="store_true",
+                    help="Optuna ハイパラ探索を有効化（--stacking と併用で4モデル×探索→スタッキング=本番最強構成）。"
+                         "『チューニングでも市場を出し抜けるか』の OOS 実測用。学習は重くなる")
     ap.add_argument("--by-odds", action="store_true",
                     help="全fold プールの OOS 回収率をオッズ帯別に出す（『中人気にエッジ』の honest 検証）")
     ap.add_argument("--quality", action="store_true",
@@ -202,10 +218,7 @@ def main():
         label = f"{d0}〜{d1}"
         try:
             ai = KeibaAIFactory.create(train, test_size=0.1, valid_size=0.2)
-            if args.stacking:
-                ai.train_with_stacking(with_tuning=False)
-            else:
-                ai.train_without_tuning()
+            _train_ai(ai, args)
             summary, _ = backtest_bet_type(ai, fold, rp, args.bet_type, params, takeout=args.takeout)
         except Exception as e:  # noqa: BLE001
             print(f"  {label:<26}  学習/評価失敗: {e}")
