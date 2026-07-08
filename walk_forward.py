@@ -143,6 +143,8 @@ def _quality_walk_forward(featured, chunks, factory, args):
 def main():
     ap = argparse.ArgumentParser(description="walk-forward OOS バックテスト（時系列 honest 評価）")
     ap.add_argument("--folds", type=int, default=5, help="時間チャンク数（既定5＝4回評価）")
+    ap.add_argument("--limit", type=int, default=None,
+                    help="直近 N レースだけで実行（動作確認・高速化用。featured 再構築は不要）")
     ap.add_argument("--bet-type", default="tansho")
     ap.add_argument("--ev-floor", type=float, default=1.1, help="賭ける EV 下限（既定1.1）")
     ap.add_argument("--ev-max", type=float, default=100.0, help="賭ける EV 上限（既定100）")
@@ -203,6 +205,10 @@ def main():
     # レース単位で発走日順に並べ、--folds 個のチャンクへ分割（レースを跨いで割らない）。
     race_date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
     ordered = list(race_date.index)
+    if args.limit and len(ordered) > args.limit:
+        ordered = ordered[-args.limit:]  # 直近 limit レースだけ（時系列順は保持）＝動作確認・高速化
+        featured = featured.loc[ordered]
+        print(f"[--limit] 直近 {args.limit:,} レースに絞って実行（全 {len(race_date):,} 中）")
     n = len(ordered)
     if n < args.folds * 2:
         print(f"レース数 {n} が少なすぎます（--folds {args.folds}）")
