@@ -376,6 +376,36 @@ def f_leg_type(df: pd.DataFrame) -> pd.Series:
     return lab
 
 
+def f_kijun_gap(df: pd.DataFrame) -> pd.Series:
+    """基準オッズ乖離（JRDBフェアバリュー / 市場単勝）＝Benter核。JRDB付与時のみ発火。
+
+    gap<1: 基準<市場＝JRDBは市場より勝率高いと見る＝市場が過小評価＝買い妙味。
+    gap>1: 基準>市場＝市場が過大評価。
+    """
+    if "jrdb_kijun_gap" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    g = _num(df["jrdb_kijun_gap"])
+    out = pd.cut(g, [0, 0.7, 0.9, 1.1, 1.5, np.inf],
+                 labels=["under", "slight_under", "fair", "slight_over", "over"])
+    return out.astype(object).where(g.notna(), NA).to_numpy()
+
+
+def f_prev_trouble(df: pd.DataFrame) -> pd.Series:
+    """前走で不利/道中外々等の特記（JRDB SKB特記）。卍の核＝過小評価の妙味。JRDB付与時のみ。"""
+    if "prev_trouble" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["prev_trouble"])
+    return np.where(v.isna(), NA, np.where(v >= 0.5, "trouble", "clean"))
+
+
+def f_prev_deokure(df: pd.DataFrame) -> pd.Series:
+    """前走で出遅れ（JRDB SED出遅）。着順が実力より悪く出た過小評価馬。JRDB付与時のみ。"""
+    if "prev_deokure" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["prev_deokure"])
+    return np.where(v.isna(), NA, np.where(v >= 0.5, "deokure", "normal"))
+
+
 _SIRE_COLS = ("父", "種牡馬", "sire", "father", "父名", "種牡馬名")
 
 
@@ -419,6 +449,9 @@ FACTORS: dict[str, callable] = {
     "ground": f_ground,
     "race_class": f_race_class,
     "leg_type": f_leg_type,
+    "kijun_gap": f_kijun_gap,
+    "prev_trouble": f_prev_trouble,
+    "prev_deokure": f_prev_deokure,
 }
 
 
