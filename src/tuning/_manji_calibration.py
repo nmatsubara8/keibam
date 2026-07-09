@@ -173,8 +173,14 @@ def calibrate_factor_weights(
         if not pmap:
             continue
         pts = bk[f].map(lambda b, pmap=pmap: pmap.get(b, 0.0)).to_numpy(dtype=float)
-        pos = ret[(pts > 0) & finite]
-        neg = ret[(pts < 0) & finite]
+        # 効率市場では全バケットの点が負になりうるため、絶対 0 でなく「その因子の
+        # アクティブ馬(点≠0)の平均点」で相対分割する。点が相対的に高い(=less bad)馬 vs 低い馬。
+        active = finite & (pts != 0.0)
+        if active.sum() < 2 * min_side:
+            continue
+        mu_pt = float(pts[active].mean())
+        pos = ret[active & (pts > mu_pt)]
+        neg = ret[active & (pts < mu_pt)]
         if len(pos) < min_side or len(neg) < min_side:
             continue
         lifts[f] = float(pos.mean() - neg.mean())
