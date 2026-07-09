@@ -82,8 +82,51 @@ def main() -> int:
     if feat_horses and uniq_horses and h_hit / len(uniq_horses) > 0.8:
         print("  ★ horse_id が高率で一致 → 血統登録番号橋渡しは成立。特記/基準オッズを貼れる。")
     elif feat_horses:
-        print("  △ horse_id 一致が低い → horse_id 採番の対応を確認（feat['horse_id'].head() を共有ください）。")
+        print("  △ horse_id 一致が低い → 複数の変換仮説を自動検証します。")
+        _diagnose_horse_id(recs, featured)
     return 0
+
+
+def _diagnose_horse_id(recs, featured) -> None:
+    """featured の horse_id 形式を突き止めるため、複数の変換仮説の一致率を出す。"""
+    fh = featured["horse_id"].astype(str).str.strip()
+    print("\n[featured horse_id サンプル]")
+    print("  例:", fh.head(6).tolist())
+    print("  dtype:", featured["horse_id"].dtype,
+          " 桁分布:", fh.str.len().value_counts().head().to_dict())
+    feat_horses = set(fh)
+
+    # JRDB 血統登録番号（生 8桁）
+    raw = set()
+    for r in recs:
+        k = r[10:18].decode("cp932", "replace").strip()
+        if k.isdigit() and len(k) == 8:
+            raw.add(k)
+
+    def century(k):
+        yy = int(k[0:2])
+        return (1900 + yy if yy >= 86 else 2000 + yy)
+
+    hyps = {
+        "世紀+血統登録(10桁)": lambda k: f"{century(k)}{k[2:]}",
+        "生血統登録(8桁)": lambda k: k,
+        "int化(先頭0除去)": lambda k: str(int(k)),
+        "世紀+登録 int化": lambda k: str(int(f"{century(k)}{k[2:]}")),
+    }
+    print("\n[horse_id 変換仮説の一致率]")
+    best = None
+    for name, fn in hyps.items():
+        conv = {fn(k) for k in raw}
+        hit = len(conv & feat_horses)
+        rate = hit / len(conv) if conv else 0.0
+        print(f"  {name:<22}: {hit}/{len(conv)} = {rate:.1%}")
+        if best is None or rate > best[1]:
+            best = (name, rate)
+    if best and best[1] > 0.8:
+        print(f"  ★ 仮説「{best[0]}」が一致 → この変換で橋渡し成立。_keys.py を合わせます。")
+    else:
+        print("  △ どの仮説も低い → featured の horse_id は JRA血統登録と別採番"
+              "（netkeiba独自ID等）。馬名+生年での突合表が必要。上の『例』を共有ください。")
 
 
 if __name__ == "__main__":
