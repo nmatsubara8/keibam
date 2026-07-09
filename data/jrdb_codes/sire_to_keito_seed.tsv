@@ -1,0 +1,76 @@
+sire	code	note
+# 種牡馬名 → 系統(小系統)コード の暫定シード。
+# 権威ある割当は JRDB データ本体の「系統コード」フィールド。取得後はそれで置換/拡張する。
+# ここは JRA 現役〜近年の主要種牡馬を、確度の高い父系(tail-male)知識のみで手当てしたもの。
+# 疎な稀少種牡馬は未収載(=未分類→中立)。coverage は scripts/keito_coverage.py で計測。
+サンデーサイレンス	1206	Halo→ヘイロー系
+ディープインパクト	1206	Sunday Silence
+ハーツクライ	1206	Sunday Silence
+ステイゴールド	1206	Sunday Silence
+オルフェーヴル	1206	Stay Gold
+ゴールドシップ	1206	Stay Gold
+ドリームジャーニー	1206	Stay Gold
+ダイワメジャー	1206	Sunday Silence
+キズナ	1206	Deep Impact
+ブラックタイド	1206	Sunday Silence
+キタサンブラック	1206	Black Tide
+ジャスタウェイ	1206	Heart's Cry
+スワーヴリチャード	1206	Heart's Cry
+スペシャルウィーク	1206	Sunday Silence
+アグネスタキオン	1206	Sunday Silence
+マンハッタンカフェ	1206	Sunday Silence
+ネオユニヴァース	1206	Sunday Silence
+ヴィクトワールピサ	1206	Neo Universe
+アンライバルド	1206	Neo Universe
+フジキセキ	1206	Sunday Silence
+キンシャサノキセキ	1206	Fuji Kiseki
+イスラボニータ	1206	Fuji Kiseki
+ゴールドアリュール	1206	Sunday Silence
+コパノリッキー	1206	Gold Allure
+エスポワールシチー	1206	Gold Allure
+ゼンノロブロイ	1206	Sunday Silence
+ダンスインザダーク	1206	Sunday Silence
+マーベラスサンデー	1206	Sunday Silence
+シルバーステート	1206	Deep Impact
+リアルスティール	1206	Deep Impact
+リアルインパクト	1206	Deep Impact
+サトノダイヤモンド	1206	Deep Impact
+ミッキーアイル	1206	Deep Impact
+タイキシャトル	1206	Devil's Bag→Halo
+エピファネイア	1207	Symboli Kris S→Roberto
+モーリス	1207	Screen Hero→Grass Wonder→Roberto
+スクリーンヒーロー	1207	Grass Wonder→Roberto
+グラスワンダー	1207	Silver Hawk→Roberto
+シンボリクリスエス	1207	Kris S→Roberto
+ブライアンズタイム	1207	Roberto
+タニノギムレット	1207	Brian's Time→Roberto
+キングカメハメハ	1503	Kingmambo→Mr. Prospector
+ロードカナロア	1503	King Kamehameha
+ドゥラメンテ	1503	King Kamehameha
+ルーラーシップ	1503	King Kamehameha
+ホッコータルマエ	1503	King Kamehameha
+リオンディーズ	1503	King Kamehameha
+エルコンドルパサー	1503	Kingmambo→Mr. Prospector
+ヴァーミリアン	1503	El Condor Pasa
+アドマイヤムーン	1503	End Sweep→Mr. Prospector
+サウスヴィグラス	1503	End Sweep→Forty Niner→Mr. Prospector
+アグネスデジタル	1503	Crafty Prospector→Mr. Prospector
+ハービンジャー	1106	Dansili→Danehill→Danzig
+キングヘイロー	1104	Dancing Brave→Lyphard→リファール系
+クロフネ	1103	French Deputy→Deputy Minister→Vice Regent
+ヘニーヒューズ	1108	Hennessy→Storm Cat→Storm Bird
+アジアエクスプレス	1108	Henny Hughes
+ヨハネスブルグ	1108	Hennessy→Storm Cat→Storm Bird
+シニスターミニスター	1311	Old Trieste→A.P. Indy→Seattle Slew
+パイロ	1311	Pulpit→A.P. Indy→Seattle Slew
+マジェスティックウォリアー	1311	A.P. Indy→Seattle Slew
+トニービン	1302	Kampala→Kalamoun→Grey Sovereign
+ジャングルポケット	1302	Tony Bin
+サクラバクシンオー	1304	Sakura Yutaka O→Tesco Boy→Princely Gift
+ショウナンカンプ	1304	Sakura Bakushin O
+ビッグアーサー	1304	Sakura Bakushin O
+シンボリルドルフ	2201	Partholon→パーソロン系
+トウカイテイオー	2201	Symboli Rudolf
+メジロマックイーン	2201	Mejiro Titan→Partholon
+オペラハウス	1109	Sadler's Wells
+メイショウサムソン	1109	Opera House→Sadler's Wells

@@ -162,6 +162,23 @@ def f_career(df: pd.DataFrame) -> pd.Series:
     return out.astype(object).fillna(NA).to_numpy()
 
 
+_SIRE_COLS = ("父", "種牡馬", "sire", "father", "父名", "種牡馬名")
+
+
+def f_sire_line(df: pd.DataFrame) -> pd.Series:
+    """種牡馬の大系統（JRDB 系統コード表による分類）。血統の「洗い替え」因子。
+
+    featured に種牡馬名列があれば大系統に束ねる（例: ヘイロー系/ミスタープロスペクター系）。
+    未分類・列不在は na（中立）。生の種牡馬名より疎性が低く、系統×条件の回収率を学習しやすい。
+    """
+    col = next((c for c in _SIRE_COLS if c in df.columns), None)
+    if col is None:
+        return pd.Series(NA, index=df.index)
+    from src.features._sire_line import daikeito
+    vals = df[col].map(daikeito)
+    return vals.where(vals != "不明", NA).to_numpy()
+
+
 # 因子レジストリ（名前 → 抽出関数）。Model 2 はこの名前で点数を較正する。
 FACTORS: dict[str, callable] = {
     "umaban_parity": f_umaban_parity,
@@ -175,6 +192,7 @@ FACTORS: dict[str, callable] = {
     "kinryo_rank": f_kinryo_rank,
     "track_sex": f_track_sex,
     "career": f_career,
+    "sire_line": f_sire_line,
 }
 
 
