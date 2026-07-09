@@ -106,3 +106,26 @@ def test_engineered_schema_column_names_resolve():
     assert b["weight_diff"].tolist() == ["minus", "flat", "big_plus"]
     assert b["age_rotation"].tolist() == ["young_layoff", "old_layoff", "other"]
     assert b["sex"].tolist() == ["牡", "牝", "牡"]
+
+
+def test_onehot_reconstruction_revives_dead_factors():
+    """性別/芝ダ/馬場/パドック/クラスが one-hot でも因子が発火する。"""
+    df = pd.DataFrame({
+        "枠番": [1, 8],
+        "性__牡": [1, 0], "性__牝": [0, 1], "性__セ": [0, 0],
+        "race_type__芝": [1, 0], "race_type__ダート": [0, 1], "race_type__障害": [0, 0],
+        "ground_state1__良": [1, 0], "ground_state1__重": [0, 1],
+        "パドック評価__A": [1, 0], "パドック評価__穴": [0, 1],
+        "race_class__G1": [1, 0], "race_class__未勝利": [0, 1],
+        "leg_type_binary": [0, 1], "date": ["2021-07-01", "2021-07-01"],
+    }, index=["R1", "R1"])
+    b = buckets(df, ["sex", "track_sex", "waku", "ground", "paddock", "race_class",
+                     "leg_type", "season_sex"])
+    assert b["sex"].tolist() == ["牡", "牝"]
+    assert b["track_sex"].tolist() == ["芝_牡", "ダート_牝"]
+    assert b["waku"].tolist() == ["芝_inner", "ダート_outer"]
+    assert b["ground"].tolist() == ["良", "重"]
+    assert b["paddock"].tolist() == ["A", "穴"]
+    assert b["race_class"].tolist() == ["G1", "未勝利"]
+    assert b["leg_type"].tolist() == ["front", "back"]
+    assert b["season_sex"].tolist() == ["summer_牡", "summer_牝"]

@@ -52,6 +52,19 @@ def _col(df: pd.DataFrame, *names):
     return None
 
 
+def _onehot_cat(df: pd.DataFrame, prefix: str):
+    """'性__牡','性__牝',... のような one-hot 群から元カテゴリ Series を復元。無ければ None。"""
+    cols = [c for c in df.columns if c.startswith(prefix)]
+    if not cols:
+        return None
+    sub = df[cols].to_numpy()
+    labels = np.array([c[len(prefix):] for c in cols])
+    idx = sub.argmax(axis=1)
+    anyhot = sub.max(axis=1) > 0
+    out = pd.Series(labels[idx], index=df.index, dtype=object)
+    return out.where(anyhot, NA)
+
+
 def _age_series(df: pd.DataFrame) -> pd.Series:
     c = _col(df, "年齢", "馬齢", "age")
     if c is not None:
@@ -65,6 +78,9 @@ def _sex_series(df: pd.DataFrame) -> pd.Series:
     c = _col(df, "性別", "性", "sex", "性コード")
     if c is not None:
         return df[c].astype(str).str.extract(r"([牡牝セ])")[0].fillna(NA)
+    oh = _onehot_cat(df, "性__")  # 性__牡/性__牝/性__セ → 牡/牝/セ
+    if oh is not None:
+        return oh
     if ResultsCols.SEX_AGE in df.columns:
         return _parse_sex(df[ResultsCols.SEX_AGE])
     return pd.Series(NA, index=df.index)
@@ -99,7 +115,9 @@ def _interval_series(df: pd.DataFrame) -> pd.Series:
 def _race_type_series(df: pd.DataFrame):
     """芝ダ列（文字列 Series）。無ければ None。"""
     c = _col(df, "race_type", "芝ダ", "芝ダート", "track_type", "コース種別")
-    return df[c].astype(str) if c is not None else None
+    if c is not None:
+        return df[c].astype(str)
+    return _onehot_cat(df, "race_type__")  # race_type__芝/ダート/障害
 
 
 def _dist_change_series(df: pd.DataFrame) -> pd.Series:
@@ -325,6 +343,39 @@ def f_prev_finish(df: pd.DataFrame) -> pd.Series:
     return out.astype(object).where(r.notna(), NA).to_numpy()
 
 
+def f_paddock(df: pd.DataFrame) -> pd.Series:
+    """パドック評価（JRDB系: A/B/穴）。専門家の当日馬体評価＝卍の妙味源に近い。"""
+    oh = _onehot_cat(df, "パドック評価__")
+    if oh is None:
+        return pd.Series(NA, index=df.index)
+    return oh.to_numpy()
+
+
+def f_ground(df: pd.DataFrame) -> pd.Series:
+    """馬場状態（良/稍重/重/不良）。卍: 道悪適性の加減点の土台。"""
+    oh = _onehot_cat(df, "ground_state1__")
+    if oh is None:
+        return pd.Series(NA, index=df.index)
+    return oh.to_numpy()
+
+
+def f_race_class(df: pd.DataFrame) -> pd.Series:
+    """クラス（新馬/未勝利/1-3勝/OP/G）。卍: 昇降級・クラス別の回収率傾向。"""
+    oh = _onehot_cat(df, "race_class__")
+    if oh is None:
+        return pd.Series(NA, index=df.index)
+    return oh.to_numpy()
+
+
+def f_leg_type(df: pd.DataFrame) -> pd.Series:
+    """脚質（前/後）。卍/データ: 逃げ先行有利・展開。leg_type_binary から。"""
+    if "leg_type_binary" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["leg_type_binary"])
+    lab = np.where(v.isna(), NA, np.where(v >= 0.5, "back", "front"))
+    return lab
+
+
 _SIRE_COLS = ("父", "種牡馬", "sire", "father", "父名", "種牡馬名")
 
 
@@ -364,6 +415,10 @@ FACTORS: dict[str, callable] = {
     "age_rotation": f_age_rotation,
     "dist_age": f_dist_age,
     "prev_finish": f_prev_finish,
+    "paddock": f_paddock,
+    "ground": f_ground,
+    "race_class": f_race_class,
+    "leg_type": f_leg_type,
 }
 
 
