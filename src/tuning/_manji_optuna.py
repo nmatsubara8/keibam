@@ -82,6 +82,9 @@ def optimize_manji_config(
 
     def objective(trial):
         w = np.array([trial.suggest_float(f"w::{f}", w_min, w_max) for f in active])
+        # 閾値未満の重みは完全に0＝その因子を「選ばない」。[0,thresh]が真のオフ領域になり
+        # Optunaが因子取捨を制御できる（スコアにサブ閾値のノイズが混ざらない）。
+        w = np.where(np.abs(w) < active_thresh, 0.0, w)
         lo = trial.suggest_float("odds_lo", *odds_lo_range)
         hi = trial.suggest_float("odds_hi", *odds_hi_range)
         if hi <= lo + 1.0:
@@ -101,7 +104,7 @@ def optimize_manji_config(
                 return -1.0
             recs.append(ret[m].sum() / nb_s)
         recovery = float(np.mean(recs))
-        n_active = int((np.abs(w) > active_thresh).sum())
+        n_active = int((w != 0.0).sum())  # スナップ後の非ゼロ＝実際に選択された因子数
         return recovery - parsimony * (n_active / len(active))
 
     study = optuna.create_study(
@@ -109,8 +112,10 @@ def optimize_manji_config(
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     bp = study.best_params
-    weights = {f: float(bp[f"w::{f}"]) for f in active}
+    # 閾値未満はゼロにスナップ＝探索時と同じ「選択」を最終configにも反映（0=不採用）。
+    weights = {f: (0.0 if abs(bp[f"w::{f}"]) < active_thresh else float(bp[f"w::{f}"]))
+               for f in active}
     zone = (float(bp["odds_lo"]), float(bp["odds_hi"]))
-    n_active = sum(1 for f in active if abs(weights[f]) > active_thresh)
+    n_active = sum(1 for f in active if weights[f] != 0.0)
     return {"points": points, "weights": weights, "zone": zone,
             "top_k": int(bp["top_k"]), "value": float(study.best_value), "n_active": n_active}
