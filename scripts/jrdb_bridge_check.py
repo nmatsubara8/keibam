@@ -82,9 +82,38 @@ def main() -> int:
     if feat_horses and uniq_horses and h_hit / len(uniq_horses) > 0.8:
         print("  ★ horse_id が高率で一致 → 血統登録番号橋渡しは成立。特記/基準オッズを貼れる。")
     elif feat_horses:
-        print("  △ horse_id 一致が低い → 複数の変換仮説を自動検証します。")
+        print("  △ horse_id 一致が低い（featured は代理キーの可能性）。")
         _diagnose_horse_id(recs, featured)
+
+    # 本命の結合キー: (race_id, 馬番)。race_id が一致していればこれで JRDB→featured を貼れる。
+    _check_race_uma_join(recs, featured)
     return 0
+
+
+def _check_race_uma_join(recs, featured) -> None:
+    """(race_id, 馬番) 結合の一致率を測る。これが高ければ horse_id 不要で橋渡し成立。"""
+    import pandas as pd
+
+    jr = set()
+    for r in recs:
+        rid = race_key_to_race_id(r[0:8].decode("cp932", "replace"))
+        uma = r[8:10].decode("cp932", "replace").strip()
+        if rid and uma.isdigit():
+            jr.add((rid, int(uma)))
+    if "馬番" not in featured.columns:
+        print("\n[(race_id,馬番)結合] featured に '馬番' 列が無く判定不可")
+        return
+    idx = featured.index.astype(str)
+    um = pd.to_numeric(featured["馬番"], errors="coerce")
+    fr = {(rid, int(u)) for rid, u in zip(idx, um, strict=False) if u == u}
+    hit = len(jr & fr)
+    print(f"\n[(race_id, 馬番) 結合の一致率]  {hit}/{len(jr)} = "
+          f"{hit/len(jr):.1%}" if jr else "  判定不可")
+    if jr and hit / len(jr) > 0.8:
+        print("  ★★ (race_id, 馬番) で JRDB→featured を結合可能 → 橋渡し成立。horse_id は不要。")
+        print("     JRDB内は血統登録番号で馬を時系列連結 → 前走特記(不利/出遅れ)を featured の馬に貼れる。")
+    else:
+        print("  △ (race_id,馬番) 一致も低い → 馬番の型/レースキー範囲を要確認。")
 
 
 def _diagnose_horse_id(recs, featured) -> None:
