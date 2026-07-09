@@ -29,6 +29,12 @@ def main() -> int:
         print("使い方: python scripts/jrdb_bridge_check.py <JRDBファイル(KYI/SED/SKB)>")
         return 1
     path = sys.argv[1]
+    if not Path(path).exists():
+        print(f"ファイルが見つかりません: {path}")
+        print("→ '/path/to/...' はプレースホルダです。実際のJRDBファイルのパスに置き換えてください。")
+        print("  例: python scripts/jrdb_bridge_check.py ~/jrdb/KYI150712.txt")
+        print("  ファイル位置が不明なら: find ~ -iname 'KYI*.txt' -o -iname 'SED*.txt' 2>/dev/null | head")
+        return 1
     recs = _records(path)
     if not recs:
         print(f"空ファイル: {path}")
