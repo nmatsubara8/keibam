@@ -95,6 +95,8 @@ def main():
     ap.add_argument("--lam", type=float, default=1.0)
     ap.add_argument("--clip", type=float, default=2.0)
     ap.add_argument("--placebo", type=int, default=30, help="プラシーボ試行数（0で無効）")
+    ap.add_argument("--factor-weights", action="store_true",
+                    help="符号付き因子重み w_f を検証foldで推定して適用（冗長/弱因子の希釈を抑える）")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -104,7 +106,7 @@ def main():
     from app._model_eval import load_featured_data
     from src.policies._manji_factors import FACTORS
     from src.policies._manji_scorer import ManjiScorer, ManjiScorerConfig
-    from src.tuning._manji_calibration import calibrate_points
+    from src.tuning._manji_calibration import calibrate_factor_weights, calibrate_points
 
     featured = load_featured_data()
     if featured is None or featured.empty:
@@ -156,7 +158,13 @@ def main():
             train, factor_names, lam=args.lam, clip=args.clip, min_n=args.min_n,
             universality_slices=args.universality_slices, min_agree=args.min_agree,
         )
-        cfg = ManjiScorerConfig(points=points, zone_odds=zone, top_k=args.top_k)
+        weights = {}
+        if args.factor_weights:
+            weights = calibrate_factor_weights(
+                train, factor_names, lam=args.lam, clip=args.clip, min_n=args.min_n,
+                universality_slices=args.universality_slices, min_agree=args.min_agree,
+            )
+        cfg = ManjiScorerConfig(points=points, weights=weights, zone_odds=zone, top_k=args.top_k)
         chosen = ManjiScorer(cfg).select(fold)
         nb, hit, stake, ret = _settle(chosen, w, band)
 

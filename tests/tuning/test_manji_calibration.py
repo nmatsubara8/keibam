@@ -72,3 +72,13 @@ def test_universality_filter_drops_nonstationary_signal():
     assert pts_raw["umaban_parity"]["odd"] > 0
     # 普遍性フィルタは符号反転する odd を排除する
     assert "odd" not in pts_filtered.get("umaban_parity", {})
+
+
+def test_calibrate_factor_weights_signs():
+    from src.tuning._manji_calibration import calibrate_factor_weights
+    # 奇数馬番が一貫して高オッズで勝つ→加点馬(odd)がvalidでも高回収→正の重み
+    p = _period("A", 400, pd.Timestamp("2020-01-01"), odd_win_rate=0.7, odds=4.0, seed=11)
+    w = calibrate_factor_weights(p, ["umaban_parity"], min_n=30,
+                                 universality_slices=1, min_side=50)
+    assert w["umaban_parity"] > 0          # 方向がvalidで保たれる→正
+    assert -1.0 - 1e-9 <= w["umaban_parity"] <= 1.0 + 1e-9  # 正規化範囲
