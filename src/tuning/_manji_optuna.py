@@ -36,6 +36,7 @@ def optimize_manji_config(
     min_bets: int = 500,
     parsimony: float = 0.02,
     active_thresh: float = 0.05,
+    valid_cv: int = 3,
     seed: int = 0,
     **cal_kwargs,
 ) -> dict:
@@ -65,6 +66,18 @@ def optimize_manji_config(
     finite = np.isfinite(ret) & np.isfinite(odds)
     race_code = pd.factorize(valid.index)[0]
 
+    # クロス検証スライス: valid をレース発走日で K 分割し、馬ごとにスライス番号を振る。
+    # 目的関数は「全スライスで良く回収できる」構成のみ高評価にし過学習を抑える。
+    cv = max(1, int(valid_cv))
+    if cv > 1:
+        rd = pd.to_datetime(valid["date"]).groupby(valid.index).first().sort_values()
+        nr = len(rd)
+        race_slice = {rid: min(cv - 1, int(i * cv / nr)) for i, rid in enumerate(rd.index)}
+        slice_id = valid.index.map(race_slice).to_numpy()
+    else:
+        slice_id = np.zeros(len(valid), dtype=int)
+    per_slice_min = max(50, min_bets // cv)
+
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     def objective(trial):
@@ -77,11 +90,17 @@ def optimize_manji_config(
         score = P @ w
         rank = pd.Series(score).groupby(race_code).rank(ascending=False, method="min").to_numpy()
         keep = finite & (rank <= top_k) & (odds >= lo) & (odds <= hi)
-        nb = int(keep.sum())
-        if nb < min_bets:
+        if int(keep.sum()) < min_bets:
             return -1.0
-        # recovery = Σ(odds×的中) / 買い目数（フラット100円: 100倍が分子分母で相殺）
-        recovery = float(ret[keep].sum() / nb)
+        # 各スライスの回収率を出し、その平均を目的に（1期だけ効く構成を弾く）
+        recs = []
+        for s in range(cv):
+            m = keep & (slice_id == s)
+            nb_s = int(m.sum())
+            if nb_s < per_slice_min:
+                return -1.0
+            recs.append(ret[m].sum() / nb_s)
+        recovery = float(np.mean(recs))
         n_active = int((np.abs(w) > active_thresh).sum())
         return recovery - parsimony * (n_active / len(active))
 

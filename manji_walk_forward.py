@@ -102,6 +102,8 @@ def main():
                          "N試行探索（因子24固定を外す）。--factor-weights/--zone-odds/--top-k を上書き")
     ap.add_argument("--valid-frac", type=float, default=0.3,
                     help="学習窓のうち検証(valid)に回す割合（重み/Optuna推定用）")
+    ap.add_argument("--optuna-cv", type=int, default=3,
+                    help="Optuna目的のvalidクロス検証分割数（全スライスで良い構成のみ高評価＝過学習抑制）")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -174,6 +176,7 @@ def main():
             valid = train.loc[tr_races[cut:]]
             res = optimize_manji_config(
                 calib, valid, factor_names, n_trials=args.optuna, seed=args.seed,
+                valid_cv=args.optuna_cv,
                 odds_lo_range=(1.0, float(zone[0]) + 3.0), odds_hi_range=(10.0, float(zone[1]) + 30.0),
                 lam=args.lam, clip=args.clip, min_n=args.min_n,
                 universality_slices=args.universality_slices, min_agree=args.min_agree,
