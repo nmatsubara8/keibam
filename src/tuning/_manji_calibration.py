@@ -35,8 +35,9 @@ def bucket_recovery(featured: pd.DataFrame, factor: str) -> pd.DataFrame:
 
     recovery = mean(単勝オッズ × [着順==1])。index=bucket, columns=[recovery, n]。
     """
+    from src.policies._manji_factors import factor_series
     win, odds = _win_and_odds(featured)
-    bucket = pd.Series(FACTORS[factor](featured), index=featured.index).astype(object).fillna(NA)
+    bucket = factor_series(featured, factor).astype(object).fillna(NA)
     ret = (odds * win)
     df = pd.DataFrame({"bucket": bucket.to_numpy(), "ret": ret.to_numpy()})
     df = df[df["bucket"] != NA]
@@ -63,6 +64,44 @@ def _time_slices(featured: pd.DataFrame, k: int) -> list[pd.DataFrame]:
     return out
 
 
+def _residualize_crosses(
+    points: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """クロス因子 'A*B' の点を『加法成分を引いた交互作用残差』に置換する。
+
+    resid[bA|bB] = cross_point[bA|bB] − (point_A[bA] + point_B[bB])
+
+    こうすると **単独因子が加法成分**を、**クロスが純粋な相互作用**だけを担う。最終スコア
+    score = Σ_f w_f·point_f[bucket] で加法成分の二重計上が起きず、Optuna は単独の重み
+    (w_A,w_B) と相互作用の重み(w_cross) を独立に振れる。残差が全バケット 0 のクロス
+    （＝相互作用なし＝単独の和で説明可）は自動的に脱落する。
+    単独因子（クロスを含まない）は無改変。クロスが無ければ no-op。
+    """
+    from src.policies._manji_factors import CROSS_SEP
+    if not any(CROSS_SEP in f for f in points):
+        return points
+    out: dict[str, dict[str, float]] = {}
+    for f, bmap in points.items():
+        if CROSS_SEP not in f:
+            out[f] = bmap
+            continue
+        parts = f.split(CROSS_SEP)
+        singles = [points.get(p, {}) for p in parts]
+        rmap: dict[str, float] = {}
+        for bucket, pt in bmap.items():
+            comps = bucket.split("|")
+            if len(comps) == len(parts):
+                add = sum(sp.get(c, 0.0) for sp, c in zip(singles, comps, strict=False))
+                r = pt - add
+                if abs(r) > 1e-9:      # 加法とほぼ同じ=相互作用なし→脱落（浮動小数の残差も除去）
+                    rmap[bucket] = r
+            else:
+                rmap[bucket] = pt
+        if rmap:
+            out[f] = rmap
+    return out
+
+
 def calibrate_points(
     featured: pd.DataFrame,
     factor_names: list[str] | None = None,
@@ -73,8 +112,13 @@ def calibrate_points(
     min_n: int = 30,
     universality_slices: int = 3,
     min_agree: float = 0.7,
+    residualize: bool = True,
 ) -> dict[str, dict[str, float]]:
     """学習期間 featured から points[factor][bucket] を導出する（Layer A）。
+
+    residualize=True のとき、クロス因子 'A*B' の点は交互作用残差に置換される
+    （_residualize_crosses 参照）。単独因子のみの呼び出しでは no-op。screen_crosses は
+    生のクロス点が必要なので residualize=False で呼ぶ。
 
     Returns
     -------
@@ -120,6 +164,8 @@ def calibrate_points(
                 fmap[b] = pt
         if fmap:
             points[f] = fmap
+    if residualize:
+        points = _residualize_crosses(points)
     return points
 
 

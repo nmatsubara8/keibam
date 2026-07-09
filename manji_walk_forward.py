@@ -104,6 +104,10 @@ def main():
                     help="学習窓のうち検証(valid)に回す割合（重み/Optuna推定用）")
     ap.add_argument("--optuna-cv", type=int, default=3,
                     help="Optuna目的のvalidクロス検証分割数（全スライスで良い構成のみ高評価＝過学習抑制）")
+    ap.add_argument("--crosses", type=int, default=0, metavar="N",
+                    help="因子クロス(2因子の相互作用)を最古学習chunkで選別し上位Nを因子に追加。"
+                         "クロス点は加法成分を引いた『交互作用残差』にするので加法の二重計上を回避し、"
+                         "Optuna が単独(w_A,w_B)と相互作用(w_cross)を独立に重み付けする")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -139,6 +143,20 @@ def main():
     bounds = [round(i * n / args.folds) for i in range(args.folds + 1)]
     chunks = [ordered[bounds[i]:bounds[i + 1]] for i in range(args.folds)]
     winners_by_fold = {k: _winners(featured.loc[chunks[k]]) for k in range(args.folds)}
+
+    # 相互作用（クロス）因子: 最古 chunk[0]（全評価foldの過去に必ず含まれる＝前進安全）で
+    # 選別し、上位 N を因子集合に追加。実点は残差化されるので単独の和で説明できるクロスは脱落。
+    if args.crosses:
+        from src.tuning._manji_crosses import screen_crosses
+        crosses = screen_crosses(
+            featured.loc[chunks[0]], factor_names, top_n=args.crosses, min_n=args.min_n,
+        )
+        if crosses:
+            factor_names = factor_names + crosses
+            print(f"[--crosses] 最古chunkで選別した相互作用 {len(crosses)}件を追加: "
+                  f"{', '.join(crosses)}")
+        else:
+            print("[--crosses] 有効な相互作用（残差の大きい安定クロス）は見つからず")
 
     zone = (float(args.zone_odds[0]), float(args.zone_odds[1]))
     print("=" * 82)

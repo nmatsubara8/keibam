@@ -455,11 +455,30 @@ FACTORS: dict[str, callable] = {
 }
 
 
+CROSS_SEP = "*"  # クロス因子名の区切り: "season_sex*ground" など
+
+
+def factor_series(df: pd.DataFrame, name: str) -> pd.Series:
+    """単独因子 or クロス因子（"A*B"）のバケット Series を返す。
+
+    クロスは各構成因子のバケットを結合（どちらか na なら na）。任意次数（A*B*C）に対応。
+    これにより加算モデルでは表せない相互作用を、1つの合成バケット因子として扱える。
+    """
+    if CROSS_SEP not in name:
+        return pd.Series(FACTORS[name](df), index=df.index).astype(object).fillna(NA)
+    parts = name.split(CROSS_SEP)
+    combo = None
+    na_mask = None
+    for p in parts:
+        s = pd.Series(FACTORS[p](df), index=df.index).astype(object).fillna(NA)
+        m = (s == NA)
+        combo = s.astype(str) if combo is None else combo + "|" + s.astype(str)
+        na_mask = m if na_mask is None else (na_mask | m)
+    return combo.where(~na_mask, NA)
+
+
 def buckets(df: pd.DataFrame, names: list[str] | None = None) -> pd.DataFrame:
-    """指定因子（既定=全因子）のバケットラベルを列に持つ DataFrame を返す。index は df と同一。"""
+    """指定因子（既定=全単独因子）のバケットラベル列を持つ DataFrame。クロス名 "A*B" も可。"""
     names = names or list(FACTORS)
-    out = {}
-    for name in names:
-        vals = FACTORS[name](df)
-        out[name] = pd.Series(vals, index=df.index).astype(object).fillna(NA)
+    out = {name: factor_series(df, name) for name in names}
     return pd.DataFrame(out, index=df.index)
