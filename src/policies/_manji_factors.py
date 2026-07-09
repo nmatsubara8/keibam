@@ -42,15 +42,69 @@ def _parse_age(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s.astype(str).str.extract(r"(\d+)")[0], errors="coerce")
 
 
-def _parse_weight_diff(df: pd.DataFrame) -> pd.Series:
-    """前走比 馬体重増減(kg)。'480(+4)'/'480(-2)' の括弧値、または既存の増減列から。"""
-    for c in ("馬体重増減", "weight_diff", "体重増減"):
-        if c in df.columns:
-            return pd.to_numeric(df[c], errors="coerce")
-    if ResultsCols.WEIGHT_AND_DIFF in df.columns:
-        m = df[ResultsCols.WEIGHT_AND_DIFF].astype(str).str.extract(r"\(([-+]?\d+)\)")[0]
-        return pd.to_numeric(m, errors="coerce")
+# --- スキーマ耐性リゾルバ: 生netkeiba列でも engineered列でも同じ値を取り出す --------
+
+def _col(df: pd.DataFrame, *names):
+    """候補列名のうち最初に存在するものを返す（無ければ None）。"""
+    for n in names:
+        if n in df.columns:
+            return n
+    return None
+
+
+def _age_series(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "年齢", "馬齢", "age")
+    if c is not None:
+        return _num(df[c])
+    if ResultsCols.SEX_AGE in df.columns:
+        return _parse_age(df[ResultsCols.SEX_AGE])
     return pd.Series(np.nan, index=df.index)
+
+
+def _sex_series(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "性別", "性", "sex", "性コード")
+    if c is not None:
+        return df[c].astype(str).str.extract(r"([牡牝セ])")[0].fillna(NA)
+    if ResultsCols.SEX_AGE in df.columns:
+        return _parse_sex(df[ResultsCols.SEX_AGE])
+    return pd.Series(NA, index=df.index)
+
+
+def _body_weight_series(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "体重", "馬体重", "body_weight")
+    if c is None:
+        return pd.Series(np.nan, index=df.index)
+    s = df[c]
+    if pd.api.types.is_numeric_dtype(s):
+        return _num(s)
+    return _parse_body_weight(s)  # "480(+4)" 形式
+
+
+def _weight_diff_series(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "体重変化", "馬体重増減", "weight_diff", "体重増減")
+    if c is not None:
+        return _num(df[c])
+    c2 = _col(df, "馬体重")
+    if c2 is not None:
+        m = df[c2].astype(str).str.extract(r"\(([-+]?\d+)\)")[0]
+        return _num(m)
+    return pd.Series(np.nan, index=df.index)
+
+
+def _interval_series(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "interval", "days", "レース間隔", "休養日数")
+    return _num(df[c]) if c is not None else pd.Series(np.nan, index=df.index)
+
+
+def _race_type_series(df: pd.DataFrame):
+    """芝ダ列（文字列 Series）。無ければ None。"""
+    c = _col(df, "race_type", "芝ダ", "芝ダート", "track_type", "コース種別")
+    return df[c].astype(str) if c is not None else None
+
+
+def _dist_change_series(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "dist_change", "距離変化", "距離差", "距離増減")
+    return _num(df[c]) if c is not None else pd.Series(np.nan, index=df.index)
 
 
 # --- 個別因子 --------------------------------------------------------------
@@ -64,16 +118,14 @@ def f_umaban_parity(df: pd.DataFrame) -> pd.Series:
 
 
 def f_sex(df: pd.DataFrame) -> pd.Series:
-    if ResultsCols.SEX_AGE not in df.columns:
-        return pd.Series(NA, index=df.index)
-    return _parse_sex(df[ResultsCols.SEX_AGE]).to_numpy()
+    return _sex_series(df).to_numpy()
 
 
 def f_age(df: pd.DataFrame) -> pd.Series:
     """馬齢帯: 2-3=young / 4-5=prime / 6+=old。"""
-    if ResultsCols.SEX_AGE not in df.columns:
+    a = _age_series(df)
+    if a.isna().all():
         return pd.Series(NA, index=df.index)
-    a = _parse_age(df[ResultsCols.SEX_AGE])
     out = pd.cut(a, [0, 3.5, 5.5, np.inf], labels=["young", "prime", "old"])
     return out.astype(object).fillna(NA).to_numpy()
 
@@ -96,9 +148,9 @@ def f_season(df: pd.DataFrame) -> pd.Series:
 
 def f_season_sex(df: pd.DataFrame) -> pd.Series:
     """季節×性別（卍: 夏の牝馬に加点、など）。"""
-    if ResultsCols.SEX_AGE not in df.columns or "date" not in df.columns:
+    if "date" not in df.columns:
         return pd.Series(NA, index=df.index)
-    sex = _parse_sex(df[ResultsCols.SEX_AGE])
+    sex = _sex_series(df)
     sea = _season(df)
     combo = sea.astype(str) + "_" + sex.astype(str)
     combo[(sea == NA) | (sex == NA)] = NA
@@ -108,9 +160,9 @@ def f_season_sex(df: pd.DataFrame) -> pd.Series:
 def f_weight_rank(df: pd.DataFrame) -> pd.Series:
     """馬体重のレース内順位帯（light/mid/heavy）。全馬が重い/軽い開催の歪みを
     絶対値でなく順位で吸収する（卍の指摘）。"""
-    if ResultsCols.WEIGHT_AND_DIFF not in df.columns:
+    w = _body_weight_series(df)
+    if w.isna().all():
         return pd.Series(NA, index=df.index)
-    w = _parse_body_weight(df[ResultsCols.WEIGHT_AND_DIFF])
     r = w.groupby(df.index).rank(pct=True)
     out = pd.cut(r, [0, 1 / 3, 2 / 3, 1.0], labels=["light", "mid", "heavy"], include_lowest=True)
     return out.astype(object).where(w.notna(), NA).to_numpy()
@@ -118,9 +170,9 @@ def f_weight_rank(df: pd.DataFrame) -> pd.Series:
 
 def f_rotation(df: pd.DataFrame) -> pd.Series:
     """ローテ（前走からの間隔 interval[日]）: 連闘/中1-3週/中4週+/休養明け。"""
-    if "interval" not in df.columns:
+    iv = _interval_series(df)
+    if iv.isna().all():
         return pd.Series(NA, index=df.index)
-    iv = _num(df["interval"])
     lab = pd.Series(NA, index=df.index, dtype=object)
     lab[iv <= 8] = "rentai"        # 連闘（中0週）
     lab[(iv > 8) & (iv <= 27)] = "naka1_3"
@@ -131,9 +183,9 @@ def f_rotation(df: pd.DataFrame) -> pd.Series:
 
 def f_dist_change(df: pd.DataFrame) -> pd.Series:
     """距離変更（今回−前走, dist_change[100m単位or m]）: 短縮/同/延長。"""
-    if "dist_change" not in df.columns:
+    dc = _dist_change_series(df)
+    if dc.isna().all():
         return pd.Series(NA, index=df.index)
-    dc = _num(df["dist_change"])
     lab = pd.Series(NA, index=df.index, dtype=object)
     lab[dc < 0] = "short"
     lab[dc == 0] = "same"
@@ -153,10 +205,10 @@ def f_kinryo_rank(df: pd.DataFrame) -> pd.Series:
 
 def f_track_sex(df: pd.DataFrame) -> pd.Series:
     """トラック（芝/ダ）×性別（卍: トラックと性別から回収率を分析し加減）。"""
-    if "race_type" not in df.columns or ResultsCols.SEX_AGE not in df.columns:
+    rt = _race_type_series(df)
+    sex = _sex_series(df)
+    if rt is None or (sex == NA).all():
         return pd.Series(NA, index=df.index)
-    rt = df["race_type"].astype(str)
-    sex = _parse_sex(df[ResultsCols.SEX_AGE])
     combo = rt + "_" + sex.astype(str)
     combo[sex.to_numpy() == NA] = NA
     return combo.to_numpy()
@@ -165,7 +217,7 @@ def f_track_sex(df: pd.DataFrame) -> pd.Series:
 def f_career(df: pd.DataFrame) -> pd.Series:
     """キャリア（出走回数帯）。featured に出走回数列がある場合のみ（無ければ na）。
     候補列名を順に探す。"""
-    col = next((c for c in ("n_races", "career", "出走回数", "race_count") if c in df.columns), None)
+    col = _col(df, "times", "n_races", "career", "出走回数", "race_count", "出走数")
     if col is None:
         return pd.Series(NA, index=df.index)
     c = _num(df[col])
@@ -187,11 +239,11 @@ def f_popularity(df: pd.DataFrame) -> pd.Series:
 
 def f_waku(df: pd.DataFrame) -> pd.Series:
     """枠順×芝ダ（卍/データ: 芝は内枠有利・ダは外枠有利）。"""
-    if ResultsCols.WAKUBAN not in df.columns or "race_type" not in df.columns:
+    rt = _race_type_series(df)
+    if ResultsCols.WAKUBAN not in df.columns or rt is None:
         return pd.Series(NA, index=df.index)
     w = _num(df[ResultsCols.WAKUBAN])
     pos = pd.cut(w, [0, 3, 5, 8], labels=["inner", "mid", "outer"])
-    rt = df["race_type"].astype(str)
     combo = rt + "_" + pos.astype(object)
     combo = combo.where(w.notna() & pos.notna(), NA)
     return combo.to_numpy()
@@ -199,16 +251,18 @@ def f_waku(df: pd.DataFrame) -> pd.Series:
 
 def f_body_weight(df: pd.DataFrame) -> pd.Series:
     """馬体重の絶対帯（卍/データ: 大型有利・軽量危険）。"""
-    if ResultsCols.WEIGHT_AND_DIFF not in df.columns:
+    w = _body_weight_series(df)
+    if w.isna().all():
         return pd.Series(NA, index=df.index)
-    w = _parse_body_weight(df[ResultsCols.WEIGHT_AND_DIFF])
     out = pd.cut(w, [0, 440, 470, 500, np.inf], labels=["u440", "440_470", "470_500", "o500"])
     return out.astype(object).where(w.notna(), NA).to_numpy()
 
 
 def f_weight_diff(df: pd.DataFrame) -> pd.Series:
     """前走比 馬体重増減の帯（卍: 大幅減は割引・大幅増は平場割引/重賞妙味）。"""
-    d = _parse_weight_diff(df)
+    d = _weight_diff_series(df)
+    if d.isna().all():
+        return pd.Series(NA, index=df.index)
     out = pd.cut(d, [-1000, -12, -3, 3, 12, 1000],
                  labels=["big_minus", "minus", "flat", "plus", "big_plus"])
     return out.astype(object).where(d.notna(), NA).to_numpy()
@@ -218,11 +272,11 @@ def f_kinryo_per_weight(df: pd.DataFrame) -> pd.Series:
     """斤量/馬体重 の相対負担帯（卍: 軽量馬×重斤量は危険）。"""
     if "kinryo_per_weight" in df.columns:
         r = _num(df["kinryo_per_weight"])
-    elif ResultsCols.KINRYO in df.columns and ResultsCols.WEIGHT_AND_DIFF in df.columns:
-        w = _parse_body_weight(df[ResultsCols.WEIGHT_AND_DIFF])
-        r = _num(df[ResultsCols.KINRYO]) / w
     else:
-        return pd.Series(NA, index=df.index)
+        w = _body_weight_series(df)
+        if ResultsCols.KINRYO not in df.columns or w.isna().all():
+            return pd.Series(NA, index=df.index)
+        r = _num(df[ResultsCols.KINRYO]) / w
     q = r.groupby(df.index).rank(pct=True)
     out = pd.cut(q, [0, 1 / 3, 2 / 3, 1.0], labels=["light", "mid", "heavy"], include_lowest=True)
     return out.astype(object).where(r.notna(), NA).to_numpy()
@@ -230,10 +284,10 @@ def f_kinryo_per_weight(df: pd.DataFrame) -> pd.Series:
 
 def f_age_rotation(df: pd.DataFrame) -> pd.Series:
     """馬齢×休養明け（卍/データ: 若馬の長期明けは加点・古馬の長期明けは減点）。"""
-    if ResultsCols.SEX_AGE not in df.columns or "interval" not in df.columns:
+    a = _age_series(df)
+    iv = _interval_series(df)
+    if a.isna().all() or iv.isna().all():
         return pd.Series(NA, index=df.index)
-    a = _parse_age(df[ResultsCols.SEX_AGE])
-    iv = _num(df["interval"])
     young = a <= 3
     layoff = iv >= 90
     lab = pd.Series("other", index=df.index, dtype=object)
@@ -245,10 +299,10 @@ def f_age_rotation(df: pd.DataFrame) -> pd.Series:
 
 def f_dist_age(df: pd.DataFrame) -> pd.Series:
     """距離変更×馬齢（卍: 2歳の距離短縮/延長で回収率が変わる）。"""
-    if "dist_change" not in df.columns or ResultsCols.SEX_AGE not in df.columns:
+    dc = _dist_change_series(df)
+    a = _age_series(df)
+    if dc.isna().all() or a.isna().all():
         return pd.Series(NA, index=df.index)
-    dc = _num(df["dist_change"])
-    a = _parse_age(df[ResultsCols.SEX_AGE])
     grp = np.where(a <= 3, "young", "old")
     dirn = np.where(dc < 0, "short", np.where(dc > 0, "extend", "same"))
     combo = pd.Series([f"{g}_{d}" for g, d in zip(grp, dirn, strict=False)], index=df.index)

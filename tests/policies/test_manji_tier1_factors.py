@@ -88,3 +88,21 @@ def test_all_new_factors_registered():
     for name in ("popularity", "waku", "body_weight", "weight_diff",
                  "kinryo_per_weight", "age_rotation", "dist_age", "prev_finish"):
         assert name in FACTORS
+
+
+def test_engineered_schema_column_names_resolve():
+    """実featuredの列名(年齢/体重/体重変化/days)でも因子が発火する。"""
+    df = pd.DataFrame({
+        "年齢": [3, 6, 4],
+        "体重": [430, 520, 470],
+        "体重変化": [-6, 2, 20],
+        "days": [200, 200, 14],
+        "斤量": [54.0, 57.0, 55.0],
+        "性別": ["牡", "牝", "牡"],
+    }, index=["R1", "R1", "R1"])
+    b = buckets(df, ["age", "body_weight", "weight_diff", "age_rotation", "sex"])
+    assert b["age"].tolist() == ["young", "old", "prime"]
+    assert b["body_weight"].tolist() == ["u440", "o500", "440_470"]
+    assert b["weight_diff"].tolist() == ["minus", "flat", "big_plus"]
+    assert b["age_rotation"].tolist() == ["young_layoff", "old_layoff", "other"]
+    assert b["sex"].tolist() == ["牡", "牝", "牡"]
