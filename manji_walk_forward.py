@@ -97,6 +97,11 @@ def main():
     ap.add_argument("--placebo", type=int, default=30, help="プラシーボ試行数（0で無効）")
     ap.add_argument("--factor-weights", action="store_true",
                     help="符号付き因子重み w_f を検証foldで推定して適用（冗長/弱因子の希釈を抑える）")
+    ap.add_argument("--optuna", type=int, default=0, metavar="N",
+                    help="Layer B: Optuna で 因子重み(0=除外含む)＋ゾーン境界＋top_k を検証foldで"
+                         "N試行探索（因子24固定を外す）。--factor-weights/--zone-odds/--top-k を上書き")
+    ap.add_argument("--valid-frac", type=float, default=0.3,
+                    help="学習窓のうち検証(valid)に回す割合（重み/Optuna推定用）")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -107,6 +112,7 @@ def main():
     from src.policies._manji_factors import FACTORS
     from src.policies._manji_scorer import ManjiScorer, ManjiScorerConfig
     from src.tuning._manji_calibration import calibrate_factor_weights, calibrate_points
+    from src.tuning._manji_optuna import optimize_manji_config
 
     featured = load_featured_data()
     if featured is None or featured.empty:
@@ -159,17 +165,34 @@ def main():
             universality_slices=args.universality_slices, min_agree=args.min_agree,
         )
         weights = {}
-        if args.factor_weights:
-            weights = calibrate_factor_weights(
-                train, factor_names, lam=args.lam, clip=args.clip, min_n=args.min_n,
+        cfg_zone, cfg_top_k = zone, args.top_k
+        if args.optuna:
+            # Layer B: calib/valid 分割 → Optuna で重み・ゾーン・top_k を探索
+            tr_races = list(pd.to_datetime(train["date"]).groupby(level=0).first().sort_values().index)
+            cut = int(len(tr_races) * (1.0 - args.valid_frac))
+            calib = train.loc[tr_races[:cut]]
+            valid = train.loc[tr_races[cut:]]
+            res = optimize_manji_config(
+                calib, valid, factor_names, n_trials=args.optuna, seed=args.seed,
+                odds_lo_range=(1.0, float(zone[0]) + 3.0), odds_hi_range=(10.0, float(zone[1]) + 30.0),
+                lam=args.lam, clip=args.clip, min_n=args.min_n,
                 universality_slices=args.universality_slices, min_agree=args.min_agree,
             )
-        cfg = ManjiScorerConfig(points=points, weights=weights, zone_odds=zone, top_k=args.top_k)
+            points, weights = res["points"], res["weights"]
+            cfg_zone, cfg_top_k = res["zone"], res["top_k"]
+            print(f"    [optuna k={k}] zone=({cfg_zone[0]:.1f},{cfg_zone[1]:.1f}) top_k={cfg_top_k} "
+                  f"採用因子={res['n_active']} valid回収={res['value']:.3f}")
+        elif args.factor_weights:
+            weights = calibrate_factor_weights(
+                train, factor_names, valid_frac=args.valid_frac, lam=args.lam, clip=args.clip,
+                min_n=args.min_n, universality_slices=args.universality_slices, min_agree=args.min_agree,
+            )
+        cfg = ManjiScorerConfig(points=points, weights=weights, zone_odds=cfg_zone, top_k=cfg_top_k)
         chosen = ManjiScorer(cfg).select(fold)
         nb, hit, stake, ret = _settle(chosen, w, band)
 
         # baseline: ゾーン規律のみ（点数空）
-        cfg0 = ManjiScorerConfig(points={}, zone_odds=zone, top_k=args.top_k)
+        cfg0 = ManjiScorerConfig(points={}, zone_odds=cfg_zone, top_k=cfg_top_k)
         bchosen = ManjiScorer(cfg0).select(fold)
         _, _, bstake, bret = _settle(bchosen, w)
 
@@ -186,11 +209,11 @@ def main():
               f"{len(set(fold.index)):>7}{len(points):>8}{nb:>7}"
               f"{_fmt(hr):>7}{_fmt(rr):>8}{_fmt(brr):>9}")
 
-        # placebo: 同バケットにランダム点
+        # placebo: 同バケットにランダム点（重み・ゾーンは実configと同じに保つ）
         if args.placebo:
             for pi in range(args.placebo):
                 pcfg = ManjiScorerConfig(points=_random_points(points, rng, args.clip),
-                                         zone_odds=zone, top_k=args.top_k)
+                                         weights=weights, zone_odds=cfg_zone, top_k=cfg_top_k)
                 pch = ManjiScorer(pcfg).select(fold)
                 _, _, ps, pr = _settle(pch, w)
                 # 通算プールに寄与（stake加重で後で割る）
