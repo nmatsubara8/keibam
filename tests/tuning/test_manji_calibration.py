@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.tuning._manji_calibration import bucket_recovery, calibrate_points
 
@@ -74,11 +75,33 @@ def test_universality_filter_drops_nonstationary_signal():
     assert "odd" not in pts_filtered.get("umaban_parity", {})
 
 
-def test_calibrate_factor_weights_signs():
+def test_calibrate_factor_weights_center_and_range():
     from src.tuning._manji_calibration import calibrate_factor_weights
-    # 奇数馬番が一貫して高オッズで勝つ→加点馬(odd)がvalidでも高回収→正の重み
+    # 単一因子: z=0 → 1.0 中心（解像度を潰さない）
     p = _period("A", 400, pd.Timestamp("2020-01-01"), odd_win_rate=0.7, odds=4.0, seed=11)
     w = calibrate_factor_weights(p, ["umaban_parity"], min_n=30,
                                  universality_slices=1, min_side=50)
-    assert w["umaban_parity"] > 0          # 方向がvalidで保たれる→正
-    assert -1.0 - 1e-9 <= w["umaban_parity"] <= 1.0 + 1e-9  # 正規化範囲
+    assert w["umaban_parity"] == pytest.approx(1.0)   # 単因子は中立1.0
+
+
+def test_calibrate_factor_weights_strong_outweighs_noise():
+    import numpy as np
+    from src.tuning._manji_calibration import calibrate_factor_weights
+    # 奇数馬番=強シグナル、性別=ノイズ。強因子の重み > ノイズ因子の重み、範囲[0,2]。
+    rng = np.random.default_rng(3)
+    rows, idx = [], []
+    for i in range(600):
+        rid = f"R{i:04d}"
+        day = pd.Timestamp("2020-01-01") + pd.Timedelta(days=i)
+        odd_wins = rng.random() < 0.7
+        winner = int(rng.choice([1, 3])) if odd_wins else int(rng.choice([2, 4]))
+        for u in (1, 2, 3, 4):
+            rows.append({"馬番": u, "着順": 1 if u == winner else u + 1, "単勝": 4.0,
+                         "性別": rng.choice(["牡", "牝"]), "date": day})
+            idx.append(rid)
+    df = pd.DataFrame(rows, index=idx)
+    w = calibrate_factor_weights(df, ["umaban_parity", "sex"], min_n=30,
+                                 universality_slices=1, min_side=50)
+    assert w["umaban_parity"] > w["sex"]              # 強因子が重い
+    for v in w.values():
+        assert 0.0 <= v <= 2.0                        # w_min..w_max
