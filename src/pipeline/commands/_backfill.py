@@ -10,6 +10,20 @@ from src.pipeline.commands._ingest import _resolve_data_source
 logger = logging.getLogger(__name__)
 
 
+def _done_horse_ids(hr) -> set:
+    """取得済み horse_results テーブルから「済み」horse_id 集合を取り出す。
+
+    保存テーブルは transfer で reset_index 済み（index=連番）なので horse_id は列に入る。
+    列があれば列から、無ければ（horse_id を index に持つ旧形式）index から取る。
+    これを誤ると done=空になり全頭再取得＝無限ストールになる（本関数はその番人）。
+    """
+    if hr is None or getattr(hr, "empty", True):
+        return set()
+    if "horse_id" in hr.columns:
+        return set(hr["horse_id"].astype(str))
+    return {str(h) for h in hr.index}
+
+
 def _backfill_notes(args: argparse.Namespace) -> None:
     """既存 raw の全 race_id に対し当日ノート（調教/パドック/コメント）だけを取得する。
 
@@ -198,15 +212,17 @@ def _backfill_horses(args: argparse.Namespace) -> None:
         logger.info("[backfill-horses] 対象 horse_id なし（raw_results が空 or horse_id 列なし）")
         return
     ids = sorted(set(res["horse_id"].astype(str)))
-    # 中断・再開: 既に horse_results 取得済み（index に居る horse_id）を除外。
+    # 中断・再開: 既に horse_results 取得済みの horse_id を除外。
     # 解析テーブルの正本は data/html/horse_results（get_rawdata_horse_results の出力先）。
     # RAW_HORSE_RESULTS_PATH は netkeiba backfill では書かれず常に空→全頭再取得扱いに
     # なるため、まず HTML 正本を見て、無ければ RAW にフォールバックする。
+    # 保存テーブルは transfer で reset_index 済み（index は連番）なので、取得済み判定は
+    # index ではなく horse_id 列から取る（列が無い旧形式のみ index にフォールバック）。
     if not getattr(args, "no_skip_existing", False):
         hr = load_raw(LocalPaths.HTML_HORSE_RESULTS_PATH)
         if hr.empty:
             hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
-        done = {str(h) for h in hr.index} if not hr.empty else set()
+        done = _done_horse_ids(hr)
         before = len(ids)
         ids = [h for h in ids if h not in done]
         if before != len(ids):

@@ -99,7 +99,14 @@ ids = set(res["horse_id"].astype(str))
 hr = load_raw(LocalPaths.HTML_HORSE_RESULTS_PATH)
 if hr.empty:
     hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
-done = {str(h) for h in hr.index} if not hr.empty else set()
+# 保存テーブルは reset_index 済み（index=連番）なので horse_id は列から取る
+# （index を見ると done が連番集合になり ids と交わらず残頭数が減らない）。
+if hr.empty:
+    done = set()
+elif "horse_id" in hr.columns:
+    done = set(hr["horse_id"].astype(str))
+else:
+    done = {str(h) for h in hr.index}
 print(len(ids - done))
 PY
 }
