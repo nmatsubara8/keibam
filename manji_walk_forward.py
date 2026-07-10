@@ -50,13 +50,23 @@ def _winners(featured):
 ODDS_BUCKETS = [(1.0, 3.0), (3.0, 7.0), (7.0, 15.0), (15.0, 50.0), (50.0, float("inf"))]
 
 
-def _settle(chosen, winners, band=None):
-    """chosen(DataFrame: race_id,umaban,odds) をフラット100円で決済 → (n, hit, stake, ret)。"""
+def _settle(chosen, winners, band=None, payoffs=None):
+    """chosen(DataFrame: race_id,umaban,odds) をフラット100円で決済 → (n, hit, stake, ret)。
+
+    payoffs=None（既定）は単勝: 着順1位なら 100×単勝オッズ。
+    payoffs 指定時は複勝等の単一馬券 {(race_id,馬番): 払戻円}。当選（キーあり）なら払戻円、
+    非当選（キー無し）は0。band 集計は選択時の単勝オッズ(chosen.odds)基準のまま。
+    """
     n = hit = 0
     stake = ret = 0.0
     for row in chosen.itertuples(index=False):
-        won = int(row.umaban) in winners.get(str(row.race_id), set())
-        r = 100.0 * float(row.odds) if won else 0.0
+        if payoffs is None:
+            won = int(row.umaban) in winners.get(str(row.race_id), set())
+            r = 100.0 * float(row.odds) if won else 0.0
+        else:
+            pay = payoffs.get((str(row.race_id), int(row.umaban)))
+            won = pay is not None
+            r = float(pay) if won else 0.0
         n += 1
         stake += 100.0
         ret += r
@@ -109,6 +119,11 @@ def main():
                          "クロス点は加法成分を引いた『交互作用残差』にするので加法の二重計上を回避し、"
                          "Optuna が単独(w_A,w_B)と相互作用(w_cross)を独立に重み付けする")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--bet-type", choices=["tansho", "fukusho"], default="tansho",
+                    help="決済する馬券種。fukusho は payoffs.pkl の複勝払戻で決済（因子スコア/"
+                         "ゾーンは単勝ベースのまま＝『単勝妙味で選んだ馬を複勝で買う』検証）")
+    ap.add_argument("--payoffs", default=None,
+                    help="払戻テーブル（既定 data/raw/payoffs.pkl）。--bet-type fukusho で使用")
     args = ap.parse_args()
 
     import numpy as np
@@ -124,6 +139,19 @@ def main():
     if featured is None or featured.empty:
         print("featured_data がありません")
         return
+
+    # 複勝決済用の払戻ルックアップ（--bet-type fukusho のときだけロード）
+    payoff_lookup = None
+    if args.bet_type == "fukusho":
+        from src.constants._local_paths import LocalPaths
+        from src.tuning._payoffs import load_payoffs, single_horse_payoff_lookup
+        pp = args.payoffs or str(Path(LocalPaths.RAW_DIR) / "payoffs.pkl")
+        payoffs_df = load_payoffs(pp)
+        payoff_lookup = single_horse_payoff_lookup(payoffs_df, "fukusho")
+        if not payoff_lookup:
+            print(f"複勝払戻が空です（{pp}）。import_archive_odds.py で payoffs.pkl を作成してください")
+            return
+        print(f"[--bet-type fukusho] 複勝払戻 {len(payoff_lookup):,} 件をロード（{pp}）")
     factor_names = list(FACTORS) if args.factors == "all" else \
         [f.strip() for f in args.factors.split(",") if f.strip() in FACTORS]
     if not factor_names:
@@ -160,8 +188,8 @@ def main():
 
     zone = (float(args.zone_odds[0]), float(args.zone_odds[1]))
     print("=" * 82)
-    print(f"卍式(行動因子) 前進検証 / 因子{len(factor_names)}個 / ゾーンodds{zone} / "
-          f"top_k={args.top_k} / {args.folds}分割")
+    print(f"卍式(行動因子) 前進検証 / 券種={args.bet_type} / 因子{len(factor_names)}個 / "
+          f"ゾーンodds{zone} / top_k={args.top_k} / {args.folds}分割")
     print(f"  {'評価fold期間':<24}{'学習R':>7}{'評価R':>7}{'採用因子':>8}"
           f"{'買い目':>7}{'的中率':>7}{'回収率':>8}{'baseline':>9}")
     print("-" * 82)
@@ -210,12 +238,12 @@ def main():
             )
         cfg = ManjiScorerConfig(points=points, weights=weights, zone_odds=cfg_zone, top_k=cfg_top_k)
         chosen = ManjiScorer(cfg).select(fold)
-        nb, hit, stake, ret = _settle(chosen, w, band)
+        nb, hit, stake, ret = _settle(chosen, w, band, payoffs=payoff_lookup)
 
         # baseline: ゾーン規律のみ（点数空）
         cfg0 = ManjiScorerConfig(points={}, zone_odds=cfg_zone, top_k=cfg_top_k)
         bchosen = ManjiScorer(cfg0).select(fold)
-        _, _, bstake, bret = _settle(bchosen, w)
+        _, _, bstake, bret = _settle(bchosen, w, payoffs=payoff_lookup)
 
         rr = ret / stake if stake else 0.0
         brr = bret / bstake if bstake else 0.0
@@ -236,7 +264,7 @@ def main():
                 pcfg = ManjiScorerConfig(points=_random_points(points, rng, args.clip),
                                          weights=weights, zone_odds=cfg_zone, top_k=cfg_top_k)
                 pch = ManjiScorer(pcfg).select(fold)
-                _, _, ps, pr = _settle(pch, w)
+                _, _, ps, pr = _settle(pch, w, payoffs=payoff_lookup)
                 # 通算プールに寄与（stake加重で後で割る）
                 placebo_pooled[pi] += pr - ps  # 損益を積む（後で /総stakeは近似のため損益で比較）
 
