@@ -376,6 +376,32 @@ def f_leg_type(df: pd.DataFrame) -> pd.Series:
     return lab
 
 
+def f_pace_pressure(df: pd.DataFrame) -> pd.Series:
+    """展開（レース内の先行勢比率）。各馬の**過去走**脚質傾向 leg_type_binary から、
+    そのレースの「逃げ・先行タイプ」の割合を出す＝想定ペースの代理。
+
+    前進安全: 当該レースの結果（今走の通過順）ではなく、各馬が過去に示した脚質傾向の
+    レース内構成を使う（発走前に既知）。先行勢が多い＝ハイペース想定＝差し有利、が定石。
+
+    単独ではレース内で全馬同値＝順位に効かないが、**脚質とのクロス（展開×脚質）**で
+    「先行馬×ハイペース＝不利／差し馬×ハイペース＝有利」を per-horse に表せる。
+    バケット: few(緩)/mid/many(速)。レースの有効脚質が乏しければ na。
+    """
+    if "leg_type_binary" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["leg_type_binary"])
+    front = (v < 0.5).astype(float)                 # 先行勢=1
+    denom = v.notna().astype(float)
+    idx = pd.Series(df.index, index=df.index)
+    n_front = front.groupby(idx).transform("sum")
+    n_valid = denom.groupby(idx).transform("sum")
+    ratio = np.where(n_valid > 0, n_front / n_valid, np.nan)
+    lab = np.where(np.isnan(ratio), NA,
+                   np.where(ratio < 0.30, "few",
+                            np.where(ratio < 0.55, "mid", "many")))
+    return pd.Series(lab, index=df.index)
+
+
 def f_kijun_gap(df: pd.DataFrame) -> pd.Series:
     """基準オッズ乖離（JRDBフェアバリュー / 市場単勝）＝Benter核。JRDB付与時のみ発火。
 
@@ -449,6 +475,7 @@ FACTORS: dict[str, callable] = {
     "ground": f_ground,
     "race_class": f_race_class,
     "leg_type": f_leg_type,
+    "pace_pressure": f_pace_pressure,
     "kijun_gap": f_kijun_gap,
     "prev_trouble": f_prev_trouble,
     "prev_deokure": f_prev_deokure,
