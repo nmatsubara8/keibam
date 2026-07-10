@@ -198,9 +198,14 @@ def _backfill_horses(args: argparse.Namespace) -> None:
         logger.info("[backfill-horses] 対象 horse_id なし（raw_results が空 or horse_id 列なし）")
         return
     ids = sorted(set(res["horse_id"].astype(str)))
-    # 中断・再開: 既に horse_results 取得済み（index に居る horse_id）を除外
+    # 中断・再開: 既に horse_results 取得済み（index に居る horse_id）を除外。
+    # 解析テーブルの正本は data/html/horse_results（get_rawdata_horse_results の出力先）。
+    # RAW_HORSE_RESULTS_PATH は netkeiba backfill では書かれず常に空→全頭再取得扱いに
+    # なるため、まず HTML 正本を見て、無ければ RAW にフォールバックする。
     if not getattr(args, "no_skip_existing", False):
-        hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
+        hr = load_raw(LocalPaths.HTML_HORSE_RESULTS_PATH)
+        if hr.empty:
+            hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
         done = {str(h) for h in hr.index} if not hr.empty else set()
         before = len(ids)
         ids = [h for h in ids if h not in done]

@@ -83,8 +83,11 @@ if [[ -f ".venv/bin/activate" ]]; then
     source ".venv/bin/activate"
 fi
 
-# 残り取得対象の頭数を返す（raw_results の horse_id − horse_results.index）。
+# 残り取得対象の頭数を返す（results の horse_id − horse_results.index）。
 # 失敗時は -1 を返す（判定不能。停止条件には使わない）。
+# 注意: 解析済み horse_results の正本は data/html/horse_results（backfill-horses の出力先）。
+# RAW_HORSE_RESULTS_PATH は netkeiba backfill では書かれず常に空→残頭数が減らず無限ストール
+# するため、HTML 正本を見て（無ければ RAW にフォールバック）判定する。
 remaining_count() {
     python - <<'PY' 2>/dev/null || echo -1
 from src.constants._local_paths import LocalPaths
@@ -93,7 +96,9 @@ res = load_raw(LocalPaths.RAW_RESULTS_PATH)
 if res.empty or "horse_id" not in res.columns:
     print(0); raise SystemExit
 ids = set(res["horse_id"].astype(str))
-hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
+hr = load_raw(LocalPaths.HTML_HORSE_RESULTS_PATH)
+if hr.empty:
+    hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
 done = {str(h) for h in hr.index} if not hr.empty else set()
 print(len(ids - done))
 PY

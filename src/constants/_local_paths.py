@@ -16,6 +16,11 @@ class LocalPaths:
     HTML_PED_DIR: str = os.path.join(HTML_DIR, "ped")
     ### 段階オッズ取得の生 HTML 保存ディレクトリ（race_id/フェーズ単位）
     HTML_ODDS_DIR: str = os.path.join(HTML_DIR, "odds")
+    ### netkeiba の馬ページ解析テーブルの正本（UrlPaths.horse_results_table/horse_info_table の
+    ### 出力先＝attr[4]/attr[5]）。backfill-horses はここに書く。RAW_* とは別物なので
+    ### 取得済み判定・残頭数カウントはこちらを見る（raw を見ると常に空→無限ストール）。
+    HTML_HORSE_RESULTS_PATH: str = os.path.join(HTML_DIR, "horse_results", "horse_results.pkl")
+    HTML_HORSE_INFO_PATH: str = os.path.join(HTML_DIR, "horse_info", "horse_info.pkl")
 
     ### rawディレクトリのパス
     RAW_DIR: str = os.path.join(DATA_DIR, "raw")
