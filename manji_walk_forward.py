@@ -119,6 +119,9 @@ def main():
                          "クロス点は加法成分を引いた『交互作用残差』にするので加法の二重計上を回避し、"
                          "Optuna が単独(w_A,w_B)と相互作用(w_cross)を独立に重み付けする")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--max-year", type=int, default=None,
+                    help="この年までのレースに限定（race_id先頭4桁=年）。複勝払戻が1986-2021"
+                         "しか無い等、カバレッジに合わせて末尾foldの欠損アーティファクトを防ぐ")
     ap.add_argument("--bet-type", choices=["tansho", "fukusho"], default="tansho",
                     help="決済する馬券種。fukusho は payoffs.pkl の複勝払戻で決済（因子スコア/"
                          "ゾーンは単勝ベースのまま＝『単勝妙味で選んだ馬を複勝で買う』検証）")
@@ -160,6 +163,12 @@ def main():
 
     race_date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
     ordered = list(race_date.index)
+    if args.max_year:
+        # 払戻カバレッジ等に合わせ、この年までのレースに限定（race_id 先頭4桁=年）
+        before = len(ordered)
+        ordered = [r for r in ordered if str(r)[:4].isdigit() and int(str(r)[:4]) <= args.max_year]
+        featured = featured.loc[ordered]
+        print(f"[--max-year {args.max_year}] {len(ordered):,} レース（全 {before:,} 中）")
     if args.limit and len(ordered) > args.limit:
         ordered = ordered[-args.limit:]
         featured = featured.loc[ordered]
