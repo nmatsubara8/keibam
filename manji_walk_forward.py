@@ -119,6 +119,10 @@ def main():
                          "クロス点は加法成分を引いた『交互作用残差』にするので加法の二重計上を回避し、"
                          "Optuna が単独(w_A,w_B)と相互作用(w_cross)を独立に重み付けする")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--force-crosses", default=None,
+                    help="選別ランクに関係なく必ず投入するクロス名（カンマ区切り、例 "
+                         "'pace_pressure*leg_type,ground*sire_line'）。特定の相互作用仮説を"
+                         "確実に検証したいときに使う")
     ap.add_argument("--max-year", type=int, default=None,
                     help="この年までのレースに限定（race_id先頭4桁=年）。複勝払戻が1986-2021"
                          "しか無い等、カバレッジに合わせて末尾foldの欠損アーティファクトを防ぐ")
@@ -194,6 +198,24 @@ def main():
                   f"{', '.join(crosses)}")
         else:
             print("[--crosses] 有効な相互作用（残差の大きい安定クロス）は見つからず")
+
+    # 特定クロスを選別ランクに関係なく強制投入（例: pace_pressure*leg_type を必ず検証）。
+    # 選別は最古chunkの残差で決まるので、そこで上位N外でも本オプションで確実にモデルへ入る。
+    if args.force_crosses:
+        from src.policies._manji_factors import CROSS_SEP, FACTORS
+        forced = []
+        for name in args.force_crosses.split(","):
+            name = name.strip()
+            if not name or name in factor_names:
+                continue
+            parts = name.split(CROSS_SEP)
+            if len(parts) >= 2 and all(p in FACTORS for p in parts):
+                forced.append(name)
+            else:
+                print(f"[--force-crosses] 無効なクロス名をスキップ: {name}")
+        if forced:
+            factor_names = factor_names + forced
+            print(f"[--force-crosses] 強制投入した相互作用 {len(forced)}件: {', '.join(forced)}")
 
     zone = (float(args.zone_odds[0]), float(args.zone_odds[1]))
     print("=" * 82)
