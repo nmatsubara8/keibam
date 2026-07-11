@@ -91,7 +91,8 @@ def _front_distance(x: np.ndarray) -> np.ndarray:
 
 
 def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = None,
-                seed: int = 0, place_k: int = 3, ability_sigma: float = 0.15) -> dict:
+                seed: int = 0, place_k: int = 3, ability_sigma: float = 0.15,
+                track_dynamics: bool = False) -> dict:
     """field を n_sim 回走らせ、勝率・複勝率(上位place_k)・平均着順・着順分布を返す。
 
     ability_sigma>0 のとき、各シミュレーションで能力を μ_i ± σ_i から引き直す
@@ -99,10 +100,13 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     着順分布に本当の不確実性を与える＝**較正された勝率**になる（σ を入れないと勝者が
     ほぼ決定論的になり p_sim が [≒1,0,…] に潰れて log-loss が爆発する）。
 
+    track_dynamics=True で創発ダイナミクスの要約も返す（忠実度検証用）:
+      early_pos_rank : 各馬の「序盤(1/3地点)の平均位置順位」(0=先頭)。実測の第1コーナー通過順と対応。
+      early_speed/late_speed : 序盤/終盤の全馬平均速度（全体のペース形。early>late＝前傾）。
+
     Returns
     -------
-    {win, place, mean_rank, finish_counts} — win/place/mean_rank は (n_horses,)。
-    finish_counts[h, r] = 馬 h が r 着(0始まり)になった回数。
+    {win, place, mean_rank, finish_counts[, early_pos_rank, early_speed, late_speed]}
     """
     cfg = cfg or SimConfig()
     n = field.n
@@ -121,6 +125,10 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     v = np.zeros((n_sim, n))
     s = np.tile(field.stamina, (n_sim, 1)).astype(float)
 
+    third = max(1, cfg.T // 3)
+    early_pos_rank = np.zeros((n_sim, n))
+    early_v = np.zeros(n_sim)
+    late_v = np.zeros(n_sim)
     for t in range(cfg.T):
         phase = t / cfg.T
         vt = _target_speed(style, A, phase, cfg)
@@ -131,6 +139,13 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         v = np.clip(v + a * cfg.dt, 0.0, None)
         x = x + v * cfg.dt
         s = np.clip(s - cfg.stamina_cost * v * v * cfg.dt, 0.0, None)
+        if track_dynamics:
+            if t < third:
+                early_v += v.mean(axis=1)
+            if t >= cfg.T - third:
+                late_v += v.mean(axis=1)
+            if t == third:
+                early_pos_rank = (-x).argsort(axis=1).argsort(axis=1)
 
     # 各 sim の着順（0=1着）。位置降順の順位。
     finish_rank = (-x).argsort(axis=1).argsort(axis=1)
@@ -140,8 +155,13 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     finish_counts = np.zeros((n, n), dtype=int)
     for r in range(n):
         finish_counts[:, r] = (finish_rank == r).sum(axis=0)
-    return {"win": win, "place": place, "mean_rank": mean_rank,
-            "finish_counts": finish_counts}
+    out = {"win": win, "place": place, "mean_rank": mean_rank,
+           "finish_counts": finish_counts}
+    if track_dynamics:
+        out["early_pos_rank"] = early_pos_rank.mean(axis=0)     # (n,) 序盤位置順位の平均
+        out["early_speed"] = float(early_v.mean() / third)
+        out["late_speed"] = float(late_v.mean() / third)
+    return out
 
 
 def field_from_arrays(ability, style_names, stamina=None, noise=None) -> RaceField:
