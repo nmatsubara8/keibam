@@ -103,14 +103,15 @@ def main():
         for i in range(nH):
             backness.append(b[i]); rank_norm.append(rn[i]); real_pace_perrow.append(rp)
 
-        # 位置忠実度: sim 序盤位置順位 vs 実 第1コーナー
+        # 位置忠実度: sim 序盤位置順位 vs 実 第1コーナー（頭数で [0,1] 正規化してプール）
         if has_corner:
             from src.preprocessing._horse_results_processor import parse_corner
-            fc = rd["通過"].map(lambda x: parse_corner(x, 1)).to_numpy()
+            fc = pd.to_numeric(rd["通過"].map(lambda x: parse_corner(x, 1)), errors="coerce").to_numpy()
+            denom = max(nH - 1, 1)
             for i in range(nH):
                 pos_style.append(field.style[i])
-                pos_sim_early.append(sim["early_pos_rank"][i])
-                pos_real_corner.append(fc[i] if np.isfinite(pd.to_numeric(fc[i], errors="coerce")) else np.nan)
+                pos_sim_early.append(sim["early_pos_rank"][i] / denom)          # 0=先頭..1=最後方
+                pos_real_corner.append((fc[i] - 1) / denom if np.isfinite(fc[i]) else np.nan)
 
     print("=" * 72)
     print(f"ABS 忠実度検証 / {len(order):,}レース / n_sim={args.n_sim}")
