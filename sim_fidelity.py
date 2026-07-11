@@ -99,7 +99,9 @@ def main():
 
         field = field_from_featured(rd, ability_spread=args.ability_spread)
         sim = run_sim(field, int(rng.integers(1 << 30)))
-        sp = sim["early_speed"] - sim["late_speed"]     # sim の前傾度（序盤−終盤）
+        # sim 前傾度は速度レベルで正規化（(early-late)/(early+late)）＝形だけ測り能力レベル交絡を除く
+        _es, _ls = sim["early_speed"], sim["late_speed"]
+        sp = (_es - _ls) / (_es + _ls + 1e-9)
 
         rp = race_pace.get(str(rid), np.nan) if race_pace is not None else np.nan
         if np.isfinite(rp):
@@ -147,8 +149,10 @@ def main():
     if has_corner and len(pos_style) > 100:
         cs = spearman(pos_style, pos_sim_early)
         cr = spearman(pos_style, pos_real_corner)
+        c_direct = spearman(pos_sim_early, pos_real_corner)   # sim位置 vs 実位置（直接）
         print(f"(3) 隊列 忠実度: corr(脚質, 序盤位置)  sim={cs:+.3f}  実={cr:+.3f}")
-        print("     → 双方が正（先行=前・追込=後ろ）かつ近い値なら、隊列形成を再現。")
+        print(f"(3b) 位置 直接一致: corr(sim序盤位置, 実第1コーナー) = {c_direct:+.3f}")
+        print("     → (3b)が正で大きいほど『実際に前にいた馬』を sim も前に置けている（直接の隊列再現）。")
     elif not has_corner:
         print("(3) 隊列 忠実度: featured に通過列が無いためスキップ"
               "（leg_type修正版で rebuild-featured 後に有効）。")
