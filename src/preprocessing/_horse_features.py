@@ -29,9 +29,10 @@ def build_horse_results_from_results(results: pd.DataFrame) -> pd.DataFrame:
     アダプタ。着順/頭数/馬場/開催/course_len/race_type/斤量/騎手(=jockey_id)/date を
     HorseResultsCols 名で持つ（各行＝その馬の1過去走）。
 
-    通過(CORNER)/タイム(speed_figure)/賞金(PRIZE)/レース名(RACE_NAME) は results に無いため付けない。
-    → `add_pace_stats`/`add_speed_figure_stats`/`add_race_class_stats`/`add_opponent_strength_stats`
-    は列不在で自動スキップし、率・適性・距離・馬場系のみが計算される（既存ガードに委譲）。
+    通過(CORNER) は results に有れば first_corner を導出する（アーカイブ取込 results は 1-4
+    コーナー由来の通過を持つ）。これにより `add_pace_stats` が過去走から脚質(leg_type_binary)を
+    計算でき、歴史馬(馬ページ未取得)にも展開×脚質が効かせられる。タイム(speed_figure)/賞金
+    (PRIZE)/レース名(RACE_NAME) は無ければ付けない（列不在で各 add_* が自動スキップ）。
 
     リーク回避は呼び出し側の date スライス（date<target を searchsorted）に委ねる。ここでは
     純粋に「results の各行を過去走レコードへ写像」するだけ（着順という結果は過去走の事実であり、
@@ -49,8 +50,15 @@ def build_horse_results_from_results(results: pd.DataFrame) -> pd.DataFrame:
     out["horse_id"] = df["horse_id"].astype(str).str.replace(r"\.0$", "", regex=True).to_numpy()
     out["date"] = pd.to_datetime(df.get("date"), errors="coerce").to_numpy()
     out[HRCols.RANK] = pd.to_numeric(df.get(ResultsCols.RANK), errors="coerce").to_numpy()
+    # 頭数: results 列があれば使用、無ければ（アーカイブ由来）同一 race_id の出走頭数から算出。
     if "n_horses" in df.columns:
         out[HRCols.N_HORSES] = pd.to_numeric(df["n_horses"], errors="coerce").to_numpy()
+    elif "race_id" in df.columns:
+        out[HRCols.N_HORSES] = df.groupby("race_id")["horse_id"].transform("size").to_numpy()
+    # 通過順 → first_corner（脚質算出の入力）。add_pace_stats は first_corner/頭数 で _pace_num を出す。
+    if HRCols.CORNER in df.columns:
+        from src.preprocessing._horse_results_processor import parse_corner
+        out["first_corner"] = df[HRCols.CORNER].map(lambda x: parse_corner(x, 1)).to_numpy()
     for src_col, dst in (("course_len", "course_len"), ("race_type", "race_type"),
                          (ResultsCols.KINRYO, HRCols.KINRYO), ("開催", HRCols.PLACE)):
         if src_col in df.columns:
