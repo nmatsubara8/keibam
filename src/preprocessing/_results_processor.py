@@ -74,34 +74,29 @@ class ResultsProcessor(AbstractDataProcessor):
         # race_id がインデックスにあり列にない場合（pickle 再保存後の状態）は列に復元する
         if "race_id" not in df.columns and df.index.name == "race_id":
             df = df.reset_index()
-        df = df[
-            [
-                "race_id",
-                Cols.RANK,  # 着順 (actual finishing position; used for jockey/trainer/sire stats)
-                Cols.WAKUBAN,  # 枠番
-                Cols.UMABAN,  # 馬番
-                # Cols.HORSE_NAME, # 馬名
-                # Cols.SEX_AGE, # 性齢
-                Cols.KINRYO,  # 斤量
-                # Cols.JOCKEY, # 騎手
-                # Cols.TIME # タイム
-                # Cols.RANK_DIFF # 着差
-                Cols.TANSHO_ODDS,  # 単勝
-                # Cols.POPULARITY, # 人気
-                # Cols.WEIGHT_AND_DIFF, # 馬体重
-                # Cols.TRAINER, # 調教師
-                "horse_id",
-                "jockey_id",
-                "trainer_id",
-                "owner_id",
-                "性",
-                "年齢",
-                "体重",
-                "体重変化",
-                "n_horses",
-                "rank",
-                "rank_win",
-            ]
+        cols = [
+            "race_id",
+            Cols.RANK,  # 着順 (actual finishing position; used for jockey/trainer/sire stats)
+            Cols.WAKUBAN,  # 枠番
+            Cols.UMABAN,  # 馬番
+            Cols.KINRYO,  # 斤量
+            Cols.TANSHO_ODDS,  # 単勝
+            "horse_id",
+            "jockey_id",
+            "trainer_id",
+            "owner_id",
+            "性",
+            "年齢",
+            "体重",
+            "体重変化",
+            "n_horses",
+            "rank",
+            "rank_win",
         ]
+        # 通過（コーナー順）はアーカイブ取込 results に有り、脚質(leg_type)算出の入力になる。
+        # 旧スクレイプ data に無い場合もあるため、存在するときだけ保持する（欠落で KeyError しない）。
+        if "通過" in df.columns:
+            cols.append("通過")
+        df = df[cols]
         df.set_index("race_id", inplace=True)
         return df
