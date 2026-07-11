@@ -77,44 +77,59 @@ def main():
     X = np.array(X, float); y = np.array(y, float); fr = np.array(fr, float)
     print(f"有効レース: {len(y):,}")
 
+    from src.simulation._pace_model import PACE_FEATURE_NAMES as PN
+    idx = {name: i for i, name in enumerate(PN)}
+    COND = [idx["field_size"], idx["course_len"], idx["is_dirt"]]          # レース条件のみ
+    COMP = [idx["n_front"], idx["front_ratio"], idx["n_front_sq"], idx["ability_mean"],
+            idx["ability_std"], idx["front_ability_max"], idx["back_ability_max"]]  # 隊列構成/力
+
+    def _new_model():
+        if args.model == "gbm":
+            try:
+                from sklearn.ensemble import HistGradientBoostingRegressor
+                return HistGradientBoostingRegressor(max_depth=4, max_iter=200, learning_rate=0.05)
+            except Exception:
+                from sklearn.linear_model import Ridge
+                return Ridge(alpha=1.0)
+        from sklearn.linear_model import Ridge
+        return Ridge(alpha=1.0)
+
     n = len(y)
     bounds = [round(i * n / args.folds) for i in range(args.folds + 1)]
-    model_corrs, naive_corrs, base_rmse, model_rmse = [], [], [], []
+    c_all, c_cond, c_comp, c_resid = [], [], [], []
     for k in range(1, args.folds):
         tr = slice(0, bounds[k]); te = slice(bounds[k], bounds[k + 1])
         if bounds[k + 1] - bounds[k] < 50:
             continue
         Xtr, ytr, Xte, yte = X[tr], y[tr], X[te], y[te]
-        if args.model == "gbm":
-            try:
-                from sklearn.ensemble import HistGradientBoostingRegressor
-                m = HistGradientBoostingRegressor(max_depth=4, max_iter=200, learning_rate=0.05)
-            except Exception:
-                from sklearn.linear_model import Ridge
-                m = Ridge(alpha=1.0)
-        else:
-            from sklearn.linear_model import Ridge
-            m = Ridge(alpha=1.0)
-        m.fit(Xtr, ytr)
-        pred = m.predict(Xte)
-        model_corrs.append(_corr(pred, yte))
-        naive_corrs.append(_corr(fr[te], yte))            # sim の素朴仮定 先行率→ペース
-        base_rmse.append(float(np.sqrt(np.mean((yte - ytr.mean()) ** 2))))
-        model_rmse.append(float(np.sqrt(np.mean((yte - pred) ** 2))))
+        # 全部
+        m = _new_model(); m.fit(Xtr, ytr); c_all.append(_corr(m.predict(Xte), yte))
+        # 条件のみ
+        mc = _new_model(); mc.fit(Xtr[:, COND], ytr); cond_pred_te = mc.predict(Xte[:, COND])
+        c_cond.append(_corr(cond_pred_te, yte))
+        # 構成のみ
+        mp = _new_model(); mp.fit(Xtr[:, COMP], ytr); c_comp.append(_corr(mp.predict(Xte[:, COMP]), yte))
+        # 条件を除いた残差を構成で説明できるか（＝駆け引きの純寄与）
+        cond_pred_tr = mc.predict(Xtr[:, COND])
+        mr = _new_model(); mr.fit(Xtr[:, COMP], ytr - cond_pred_tr)
+        c_resid.append(_corr(mr.predict(Xte[:, COMP]), yte - cond_pred_te))
 
-    mc = float(np.nanmean(model_corrs)); nc = float(np.nanmean(naive_corrs))
-    print("-" * 60)
-    print(f"モデル OOS corr(予測, 実ペース)   = {mc:+.3f}")
-    print(f"素朴 OOS corr(先行率, 実ペース)   = {nc:+.3f}   ← sim が使っていた仮定")
-    print(f"RMSE  baseline(平均)={np.nanmean(base_rmse):.3f}  model={np.nanmean(model_rmse):.3f}")
-    print("-" * 60)
-    if mc > 0.25:
-        print("→ ペースは発走前に有意に予測可能。sim にペース外挿として注入する価値あり。")
-    elif mc > 0.1:
-        print("→ 弱いが予測可能。改善余地はあるが効果は限定的。")
+    a = float(np.nanmean(c_all)); cc = float(np.nanmean(c_cond))
+    cp = float(np.nanmean(c_comp)); cr = float(np.nanmean(c_resid))
+    print("-" * 64)
+    print(f"OOS corr(予測, 実ペース):")
+    print(f"  全部(条件+構成)         = {a:+.3f}")
+    print(f"  条件のみ(距離/芝ダ/頭数) = {cc:+.3f}   ← 距離等で決まる平均的ペース形")
+    print(f"  構成のみ(隊列/力)        = {cp:+.3f}   ← 駆け引き由来の候補")
+    print(f"  条件除去後の残差を構成で = {cr:+.3f}   ★駆け引きの純寄与（条件と独立）")
+    print("-" * 64)
+    if cr > 0.2:
+        print("→ 条件と独立に、隊列構成からペースの上振れ/下振れ(＝展開)が読める。sim注入の価値あり。")
+    elif cr > 0.08:
+        print("→ 駆け引きの純寄与は弱いが存在。効果は限定的。")
     else:
-        print("→ 隊列・力からペースはほぼ読めない＝発走前にペースは本質的に不確実（同日の駆け引きが支配）。"
-              "\n   展開予測は原理的に困難、と確定。")
+        print("→ ★駆け引きの純寄与 ≈ 0。ペース予測力はほぼ距離/条件由来で、同一条件内の展開は"
+              "\n   発走前に読めない（＝騎手の駆け引き・当日要因が支配）。展開予測は原理的に困難。")
 
 
 if __name__ == "__main__":
