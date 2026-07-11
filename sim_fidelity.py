@@ -28,6 +28,8 @@ def main():
     ap.add_argument("--T", type=int, default=100)
     ap.add_argument("--ability-spread", type=float, default=0.20)
     ap.add_argument("--ability-sigma", type=float, default=0.35)
+    ap.add_argument("--engine", choices=["1d", "2d"], default="1d",
+                    help="1d=既存物理 / 2d=Phase1.5（発走速度・位置ターゲット・2次元位置取り）")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -64,7 +66,18 @@ def main():
     if args.limit and len(order) > args.limit:
         order = order[-args.limit:]
     featured = featured.loc[order]
-    cfg = SimConfig(T=args.T)
+    if args.engine == "2d":
+        from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
+        cfg = SimConfig2D(T=args.T)
+        run_sim = lambda fld, sd: monte_carlo_2d(  # noqa: E731
+            fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
+            ability_sigma=args.ability_sigma, track_dynamics=True)
+    else:
+        cfg = SimConfig(T=args.T)
+        run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
+            fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
+            ability_sigma=args.ability_sigma, track_dynamics=True)
+    print(f"[engine] {args.engine}")
     rng = np.random.default_rng(args.seed)
 
     # 収集: レース単位（sim/実ペース）と 馬単位（脚質・相対着順・序盤位置）
@@ -85,8 +98,7 @@ def main():
             continue
 
         field = field_from_featured(rd, ability_spread=args.ability_spread)
-        sim = monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
-                          ability_sigma=args.ability_sigma, track_dynamics=True)
+        sim = run_sim(field, int(rng.integers(1 << 30)))
         sp = sim["early_speed"] - sim["late_speed"]     # sim の前傾度（序盤−終盤）
 
         rp = race_pace.get(str(rid), np.nan) if race_pace is not None else np.nan
