@@ -34,6 +34,9 @@ def main():
     ap.add_argument("--n-sim", type=int, default=800)
     ap.add_argument("--T", type=int, default=100)
     ap.add_argument("--ability-spread", type=float, default=0.20)
+    ap.add_argument("--ability-sigma", type=float, default=0.35,
+                    help="各simで能力を μ±(σ) から引き直す幅。小さいと確率が潰れ log-loss 爆発、"
+                         "大きすぎると一様化。市場に合う値を --ability-sigma で掃引して較正する")
     ap.add_argument("--ev-threshold", type=float, default=1.10, help="EV>この値で購入")
     ap.add_argument("--min-odds", type=float, default=1.0)
     ap.add_argument("--max-odds", type=float, default=100.0)
@@ -90,7 +93,8 @@ def main():
         w = int(winner[0])
 
         field = field_from_featured(rd, ability_spread=args.ability_spread)
-        sim = monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)))
+        sim = monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
+                          ability_sigma=args.ability_sigma)
         p_sim = sim["win"]
         # 市場implied（オーバーラウンド除去）
         inv = 1.0 / odds
@@ -110,12 +114,15 @@ def main():
                 bet_hit += 1
                 bet_ret += 100.0 * odds[j]
 
-        # プラシーボ: 能力シャッフル（機構は同じ・情報を壊す）
+        # プラシーボ（真のnull）: 能力・脚質・スタミナを一様化して情報を完全に壊す。
+        # 物理ランダムのみの sim → 勝率はほぼ一様。実 sim がこれを上回らなければ情報寄与なし。
         if args.placebo:
-            perm = rng.permutation(len(field.ability))
-            from src.simulation._agent_race import RaceField
-            pf = RaceField(field.ability[perm], field.style, field.stamina, field.noise)
-            ps = monte_carlo(pf, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)))["win"]
+            from src.simulation._agent_race import STYLE_STALKER, RaceField
+            m = len(field.ability)
+            pf = RaceField(np.ones(m), np.full(m, STYLE_STALKER, dtype=int),
+                           np.ones(m), field.noise)
+            ps = monte_carlo(pf, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
+                             ability_sigma=args.ability_sigma)["win"]
             ll_plc += _logloss(ps[w])
             pev = ps * odds
             pbuy = (pev > args.ev_threshold) & (odds >= args.min_odds) & (odds <= args.max_odds)

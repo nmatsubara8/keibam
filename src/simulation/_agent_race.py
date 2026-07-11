@@ -91,8 +91,13 @@ def _front_distance(x: np.ndarray) -> np.ndarray:
 
 
 def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = None,
-                seed: int = 0, place_k: int = 3) -> dict:
+                seed: int = 0, place_k: int = 3, ability_sigma: float = 0.15) -> dict:
     """field を n_sim 回走らせ、勝率・複勝率(上位place_k)・平均着順・着順分布を返す。
+
+    ability_sigma>0 のとき、各シミュレーションで能力を μ_i ± σ_i から引き直す
+    （A_sim = μ + ability_sigma·σ_i·N(0,1)）。これが「その馬がどれだけブレるか」を表し、
+    着順分布に本当の不確実性を与える＝**較正された勝率**になる（σ を入れないと勝者が
+    ほぼ決定論的になり p_sim が [≒1,0,…] に潰れて log-loss が爆発する）。
 
     Returns
     -------
@@ -104,6 +109,12 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     rng = np.random.default_rng(seed)
 
     A = np.tile(field.ability, (n_sim, 1))
+    if ability_sigma > 0:
+        # 各 sim・各馬で能力を μ±(ability_sigma·σ_i) から引き直す（σ_i=field.noise を相対的な
+        # 能力不確実性として使い、ブレやすい馬ほど広く引く）。着順分布に本当の不確実性を与える。
+        rel = field.noise / max(float(field.noise.mean()), 1e-6)   # 平均1に正規化した相対σ
+        sig = np.tile(rel, (n_sim, 1))
+        A = np.clip(A + ability_sigma * sig * rng.normal(0.0, 1.0, size=(n_sim, n)), 0.1, None)
     style = np.tile(field.style, (n_sim, 1))
     noise = np.tile(field.noise, (n_sim, 1))
     x = np.zeros((n_sim, n))
