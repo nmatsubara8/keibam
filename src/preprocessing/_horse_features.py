@@ -60,11 +60,14 @@ def build_horse_results_from_results(results: pd.DataFrame) -> pd.DataFrame:
             _dt = pd.to_datetime(_d, errors="coerce")
         out["date"] = _dt.to_numpy()
     out[HRCols.RANK] = pd.to_numeric(df.get(ResultsCols.RANK), errors="coerce").to_numpy()
-    # 頭数: results 列があれば使用、無ければ（アーカイブ由来）同一 race_id の出走頭数から算出。
-    if "n_horses" in df.columns:
-        out[HRCols.N_HORSES] = pd.to_numeric(df["n_horses"], errors="coerce").to_numpy()
-    elif "race_id" in df.columns:
+    # 頭数=実出走頭数。race_id があれば groupby サイズが常に正。n_horses 列は index 崩れ
+    # (results の race_id が列で index が RangeIndex 等)で value_counts が全 1 に縮退している
+    # 場合があり、それを頭数に使うと _pace_num=first_corner/頭数 が clip で 1.0 固着し脚質が
+    # 全馬同値(1.0)に潰れる。よって race_id からの実頭数を優先し、無い時だけ n_horses に退避。
+    if "race_id" in df.columns:
         out[HRCols.N_HORSES] = df.groupby("race_id")["horse_id"].transform("size").to_numpy()
+    elif "n_horses" in df.columns:
+        out[HRCols.N_HORSES] = pd.to_numeric(df["n_horses"], errors="coerce").to_numpy()
     # 通過順 → first_corner（脚質算出の入力）。add_pace_stats は first_corner/頭数 で _pace_num を出す。
     if HRCols.CORNER in df.columns:
         from src.preprocessing._horse_results_processor import parse_corner

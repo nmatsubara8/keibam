@@ -77,3 +77,16 @@ def test_reconstruct_handles_japanese_date_format():
     hr2 = add_pace_stats(df.copy(), hr)
     lt = pd.to_numeric(hr2["leg_type_binary"], errors="coerce").dropna()
     assert lt.nunique() >= 2, f"leg_type_binary が定数化: uniq={lt.nunique()}"
+
+
+def test_reconstruct_ignores_degenerate_n_horses_column():
+    # n_horses が全 1 に縮退（index 崩れの value_counts）していても、race_id からの実頭数を
+    # 優先して脚質が潰れないことを固定する（archive の leg_type=1.0 全馬同値 回帰）。
+    df = _results().copy()
+    df["n_horses"] = 1  # 壊れた頭数列
+    hr = build_horse_results_from_results(df)
+    # 頭数は race_id ごとの実出走数=3 になる（壊れた 1 を使わない）
+    assert (pd.to_numeric(hr[HRCols.N_HORSES]) == 3).all()
+    out = add_pace_stats(df.copy(), hr)
+    lt = pd.to_numeric(out["leg_type_binary"], errors="coerce").dropna()
+    assert lt.nunique() >= 2, f"壊れた n_horses で leg_type が定数化: uniq={lt.nunique()}"
