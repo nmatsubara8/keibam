@@ -41,7 +41,10 @@ class SimConfigFixed:
     dt: float = 1.0
     max_steps: int = 400
     accel_k: float = 0.5         # 目標速度への追従ゲイン
-    reserve: float = 1.15        # スタミナ予算 = reserve·(等ペースで D を走り切る消費)
+    reserve: float = 1.15        # スタミナ予算 = reserve·(基準距離 D_ref を等ペースで走り切る消費)
+    stamina_ref_D: float = 1800.0  # スタミナ容量の基準距離[m]。予算は実距離でなくこれに固定＝馬固有の
+                                 # 容量。短距離は使い切らず崩れない/長距離は使い果たし崩れる、という
+                                 # 距離勾配を自然に創発させる（実測: スプリント≈0→長距離+0.06）。
     cost_pow: float = 2.0        # 消費 = cost_coef·v^cost_pow（速いほど超過消費）
     exhaust_floor: float = 0.45  # スタミナ枯渇時の出力率（脚が上がる＝非線形の壁）
     early_frac: float = 0.6      # レース前半(位置取り)と後半(仕掛け)の境
@@ -107,8 +110,10 @@ def monte_carlo_fixed(field: RaceField, D: float = 1600.0, n_sim: int = 400,
     # pace_intensity>1 → 積極性平均↑（前を取りに行く馬が増える＝ペースが上がりやすい）
     aggr = np.clip(pace_intensity + cfg.aggr_sigma * rng.normal(0, 1, (n_sim, n)), 0.3, None)
 
-    # 距離連動スタミナ予算: 等ペース(=v0·A)で D を走り切ると使い切る量 × reserve
-    B = cfg.reserve * v0 * A * D
+    # スタミナ容量は馬固有(≒一定)で、基準距離 D_ref を等ペースで走り切る量 × reserve。
+    # 実距離 D には比例させない → 消費/容量 = D/(reserve·D_ref) が距離で変わり、短距離は
+    # 使い切らず崩れない・長距離は超過して崩れる、という距離勾配が創発する。
+    B = cfg.reserve * v0 * A * cfg.stamina_ref_D
     s = B.copy()
 
     # 逃げの競り合い(創発ペース): 前を取りたい馬(pos_target 小)が多い sim ほど序盤ペースが上がる。
