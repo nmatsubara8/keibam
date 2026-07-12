@@ -62,3 +62,18 @@ def test_no_corner_column_is_noop():
     df = _results().drop(columns=["通過"])
     hr = build_horse_results_from_results(df)
     assert "first_corner" not in hr.columns   # 通過なしなら付けない（従来動作）
+
+
+def test_reconstruct_handles_japanese_date_format():
+    # アーカイブ取込 results は date が "YYYY年MM月DD日" の文字列。書式無しパースだと
+    # 全 NaT→dropna で 0 行になり脚質が全馬同値に潰れる回帰を固定する。
+    df = _results().copy()
+    df["date"] = ["2000年01月01日"] * 3 + ["2000年02月01日"] * 3
+    hr = build_horse_results_from_results(df)
+    assert not hr.empty, "日本語形式 date で reconstruction が空になってはいけない"
+    assert hr["date"].notna().all()          # date が datetime として救済されている
+    assert pd.to_numeric(hr["first_corner"], errors="coerce").notna().any()
+    # 脚質が変動する（H1=先行 0, H3=追込 1 の両方が出る＝定数化しない）
+    hr2 = add_pace_stats(df.copy(), hr)
+    lt = pd.to_numeric(hr2["leg_type_binary"], errors="coerce").dropna()
+    assert lt.nunique() >= 2, f"leg_type_binary が定数化: uniq={lt.nunique()}"

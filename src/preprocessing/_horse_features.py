@@ -48,7 +48,17 @@ def build_horse_results_from_results(results: pd.DataFrame) -> pd.DataFrame:
     n = len(df)
     out = pd.DataFrame(index=range(n))
     out["horse_id"] = df["horse_id"].astype(str).str.replace(r"\.0$", "", regex=True).to_numpy()
-    out["date"] = pd.to_datetime(df.get("date"), errors="coerce").to_numpy()
+    # date は datetime とは限らず、アーカイブ取込 results は "YYYY年MM月DD日" の文字列で来る。
+    # 書式無し pd.to_datetime は日本語書式を読めず全 NaT→下段 dropna で全行消滅し、歴史馬の
+    # horse_results が空になる（＝脚質 leg_type_binary が全馬同値 1.0 に潰れる根本原因）。書式を明示して救う。
+    _d = df.get("date")
+    if _d is None:
+        out["date"] = pd.NaT
+    else:
+        _dt = pd.to_datetime(_d, errors="coerce", format="%Y年%m月%d日")
+        if float(_dt.notna().mean()) < 0.5:          # 既に datetime / ISO 文字列 等
+            _dt = pd.to_datetime(_d, errors="coerce")
+        out["date"] = _dt.to_numpy()
     out[HRCols.RANK] = pd.to_numeric(df.get(ResultsCols.RANK), errors="coerce").to_numpy()
     # 頭数: results 列があれば使用、無ければ（アーカイブ由来）同一 race_id の出走頭数から算出。
     if "n_horses" in df.columns:
