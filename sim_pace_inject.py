@@ -31,6 +31,8 @@ def main():
     ap.add_argument("--ability-spread", type=float, default=0.20)
     ap.add_argument("--ability-sigma", type=float, default=0.35)
     ap.add_argument("--gain", type=float, default=0.25, help="pace_intensity の振れ幅(±)")
+    ap.add_argument("--engine", choices=["timebox", "fixed"], default="fixed",
+                    help="timebox=時間箱(旧)/fixed=固定距離(time-to-D・drafting・戦略分布)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -41,6 +43,7 @@ def main():
     from src.constants._local_paths import LocalPaths
     from src.constants._results_cols import ResultsCols
     from src.simulation._agent_race import SimConfig, monte_carlo
+    from src.simulation._agent_race_fixed import SimConfigFixed, monte_carlo_fixed
     from src.simulation._fidelity import pace_backness_signal, pace_shape_corr
     from src.simulation._pace_model import PacePredictor, features_to_row, pace_features
     from src.simulation._sim_params import field_from_featured
@@ -85,8 +88,18 @@ def main():
         yf.append(pace[str(rid)])
     predictor = PacePredictor(gain=args.gain).fit(np.array(Xf, float), np.array(yf, float))
 
-    # --- 後半で baseline / 注入 の sim を回して忠実度を集める ---
-    cfg_base = SimConfig(T=args.T)
+    # --- エンジン別の sim ランナー（baseline/注入を同一 seed で回す） ---
+    def _run(field, intensity, seed, D):
+        if args.engine == "fixed":
+            cfg = SimConfigFixed()
+            return monte_carlo_fixed(field, D=D, n_sim=args.n_sim, cfg=cfg, seed=seed,
+                                     ability_sigma=args.ability_sigma,
+                                     pace_intensity=intensity, track_dynamics=True)
+        cfg = SimConfig(T=args.T, pace_intensity=intensity)
+        return monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=seed,
+                           ability_sigma=args.ability_sigma, track_dynamics=True)
+
+    print(f"[engine] {args.engine}")
     rng = np.random.default_rng(args.seed)
     sp_base, sp_inj, real_pace_r = [], [], []
     back, rn_real, rn_base, rn_inj, real_pp = [], [], [], [], []
@@ -106,13 +119,14 @@ def main():
 
         it = predictor.predict_intensity(features_to_row(pace_features(rd)))
         intens.append(it)
-        cfg_inj = SimConfig(T=args.T, pace_intensity=it)
+        # D=固定距離(m)。course_len は 100m バケットなので ×100（メートル記録ならそのまま）
+        cl = pd.to_numeric(rd["course_len"], errors="coerce")
+        clv = float(cl.iloc[0]) if cl.notna().any() else 16.0
+        D = clv * 100.0 if clv < 100 else clv
 
         sd = int(rng.integers(1 << 30))                 # 同一 seed で baseline/注入を比較
-        sim_b = monte_carlo(field, n_sim=args.n_sim, cfg=cfg_base, seed=sd,
-                            ability_sigma=args.ability_sigma, track_dynamics=True)
-        sim_i = monte_carlo(field, n_sim=args.n_sim, cfg=cfg_inj, seed=sd,
-                            ability_sigma=args.ability_sigma, track_dynamics=True)
+        sim_b = _run(field, 1.0, sd, D)
+        sim_i = _run(field, it, sd, D)
 
         def _shape(s):
             e, l = s["early_speed"], s["late_speed"]
