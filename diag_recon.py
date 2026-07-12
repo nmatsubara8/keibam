@@ -53,12 +53,34 @@ def main():
     merged = res.merge(ri_small, on="race_id", how="left")
     print(f"merged: {len(merged):,}行  付与列={join_cols}")
 
-    if "date" not in merged.columns:
-        print("race_info に date が無い。年代分けできない。")
-        return
-    yr = pd.to_datetime(merged["date"], errors="coerce").dt.year
-    print("date 年分布:", {int(k): int(v) for k, v in yr.value_counts().sort_index().items()
-          if k in (1986, 2000, 2021, 2023, 2026)})
+    # 診断: race_id 形式一致とマージ成否、date 生値
+    print(f"  results race_id 例: {list(res['race_id'].head(3))}")
+    print(f"  race_info race_id 例: {list(ri['race_id'].head(3))}")
+    print(f"  merge で date 非NULL: {100*merged['date'].notna().mean():.0f}%")
+    if "date" in merged.columns:
+        print(f"  date dtype={merged['date'].dtype} 生値例={list(merged['date'].dropna().head(3))}")
+
+    def _to_year(s):
+        """date(datetime/西暦文字列/日本語 'YYYY年MM月DD日') → 年。複数戦略で頑健に。"""
+        import pandas as pd
+        s = pd.Series(s)
+        if pd.api.types.is_datetime64_any_dtype(s):
+            return s.dt.year
+        y = pd.to_datetime(s, errors="coerce", format="%Y年%m月%d日").dt.year
+        if y.notna().mean() < 0.5:
+            y2 = pd.to_datetime(s, errors="coerce").dt.year
+            if y2.notna().mean() > y.notna().mean():
+                y = y2
+        if y.notna().mean() < 0.5:                       # 文字列先頭4桁を西暦とみなす最終手段
+            y3 = pd.to_numeric(s.astype(str).str.extract(r"(\d{4})")[0], errors="coerce")
+            if y3.notna().mean() > y.notna().mean():
+                y = y3
+        return y
+
+    yr = _to_year(merged["date"])
+    print(f"  year 解釈成功率={100*yr.notna().mean():.0f}%")
+    vc = yr.value_counts().sort_index()
+    print("date 年分布:", {int(k): int(v) for k, v in vc.items() if k in (1986, 2000, 2021, 2023, 2026)})
 
     if "horse_id" in merged.columns:
         vc = merged["horse_id"].astype(str).value_counts()
