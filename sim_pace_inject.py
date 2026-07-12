@@ -102,8 +102,12 @@ def main():
     print(f"[engine] {args.engine}")
     rng = np.random.default_rng(args.seed)
     sp_base, sp_inj, real_pace_r = [], [], []
-    back, rn_real, rn_base, rn_inj, real_pp = [], [], [], [], []
+    back, rn_real, rn_base, rn_inj, real_pp, band_row = [], [], [], [], [], []
     intens = []
+
+    def _band(clb):
+        return ("スプリント≤1400" if clb <= 14 else "マイル1500-1800" if clb <= 18
+                else "中距離1900-2200" if clb <= 22 else "長距離≥2300")
 
     for rid in eval_ids:
         rd = _race_df(rid)
@@ -145,8 +149,10 @@ def main():
         # sim の相対着順（baseline/注入）: mean_rank を [0,1] 正規化
         mr_b = (sim_b["mean_rank"] - 1) / max(nH - 1, 1)
         mr_i = (sim_i["mean_rank"] - 1) / max(nH - 1, 1)
+        clb = clv if clv < 100 else clv / 100.0
+        lab = _band(clb)
         for i in range(nH):
-            back.append(b[i]); real_pp.append(rpv)
+            back.append(b[i]); real_pp.append(rpv); band_row.append(lab)
             rn_real.append(rnn[i]); rn_base.append(mr_b[i]); rn_inj.append(mr_i[i])
 
     print("=" * 72)
@@ -172,6 +178,19 @@ def main():
           f"(hi={sig_i['corr_hi']:+.3f}, lo={sig_i['corr_lo']:+.3f})")
     print(f"      平均 pace_intensity = {float(np.mean(intens)):.3f}  "
           f"(±{float(np.std(intens)):.3f}, 範囲 {min(intens):.3f}–{max(intens):.3f})")
+    print("-" * 72)
+
+    # (2b) 距離帯で層別（実測は中距離が最強。強い帯で sim が的を射るか）
+    print("(2b) 距離帯別 signal（実測 / sim注入）  ← 実測は中距離+0.09 が最強")
+    barr = np.array(band_row)
+    back_a = np.array(back); rr_a = np.array(rn_real); ri_a = np.array(rn_inj); pp_a = np.array(real_pp)
+    for lab in ("スプリント≤1400", "マイル1500-1800", "中距離1900-2200", "長距離≥2300"):
+        m = barr == lab
+        if int(m.sum()) < 200:
+            print(f"      {lab:<16} n={int(m.sum()):>6}  （少数）"); continue
+        sr = pace_backness_signal(back_a[m], rr_a[m], pp_a[m])
+        si = pace_backness_signal(back_a[m], ri_a[m], pp_a[m])
+        print(f"      {lab:<16} n={int(m.sum()):>6}  実測={sr['signal']:+.3f}  sim注入={si['signal']:+.3f}")
     print("-" * 72)
     print("解釈: (2)の注入 signal が baseline より正側に動けば、正しいペース水準を与えると")
     print("      sim が『前傾で差しが台頭』という展開×脚質の物理を再現できたことを意味する。")

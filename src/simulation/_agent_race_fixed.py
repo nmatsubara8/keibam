@@ -52,6 +52,7 @@ class SimConfigFixed:
     draft_save: float = 0.30     # ドラフト時の消費軽減率
     strat_pos_sigma: float = 0.14  # 騎手が狙う位置の分布幅（駆け引きの揺らぎ）
     aggr_sigma: float = 0.18     # 序盤の積極性の分布幅
+    pressure_gain: float = 0.60  # 逃げ志向の馬が多いほど序盤ペースが上がる（競り合い＝前傾の創発）
     exec_noise: float = 0.35     # 実行ノイズ（出遅れ・不利の確率表現）
 
 
@@ -110,6 +111,11 @@ def monte_carlo_fixed(field: RaceField, D: float = 1600.0, n_sim: int = 400,
     B = cfg.reserve * v0 * A * D
     s = B.copy()
 
+    # 逃げの競り合い(創発ペース): 前を取りたい馬(pos_target 小)が多い sim ほど序盤ペースが上がる。
+    # これで「実ペースが出走構成と相関する」＝前傾/後傾が composition から創発する。
+    front_frac = (pos_target < 0.35).mean(axis=1, keepdims=True)     # (n_sim,1)
+    field_pressure = 1.0 + cfg.pressure_gain * (front_frac - 0.35)
+
     x = np.zeros((n_sim, n))
     v = np.zeros((n_sim, n))
     finish_t = np.full((n_sim, n), np.inf)
@@ -127,7 +133,7 @@ def monte_carlo_fixed(field: RaceField, D: float = 1600.0, n_sim: int = 400,
             # 後方は前走馬の直後で消費軽減＝脚を溜められる、という位置取りの本質。
             pf = _pos_frac(x)
             seek = np.clip(pf - pos_target, -0.4, 0.4)            # 目標より後ろ(>0)なら前へ加速
-            vt = v0 * A * (aggr + cfg.forward_gain * seek)
+            vt = v0 * A * (aggr * field_pressure + cfg.forward_gain * seek)
         else:
             # 後半: 残スタミナが速度を分ける。枯れた逃げは late_base まで失速し、脚を溜めた
             # 差し(高srat)が伸びる＝『前傾で飛ばした先行が差される』機構がここで出る。

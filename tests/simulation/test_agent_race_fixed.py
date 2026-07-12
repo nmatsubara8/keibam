@@ -60,3 +60,15 @@ def test_pace_intensity_raises_early_pace_shape():
         return (e - l) / (e + l + 1e-9)
 
     assert _shape(1.25) > _shape(0.80)      # 高積極性ほど前傾（序盤が速い）
+
+
+def test_more_front_runners_raise_early_pace():
+    # 逃げの競り合い: 逃げが多い場ほど序盤ペースが上がる（前傾が composition から創発）。
+    def _shape(n_front):
+        styles = ["front"] * n_front + ["closer"] * (8 - n_front)
+        field = field_from_arrays([1.0] * 8, styles)
+        r = monte_carlo_fixed(field, D=1600, n_sim=1500, seed=5, track_dynamics=True)
+        e, l = r["early_speed"], r["late_speed"]
+        return (e - l) / (e + l + 1e-9)
+    # 逃げ5頭は逃げ1頭より前傾（序盤ペース高）
+    assert _shape(5) > _shape(1)
