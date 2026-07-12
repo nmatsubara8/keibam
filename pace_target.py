@@ -70,12 +70,11 @@ def main():
     rp = pd.read_pickle(pace_path)
     pace = dict(zip(rp["race_id"].astype(str), pd.to_numeric(rp["pace_diff"], errors="coerce")))
 
-    has_pm = "pace_median" in featured.columns
-    back_col = "pace_median" if has_pm else "leg_type_binary"
-    if back_col not in featured.columns:
+    # backness 候補列（連続 pace_median 優先、二値 leg_type_binary 予備）。
+    cols = [c for c in ("pace_median", "leg_type_binary") if c in featured.columns]
+    if not cols:
         print("backness 列（pace_median / leg_type_binary）が featured に無い。rebuild-featured が必要。")
         return
-    print(f"backness = {back_col}（0=先行 … 1=追込, {'連続' if has_pm else '二値'}）")
 
     date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
     order = [r for r in date.index
@@ -84,26 +83,52 @@ def main():
     if args.limit and len(order) > args.limit:
         order = order[-args.limit:]
 
-    # レース単位で (band, pace_diff, backness[], rank_norm[]) を集める（ブートストラップ用）
-    races: dict[str, list] = {lab: [] for _, lab in BANDS}
+    # レース単位で (band, pace_diff, {col: backness[]}, rank_norm[]) を集める
+    raw: dict[str, list] = {lab: [] for _, lab in BANDS}
     for rid in order:
         rd = featured.loc[[rid]] if not isinstance(featured.loc[rid], pd.DataFrame) else featured.loc[rid]
         nH = len(rd)
         if nH < 5:
             continue
         rank = pd.to_numeric(rd[ResultsCols.RANK], errors="coerce").to_numpy()
-        b = pd.to_numeric(rd[back_col], errors="coerce").to_numpy()
         cl = pd.to_numeric(rd["course_len"], errors="coerce")
         if not np.isfinite(rank).all() or cl.isna().all():
             continue
-        m = np.isfinite(b)
-        if int(m.sum()) < 4:
+        bv = {c: pd.to_numeric(rd[c], errors="coerce").to_numpy() for c in cols}
+        if max(int(np.isfinite(v).sum()) for v in bv.values()) < 4:
             continue
         rn = (rank - 1) / max(nH - 1, 1)
         cl_val = float(cl.iloc[0])
         cl_bucket = cl_val / 100.0 if cl_val > 100 else cl_val   # メートル記録なら100mバケットへ
-        band = _band(cl_bucket)
-        races[band].append((float(pace[str(rid)]), b[m], rn[m]))
+        raw[_band(cl_bucket)].append((float(pace[str(rid)]), bv, rn))
+
+    # backness 診断: 各候補列の pooled 分散を見て、変動する列を採用する。
+    print("[backness 診断] （spearman は定数列で NaN になるため分散を確認）")
+    best = None
+    for c in cols:
+        pooled = np.concatenate([bv[c] for lab in raw for _, bv, _ in raw[lab]]) if any(raw.values()) else np.array([])
+        vf = pooled[np.isfinite(pooled)]
+        std = float(vf.std()) if len(vf) else 0.0
+        nuq = int(len(np.unique(np.round(vf, 4)))) if len(vf) else 0
+        print(f"  {c}: finite={len(vf):,} unique={nuq} std={std:.4f}")
+        if std > 1e-6 and best is None:
+            best = c
+    if best is None:
+        print("→ どの backness 列も pooled 分散≈0（この期間の脚質特徴が全馬ほぼ同値＝縮退）。")
+        print("  archive era(≤2021) の featured で 通過→first_corner→脚質 が再構築されていない疑い。")
+        print("  rebuild-featured（通過保持修正版）後に脚質が変動する期間でのみ標的測定が可能。")
+        return
+    print(f"→ 採用 backness = {best}（0=先行 … 1=追込）")
+
+    # 採用列で races を再構築（finite のみ、下流は (pdiff, b[], rn[])）
+    races: dict[str, list] = {lab: [] for _, lab in BANDS}
+    for lab in raw:
+        for pdiff, bv, rn in raw[lab]:
+            b = bv[best]
+            m = np.isfinite(b)
+            if int(m.sum()) >= 4:
+                races[lab].append((pdiff, b[m], rn[m]))
+
 
     def _split_lohi(race_list, lo_thr, hi_thr):
         """pace_diff で下位=後傾(lo)/上位=前傾(hi) に3分位分割。閾値は帯全体で固定。"""
