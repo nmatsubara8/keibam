@@ -79,6 +79,12 @@ def main():
 
     yr = _to_year(merged["date"])
     print(f"  year 解釈成功率={100*yr.notna().mean():.0f}%")
+    # 重要: reconstruction 内の pd.to_datetime は日本語形式を読めず全行 dropna される。
+    # 実パイプライン相当に date を datetime 化してから再構築へ渡す（バグ切り分け）。
+    merged["date"] = pd.to_datetime(merged["date"], errors="coerce", format="%Y年%m月%d日")
+    if merged["date"].notna().mean() < 0.5:
+        merged["date"] = pd.to_datetime(merged["date"], errors="coerce")
+    print(f"  date→datetime 化後 非NULL={100*merged['date'].notna().mean():.0f}%")
     vc = yr.value_counts().sort_index()
     print("date 年分布:", {int(k): int(v) for k, v in vc.items() if k in (1986, 2000, 2021, 2023, 2026)})
 
@@ -119,6 +125,12 @@ def main():
                 _desc(pn, "_pace_num=fc/頭数(clip)")
                 print(f"    → _pace_num>=0.5 割合={100*(pn >= 0.5).mean():.0f}% "
                       f"(≈100%なら全馬『追込1.0』に潰れる直接原因)")
+                # 馬ごと中央値→leg_type_binary の変動（featured と同じ算出）
+                pm = pn.groupby(hr.index).median()
+                lt = pm.map(lambda v: float("nan") if pd.isna(v) else (0.0 if v < 0.5 else 1.0))
+                ltf = lt.dropna()
+                print(f"    → 馬別 leg_type_binary: uniq={ltf.round(2).nunique()} "
+                      f"mean={ltf.mean():.3f} (uniq=1 なら featured の全馬同値を再現)")
         print(f"    date finite={100*pd.to_datetime(hr['date'], errors='coerce').notna().mean():.0f}%"
               if "date" in hr.columns else "    date列なし")
 
