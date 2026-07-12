@@ -68,3 +68,56 @@ def pace_features(race_df: pd.DataFrame) -> dict:
 def features_to_row(feat: dict) -> list:
     """dict → PACE_FEATURE_NAMES 順のリスト（行列化用）。"""
     return [feat.get(k, 0.0) for k in PACE_FEATURE_NAMES]
+
+
+class PacePredictor:
+    """発走前特徴 → 実ペース(pace_diff) を回帰し、sim 注入用の pace_intensity を出す。
+
+    fit は「過去レースの (特徴行, 実pace_diff)」で学習（前進安全は呼び出し側が担保）。
+    predict_intensity は予測ペースを **学習分布の z-score** に直し、1.0 中心のペース強度に写す。
+    符号: 予測が前傾(pace_diff 大)ほど intensity>1（先行が速く飛ばす）→ sim で差し台頭。
+    これで「先行数→速い」の素朴符号でなく、データが決めた向きが sim に入る。
+    """
+
+    def __init__(self, gain: float = 0.25, model: str = "gbm"):
+        self.gain = float(gain)
+        self.model_kind = model
+        self._model = None
+        self._pred_mean = 0.0
+        self._pred_std = 1.0
+
+    def _new_model(self):
+        if self.model_kind == "gbm":
+            try:
+                from sklearn.ensemble import HistGradientBoostingRegressor
+                return HistGradientBoostingRegressor(max_depth=4, max_iter=200,
+                                                     learning_rate=0.05)
+            except Exception:
+                from sklearn.linear_model import Ridge
+                return Ridge(alpha=1.0)
+        from sklearn.linear_model import Ridge
+        return Ridge(alpha=1.0)
+
+    def fit(self, X, y) -> "PacePredictor":
+        X = np.asarray(X, float)
+        y = np.asarray(y, float)
+        m = np.isfinite(y)
+        if int(m.sum()) < 20:
+            return self
+        self._model = self._new_model()
+        self._model.fit(X[m], y[m])
+        p = self._model.predict(X[m])
+        self._pred_mean = float(np.mean(p))
+        sd = float(np.std(p))
+        self._pred_std = sd if sd > 1e-9 else 1.0
+        return self
+
+    def predict_intensity(self, feat_row) -> float:
+        """1レースの特徴行 → pace_intensity（≈1.0 中心、前傾で >1）。未学習なら 1.0。"""
+        if self._model is None:
+            return 1.0
+        x = np.asarray(feat_row, float).reshape(1, -1)
+        pred = float(self._model.predict(x)[0])
+        z = (pred - self._pred_mean) / self._pred_std
+        # tanh で外れ値を抑えつつ 1±gain の帯へ写す
+        return float(1.0 + self.gain * np.tanh(z))

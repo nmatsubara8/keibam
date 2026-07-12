@@ -64,3 +64,42 @@ def test_field_from_arrays_defaults():
     assert f.n == 2
     assert list(f.style) == [0, 2]
     assert (f.stamina == 1.0).all()
+
+
+def test_pace_intensity_raises_early_pace_shape():
+    # pace_intensity が robust に効かせるのは「場のペース形(序盤−終盤速度)」。高いほど前傾。
+    # 注: これで『前傾→差し有利』の帰結まで robust に反転はしない。誰が得するかはスタミナ較正に
+    #   カオス的に敏感で、薄い物理では再現性が出ない——という負の結果を sim_pace_inject.py の
+    #   忠実度(2)で経験的に確認する。ここでは注入レバーが確実に効かせるペース"水準"の向きを固定。
+    field = field_from_arrays(
+        ability=[1.0, 1.0, 1.0, 1.0],
+        style_names=["front", "front", "closer", "closer"],
+        stamina=[1.0, 1.0, 1.0, 1.0], noise=[0.02, 0.02, 0.02, 0.02],
+    )
+
+    def _shape(it):
+        r = monte_carlo(field, n_sim=1500, seed=11,
+                        cfg=SimConfig(stamina_cost=0.03, pace_intensity=it),
+                        track_dynamics=True)
+        e, l = r["early_speed"], r["late_speed"]
+        return (e - l) / (e + l + 1e-9)
+
+    # 高 intensity ほど序盤が速い＝前傾度が大きい（注入レバーの符号が正しい）
+    assert _shape(1.30) > _shape(0.85)
+
+
+def test_pace_predictor_intensity_sign_and_default():
+    import numpy as np
+
+    from src.simulation._pace_model import PacePredictor
+    # 特徴0がペースを正に効かせる合成データ。学習後、高特徴→intensity>1、低→<1。
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(400, 3))
+    y = 2.0 * X[:, 0] + 0.1 * rng.normal(size=400)     # pace_diff は特徴0に比例
+    p = PacePredictor(gain=0.25).fit(X, y)
+    hi = p.predict_intensity([2.0, 0.0, 0.0])
+    lo = p.predict_intensity([-2.0, 0.0, 0.0])
+    assert hi > 1.0 > lo                                # 前傾予測→強め、後傾予測→弱め
+    assert 1.0 - 0.25 - 1e-6 <= lo and hi <= 1.0 + 0.25 + 1e-6   # gain 帯に収まる
+    # 未学習器は中立(1.0)
+    assert PacePredictor().predict_intensity([1.0, 2.0, 3.0]) == 1.0

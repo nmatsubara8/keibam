@@ -54,6 +54,10 @@ class SimConfig:
     stamina_floor: float = 0.3   # スタミナ枯渇時の最低出力率
     interf_dist: float = 2.0     # この距離未満で前方干渉（詰まり）
     interf_mult: float = 0.7     # 干渉時の目標速度倍率
+    # ペース強度（外生注入用）: 先行馬の序盤ペースを乗算スケール。1.0=既定（内生のみ）。
+    # >1 で先行が速く飛ばす→前傾（v²でスタミナ消費増→終盤失速→差し台頭）、<1 でスロー→先行残り。
+    # 素朴仮定「先行多数→速い」を捨て、データ学習したペース予測をここに入れて符号ごと修正する。
+    pace_intensity: float = 1.0
     # 脚質別 目標速度プロファイル（能力に対する倍率、レース進行率 phase で切替）
     front_mult: float = 1.0
     stalker_early: float = 0.9
@@ -71,7 +75,9 @@ def _target_speed(style: np.ndarray, ability: np.ndarray, phase: float,
     is_f = style == STYLE_FRONT
     is_s = style == STYLE_STALKER
     is_c = style == STYLE_CLOSER
-    vt[is_f] = cfg.front_mult * ability[is_f]
+    # 先行馬がレースのペースを作る。pace_intensity で序盤の飛ばし方を外生スケール
+    # （高いほど速い逃げ＝前傾。v²コストでスタミナを削り終盤失速→差し有利になる）。
+    vt[is_f] = cfg.front_mult * cfg.pace_intensity * ability[is_f]
     s_mult = cfg.stalker_early if phase < cfg.stalker_switch else cfg.stalker_late
     vt[is_s] = s_mult * ability[is_s]
     c_mult = cfg.closer_early if phase < cfg.closer_switch else cfg.closer_late
