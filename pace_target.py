@@ -25,12 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-# 距離帯（course_len[m] 下限, ラベル）。上限は次の帯の下限。
+# 距離帯（course_len は 100m バケット単位＝1600m→16。src/preprocessing で //100 済み）。
+# (下限[バケット], ラベル)。上限は次帯の下限。
 BANDS = [
-    (0, "スプリント ≤1400"),
-    (1401, "マイル 1401–1800"),
-    (1801, "中距離 1801–2200"),
-    (2201, "長距離 ≥2201"),
+    (0, "スプリント ≤1400m"),
+    (15, "マイル 1500–1800m"),
+    (19, "中距離 1900–2200m"),
+    (23, "長距離 ≥2300m"),
 ]
 
 
@@ -99,52 +100,71 @@ def main():
         if int(m.sum()) < 4:
             continue
         rn = (rank - 1) / max(nH - 1, 1)
-        band = _band(float(cl.iloc[0]))
-        races[band].append((pace[str(rid)], b[m], rn[m]))
+        cl_val = float(cl.iloc[0])
+        cl_bucket = cl_val / 100.0 if cl_val > 100 else cl_val   # メートル記録なら100mバケットへ
+        band = _band(cl_bucket)
+        races[band].append((float(pace[str(rid)]), b[m], rn[m]))
 
-    def _signal(race_list, thr):
-        """race_list を前傾/後傾に分け signal=corr_後傾−corr_前傾 を返す（rows をプール）。"""
-        bl, rl, bh, rh = [], [], [], []
+    def _split_lohi(race_list, lo_thr, hi_thr):
+        """pace_diff で下位=後傾(lo)/上位=前傾(hi) に3分位分割。閾値は帯全体で固定。"""
+        bl, rl_, bh, rh = [], [], [], []
         for pdiff, b, rn in race_list:
-            if pdiff >= thr:          # 前傾（hi）
+            if pdiff <= lo_thr:
+                bl.append(b); rl_.append(rn)
+            elif pdiff >= hi_thr:
                 bh.append(b); rh.append(rn)
-            else:                     # 後傾（lo）
-                bl.append(b); rl.append(rn)
+        return bl, rl_, bh, rh
+
+    def _signal(race_list, lo_thr, hi_thr):
+        """signal = corr_後傾 − corr_前傾（正＝前傾で差しが相対的に上位）。件数も返す。"""
+        bl, rl_, bh, rh = _split_lohi(race_list, lo_thr, hi_thr)
+        n_lo = sum(len(x) for x in bl); n_hi = sum(len(x) for x in bh)
         if not bh or not bl:
-            return float("nan"), float("nan"), float("nan")
+            return float("nan"), float("nan"), float("nan"), n_lo, n_hi
         c_hi = spearman(np.concatenate(bh), np.concatenate(rh))
-        c_lo = spearman(np.concatenate(bl), np.concatenate(rl))
+        c_lo = spearman(np.concatenate(bl), np.concatenate(rl_))
         sig = (c_lo - c_hi) if (np.isfinite(c_hi) and np.isfinite(c_lo)) else float("nan")
-        return sig, c_lo, c_hi
+        return sig, c_lo, c_hi, n_lo, n_hi
+
+    # pace_diff 分布の診断（同値過多で分割が潰れていないか）
+    allp = np.array([p for lab in races for p, _, _ in races[lab]], float)
+    if len(allp):
+        print(f"[pace_diff] n={len(allp):,} 一意値={len(np.unique(np.round(allp,3))):,} "
+              f"min={allp.min():+.2f} median={np.median(allp):+.2f} max={allp.max():+.2f}")
 
     rng = np.random.default_rng(args.seed)
     print("=" * 78)
     print(f"距離×ペース層別『前傾→差し有利』 / {len(order):,}レース / bootstrap={args.bootstrap}")
     print("signal = corr(backness,着順)_後傾 − _前傾 。正＝前傾で差しが相対的に上位＝現象あり")
+    print("（前傾=pace_diff上位1/3, 後傾=下位1/3 で対比。中間1/3は除外）")
     print("-" * 78)
-    print(f"{'距離帯':<20}{'レース数':>8}{'signal':>9}{'  95%CI':>18}   判定")
+    print(f"{'距離帯':<20}{'レース数':>7}{'後/前':>10}{'signal':>9}{'  95%CI':>17}   判定")
     any_sig = False
     for _, lab in BANDS:
         rl = races[lab]
         n = len(rl)
         if n < 200:
-            print(f"{lab:<20}{n:>8}     （少数のためスキップ）")
+            print(f"{lab:<20}{n:>7}     （少数のためスキップ）")
             continue
-        # 帯内の pace_diff 中央値で前傾/後傾を分割（閾値は全体で固定）
-        thr = float(np.median([p for p, _, _ in rl]))
-        sig, c_lo, c_hi = _signal(rl, thr)
-        # レース単位ブートストラップ
+        ps = np.array([p for p, _, _ in rl], float)
+        lo_thr, hi_thr = np.percentile(ps, [33.3, 66.7])
+        if not (hi_thr > lo_thr):   # 同値過多で3分位が潰れる場合
+            print(f"{lab:<20}{n:>7}   pace_diff の分散不足（一意値が少なく前傾/後傾を分離できず）")
+            continue
+        sig, c_lo, c_hi, n_lo, n_hi = _signal(rl, lo_thr, hi_thr)
         boot = np.empty(args.bootstrap)
         idx = np.arange(n)
         for k in range(args.bootstrap):
             samp = [rl[i] for i in rng.choice(idx, size=n, replace=True)]
-            boot[k] = _signal(samp, thr)[0]
+            boot[k] = _signal(samp, lo_thr, hi_thr)[0]
         boot = boot[np.isfinite(boot)]
         lo95, hi95 = (np.percentile(boot, [2.5, 97.5]) if len(boot) > 10 else (np.nan, np.nan))
         sig_flag = np.isfinite(lo95) and (lo95 > 0)
         any_sig = any_sig or sig_flag
-        verdict = "★有意に正（差し有利あり）" if sig_flag else ("正だが0跨ぎ" if sig > 0 else "無/逆")
-        print(f"{lab:<20}{n:>8}{sig:>+9.3f}   [{lo95:+.3f}, {hi95:+.3f}]   {verdict}")
+        verdict = ("★有意に正（差し有利あり）" if sig_flag
+                   else ("正だが0跨ぎ" if np.isfinite(sig) and sig > 0 else "無/逆"))
+        print(f"{lab:<20}{n:>7}{f'{n_lo}/{n_hi}':>10}{sig:>+9.3f}"
+              f"   [{lo95:+.3f},{hi95:+.3f}]   {verdict}")
     print("-" * 78)
     if any_sig:
         print("→ 一部距離帯で『前傾→差し有利』が実測で有意。その条件で展開機構を入れた sim を作る価値あり。")
