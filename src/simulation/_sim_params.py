@@ -66,6 +66,17 @@ def _going_level(race_df: pd.DataFrame) -> float:
     return float(min(1.0, max(0.0, total)))
 
 
+def _race_type_is(race_df: pd.DataFrame, kind: str) -> bool:
+    """当該レースの race_type が kind（"ダート"/"障害"/"芝"）か。生列 or ダミー両対応。"""
+    if "race_type" in race_df.columns:
+        vals = race_df["race_type"].astype(str)
+        return bool((vals == kind).mean() > 0.5)
+    for col in (f"race_type_{kind}", f"race_type__{kind}"):
+        if col in race_df.columns:
+            return bool(pd.to_numeric(race_df[col], errors="coerce").fillna(0.0).mean() > 0.5)
+    return False
+
+
 def _ability_z(race_df: pd.DataFrame) -> pd.Series:
     """利用可能な能力シグナルをレース内 z-score して平均合成（無ければ 0）。"""
     parts = []
@@ -148,5 +159,10 @@ def field_from_featured(
     if wr is not None and int(wr.notna().sum()) >= 2:
         going_apt = (-_zscore(wr).fillna(0.0)).to_numpy()
 
+    # レース種別（イベント条件）: 砂被り＝ダート、落馬率大＝障害。生 race_type 列 or ダミーから判定。
+    is_dirt = _race_type_is(race_df, "ダート")
+    is_jump = _race_type_is(race_df, "障害")
+
     return RaceField(ability=ability, style=style, stamina=stamina, noise=noise,
-                     gate=gate, turn_apt=turn_apt, going=going, going_apt=going_apt)
+                     gate=gate, turn_apt=turn_apt, going=going, going_apt=going_apt,
+                     is_dirt=is_dirt, is_jump=is_jump)

@@ -43,6 +43,9 @@ class RaceField:
     going: float = 0.0
     # 馬場適性（レース内 z・+ ＝道悪得意/− ＝不得意）。馬場が重い(going>0)ときだけ能力を修正する。
     going_apt: np.ndarray | None = None
+    # レース種別フラグ（イベント層の発生条件）: ダート（砂被り）/ 障害（落馬率大）。既定 False。
+    is_dirt: bool = False
+    is_jump: bool = False
 
     def __post_init__(self):
         self.ability = np.asarray(self.ability, dtype=float)
@@ -97,6 +100,22 @@ class SimConfig:
     going_speed_k: float = 0.06   # 重い馬場ほど全馬の実効能力(目標速度)を下げる
     going_stamina_k: float = 0.5  # 重い馬場ほどスタミナ消費を増やす（消費 ×(1+これ·going)）
     going_apt_gain: float = 0.05  # 馬場適性で能力を修正（道悪巧者は重馬場で相対的に有利）
+    # 走行距離ロス（横レーン）: 縦進行を (1 − turn_k·lane) で割引。lane∈[0,1]（0=最内ラチ..1=大外）は
+    # 枠順で初期化し、前が詰まると外へ持ち出し(lane_swing_rate)・空けば内へ戻る(lane_return)。
+    # 「コース幅・位置取り」がある以上、外を回す馬は距離が延びる＝固定距離でない、を物理化する。
+    # 既定 0＝opt-in（較正で on）。物理レンジ turn_k∈[0.005,0.03]。
+    turn_k: float = 0.0
+    lane_swing_rate: float = 0.15   # 前方バンドが定員超過で上がりたい馬が外へ持ち出す速さ
+    lane_return: float = 0.05       # 空いていれば内(ラチ=最短)へ戻る速さ
+    # 砂被り（ダート・条件付き連続ペナルティ）: ダートで前に馬がいる後方馬は視界不良で追走が鈍る。
+    # 重い馬場(going)で増幅。芝は無効。既定 0＝opt-in（較正で on）。
+    kickback_k: float = 0.0
+    # 落馬・巻き込まれ（離散イベント）: 1ステップ落馬確率＝base(種別)＋混雑係数。至近の落馬馬に
+    # 巻き込まれる確率 brought_down_p。落馬馬は DNF（最下位相当）。既定 0＝opt-in。平地は極小・障害で有意。
+    fall_base_flat: float = 0.0
+    fall_base_jump: float = 0.0
+    fall_congestion_k: float = 0.0
+    brought_down_p: float = 0.0
     # ペース強度（外生注入用）: 先行馬の序盤ペースを乗算スケール。1.0=既定（内生のみ）。
     # >1 で先行が速く飛ばす→前傾（v²でスタミナ消費増→終盤失速→差し台頭）、<1 でスロー→先行残り。
     # 素朴仮定「先行多数→速い」を捨て、データ学習したペース予測をここに入れて符号ごと修正する。
@@ -138,6 +157,17 @@ def _crowd_ahead(x: np.ndarray, dist: float) -> np.ndarray:
     diff = x[:, None, :] - x[:, :, None]       # (n_sim, n_i, n_j): x_j - x_i
     ahead = (diff > 0.0) & (diff <= dist)
     return ahead.sum(axis=2).astype(float)     # (n_sim, n_i) 前方バンドの他馬数
+
+
+def _crowd_within(x: np.ndarray, mask: np.ndarray, dist: float) -> np.ndarray:
+    """各馬の「前後 dist 以内に居る mask=True の馬の頭数」(n_sim,n)。巻き込まれ判定に使う。"""
+    d = np.abs(x[:, :, None] - x[:, None, :])         # (n_sim, n_i, n_j) 距離
+    near = (d <= dist) & mask[:, None, :]             # j が mask かつ i の近く
+    # 自分自身(i==j)が mask のとき自己カウントを除く
+    self_mask = np.zeros_like(near)
+    idx = np.arange(x.shape[1])
+    self_mask[:, idx, idx] = mask
+    return (near & ~self_mask).sum(axis=2).astype(float)
 
 
 def _front_distance(x: np.ndarray) -> np.ndarray:
@@ -198,6 +228,10 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     x = np.zeros((n_sim, n))
     v = np.zeros((n_sim, n))
     s = np.tile(field.stamina, (n_sim, 1)).astype(float)
+    lane = gate.copy()                            # 横レーン: 枠順で初期化（内枠はラチ発進）
+    fallen = np.zeros((n_sim, n), dtype=bool)     # 落馬・故障・巻き込まれで DNF になった馬
+    _events_on = (cfg.fall_base_flat > 0 or cfg.fall_base_jump > 0
+                  or cfg.fall_congestion_k > 0 or cfg.brought_down_p > 0)
 
     third = max(1, cfg.T // 3)
     early_pos_rank = np.zeros((n_sim, n))
@@ -216,8 +250,12 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         # コース幅÷馬体幅の定員による横の詰まり（追加）: 前方バンドが定員超過なら前列が埋まり
         # 上がれない。全先行馬が前に殺到できず前列争い→脚質だけで位置が決まりすぎるのを散らす。
         lane_cap = max(1.0, cfg.course_width / cfg.body_width)
-        crowd = np.clip(_crowd_ahead(x, cfg.interf_dist) / lane_cap, 0.0, 1.0)
+        n_ahead = _crowd_ahead(x, cfg.interf_dist)
+        crowd = np.clip(n_ahead / lane_cap, 0.0, 1.0)
         vt = vt * (1.0 - (1.0 - cfg.interf_mult) * crowd)
+        # 砂被り（ダート・視界不良）: ダートで前に馬がいる後方馬は追走が鈍る。重い馬場で増幅。
+        if cfg.kickback_k and field.is_dirt:
+            vt = vt * (1.0 - np.clip(cfg.kickback_k * crowd * (1.0 + float(field.going)), 0.0, 0.9))
         vt = vt * np.clip(s, cfg.stamina_floor, None)    # スタミナ制約
         # dt 不変な時間積分: 決定論項は dt に比例、加速度ノイズは √dt に比例（Wiener 過程）。
         # これで dt を細かく（T を増やして）しても速度ブレの分散が保存され、答えが dt に収束する。
@@ -225,8 +263,26 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         dv_det = (vt - v) * cfg.accel_k * cfg.dt
         dv_noise = noise * np.sqrt(cfg.dt) * rng.normal(0.0, 1.0, size=(n_sim, n))
         v = np.clip(v + dv_det + dv_noise, 0.0, None)
-        x = x + v * cfg.dt
+        # 横レーン更新: 前が詰まった(crowd高)馬は外へ持ち出し、空けば内(ラチ)へ戻る。clip[0,1]。
+        if cfg.turn_k:
+            lane = np.clip(lane + (cfg.lane_swing_rate * crowd - cfg.lane_return) * cfg.dt, 0.0, 1.0)
+            # 走行距離ロス: 外を回すほど縦進行が減る（同じ速度でも距離を余計に走る）＝可変距離。
+            x = x + v * cfg.dt * (1.0 - cfg.turn_k * lane)
+        else:
+            x = x + v * cfg.dt
         s = np.clip(s - stamina_cost_eff * v * v * cfg.dt, 0.0, None)
+        # 落馬・巻き込まれ（離散イベント）: 発火した馬は以降 v=0・進行停止で DNF。
+        if _events_on:
+            base = cfg.fall_base_jump if field.is_jump else cfg.fall_base_flat
+            p_fall = (base + cfg.fall_congestion_k * crowd) * cfg.dt
+            new_fall = (rng.random((n_sim, n)) < p_fall) & ~fallen
+            if cfg.brought_down_p > 0.0:
+                # 至近（interf_dist 内）に既落馬馬がいる非落馬馬は確率 brought_down_p で巻き込まれる
+                near_fallen = _crowd_within(x, fallen, cfg.interf_dist) > 0
+                bd = near_fallen & ~fallen & (rng.random((n_sim, n)) < cfg.brought_down_p * cfg.dt)
+                new_fall = new_fall | bd
+            fallen = fallen | new_fall
+            v = np.where(fallen, 0.0, v)
         if track_dynamics:
             if t < third:
                 early_v += v.mean(axis=1)
@@ -235,6 +291,9 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
             if t == third:
                 early_pos_rank = (-x).argsort(axis=1).argsort(axis=1)
 
+    # 落馬・DNF 馬は最下位相当にする（位置を -inf に落として順位付け）。
+    if _events_on and fallen.any():
+        x = np.where(fallen, -np.inf, x)
     # 各 sim の着順（0=1着）。位置降順の順位。
     finish_rank = (-x).argsort(axis=1).argsort(axis=1)
     win = (finish_rank == 0).mean(axis=0)

@@ -228,3 +228,58 @@ def test_going_apt_helps_on_heavy_not_on_good():
     assert heavy["mean_rank"][0] < heavy["mean_rank"][1]
     # 良馬場: going=0 なので馬場適性は無効果 → 0 と 1 はほぼ互角（差が重馬場より小さい）
     assert abs(good["mean_rank"][0] - good["mean_rank"][1]) < abs(heavy["mean_rank"][0] - heavy["mean_rank"][1])
+
+
+def test_turn_k_wide_lane_runs_farther_loses():
+    """turn_k>0 で、混雑して外を回らされる馬は縦進行が減り(距離ロス)不利になる。
+
+    内枠(gate=0)と外枠(gate=1)を同能力・同脚質で並べ、外枠が距離ロスで着順が悪いことを確認。
+    """
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    n = 10
+    gate = np.linspace(0.0, 1.0, n)     # 0=最内..1=最外
+    field = RaceField(ability=np.ones(n), style=np.full(n, STYLE_STALKER),
+                      stamina=np.full(n, 2.0), noise=np.full(n, 0.02), gate=gate)
+    r = monte_carlo(field, n_sim=1500, seed=3, ability_sigma=0.0,
+                    cfg=SimConfig(turn_k=0.03, lane_return=0.02, lane_swing_rate=0.2))
+    # 枠順(gate)と平均着順が正相関（内ほど上位＝距離ロスが効く）
+    corr = np.corrcoef(gate, r["mean_rank"])[0, 1]
+    assert corr > 0.3, f"turn_k による内枠有利が出ない: corr={corr:.3f}"
+
+
+def test_turn_k_zero_is_backward_compatible():
+    """turn_k=0（既定）は距離ロス無し＝従来の x += v·dt と一致（決定論再現）。"""
+    f = field_from_arrays([1.0, 1.1, 0.9], ["front", "stalker", "closer"])
+    a = monte_carlo(f, n_sim=300, seed=7)
+    b = monte_carlo(f, n_sim=300, seed=7, cfg=SimConfig(turn_k=0.0))
+    assert np.allclose(a["win"], b["win"])
+
+
+def test_kickback_dirt_penalizes_rear_not_on_turf():
+    """砂被り: ダート(is_dirt)では前に馬がいる後方馬(差し)が鈍り相対的に不利、芝では無効。"""
+    from src.simulation._agent_race import RaceField, STYLE_FRONT, STYLE_STALKER
+    # 逃げ1頭(前でクリア＝砂被り無し)＋後方 stalker 5頭(前に馬がいる＝ダートで砂被り)。
+    n = 6
+    style = np.array([STYLE_FRONT] + [STYLE_STALKER] * (n - 1))
+    base = dict(ability=np.ones(n), style=style, stamina=np.full(n, 2.0), noise=np.full(n, 0.02))
+    cfg = SimConfig(kickback_k=0.6)
+    dirt = monte_carlo(RaceField(is_dirt=True, **base), n_sim=800, seed=2, ability_sigma=0.0,
+                       cfg=cfg, track_dynamics=True)
+    turf = monte_carlo(RaceField(is_dirt=False, **base), n_sim=800, seed=2, ability_sigma=0.0,
+                       cfg=cfg, track_dynamics=True)
+    # 後方5頭が前に馬を置く＝砂被り。ダート(kickback)ではフィールド序盤速度が芝より落ちる。
+    assert dirt["early_speed"] < turf["early_speed"]
+
+
+def test_falls_dnf_and_jump_higher_rate():
+    """落馬イベント: 発火した馬は DNF（最下位相当）。障害は平地より落馬が多い。"""
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    n = 8
+    base = dict(ability=np.ones(n), style=np.full(n, STYLE_STALKER),
+                stamina=np.full(n, 2.0), noise=np.full(n, 0.02))
+    cfg = SimConfig(fall_base_flat=0.0005, fall_base_jump=0.02)
+    flat = monte_carlo(RaceField(is_jump=False, **base), n_sim=3000, seed=5, ability_sigma=0.0, cfg=cfg)
+    jump = monte_carlo(RaceField(is_jump=True, **base), n_sim=3000, seed=5, ability_sigma=0.0, cfg=cfg)
+    # 障害は落馬で最下位が増える → 平均着順の分散(裾)が平地より大きい。ここでは
+    # 「勝率が平地よりばらつく＝ある馬が飛んで別の馬が勝つ」波乱を、勝率和=1 の下で最大勝率の低下で見る。
+    assert jump["win"].max() < flat["win"].max()
