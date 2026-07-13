@@ -82,19 +82,24 @@ def main():
             ability_sigma=args.ability_sigma, track_dynamics=True)
     else:
         cal_params = {}
+        eff_ability_sigma = args.ability_sigma
         if args.calibrated:
             cal_path = Path(LocalPaths.RAW_DIR).parent / "models" / "sim_calibration.json"
             if cal_path.exists():
                 import json
-                cal_params = json.loads(cal_path.read_text()).get("best_params", {})
+                cal_params = dict(json.loads(cal_path.read_text()).get("best_params", {}))
+                # ability_sigma は SimConfig でなく monte_carlo 引数なので分離する
+                if "ability_sigma" in cal_params:
+                    eff_ability_sigma = cal_params.pop("ability_sigma")
                 print(f"[calibrated] {cal_path} の best_params を適用: "
-                      + ", ".join(f"{k}={v:.4f}" for k, v in cal_params.items()))
+                      + ", ".join(f"{k}={v:.4f}" for k, v in cal_params.items())
+                      + f", ability_sigma={eff_ability_sigma:.4f}")
             else:
                 print(f"[calibrated] {cal_path} が無い。calibrate_sim.py を先に実行。既定パラメータで続行。")
         cfg = SimConfig(T=steps, dt=args.dt, **cal_params)
         run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
-            ability_sigma=args.ability_sigma, track_dynamics=True)
+            ability_sigma=eff_ability_sigma, track_dynamics=True)
     print(f"[engine] {args.engine} / dt={args.dt} / 実ステップ数={steps}（総時間 T·dt={args.T}）"
           + ("" if args.engine == "1d" else "  ※dt不変は1dのみ（2dは近似）"))
     rng = np.random.default_rng(args.seed)

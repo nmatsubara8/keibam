@@ -283,3 +283,16 @@ def test_falls_dnf_and_jump_higher_rate():
     # 障害は落馬で最下位が増える → 平均着順の分散(裾)が平地より大きい。ここでは
     # 「勝率が平地よりばらつく＝ある馬が飛んで別の馬が勝つ」波乱を、勝率和=1 の下で最大勝率の低下で見る。
     assert jump["win"].max() < flat["win"].max()
+
+
+def test_noise_mult_backward_compatible_and_spreads_finish():
+    """noise_mult=1.0 は従来一致。大きくすると着順分布が散る（大域ノイズ lever）。"""
+    f = field_from_arrays([1.3, 1.0, 0.7], ["stalker", "stalker", "stalker"],
+                          stamina=[5.0, 5.0, 5.0], noise=[0.05, 0.05, 0.05])
+    a = monte_carlo(f, n_sim=800, seed=7)
+    b = monte_carlo(f, n_sim=800, seed=7, cfg=SimConfig(noise_mult=1.0))
+    assert np.allclose(a["win"], b["win"])                      # 既定=従来一致
+    lo = monte_carlo(f, n_sim=2000, seed=7, cfg=SimConfig(noise_mult=1.0))
+    hi = monte_carlo(f, n_sim=2000, seed=7, cfg=SimConfig(noise_mult=4.0))
+    # ノイズを増やすと勝率が最上位馬に集中しにくくなる（着順が散る）
+    assert hi["win"].max() < lo["win"].max()

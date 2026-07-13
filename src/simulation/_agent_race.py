@@ -80,6 +80,9 @@ class SimConfig:
     stamina_floor: float = 0.3   # スタミナ枯渇時の最低出力率
     interf_dist: float = 2.0     # 前方バンドの深さ（この距離内の前走馬を「詰まり」と数える）
     interf_mult: float = 0.7     # 前列が定員一杯のときの目標速度倍率（最大減速）
+    # 加速度ノイズの倍率。sim が決定論的すぎて相関(style_pos/draw_bias)が実測より増幅される場合に
+    # 全体のばらつきを上げる大域 lever（較正対象）。1.0=従来（field.noise そのまま）。
+    noise_mult: float = 1.0
     # コース幅・馬体幅による横の定員（位置取りの物理）。lane_capacity = course_width / body_width
     # ＝前方バンドに横並びできる頭数。前方バンドの頭数がこれを超えると前列が埋まり上がれない
     # （混雑度 crowd = min(1, n_ahead/定員) に比例して減速）。全先行馬が前に殺到できず前列争いが
@@ -261,7 +264,7 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         # これで dt を細かく（T を増やして）しても速度ブレの分散が保存され、答えが dt に収束する。
         # dt=1.0 では従来式 v += ((vt-v)·accel_k + noise·N) と厳密に一致（後方互換）。
         dv_det = (vt - v) * cfg.accel_k * cfg.dt
-        dv_noise = noise * np.sqrt(cfg.dt) * rng.normal(0.0, 1.0, size=(n_sim, n))
+        dv_noise = cfg.noise_mult * noise * np.sqrt(cfg.dt) * rng.normal(0.0, 1.0, size=(n_sim, n))
         v = np.clip(v + dv_det + dv_noise, 0.0, None)
         # 横レーン更新: 前が詰まった(crowd高)馬は外へ持ち出し、空けば内(ラチ)へ戻る。clip[0,1]。
         if cfg.turn_k:

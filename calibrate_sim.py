@@ -39,7 +39,13 @@ PARAM_BOUNDS = {
     "going_speed_k": (0.0, 0.15),
     "going_apt_gain": (0.0, 0.15),
     "turn_gain": (0.0, 0.15),
+    # 大域ノイズ lever（過決定＝style_pos/draw_bias の一律増幅 を実測へ下げる）:
+    "noise_mult": (0.5, 3.0),        # 加速度ノイズ倍率（序盤位置の散り＝style_pos に効く）
+    "ability_sigma": (0.10, 0.80),   # 能力の per-sim ばらつき（着順の散り＝draw_bias に効く）
 }
+
+# SimConfig のフィールドでない（monte_carlo 引数の）較正パラメータ。cfg 生成時に分離する。
+_NON_CFG_PARAMS = ("ability_sigma",)
 
 # 目的の重み（一致項は |sim-real|、最大化項は係数付きで負に加える）。
 # 初回較正で draw_bias が実測の約2倍に過剰化し、非有界な最大化項(pos_direct/pace_shape)が
@@ -202,7 +208,7 @@ def main():
     print(f"[real train] {R_train}")
 
     # sim を回し、実測と同順で対応させた集約統計を返す（pos_direct=sim位置 vs 実第1コーナー）。
-    def evaluate(ids, real_pool, cfg, seed):
+    def evaluate(ids, cfg, ability_sigma, seed):
         rng = np.random.default_rng(seed)
         s_style, s_pos, s_rank, s_draw, s_back, s_rn = [], [], [], [], [], []
         r_pos, r_pace = [], []
@@ -217,7 +223,7 @@ def main():
             nH = len(rd)
             field = field_from_featured(rd, ability_spread=args.ability_spread)
             sim = monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
-                              ability_sigma=args.ability_sigma, track_dynamics=True)
+                              ability_sigma=ability_sigma, track_dynamics=True)
             epr = sim["early_pos_rank"]; smr = sim["mean_rank"]
             fc = pd.to_numeric(rd["通過"].map(lambda x: parse_corner(x, 1)), errors="coerce").to_numpy()
             dr = pd.to_numeric(rd.get(ResultsCols.UMABAN), errors="coerce").to_numpy() if ResultsCols.UMABAN in rd.columns else field.gate
@@ -241,15 +247,22 @@ def main():
             st["backness"] = pace_backness_signal(s_back, s_rn, r_pace)["signal"]
         return st
 
+    def split_params(params):
+        """(SimConfig 用 cfg_params, ability_sigma) に分離する。"""
+        cfg_params = {k: v for k, v in params.items() if k not in _NON_CFG_PARAMS}
+        return cfg_params, params.get("ability_sigma", args.ability_sigma)
+
     def make_cfg(params):
-        return SimConfig(T=args.T, **params)
+        cfg_params, _ = split_params(params)
+        return SimConfig(T=args.T, **cfg_params)
 
     def suggest(trial):
         return {k: trial.suggest_float(k, lo, hi) for k, (lo, hi) in PARAM_BOUNDS.items()}
 
     def obj(trial):
         params = suggest(trial)
-        st = evaluate(train_ids, real_train, make_cfg(params), seed=args.seed)
+        _, absig = split_params(params)
+        st = evaluate(train_ids, make_cfg(params), absig, seed=args.seed)
         return objective_distance(st, R_train, has_pace=race_pace is not None, weights=weights)
 
     sampler = optuna.samplers.TPESampler(seed=args.seed)
@@ -264,8 +277,9 @@ def main():
     spread = {k: [float(top[f"params_{k}"].quantile(0.1)), float(top[f"params_{k}"].quantile(0.9))]
               for k in PARAM_BOUNDS}
 
-    st_train = evaluate(train_ids, real_train, make_cfg(best), seed=args.seed + 1)
-    st_val = evaluate(val_ids, real_val, make_cfg(best), seed=args.seed + 2)
+    _, best_absig = split_params(best)
+    st_train = evaluate(train_ids, make_cfg(best), best_absig, seed=args.seed + 1)
+    st_val = evaluate(val_ids, make_cfg(best), best_absig, seed=args.seed + 2)
 
     print("\n[best params]")
     for k in PARAM_BOUNDS:
