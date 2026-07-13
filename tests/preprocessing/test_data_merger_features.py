@@ -986,6 +986,31 @@ class TestAttachOwnerStats:
         assert "owner_win_rate" not in m._results.columns
         assert "jockey_win_rate" in m._results.columns
 
+    def _same_race_results(self):
+        # 馬主 O1 が「同一レース r1」に2頭（着順 1 と 5）。翌 r2 に1頭（着順 3）。
+        # 位置ベース shift(1) だと r1 の2頭目が1頭目(勝ち)を取り込み owner_win_rate=1.0 に
+        # なる＝同一レースリーク。date-strict 集約なら r1 の2頭とも過去なし→NaN が正しい。
+        return pd.DataFrame(
+            {
+                "着順": [1, 5, 3],
+                "n_horses": [10, 10, 8],
+                "jockey_id": ["J1", "J2", "J1"],
+                "trainer_id": ["T1", "T1", "T1"],
+                "owner_id": ["O1", "O1", "O1"],
+                "date": pd.to_datetime(["2023-01-01", "2023-01-01", "2023-02-01"]),
+            },
+            index=pd.Index(["r1", "r1", "r2"], name="race_id"),
+        )
+
+    def test_same_race_multiple_horses_no_leak(self):
+        m = _make_merger(self._same_race_results())
+        m._attach_jockey_trainer_stats()
+        wr = m._results["owner_win_rate"].to_numpy()
+        # r1 の2頭とも過去開催なし → NaN（同一レースの相方の勝ちを取り込まない＝リーク無し）
+        assert pd.isna(wr[0]) and pd.isna(wr[1])
+        # r2 の過去 = r1 の当日集約（勝ち1/2頭=0.5）→ owner_win_rate=0.5
+        assert wr[2] == pytest.approx(0.5)
+
 
 # ──────────────────────────────────────────
 # 人物年度別: _merge_person_yearly（前年 as-of 結合 + _pkey 堅牢性）

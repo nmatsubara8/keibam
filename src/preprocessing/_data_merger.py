@@ -539,12 +539,26 @@ class DataMerger:
 
         def _recent(id_col: str, win_name: str, rank_name: str) -> None:
             nonlocal res
-            res = res.sort_values([id_col, "date"], kind="stable")
-            res[win_name] = res.groupby(id_col)["_is_win"].transform(
+            # 位置ベース shift(1) は「同一 id が同一レースに複数行」あると同一レース他馬を
+            # ウィンドウに取り込みリークする（旧年代は id が単一定数に潰れ全馬が1グループ＝
+            # 同レース総取り込み、近代でも同一レース複数頭の調教師/馬主で顕在化）。
+            # まず (id, date) 単位に集約してから日付方向に shift(1).rolling で「当該開催日より
+            # 前 N 開催」を平均し、同一レース(=同一 id×date)を構造的に除外する。
+            daily = (
+                res.groupby([id_col, "date"], sort=True)[["_is_win", "_rel_rank"]]
+                .mean()
+                .reset_index()
+                .sort_values([id_col, "date"], kind="stable")
+            )
+            daily[win_name] = daily.groupby(id_col)["_is_win"].transform(
                 lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
             )
-            res[rank_name] = res.groupby(id_col)["_rel_rank"].transform(
+            daily[rank_name] = daily.groupby(id_col)["_rel_rank"].transform(
                 lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
+            )
+            # (id, date) 粒度の統計を各行へ broadcast（多対一）。_pos は保持され最後に整列で戻す。
+            res = res.merge(
+                daily[[id_col, "date", win_name, rank_name]], on=[id_col, "date"], how="left"
             )
 
         _recent("jockey_id", "jockey_win_rate", "jockey_avg_rank")
