@@ -35,6 +35,8 @@ def main():
     ap.add_argument("--engine", choices=["1d", "2d"], default="1d",
                     help="1d=既存物理 / 2d=Phase1.5（発走速度・位置ターゲット・2次元位置取り）")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--calibrated", action="store_true",
+                    help="models/sim_calibration.json の best_params(較正済み物理定数)を適用して測る。")
     args = ap.parse_args()
 
     import numpy as np
@@ -79,7 +81,17 @@ def main():
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
             ability_sigma=args.ability_sigma, track_dynamics=True)
     else:
-        cfg = SimConfig(T=steps, dt=args.dt)
+        cal_params = {}
+        if args.calibrated:
+            cal_path = Path(LocalPaths.RAW_DIR).parent / "models" / "sim_calibration.json"
+            if cal_path.exists():
+                import json
+                cal_params = json.loads(cal_path.read_text()).get("best_params", {})
+                print(f"[calibrated] {cal_path} の best_params を適用: "
+                      + ", ".join(f"{k}={v:.4f}" for k, v in cal_params.items()))
+            else:
+                print(f"[calibrated] {cal_path} が無い。calibrate_sim.py を先に実行。既定パラメータで続行。")
+        cfg = SimConfig(T=steps, dt=args.dt, **cal_params)
         run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
             ability_sigma=args.ability_sigma, track_dynamics=True)
