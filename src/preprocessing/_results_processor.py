@@ -42,11 +42,28 @@ class ResultsProcessor(AbstractDataProcessor):
         df[Cols.UMABAN] = pd.to_numeric(df[Cols.UMABAN], errors="coerce").astype("Int64")
 
         # 6/6出走数追加
-        df["n_horses"] = df.index.map(df.index.value_counts())
+        df = self._add_n_horses(df)
 
         # カラム抽出
         df = self._select_columns(df)
 
+        return df
+
+    def _add_n_horses(self, raw):
+        """出走頭数 n_horses を「同一 race_id の実出走数」で付与する。
+
+        旧実装 ``df.index.map(df.index.value_counts())`` は生 pickle が
+        RangeIndex（race_id は通常列）の形状だと各行 index が一意になり、
+        n_horses が全馬 1 に縮退した。この縮退列は featured_data 本流の
+        _rel_rank（着順/頭数）を壊す。race_id を明示的に取り出し groupby
+        サイズで実頭数を数える（_horse_features.py の頭数算出と同規約）。
+        """
+        df = raw.copy()
+        if "race_id" in df.columns:
+            race_ids = df["race_id"]
+        else:  # race_id がインデックス側（processor 往復後の pickle 等）
+            race_ids = df.index.to_series()
+        df["n_horses"] = race_ids.groupby(race_ids).transform("size").to_numpy()
         return df
 
     def _preprocess_rank(self, raw):
