@@ -84,7 +84,8 @@ def main():
         cal_params = {}
         eff_ability_sigma = args.ability_sigma
         if args.calibrated:
-            cal_path = Path(LocalPaths.RAW_DIR).parent / "models" / "sim_calibration.json"
+            # calibrate_sim.py の保存先（cwd/models）に合わせる。RAW_DIR(data/raw)基準ではない。
+            cal_path = Path(__file__).resolve().parent / "models" / "sim_calibration.json"
             if cal_path.exists():
                 import json
                 cal_params = dict(json.loads(cal_path.read_text()).get("best_params", {}))
