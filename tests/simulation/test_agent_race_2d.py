@@ -54,3 +54,50 @@ def test_swing_spreads_lateral_positions():
     r = monte_carlo_2d(f, n_sim=400, seed=6, cfg=SimConfig2D(stamina_cost=0.02))
     # 全員同条件でも勝ちが1頭に潰れない（横に散って複数が勝ちうる）
     assert (r["win"] > 0.02).sum() >= 4
+
+
+def test_2d_gate_inside_runs_shorter_and_wins_more():
+    """2D: turn_k>0 で内枠(gate=0)は内ラチ=最短、外枠(gate=1)は外を回り距離ロスで不利。"""
+    import numpy as np
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
+    n = 10
+    gate = np.linspace(0.0, 1.0, n)
+    f = RaceField(ability=np.ones(n), style=np.full(n, STYLE_STALKER),
+                  stamina=np.full(n, 2.0), noise=np.full(n, 0.02), gate=gate)
+    r = monte_carlo_2d(f, n_sim=1500, seed=3, ability_sigma=0.0,
+                       cfg=SimConfig2D(turn_k=0.03, lane_return=0.0))
+    # 枠順(gate)と平均着順が正相関（内ほど上位＝実走距離ロスが効く）
+    assert np.corrcoef(gate, r["mean_rank"])[0, 1] > 0.3
+
+
+def test_2d_dirt_kickback_slows_field():
+    """2D砂被り: ダートで前に馬がいる後方馬が鈍り、序盤速度が芝より落ちる。"""
+    import numpy as np
+    from src.simulation._agent_race import RaceField, STYLE_FRONT, STYLE_STALKER
+    from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
+    n = 8
+    style = np.array([STYLE_FRONT] + [STYLE_STALKER] * (n - 1))
+    base = dict(ability=np.ones(n), style=style, stamina=np.full(n, 2.0), noise=np.full(n, 0.02))
+    cfg = SimConfig2D(kickback_k=0.6)
+    dirt = monte_carlo_2d(RaceField(is_dirt=True, **base), n_sim=600, seed=2,
+                          ability_sigma=0.0, cfg=cfg, track_dynamics=True)
+    turf = monte_carlo_2d(RaceField(is_dirt=False, **base), n_sim=600, seed=2,
+                          ability_sigma=0.0, cfg=cfg, track_dynamics=True)
+    assert dirt["early_speed"] < turf["early_speed"]
+
+
+def test_2d_falls_dnf_jump_more_than_flat():
+    """2D落馬: 発火馬は DNF。障害は平地より多く飛ぶ（最大勝率が下がる＝波乱）。"""
+    import numpy as np
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
+    n = 8
+    ab = np.ones(n); ab[0] = 1.6                      # 明確な本命(idx0)
+    base = dict(ability=ab, style=np.full(n, STYLE_STALKER),
+                stamina=np.full(n, 2.0), noise=np.full(n, 0.02))
+    cfg = SimConfig2D(fall_base_flat=0.0002, fall_base_jump=0.03)
+    flat = monte_carlo_2d(RaceField(is_jump=False, **base), n_sim=3000, seed=5, ability_sigma=0.0, cfg=cfg)
+    jump = monte_carlo_2d(RaceField(is_jump=True, **base), n_sim=3000, seed=5, ability_sigma=0.0, cfg=cfg)
+    # 障害は落馬で本命(idx0)も飛ぶ → 本命の勝率が平地より下がる（波乱）
+    assert jump["win"][0] < flat["win"][0]

@@ -127,10 +127,11 @@ def monte_carlo_fixed(field: RaceField, D: float = 1600.0, n_sim: int = 400,
     v = np.zeros((n_sim, n))
     finish_t = np.full((n_sim, n), np.inf)
 
-    third = None
     if track_dynamics:
-        early_v = np.zeros(n_sim); late_v = np.zeros(n_sim)
-        early_pos = np.zeros((n_sim, n)); early_marked = False
+        early_v = np.zeros(n_sim)
+        late_v = np.zeros(n_sim)
+        early_pos = np.zeros((n_sim, n))
+        early_marked = False
 
     for t in range(cfg.max_steps):
         prog = float(np.clip(x.mean() / D, 0.0, 1.0))       # 全体進行率(位相)
@@ -173,7 +174,8 @@ def monte_carlo_fixed(field: RaceField, D: float = 1600.0, n_sim: int = 400,
             if prog < 0.34:
                 early_v += v.mean(axis=1)
                 if not early_marked and prog >= 0.28:
-                    early_pos = _pos_frac(x); early_marked = True
+                    early_pos = _pos_frac(x)
+                    early_marked = True
             if prog >= 0.66:
                 late_v += v.mean(axis=1)
         if np.isfinite(finish_t).all():

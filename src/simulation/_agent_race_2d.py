@@ -23,6 +23,7 @@ from src.simulation._agent_race import (
     STYLE_FRONT,
     STYLE_STALKER,
     RaceField,
+    _crowd_within,
 )
 
 
@@ -38,7 +39,6 @@ class SimConfig2D:
     interf_dist: float = 2.0        # 縦の詰まり判定距離
     lane_width: float = 0.18        # 同一レーン判定（横距離）
     swing_step: float = 0.12        # 1ステップで外に出す横移動量
-    swing_cost: float = 0.06        # 外に出す速度ペナルティ（距離ロス）
     interf_mult: float = 0.85       # 詰まって出せない時の減速
     # 脚質×進行率 の目標隊列位置（0=先頭 … 1=最後方）
     front_pos: float = 0.12
@@ -47,6 +47,21 @@ class SimConfig2D:
     closer_early: float = 0.82
     closer_late: float = 0.42
     switch: float = 0.6             # 早→遅の切替 phase
+    # ── 2D化で正統物理へ格上げ（1D と同名 knob。既定は穏当な物理値／効果なし）──
+    turn_k: float = 0.012           # 横レーン y による実走距離ロス: x += v·dt·(1−turn_k·y)。
+                                    # 速度ペナルティ近似(旧 swing_cost)を置換＝外を回すほど距離が延びる
+    lane_return: float = 0.05       # 詰まりが解けたら内ラチ(y→0)へ戻る速さ
+    gate_lane: float = 1.0          # gate(枠順)→初期レーン y への写像強度（1=内枠ほど内ラチ発進）
+    noise_mult: float = 1.0         # 加速度ノイズ倍率（大域ばらつき lever）
+    turn_gain: float = 0.0          # 回り(右/左)適性で実効能力を微修正
+    going_speed_k: float = 0.0      # 重い馬場ほど全馬を遅く
+    going_stamina_k: float = 0.0    # 重い馬場ほどスタミナ消費増
+    going_apt_gain: float = 0.0     # 道悪適性で能力修正
+    kickback_k: float = 0.0         # 砂被り（ダートで前に馬がいる後方馬が鈍る）
+    fall_base_flat: float = 0.0     # 平地の1ステップ落馬確率
+    fall_base_jump: float = 0.0     # 障害の1ステップ落馬確率
+    fall_congestion_k: float = 0.0  # 混雑で落馬確率上昇
+    brought_down_p: float = 0.0     # 至近の落馬馬に巻き込まれる確率
 
 
 def _target_position(style: np.ndarray, phase: float, cfg: SimConfig2D) -> np.ndarray:
@@ -77,14 +92,33 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
     if ability_sigma > 0:
         rel = field.noise / max(float(field.noise.mean()), 1e-6)
         A = np.clip(A + ability_sigma * np.tile(rel, (n_sim, 1)) * rng.normal(0, 1, (n_sim, n)), 0.1, None)
+    # 回り(右/左)適性・馬場で実効能力を微修正（1D と同規約。中立値なら無効果）。
+    if cfg.turn_gain and field.turn_apt is not None:
+        A = np.clip(A * (1.0 + cfg.turn_gain * np.tile(field.turn_apt, (n_sim, 1))), 0.1, None)
+    if field.going > 0.0:
+        g = float(field.going)
+        A = A * (1.0 - cfg.going_speed_k * g)
+        if cfg.going_apt_gain and field.going_apt is not None:
+            A = A * (1.0 + cfg.going_apt_gain * np.tile(field.going_apt, (n_sim, 1)) * g)
+        A = np.clip(A, 0.1, None)
+    stamina_cost_eff = cfg.stamina_cost * (1.0 + cfg.going_stamina_k * float(field.going))
     style = np.tile(field.style, (n_sim, 1))
     noise = np.tile(field.noise, (n_sim, 1))
     stamina = np.tile(field.stamina, (n_sim, 1)).astype(float)
 
     x = np.zeros((n_sim, n))
     v = cfg.break_speed * A                              # 発走速度>0
-    y = np.tile(np.linspace(0.15, 0.85, n), (n_sim, 1))  # 初期は横に散らす（枠なり）
+    # 初期レーン y: gate(枠順・0=内..1=外)から。gate に変動があれば枠なり、無ければ linspace で散らす。
+    gate = np.asarray(field.gate, dtype=float)
+    if float(np.nanstd(gate)) > 1e-6:
+        y0 = cfg.gate_lane * (0.08 + 0.84 * gate) + (1.0 - cfg.gate_lane) * 0.5
+    else:
+        y0 = np.linspace(0.15, 0.85, n)
+    y = np.tile(y0, (n_sim, 1)).astype(float)
     s = stamina.copy()
+    fallen = np.zeros((n_sim, n), dtype=bool)
+    _events_on = (cfg.fall_base_flat > 0 or cfg.fall_base_jump > 0
+                  or cfg.fall_congestion_k > 0 or cfg.brought_down_p > 0)
 
     # 巡航区間（前半3F/上がり3F 相当）: 加速相(最初の10%)を除く
     warm = max(1, cfg.T // 10)
@@ -93,7 +127,6 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
     early_v = np.zeros(n_sim)
     late_v = np.zeros(n_sim)
     early_pos_rank = np.zeros((n_sim, n))
-    idx_all = np.arange(n)
 
     for t in range(cfg.T):
         phase = t / cfg.T
@@ -118,16 +151,33 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
         blocker_y = np.where(cnt > 0, ysum / np.maximum(cnt, 1), np.nan)
         swing_dir = np.sign(np.where(np.isnan(blocker_y), y + 1e-9, y - blocker_y))
         swing_dir = np.where(swing_dir == 0, 1.0, swing_dir)
-        y = np.where(blocked, np.clip(y + swing_dir * cfg.swing_step, 0.0, 1.0), y)
-        v_target = np.where(blocked, v_target - cfg.swing_cost * A, v_target)
+        # 詰まった馬は外へ持ち出し(y↑)、空いていれば内ラチ(y→0)へ戻る。外を回るコストは
+        # 速度ペナルティでなく下段の実走距離ロス(1−turn_k·y)で払う＝物理的に正しい距離増。
+        y = np.where(blocked, np.clip(y + swing_dir * cfg.swing_step, 0.0, 1.0),
+                     np.clip(y - cfg.lane_return * cfg.dt, 0.0, 1.0))
         # まだ真後ろが塞がったまま(端で外へ出られない)なら減速
         boxed = blocked & ((y <= 0.001) | (y >= 0.999))
         v_target = np.where(boxed, v_target * cfg.interf_mult, v_target)
+        # 砂被り（ダート・視界不良）: 前に馬がいる後方馬(cnt>0)は追走が鈍る。重い馬場で増幅・芝は無効。
+        if cfg.kickback_k and field.is_dirt:
+            kb = np.clip(cfg.kickback_k * np.minimum(cnt, 3) / 3.0 * (1.0 + float(field.going)), 0.0, 0.9)
+            v_target = v_target * (1.0 - kb)
 
-        a = (v_target - v) * cfg.accel_k + rng.normal(0, 1, (n_sim, n)) * noise
+        a = (v_target - v) * cfg.accel_k + cfg.noise_mult * rng.normal(0, 1, (n_sim, n)) * noise
         v = np.clip(v + a * cfg.dt, 0.0, None)
-        x = x + v * cfg.dt
-        s = np.clip(s - cfg.stamina_cost * v * v * cfg.dt, 0.0, None)
+        # 実走距離ロス: 外レーン(y大)ほど縦進行が減る＝同じ速度でも距離を余計に走る（可変距離）。
+        x = x + v * cfg.dt * (1.0 - cfg.turn_k * y)
+        s = np.clip(s - stamina_cost_eff * v * v * cfg.dt, 0.0, None)
+        # 落馬・巻き込まれ（離散イベント）: 発火馬は以降 v=0・進行停止で DNF。
+        if _events_on:
+            base = cfg.fall_base_jump if field.is_jump else cfg.fall_base_flat
+            p_fall = (base + cfg.fall_congestion_k * (cnt > 0)) * cfg.dt
+            new_fall = (rng.random((n_sim, n)) < p_fall) & ~fallen
+            if cfg.brought_down_p > 0.0:
+                near_fallen = _crowd_within(x, fallen, cfg.interf_dist) > 0
+                new_fall |= near_fallen & ~fallen & (rng.random((n_sim, n)) < cfg.brought_down_p * cfg.dt)
+            fallen |= new_fall
+            v = np.where(fallen, 0.0, v)
 
         if track_dynamics:
             if e0 <= t < e1:
@@ -137,6 +187,8 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
             if t == e1 - 1:
                 early_pos_rank = (-x).argsort(axis=1).argsort(axis=1).astype(float)
 
+    if _events_on and fallen.any():
+        x = np.where(fallen, -np.inf, x)
     finish_rank = (-x).argsort(axis=1).argsort(axis=1)
     win = (finish_rank == 0).mean(axis=0)
     place = (finish_rank < place_k).mean(axis=0)

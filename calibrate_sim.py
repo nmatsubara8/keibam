@@ -47,6 +47,22 @@ PARAM_BOUNDS = {
 # SimConfig のフィールドでない（monte_carlo 引数の）較正パラメータ。cfg 生成時に分離する。
 _NON_CFG_PARAMS = ("ability_sigma",)
 
+# 2D エンジン(SimConfig2D)用の較正パラメータ。pos_gain(位置ターゲットの強さ)は 1D+ノイズで
+# 崩せなかった過決定(style_pos)を下げうる 2D 固有 lever。swing_step は外持ち出しの機敏さ。
+PARAM_BOUNDS_2D = {
+    "turn_k": (0.0, 0.03),
+    "lane_return": (0.0, 0.15),
+    "gate_lane": (0.0, 1.0),
+    "pos_gain": (0.2, 1.2),
+    "swing_step": (0.03, 0.25),
+    "kickback_k": (0.0, 0.80),
+    "going_speed_k": (0.0, 0.15),
+    "going_apt_gain": (0.0, 0.15),
+    "turn_gain": (0.0, 0.15),
+    "noise_mult": (0.5, 3.0),
+    "ability_sigma": (0.10, 0.80),
+}
+
 # 目的の重み（一致項は |sim-real|、最大化項は係数付きで負に加える）。
 # 初回較正で draw_bias が実測の約2倍に過剰化し、非有界な最大化項(pos_direct/pace_shape)が
 # パラメータを物理天井へ押し上げた反省から、draw_bias 一致を強く罰し・最大化項を弱めた既定。
@@ -120,7 +136,10 @@ def main():
     ap.add_argument("--train-max-year", type=int, default=2016)
     ap.add_argument("--val-min-year", type=int, default=2017)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", type=str, default="models/sim_calibration.json")
+    ap.add_argument("--engine", choices=["1d", "2d"], default="1d",
+                    help="1d=_agent_race / 2d=_agent_race_2d（位置ターゲット＋横レーン）を較正")
+    ap.add_argument("--out", type=str, default=None,
+                    help="保存先。既定は models/sim_calibration{_2d}.json（エンジン別）")
     # 目的の重み（既定は WEIGHTS。draw_bias 過剰・天井張り付きの再調整用に個別上書き可能）
     ap.add_argument("--w-style-pos", type=float, default=WEIGHTS["style_pos_match"])
     ap.add_argument("--w-draw-bias", type=float, default=WEIGHTS["draw_bias_match"])
@@ -131,7 +150,10 @@ def main():
     weights = {"style_pos_match": args.w_style_pos, "draw_bias_match": args.w_draw_bias,
                "backness_match": args.w_backness, "pos_direct_max": args.w_pos_direct,
                "pace_shape_max": args.w_pace_shape}
-    print(f"[weights] {weights}")
+    bounds = PARAM_BOUNDS_2D if args.engine == "2d" else PARAM_BOUNDS
+    out_path = args.out or ("models/sim_calibration_2d.json" if args.engine == "2d"
+                            else "models/sim_calibration.json")
+    print(f"[engine] {args.engine} / [weights] {weights}")
 
     import numpy as np
     import pandas as pd
@@ -146,8 +168,14 @@ def main():
     from src.constants._results_cols import ResultsCols
     from src.preprocessing._horse_results_processor import parse_corner
     from src.simulation._agent_race import SimConfig, monte_carlo
+    from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
     from src.simulation._fidelity import pace_backness_signal, pace_shape_corr
     from src.simulation._sim_params import field_from_featured
+
+    if args.engine == "2d":
+        cfg_cls, run_engine = SimConfig2D, monte_carlo_2d
+    else:
+        cfg_cls, run_engine = SimConfig, monte_carlo
 
     featured = load_featured_data()
     if featured is None or featured.empty:
@@ -222,7 +250,7 @@ def main():
                 continue
             nH = len(rd)
             field = field_from_featured(rd, ability_spread=args.ability_spread)
-            sim = monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
+            sim = run_engine(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
                               ability_sigma=ability_sigma, track_dynamics=True)
             epr = sim["early_pos_rank"]; smr = sim["mean_rank"]
             fc = pd.to_numeric(rd["通過"].map(lambda x: parse_corner(x, 1)), errors="coerce").to_numpy()
@@ -254,10 +282,10 @@ def main():
 
     def make_cfg(params):
         cfg_params, _ = split_params(params)
-        return SimConfig(T=args.T, **cfg_params)
+        return cfg_cls(T=args.T, **cfg_params)
 
     def suggest(trial):
-        return {k: trial.suggest_float(k, lo, hi) for k, (lo, hi) in PARAM_BOUNDS.items()}
+        return {k: trial.suggest_float(k, lo, hi) for k, (lo, hi) in bounds.items()}
 
     def obj(trial):
         params = suggest(trial)
@@ -275,14 +303,14 @@ def main():
     ok = trials_df[trials_df["value"].notna()].sort_values("value")
     top = ok.head(max(3, len(ok) // 5))
     spread = {k: [float(top[f"params_{k}"].quantile(0.1)), float(top[f"params_{k}"].quantile(0.9))]
-              for k in PARAM_BOUNDS}
+              for k in bounds}
 
     _, best_absig = split_params(best)
     st_train = evaluate(train_ids, make_cfg(best), best_absig, seed=args.seed + 1)
     st_val = evaluate(val_ids, make_cfg(best), best_absig, seed=args.seed + 2)
 
     print("\n[best params]")
-    for k in PARAM_BOUNDS:
+    for k in bounds:
         print(f"  {k:<16} = {best[k]:.4f}   （上位20%幅 {spread[k][0]:.4f}–{spread[k][1]:.4f}）")
     print("\n[汎化確認] 集約統計 sim(best) vs 実測")
     print(f"  {'統計':<12}{'train_sim':>11}{'train_real':>11}{'val_sim':>11}{'val_real':>11}")
@@ -300,7 +328,7 @@ def main():
            "real_train": R_train, "real_val": R_val, "weights": weights,
            "config": {"limit": args.limit, "n_sim": args.n_sim, "trials": args.trials,
                       "train_max_year": args.train_max_year, "val_min_year": args.val_min_year}}
-    outp = Path(args.out)
+    outp = Path(out_path)
     outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(out, ensure_ascii=False, indent=2))
     print(f"\n保存: {outp}")

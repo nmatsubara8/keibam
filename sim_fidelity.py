@@ -74,29 +74,37 @@ def main():
     featured = featured.loc[order]
     # 総時間 T·dt を保存したまま dt を細かくする: 実ステップ数 = round(T / dt)。
     steps = max(1, round(args.T / args.dt))
+    import dataclasses
+
+    def _load_calibration(cfg_cls, fname):
+        """--calibrated 時に models/<fname> の best_params を読み、cfg クラスの有効フィールドだけ
+        適用（他エンジンの knob は無視）。ability_sigma は monte_carlo 引数なので分離して返す。"""
+        cal_params, eff_absig = {}, args.ability_sigma
+        if not args.calibrated:
+            return cal_params, eff_absig
+        cal_path = Path(__file__).resolve().parent / "models" / fname
+        if not cal_path.exists():
+            print(f"[calibrated] {cal_path} が無い。calibrate_sim.py を先に実行。既定パラメータで続行。")
+            return cal_params, eff_absig
+        import json
+        raw = dict(json.loads(cal_path.read_text()).get("best_params", {}))
+        eff_absig = raw.pop("ability_sigma", eff_absig)
+        valid = {f.name for f in dataclasses.fields(cfg_cls)}
+        cal_params = {k: v for k, v in raw.items() if k in valid}
+        print(f"[calibrated] {cal_path.name}: "
+              + ", ".join(f"{k}={v:.4f}" for k, v in cal_params.items())
+              + f", ability_sigma={eff_absig:.4f}")
+        return cal_params, eff_absig
+
     if args.engine == "2d":
         from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
-        cfg = SimConfig2D(T=steps, dt=args.dt)
+        cal_params, eff_ability_sigma = _load_calibration(SimConfig2D, "sim_calibration_2d.json")
+        cfg = SimConfig2D(T=steps, dt=args.dt, **cal_params)
         run_sim = lambda fld, sd: monte_carlo_2d(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
-            ability_sigma=args.ability_sigma, track_dynamics=True)
+            ability_sigma=eff_ability_sigma, track_dynamics=True)
     else:
-        cal_params = {}
-        eff_ability_sigma = args.ability_sigma
-        if args.calibrated:
-            # calibrate_sim.py の保存先（cwd/models）に合わせる。RAW_DIR(data/raw)基準ではない。
-            cal_path = Path(__file__).resolve().parent / "models" / "sim_calibration.json"
-            if cal_path.exists():
-                import json
-                cal_params = dict(json.loads(cal_path.read_text()).get("best_params", {}))
-                # ability_sigma は SimConfig でなく monte_carlo 引数なので分離する
-                if "ability_sigma" in cal_params:
-                    eff_ability_sigma = cal_params.pop("ability_sigma")
-                print(f"[calibrated] {cal_path} の best_params を適用: "
-                      + ", ".join(f"{k}={v:.4f}" for k, v in cal_params.items())
-                      + f", ability_sigma={eff_ability_sigma:.4f}")
-            else:
-                print(f"[calibrated] {cal_path} が無い。calibrate_sim.py を先に実行。既定パラメータで続行。")
+        cal_params, eff_ability_sigma = _load_calibration(SimConfig, "sim_calibration.json")
         cfg = SimConfig(T=steps, dt=args.dt, **cal_params)
         run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
