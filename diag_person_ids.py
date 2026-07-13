@@ -48,7 +48,6 @@ def main():
     if not os.path.exists(rpath):
         print(f"raw_results.pkl が無い（{rpath}）"); return
     raw = pd.read_pickle(rpath)
-    idcols = [c for c in ("jockey_id", "trainer_id", "owner_id", "horse_id") if c in raw.columns]
     if "jockey_id" not in raw.columns:
         print(f"raw_results に jockey_id 列が無い（列: {list(raw.columns)[:20]}）"); return
     rid = raw["race_id"] if "race_id" in raw.columns else pd.Series(raw.index, index=raw.index)
@@ -70,7 +69,8 @@ def main():
             continue
         jkm = jk[m]
         jk_null = float(np.isin(jkm, list(NULLS)).mean()) * 100
-        all_eq = float(((jkm == tr[m]) & (jkm == ow[m])).mean()) * 100 if tr is not None and ow is not None else float("nan")
+        all_eq = (float(((jkm == tr[m]) & (jkm == ow[m])).mean()) * 100
+                  if tr is not None and ow is not None else float("nan"))
         jk_horse = float((jkm == ho[m]).mean()) * 100 if ho is not None else float("nan")
         print(f"  {lab:<12}{n:>9,}{pd.unique(jkm).size:>9,}{pd.unique(tr[m]).size:>9,}"
               f"{pd.unique(ow[m]).size:>9,}{jk_null:>8.1f}%{all_eq:>10.1f}%{jk_horse:>9.1f}%")
