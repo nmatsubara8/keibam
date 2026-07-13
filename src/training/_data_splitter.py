@@ -2,6 +2,7 @@ import logging
 
 import pandas as pd
 
+from src.constants._horse_results_cols import HorseResultsCols
 from src.constants._results_cols import ResultsCols
 
 logger = logging.getLogger(__name__)
@@ -13,12 +14,19 @@ logger = logging.getLogger(__name__)
 # - RANK('着順'): 当該レースの実着順。rank = (着順 < 4) の元データであり、
 #   特徴量に残すと目的変数リーク。§2c/2j 集計のため ResultsProcessor が選択するが
 #   学習入力からは必ず除外する。
+# - CORNER('通過'): 当該レースのコーナー通過順（例 "7-8-3-3"）。着順確定後にしか
+#   分からない post-race 情報＝リーク列であり、かつ生文字列なので LightGBM の
+#   数値変換で落ちる。ResultsProcessor は過去走の脚質(first_corner)復元のために
+#   選択・保持するが、学習入力からは必ず除外する（§10 で results に追加された）。
 # rank(top3) と rank_win(1着) は二値目的変数。どちらを学習しても**両方**を入力から除外し
 # 相互リーク（top3 に win が含まれる等）を防ぐ。
-_DROP_FOR_TRAIN = ["rank", "rank_win", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
+_DROP_FOR_TRAIN = [
+    "rank", "rank_win", "date", "horse_id",
+    ResultsCols.TANSHO_ODDS, ResultsCols.RANK, HorseResultsCols.CORNER,
+]
 
 # テスト入力用: EV 計算のため TANSHO_ODDS('単勝') は残し、実着順 RANK は除外する。
-_DROP_FOR_TEST = ["rank", "rank_win", "date", "horse_id", ResultsCols.RANK]
+_DROP_FOR_TEST = ["rank", "rank_win", "date", "horse_id", ResultsCols.RANK, HorseResultsCols.CORNER]
 
 
 class DataSplitter:
