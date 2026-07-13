@@ -155,3 +155,30 @@ def test_narrow_course_congests_front_slows_early_speed():
                        cfg=SimConfig(course_width=100.0), track_dynamics=True)   # 定員≈91
     assert narrow["early_speed"] < wide["early_speed"], (
         f"狭コースで序盤が遅くならない: narrow={narrow['early_speed']:.4f} wide={wide['early_speed']:.4f}")
+
+
+def test_turn_apt_orders_advantaged_over_disadvantaged():
+    """回り適性は 得意(turn_apt>0) < 中立 < 不得意(turn_apt<0) の順で着順に効く（符号確認）。
+
+    既定 turn_gain は小さく、ほぼ同能力だと混雑ダイナミクスに埋もれるため、機序（符号・順序）が
+    見える大きめの turn_gain で検証する。
+    """
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    n = 6
+    apt = np.zeros(n); apt[0] = -1.5; apt[1] = +1.5     # 0=不得意, 1=得意, 2..5=中立
+    field = RaceField(ability=np.ones(n), style=np.full(n, STYLE_STALKER),
+                      stamina=np.full(n, 3.0), noise=np.full(n, 0.02), turn_apt=apt)
+    r = monte_carlo(field, n_sim=2000, seed=4, ability_sigma=0.0,
+                    cfg=SimConfig(turn_gain=0.3))
+    neutral = float(np.mean([r["mean_rank"][i] for i in range(2, n)]))
+    # 得意馬 < 中立 < 不得意馬
+    assert r["mean_rank"][1] < neutral < r["mean_rank"][0]
+
+
+def test_turn_apt_neutral_default_backward_compatible():
+    """turn_apt 未指定(None→0)なら回り効果ゼロ＝従来と同一。"""
+    f = field_from_arrays([1.0, 1.1, 0.9], ["front", "stalker", "closer"])
+    assert np.allclose(f.turn_apt, 0.0)
+    a = monte_carlo(f, n_sim=300, seed=8)
+    b = monte_carlo(f, n_sim=300, seed=8)
+    assert np.allclose(a["win"], b["win"])

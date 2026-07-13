@@ -35,6 +35,9 @@ class RaceField:
     # ゲート（枠順）を [0,1] に正規化（0=最内..1=最外）。序盤の位置取り優位に使う
     # （内枠ほど序盤に前を取りやすい）。None は中立(0.5)＝効果なし＝後方互換。
     gate: np.ndarray | None = None
+    # 回り(右/左)適性（レース内 z 正規化・+ ＝この回りが得意/− ＝不得意）。能力を微修正する。
+    # None は中立(0)＝効果なし＝後方互換。
+    turn_apt: np.ndarray | None = None
 
     def __post_init__(self):
         self.ability = np.asarray(self.ability, dtype=float)
@@ -45,6 +48,10 @@ class RaceField:
             self.gate = np.full(len(self.ability), 0.5)   # 中立（枠効果なし）
         else:
             self.gate = np.asarray(self.gate, dtype=float)
+        if self.turn_apt is None:
+            self.turn_apt = np.zeros(len(self.ability))   # 中立（回り効果なし）
+        else:
+            self.turn_apt = np.asarray(self.turn_apt, dtype=float)
 
     @property
     def n(self) -> int:
@@ -74,6 +81,9 @@ class SimConfig:
     # 「脚質だけで位置が決まりすぎる（sim 0.61 vs 実 0.37）」を実測方向へ緩める。
     gate_early: float = 0.12
     gate_fade: float = 0.4
+    # 回り(右/左)適性の効き: 実効能力を (1 + turn_gain·turn_apt) で微修正。turn_apt は
+    # レース内 z（+得意/−不得意）。不得意な回りの馬をわずかに遅くする（位置取り＋能力の物理）。
+    turn_gain: float = 0.04
     # ペース強度（外生注入用）: 先行馬の序盤ペースを乗算スケール。1.0=既定（内生のみ）。
     # >1 で先行が速く飛ばす→前傾（v²でスタミナ消費増→終盤失速→差し台頭）、<1 でスロー→先行残り。
     # 素朴仮定「先行多数→速い」を捨て、データ学習したペース予測をここに入れて符号ごと修正する。
@@ -157,6 +167,9 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         rel = field.noise / max(float(field.noise.mean()), 1e-6)   # 平均1に正規化した相対σ
         sig = np.tile(rel, (n_sim, 1))
         A = np.clip(A + ability_sigma * sig * rng.normal(0.0, 1.0, size=(n_sim, n)), 0.1, None)
+    # 回り(右/左)適性で実効能力を微修正（不得意な回りの馬をわずかに遅く）。中立 turn_apt=0 は無効果。
+    if cfg.turn_gain:
+        A = np.clip(A * (1.0 + cfg.turn_gain * np.tile(field.turn_apt, (n_sim, 1))), 0.1, None)
     style = np.tile(field.style, (n_sim, 1))
     noise = np.tile(field.noise, (n_sim, 1))
     gate = np.tile(field.gate, (n_sim, 1))       # (n_sim,n) 0=内..1=外

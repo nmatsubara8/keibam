@@ -299,6 +299,20 @@ def add_aptitude_stats(results: pd.DataFrame, horse_results: pd.DataFrame) -> pd
             place_win = same.groupby("horse_id")["_is_win"].mean().rename("place_win_rate")
             results = results.merge(place_win, left_on="horse_id", right_index=True, how="left")
 
+        # 回り(右/左)適性: 開催コード→回り方向へ写像し、今回と同じ回り方向での過去平均相対着順。
+        # 低い=その回りが得意（東京巧者=左得意 等を競馬場個別でなく方向一般で捕捉）。
+        # place_win_rate（同一場）より粗いが汎化する。horse_results は当該日より前のみ＝リーク無し。
+        if "_rel_rank" in merged.columns:
+            from src.constants._master import Master
+            amap = Master.PLACE_AROUND
+            a_past = merged["_place"].map(lambda c: amap.get(int(c)) if pd.notna(c) else None)
+            a_cur = merged["_cur_place"].map(lambda c: amap.get(int(c)) if pd.notna(c) else None)
+            same_dir = merged[(a_past == a_cur) & a_cur.notna()]
+            if not same_dir.empty:
+                around_rr = (same_dir.groupby("horse_id")["_rel_rank"].mean()
+                             .rename("around_rel_rank"))
+                results = results.merge(around_rr, left_on="horse_id", right_index=True, how="left")
+
     return results
 
 

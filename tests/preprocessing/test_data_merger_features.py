@@ -396,6 +396,14 @@ class TestAddAptitudeStats:
         out = m._add_aptitude_stats(self._results(), self._hr())
         assert out["place_win_rate"].iloc[0] == pytest.approx(0.5)
 
+    def test_around_rel_rank_same_direction(self):
+        # 今回=東京(05→左回り)。同じ左回りの過去走=東京の2走(着順1/10, 5/10)→ rel_rank mean=0.3。
+        # 中山(06→右回り)の1走は方向違いで除外＝回り適性は方向一般で集計される。
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_aptitude_stats(self._results(), self._hr())
+        assert "around_rel_rank" in out.columns
+        assert out["around_rel_rank"].iloc[0] == pytest.approx((0.1 + 0.5) / 2)
+
     def test_empty_horse_results_safe(self):
         m = _make_merger(_results_df_with_jockey())
         out = m._add_aptitude_stats(self._results(), self._hr().iloc[:0])

@@ -112,6 +112,21 @@ class Master:
     AROUND_STRAIGHT: ClassVar[str] = "直線"
     AROUND_LIST: tuple = (AROUND_RIGHT, AROUND_LEFT, AROUND_STRAIGHT)
 
+    # 競馬場コード(int) → コース回り方向（JRA 主要10場の芝の主方向）。回り適性
+    # (around_rel_rank)の算出に使う。地方/海外・未定義コードは None＝方向不明で中立扱い。
+    PLACE_AROUND: ClassVar[dict] = {
+        1: AROUND_RIGHT,   # 札幌
+        2: AROUND_RIGHT,   # 函館
+        3: AROUND_RIGHT,   # 福島
+        4: AROUND_LEFT,    # 新潟
+        5: AROUND_LEFT,    # 東京
+        6: AROUND_RIGHT,   # 中山
+        7: AROUND_LEFT,    # 中京
+        8: AROUND_RIGHT,   # 京都
+        9: AROUND_RIGHT,   # 阪神
+        10: AROUND_RIGHT,  # 小倉
+    }
+
     # ------------------------------------------------------------------
     # レースクラス（位置参照の代わりに名前付き定数を使う）
     # ------------------------------------------------------------------

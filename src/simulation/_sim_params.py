@@ -111,4 +111,12 @@ def field_from_featured(
             g = (dv - lo) / (hi - lo)
             gate = np.where(np.isnan(g), 0.5, g)
 
-    return RaceField(ability=ability, style=style, stamina=stamina, noise=noise, gate=gate)
+    # 回り(右/左)適性: around_rel_rank（低い=得意）をレース内 z で反転（+得意/−不得意）。
+    # 発走前に確定する回り方向×as-of過去成績＝前進安全。無ければ中立(0)。
+    turn_apt = None
+    arr = _num(race_df, "around_rel_rank")
+    if arr is not None and int(arr.notna().sum()) >= 2:
+        turn_apt = (-_zscore(arr).fillna(0.0)).to_numpy()
+
+    return RaceField(ability=ability, style=style, stamina=stamina, noise=noise,
+                     gate=gate, turn_apt=turn_apt)
