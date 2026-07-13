@@ -105,10 +105,51 @@ def main():
     ryear = _year_from_race_id(rid)
     _report(raw[odds_col], ryear, rid, "raw_results（アーカイブ原本）", raw[odds_col].dtype)
 
+    # (3) 払戻テーブル（return_tables）の年代別カバレッジ
+    #     walk_forward の買い目は Simulator が単勝払戻テーブルで決済する。race_id が
+    #     払戻テーブルに無いと bet_tansho が (0,0,0) を返し n_bets=0 で除外される
+    #     （_betting_tickets._SingleStrategy.place）。単勝オッズが有っても払戻が無ければ買い目0。
+    if odds_col in feat.columns:
+        _return_coverage(feat, fyear)
+
     print("\n判定の読み方:")
-    print("  ・raw も featured も旧年代の非NULL%≈0 → netkeiba アーカイブに元から無い＝データ源の限界。")
-    print("    旧年代の買い目0は仕様（修正不可）。エッジ無し結論は近代データで測れており妥当。")
-    print("  ・raw は非NULLだが featured で≈0 に落ちている → パイプライン(merge/型変換)で欠落＝修正対象。")
+    print("  ・単勝オッズは有る(featured 100%)のに買い目0 → 原因は EV でなく払戻テーブル欠損の疑い。")
+    print("  ・(3)で旧年代の払戻カバレッジ%が低い → return_tables 未取得が原因＝買い目0の正体。")
+    print("    対処: 旧年代の return_tables を ingest（払戻ページ取得）すれば旧 fold も決済可能になる。")
+
+
+def _return_coverage(feat, fyear):
+    """featured の各レースが単勝払戻テーブルに存在する割合を年代別に出す。"""
+    import os
+
+    import pandas as pd
+
+    from src.constants._bet_types import BetType
+    from src.constants._local_paths import LocalPaths
+    from src.preprocessing._return_processor import ReturnProcessor
+
+    rpath = LocalPaths.RAW_RETURN_TABLES_PATH
+    if not os.path.exists(rpath):
+        print(f"\nreturn_tables.pkl が無い（{rpath}）— 払戻カバレッジ判定不可"); return
+    try:
+        tables = ReturnProcessor(rpath).preprocessed_data
+        tansho = tables[BetType.TANSHO]
+    except Exception as e:  # noqa: BLE001
+        print(f"\n払戻テーブルの読込/前処理に失敗: {e}"); return
+    payout_ids = set(tansho.index.astype(str)) if tansho is not None and not tansho.empty else set()
+    print(f"\n[払戻テーブル(単勝) カバレッジ] 払戻あり race_id 数={len(payout_ids):,}")
+    print(f"  {'年代':<12}{'レース数':>10}{'払戻あり%':>12}")
+    # featured のレース単位（race_id ×1）で判定
+    rid = _race_id_series(feat).astype(str)
+    df = pd.DataFrame({"race_id": rid.to_numpy(), "year": pd.Series(fyear).to_numpy()})
+    df = df.drop_duplicates("race_id")
+    for lab, y0, y1 in ERA_BUCKETS:
+        m = (df["year"] >= y0) & (df["year"] <= y1)
+        n = int(m.sum())
+        if n == 0:
+            continue
+        cov = float(df.loc[m, "race_id"].isin(payout_ids).mean()) * 100
+        print(f"  {lab:<12}{n:>10,}{cov:>11.1f}%")
 
 
 if __name__ == "__main__":
