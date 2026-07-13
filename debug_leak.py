@@ -22,6 +22,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--test-frac", type=float, default=0.2)
+    ap.add_argument("--era-min", type=int, default=None,
+                    help="この年以降のレースだけを対象にする（旧年代の form 再構築リーク監査用）")
+    ap.add_argument("--era-max", type=int, default=None,
+                    help="この年以前のレースだけを対象にする。--era-min と併用で年代帯を切る")
     args = ap.parse_args()
 
     import pandas as pd
@@ -34,8 +38,17 @@ def main():
     if featured is None:
         print("featured_data がありません")
         return
-    test = recent_race_slice(featured, args.test_frac)
-    print(f"held-out: {test.index.nunique()} レース / {len(test)} 行")
+    if args.era_min is not None or args.era_max is not None:
+        # 年代帯を明示指定: その帯の全レースで単独 AUC を測る（リーク列は held-out 無しでも
+        # 高 AUC に出る）。form-from-results 再構築が使われる旧年代を直接監査するのに使う。
+        yr = pd.to_datetime(featured["date"], errors="coerce").dt.year
+        lo = args.era_min if args.era_min is not None else int(yr.min())
+        hi = args.era_max if args.era_max is not None else int(yr.max())
+        test = featured[(yr >= lo) & (yr <= hi)]
+        print(f"era {lo}-{hi}: {test.index.nunique()} レース / {len(test)} 行")
+    else:
+        test = recent_race_slice(featured, args.test_frac)
+        print(f"held-out(直近): {test.index.nunique()} レース / {len(test)} 行")
 
     # 2 目的: 勝ち(着順==1) と top3(着順<4)。着順が無ければ rank(top3) を使う。
     targets = {}
