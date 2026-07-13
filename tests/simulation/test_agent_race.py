@@ -182,3 +182,49 @@ def test_turn_apt_neutral_default_backward_compatible():
     a = monte_carlo(f, n_sim=300, seed=8)
     b = monte_carlo(f, n_sim=300, seed=8)
     assert np.allclose(a["win"], b["win"])
+
+
+def test_dt_invariance_finer_mesh_converges():
+    """時間刻み dt を細かくしても（T·dt を一定に保てば）着順分布が保存される（dt 不変な積分）。
+
+    加速度ノイズを √dt スケールにしたので、dt=1.0(T=100) と dt=0.25(T=400) で勝率がほぼ一致する。
+    """
+    f = field_from_arrays([1.25, 1.0, 0.85, 1.05, 0.9],
+                          ["front", "stalker", "closer", "stalker", "closer"],
+                          stamina=[1.2, 1.0, 1.1, 1.0, 0.9], noise=[0.05] * 5)
+    coarse = monte_carlo(f, n_sim=4000, seed=11, ability_sigma=0.1,
+                         cfg=SimConfig(T=100, dt=1.0))
+    fine = monte_carlo(f, n_sim=4000, seed=11, ability_sigma=0.1,
+                       cfg=SimConfig(T=400, dt=0.25))     # 同じ総時間 T·dt=100、4倍細かい
+    # 勝率ベクトルが近い（細分化しても答えが変わらない＝dt に収束）
+    assert np.max(np.abs(coarse["win"] - fine["win"])) < 0.05
+
+
+def test_heavy_going_slows_field():
+    """重い馬場(going>0)は全馬の序盤速度を下げる（going_speed_k>0）。"""
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    n = 8
+    base = dict(ability=np.ones(n), style=np.full(n, STYLE_STALKER),
+                stamina=np.full(n, 1.0), noise=np.full(n, 0.02))
+    good = monte_carlo(RaceField(going=0.0, **base), n_sim=300, seed=2,
+                       ability_sigma=0.0, track_dynamics=True)
+    heavy = monte_carlo(RaceField(going=1.0, **base), n_sim=300, seed=2,
+                        ability_sigma=0.0, track_dynamics=True)
+    assert heavy["early_speed"] < good["early_speed"]
+
+
+def test_going_apt_helps_on_heavy_not_on_good():
+    """道悪巧者(going_apt>0)は重馬場で相対的に有利、良馬場では効かない（going 比例）。"""
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    n = 6
+    apt = np.zeros(n); apt[0] = +1.5; apt[1] = -1.5     # 0=道悪得意, 1=道悪不得意
+    base = dict(ability=np.ones(n), style=np.full(n, STYLE_STALKER),
+                stamina=np.full(n, 1.5), noise=np.full(n, 0.02), going_apt=apt)
+    heavy = monte_carlo(RaceField(going=1.0, **base), n_sim=2000, seed=4,
+                        ability_sigma=0.0, cfg=SimConfig(going_apt_gain=0.3))
+    good = monte_carlo(RaceField(going=0.0, **base), n_sim=2000, seed=4,
+                       ability_sigma=0.0, cfg=SimConfig(going_apt_gain=0.3))
+    # 重馬場: 道悪得意(0) が 不得意(1) より上位
+    assert heavy["mean_rank"][0] < heavy["mean_rank"][1]
+    # 良馬場: going=0 なので馬場適性は無効果 → 0 と 1 はほぼ互角（差が重馬場より小さい）
+    assert abs(good["mean_rank"][0] - good["mean_rank"][1]) < abs(heavy["mean_rank"][0] - heavy["mean_rank"][1])

@@ -38,6 +38,11 @@ class RaceField:
     # 回り(右/左)適性（レース内 z 正規化・+ ＝この回りが得意/− ＝不得意）。能力を微修正する。
     # None は中立(0)＝効果なし＝後方互換。
     turn_apt: np.ndarray | None = None
+    # コース状態（馬場）: レース単位のスカラー 0=良..1=不良（稍重≈0.33/重≈0.67）。重いほど全馬が
+    # 遅く・スタミナ消費が増える。既定 0（良）＝効果なし＝後方互換。
+    going: float = 0.0
+    # 馬場適性（レース内 z・+ ＝道悪得意/− ＝不得意）。馬場が重い(going>0)ときだけ能力を修正する。
+    going_apt: np.ndarray | None = None
 
     def __post_init__(self):
         self.ability = np.asarray(self.ability, dtype=float)
@@ -52,6 +57,10 @@ class RaceField:
             self.turn_apt = np.zeros(len(self.ability))   # 中立（回り効果なし）
         else:
             self.turn_apt = np.asarray(self.turn_apt, dtype=float)
+        if self.going_apt is None:
+            self.going_apt = np.zeros(len(self.ability))  # 中立（馬場適性効果なし）
+        else:
+            self.going_apt = np.asarray(self.going_apt, dtype=float)
 
     @property
     def n(self) -> int:
@@ -84,6 +93,10 @@ class SimConfig:
     # 回り(右/左)適性の効き: 実効能力を (1 + turn_gain·turn_apt) で微修正。turn_apt は
     # レース内 z（+得意/−不得意）。不得意な回りの馬をわずかに遅くする（位置取り＋能力の物理）。
     turn_gain: float = 0.04
+    # コース状態（馬場）の効き（すべて going∈[0,1] に比例。良=0 で無効果）:
+    going_speed_k: float = 0.06   # 重い馬場ほど全馬の実効能力(目標速度)を下げる
+    going_stamina_k: float = 0.5  # 重い馬場ほどスタミナ消費を増やす（消費 ×(1+これ·going)）
+    going_apt_gain: float = 0.05  # 馬場適性で能力を修正（道悪巧者は重馬場で相対的に有利）
     # ペース強度（外生注入用）: 先行馬の序盤ペースを乗算スケール。1.0=既定（内生のみ）。
     # >1 で先行が速く飛ばす→前傾（v²でスタミナ消費増→終盤失速→差し台頭）、<1 でスロー→先行残り。
     # 素朴仮定「先行多数→速い」を捨て、データ学習したペース予測をここに入れて符号ごと修正する。
@@ -170,6 +183,15 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     # 回り(右/左)適性で実効能力を微修正（不得意な回りの馬をわずかに遅く）。中立 turn_apt=0 は無効果。
     if cfg.turn_gain:
         A = np.clip(A * (1.0 + cfg.turn_gain * np.tile(field.turn_apt, (n_sim, 1))), 0.1, None)
+    # コース状態（馬場）: 重い馬場ほど全馬を遅く（going_speed_k）＋道悪適性で相対修正（going_apt_gain）。
+    # どちらも going に比例＝良(going=0)なら無効果。スタミナ消費増は下のループで going を反映する。
+    if field.going > 0.0:
+        g = float(field.going)
+        A = A * (1.0 - cfg.going_speed_k * g)
+        if cfg.going_apt_gain:
+            A = A * (1.0 + cfg.going_apt_gain * np.tile(field.going_apt, (n_sim, 1)) * g)
+        A = np.clip(A, 0.1, None)
+    stamina_cost_eff = cfg.stamina_cost * (1.0 + cfg.going_stamina_k * float(field.going))
     style = np.tile(field.style, (n_sim, 1))
     noise = np.tile(field.noise, (n_sim, 1))
     gate = np.tile(field.gate, (n_sim, 1))       # (n_sim,n) 0=内..1=外
@@ -197,10 +219,14 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         crowd = np.clip(_crowd_ahead(x, cfg.interf_dist) / lane_cap, 0.0, 1.0)
         vt = vt * (1.0 - (1.0 - cfg.interf_mult) * crowd)
         vt = vt * np.clip(s, cfg.stamina_floor, None)    # スタミナ制約
-        a = (vt - v) * cfg.accel_k + rng.normal(0.0, 1.0, size=(n_sim, n)) * noise
-        v = np.clip(v + a * cfg.dt, 0.0, None)
+        # dt 不変な時間積分: 決定論項は dt に比例、加速度ノイズは √dt に比例（Wiener 過程）。
+        # これで dt を細かく（T を増やして）しても速度ブレの分散が保存され、答えが dt に収束する。
+        # dt=1.0 では従来式 v += ((vt-v)·accel_k + noise·N) と厳密に一致（後方互換）。
+        dv_det = (vt - v) * cfg.accel_k * cfg.dt
+        dv_noise = noise * np.sqrt(cfg.dt) * rng.normal(0.0, 1.0, size=(n_sim, n))
+        v = np.clip(v + dv_det + dv_noise, 0.0, None)
         x = x + v * cfg.dt
-        s = np.clip(s - cfg.stamina_cost * v * v * cfg.dt, 0.0, None)
+        s = np.clip(s - stamina_cost_eff * v * v * cfg.dt, 0.0, None)
         if track_dynamics:
             if t < third:
                 early_v += v.mean(axis=1)

@@ -45,6 +45,27 @@ def _zscore(s: pd.Series) -> pd.Series:
     return (s - float(s.mean())) / (sd if sd > 1e-9 else 1.0)
 
 
+_GOING_WEIGHT = {"良": 0.0, "稍重": 0.33, "重": 0.67, "不良": 1.0}
+
+
+def _going_level(race_df: pd.DataFrame) -> float:
+    """ダミー化された ground_state{1,2}_{良/稍重/重/不良} から going∈[0,1] を復元する。
+
+    芝は ground_state1_・ダートは ground_state2_ のどちらか一方のみ立つ設計なので、
+    各レベルのダミー(0/1)平均に重みを掛けて総和すれば当該レースの馬場水準になる。
+    列名は単/二重アンダースコア両対応。見つからなければ 0（良＝無効果）。
+    """
+    total = 0.0
+    for pre in ("ground_state1_", "ground_state1__", "ground_state2_", "ground_state2__",
+                "ground_state_", "ground_state__"):
+        for lvl, w in _GOING_WEIGHT.items():
+            col = pre + lvl
+            if col in race_df.columns:
+                frac = float(pd.to_numeric(race_df[col], errors="coerce").fillna(0.0).mean())
+                total += w * frac
+    return float(min(1.0, max(0.0, total)))
+
+
 def _ability_z(race_df: pd.DataFrame) -> pd.Series:
     """利用可能な能力シグナルをレース内 z-score して平均合成（無ければ 0）。"""
     parts = []
@@ -118,5 +139,14 @@ def field_from_featured(
     if arr is not None and int(arr.notna().sum()) >= 2:
         turn_apt = (-_zscore(arr).fillna(0.0)).to_numpy()
 
+    # コース状態（馬場）: ダミー化された ground_state{1,2}_{良/稍重/重/不良} から going∈[0,1] を復元
+    # （良=0/稍重≈0.33/重≈0.67/不良=1）。芝は _1・ダートは _2 のどちらか一方のみ立つので和で取れる。
+    going = _going_level(race_df)
+    # 馬場適性: wet_rel_rank（道悪の相対着順・低い=得意）をレース内 z で反転（+得意/−不得意）。無ければ中立。
+    going_apt = None
+    wr = _num(race_df, "wet_rel_rank")
+    if wr is not None and int(wr.notna().sum()) >= 2:
+        going_apt = (-_zscore(wr).fillna(0.0)).to_numpy()
+
     return RaceField(ability=ability, style=style, stamina=stamina, noise=noise,
-                     gate=gate, turn_apt=turn_apt)
+                     gate=gate, turn_apt=turn_apt, going=going, going_apt=going_apt)
