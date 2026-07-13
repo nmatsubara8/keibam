@@ -25,7 +25,11 @@ def main():
     ap.add_argument("--limit", type=int, default=6000)
     ap.add_argument("--max-year", type=int, default=None)
     ap.add_argument("--n-sim", type=int, default=400)
-    ap.add_argument("--T", type=int, default=100)
+    ap.add_argument("--T", type=int, default=100,
+                    help="レース総時間（dt=1.0 換算のステップ数）。実ステップ数は round(T/dt)。")
+    ap.add_argument("--dt", type=float, default=1.0,
+                    help="時間刻み。細かいほど一瞬の駆け引きを解像（総時間 T·dt は保存）。"
+                         "1d エンジンは dt 不変(√dtノイズ)で収束。計算量 ∝ 1/dt。")
     ap.add_argument("--ability-spread", type=float, default=0.20)
     ap.add_argument("--ability-sigma", type=float, default=0.35)
     ap.add_argument("--engine", choices=["1d", "2d"], default="1d",
@@ -66,18 +70,21 @@ def main():
     if args.limit and len(order) > args.limit:
         order = order[-args.limit:]
     featured = featured.loc[order]
+    # 総時間 T·dt を保存したまま dt を細かくする: 実ステップ数 = round(T / dt)。
+    steps = max(1, round(args.T / args.dt))
     if args.engine == "2d":
         from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
-        cfg = SimConfig2D(T=args.T)
+        cfg = SimConfig2D(T=steps, dt=args.dt)
         run_sim = lambda fld, sd: monte_carlo_2d(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
             ability_sigma=args.ability_sigma, track_dynamics=True)
     else:
-        cfg = SimConfig(T=args.T)
+        cfg = SimConfig(T=steps, dt=args.dt)
         run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
             ability_sigma=args.ability_sigma, track_dynamics=True)
-    print(f"[engine] {args.engine}")
+    print(f"[engine] {args.engine} / dt={args.dt} / 実ステップ数={steps}（総時間 T·dt={args.T}）"
+          + ("" if args.engine == "1d" else "  ※dt不変は1dのみ（2dは近似）"))
     rng = np.random.default_rng(args.seed)
 
     # 収集: レース単位（sim/実ペース）と 馬単位（脚質・相対着順・序盤位置）
