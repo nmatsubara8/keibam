@@ -103,3 +103,55 @@ def test_pace_predictor_intensity_sign_and_default():
     assert 1.0 - 0.25 - 1e-6 <= lo and hi <= 1.0 + 0.25 + 1e-6   # gain 帯に収まる
     # 未学習器は中立(1.0)
     assert PacePredictor().predict_intensity([1.0, 2.0, 3.0]) == 1.0
+
+
+def test_gate_inside_secures_forward_early_position():
+    """同能力・同脚質でゲート(枠順)だけ違えば、内枠(gate=0)が序盤で前を取る。
+
+    ゲート効果を単離するため全馬 stalker・能力一定。gate は内→外に単調。
+    序盤位置順位(early_pos_rank: 0=先頭)が gate と正相関＝内ほど前、を確認する。
+    """
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+
+    n = 8
+    field = RaceField(
+        ability=np.ones(n),
+        style=np.full(n, STYLE_STALKER),
+        stamina=np.ones(n),
+        noise=np.full(n, 0.02),
+        gate=np.linspace(0.0, 1.0, n),      # 0=最内 .. 1=最外
+    )
+    r = monte_carlo(field, n_sim=800, seed=3, ability_sigma=0.0, track_dynamics=True)
+    epr = r["early_pos_rank"]               # 0=先頭
+    # 内(gate小)ほど早い位置(epr小) → gate と epr は正相関
+    corr = np.corrcoef(np.linspace(0, 1, n), epr)[0, 1]
+    assert corr > 0.5, f"gate→序盤位置の相関が弱い: {corr:.3f}"
+
+
+def test_gate_neutral_default_is_backward_compatible():
+    """gate 未指定(None→中立0.5)なら枠効果ゼロ＝従来と同一挙動（決定論再現）。"""
+    f_none = field_from_arrays([1.0, 1.2, 0.9, 1.1], ["front", "stalker", "closer", "stalker"])
+    a = monte_carlo(f_none, n_sim=300, seed=7)
+    b = monte_carlo(f_none, n_sim=300, seed=7)
+    assert np.allclose(a["win"], b["win"])           # 決定論
+    # 中立 gate は全馬同値 → ゲート項 (0.5-gate)=0 で vt 不変
+    assert np.allclose(f_none.gate, 0.5)
+
+
+def test_narrow_course_congests_front_slows_early_speed():
+    """コース幅が狭い(定員小)ほど、多頭の先行が前列で詰まり序盤速度が落ちる。
+
+    全馬 front・同能力で前に殺到させ、狭コース(course_width小→定員小)と
+    広コース(定員大)の序盤平均速度を比較。狭い方が混雑で遅い＝体幅/コース幅の定員が効く。
+    """
+    from src.simulation._agent_race import RaceField, STYLE_FRONT
+
+    n = 12
+    base = dict(ability=np.ones(n), style=np.full(n, STYLE_FRONT),
+                stamina=np.full(n, 5.0), noise=np.full(n, 0.01))
+    narrow = monte_carlo(RaceField(**base), n_sim=400, seed=2, ability_sigma=0.0,
+                         cfg=SimConfig(course_width=2.2), track_dynamics=True)   # 定員≈2
+    wide = monte_carlo(RaceField(**base), n_sim=400, seed=2, ability_sigma=0.0,
+                       cfg=SimConfig(course_width=100.0), track_dynamics=True)   # 定員≈91
+    assert narrow["early_speed"] < wide["early_speed"], (
+        f"狭コースで序盤が遅くならない: narrow={narrow['early_speed']:.4f} wide={wide['early_speed']:.4f}")

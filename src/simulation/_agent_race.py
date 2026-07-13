@@ -32,12 +32,19 @@ class RaceField:
     style: np.ndarray      # 脚質コード（int）
     stamina: np.ndarray    # 初期スタミナ（>0、消費で減る）
     noise: np.ndarray      # σ: 加速度ノイズ（出遅れ・不利・詰まりの確率的表現）
+    # ゲート（枠順）を [0,1] に正規化（0=最内..1=最外）。序盤の位置取り優位に使う
+    # （内枠ほど序盤に前を取りやすい）。None は中立(0.5)＝効果なし＝後方互換。
+    gate: np.ndarray | None = None
 
     def __post_init__(self):
         self.ability = np.asarray(self.ability, dtype=float)
         self.style = np.asarray(self.style, dtype=int)
         self.stamina = np.asarray(self.stamina, dtype=float)
         self.noise = np.asarray(self.noise, dtype=float)
+        if self.gate is None:
+            self.gate = np.full(len(self.ability), 0.5)   # 中立（枠効果なし）
+        else:
+            self.gate = np.asarray(self.gate, dtype=float)
 
     @property
     def n(self) -> int:
@@ -52,8 +59,21 @@ class SimConfig:
     accel_k: float = 0.5         # 比例制御ゲイン（目標速度への追従）
     stamina_cost: float = 0.01   # スタミナ消費係数（cost = α·v²）
     stamina_floor: float = 0.3   # スタミナ枯渇時の最低出力率
-    interf_dist: float = 2.0     # この距離未満で前方干渉（詰まり）
-    interf_mult: float = 0.7     # 干渉時の目標速度倍率
+    interf_dist: float = 2.0     # 前方バンドの深さ（この距離内の前走馬を「詰まり」と数える）
+    interf_mult: float = 0.7     # 前列が定員一杯のときの目標速度倍率（最大減速）
+    # コース幅・馬体幅による横の定員（位置取りの物理）。lane_capacity = course_width / body_width
+    # ＝前方バンドに横並びできる頭数。前方バンドの頭数がこれを超えると前列が埋まり上がれない
+    # （混雑度 crowd = min(1, n_ahead/定員) に比例して減速）。全先行馬が前に殺到できず前列争いが
+    # 起き、脚質だけで位置が決まりすぎる（sim 0.61 vs 実 0.37）を実測方向へ散らす。
+    # course_width は競走が密集する（内めの）有効レース幅の既定値。将来コース別データで置換可。
+    body_width: float = 1.1      # m（馬体幅＋レース間隔の実効値）
+    course_width: float = 7.7    # m（実効レース幅）→ 定員 ≈ 7 頭
+    # ゲート（枠順）効果: 序盤フェーズだけ内枠に目標速度優位を与える（位置取りの物理）。
+    # gate_early = 最内(gate=0)と最外(gate=1)の序盤目標速度差の振幅（±gate_early/2）。
+    # gate_fade = 効果が 0 に減衰する進行率（phase）。この因子は脚質と独立に序盤位置を散らし、
+    # 「脚質だけで位置が決まりすぎる（sim 0.61 vs 実 0.37）」を実測方向へ緩める。
+    gate_early: float = 0.12
+    gate_fade: float = 0.4
     # ペース強度（外生注入用）: 先行馬の序盤ペースを乗算スケール。1.0=既定（内生のみ）。
     # >1 で先行が速く飛ばす→前傾（v²でスタミナ消費増→終盤失速→差し台頭）、<1 でスロー→先行残り。
     # 素朴仮定「先行多数→速い」を捨て、データ学習したペース予測をここに入れて符号ごと修正する。
@@ -83,6 +103,18 @@ def _target_speed(style: np.ndarray, ability: np.ndarray, phase: float,
     c_mult = cfg.closer_early if phase < cfg.closer_switch else cfg.closer_late
     vt[is_c] = c_mult * ability[is_c]
     return vt
+
+
+def _crowd_ahead(x: np.ndarray, dist: float) -> np.ndarray:
+    """各馬の「前方バンド(0<Δ≤dist)に居る他馬の頭数」(n_sim,n)。詰まり定員判定に使う。
+
+    コース幅÷馬体幅＝横に並べる定員(lane_capacity)に対し、前方バンドの頭数が定員を
+    超えると『前列が埋まっていて上がれない』＝位置取りの物理制約になる。単一の直前馬
+    だけを見る _front_distance と違い、前が何頭で詰まっているか（混雑度）を数える。
+    """
+    diff = x[:, None, :] - x[:, :, None]       # (n_sim, n_i, n_j): x_j - x_i
+    ahead = (diff > 0.0) & (diff <= dist)
+    return ahead.sum(axis=2).astype(float)     # (n_sim, n_i) 前方バンドの他馬数
 
 
 def _front_distance(x: np.ndarray) -> np.ndarray:
@@ -127,6 +159,7 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         A = np.clip(A + ability_sigma * sig * rng.normal(0.0, 1.0, size=(n_sim, n)), 0.1, None)
     style = np.tile(field.style, (n_sim, 1))
     noise = np.tile(field.noise, (n_sim, 1))
+    gate = np.tile(field.gate, (n_sim, 1))       # (n_sim,n) 0=内..1=外
     x = np.zeros((n_sim, n))
     v = np.zeros((n_sim, n))
     s = np.tile(field.stamina, (n_sim, 1)).astype(float)
@@ -138,8 +171,18 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
     for t in range(cfg.T):
         phase = t / cfg.T
         vt = _target_speed(style, A, phase, cfg)
+        # ゲート（枠順）優位: 序盤だけ内枠(gate<0.5)に目標速度を上乗せし、gate_fade で 0 へ減衰。
+        # 脚質と独立に序盤位置を散らす（内枠は前を取りやすい）。中立 gate=0.5 は無効果。
+        if cfg.gate_early and phase < cfg.gate_fade:
+            vt = vt * (1.0 + cfg.gate_early * (0.5 - gate) * (1.0 - phase / cfg.gate_fade))
+        # 直前馬への詰まり（縦の単一干渉。隊列を縦に伸ばす既存機構は保持）。
         front = _front_distance(x)
         vt = np.where(front < cfg.interf_dist, vt * cfg.interf_mult, vt)
+        # コース幅÷馬体幅の定員による横の詰まり（追加）: 前方バンドが定員超過なら前列が埋まり
+        # 上がれない。全先行馬が前に殺到できず前列争い→脚質だけで位置が決まりすぎるのを散らす。
+        lane_cap = max(1.0, cfg.course_width / cfg.body_width)
+        crowd = np.clip(_crowd_ahead(x, cfg.interf_dist) / lane_cap, 0.0, 1.0)
+        vt = vt * (1.0 - (1.0 - cfg.interf_mult) * crowd)
         vt = vt * np.clip(s, cfg.stamina_floor, None)    # スタミナ制約
         a = (vt - v) * cfg.accel_k + rng.normal(0.0, 1.0, size=(n_sim, n)) * noise
         v = np.clip(v + a * cfg.dt, 0.0, None)

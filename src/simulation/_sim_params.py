@@ -98,4 +98,17 @@ def field_from_featured(
         sdz = _zscore(sd).fillna(0.0).to_numpy()
         noise = np.clip(noise_base + noise_gain * sdz, 0.01, 0.2)
 
-    return RaceField(ability=ability, style=style, stamina=stamina, noise=noise)
+    # ゲート（枠順）: 馬番（無ければ枠番）をレース内で [0,1] に正規化（0=最内..1=最外）。
+    # 序盤の位置取り優位に使う（前進安全: 発走前に確定する枠順は as-of 情報）。無ければ中立。
+    gate = None
+    draw = _num(race_df, "馬番")
+    if draw is None or int(draw.notna().sum()) < 2:
+        draw = _num(race_df, "枠番")
+    if draw is not None and int(draw.notna().sum()) >= 2:
+        dv = draw.to_numpy(dtype=float)
+        lo, hi = np.nanmin(dv), np.nanmax(dv)
+        if hi > lo:
+            g = (dv - lo) / (hi - lo)
+            gate = np.where(np.isnan(g), 0.5, g)
+
+    return RaceField(ability=ability, style=style, stamina=stamina, noise=noise, gate=gate)
