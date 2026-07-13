@@ -643,6 +643,23 @@ class TestAddRaceClassStats:
         out = m._add_race_class_stats(results, self._hr())
         assert "win_rate_same_class" not in out.columns
 
+    def test_best_class_won_is_numeric_with_unclassifiable_names(self):
+        # 旧年代の分類不能なレース名（race_class_level→None）が混ざっても
+        # best_class_won は object でなく数値 dtype を保つ（学習で dtype エラーにしない）。
+        hr = pd.DataFrame(
+            {
+                "horse_id": [1, 1],
+                "着順": [1, 1],  # どちらも勝利
+                "頭数": [10, 12],
+                "レース名": ["2勝クラス", "謎の古いレース名XYZ"],  # 後者は分類不能
+            }
+        ).set_index("horse_id")
+        m = _make_merger(self._results())
+        out = m._add_race_class_stats(self._results(), hr)
+        assert out["best_class_won"].dtype.kind == "f"  # float（object でない）
+        # 分類できた 2勝クラス(level3) が最高として残る
+        assert out[out["horse_id"] == 1].iloc[0]["best_class_won"] == 3
+
 
 # ──────────────────────────────────────────
 # 直近 N レースの成績率: _add_recent_form_stats

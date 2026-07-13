@@ -43,6 +43,7 @@ class DataSplitter:
         else:
             self.__featured_data = self.__downcast_floats(featured_data)
             self.__nn_raw = None
+        self.__featured_data = self.__coerce_object_features(self.__featured_data)
 
         # スタッキング用
         self.__base_train: pd.DataFrame | None = None
@@ -91,6 +92,35 @@ class DataSplitter:
             train_ids = self.__train_data.index.unique()
             # 訓練データのみで fit（リーク防止）。戻り値は破棄してメモリを解放。
             self.__nn_scaler.fit_transform(self.__nn_raw.loc[train_ids])
+
+    # 数値化しない非特徴量列（時系列分割キー date / 文字列 ID horse_id）。学習入力からは
+    # _DROP_FOR_TRAIN で除外されるが、__split_by_date が date を使うので coerce から保護する。
+    __PROTECTED_NON_NUMERIC = ("date", "horse_id")
+
+    @classmethod
+    def __coerce_object_features(cls, df):
+        """object dtype の特徴量列を数値へ強制変換する（予測側 _coerce_for_predict と対称）。
+
+        featured_data は全特徴量が数値であることを前提に LightGBM へ ``.values`` で渡す。
+        脚質集計の best_class_won 等、race_class_level が None を返し object dtype に
+        なった列が混じると "pandas dtypes must be int, float or bool" で学習が落ちる。
+        非特徴量（date/horse_id）を除く object 列を to_numeric（非数値→NaN）で数値化する。
+        featured 再ビルド不要で既存 parquet をそのまま学習可能にするセーフティネット。
+        """
+        # object / 文字列 dtype のみ対象（category は LightGBM がネイティブに扱うため触らない）。
+        # pandas 3 の select_dtypes(["object"]) は str も巻き込み警告を出すので dtype を直接判定。
+        obj_cols = [
+            c for c in df.columns
+            if c not in cls.__PROTECTED_NON_NUMERIC
+            and (df[c].dtype == object or pd.api.types.is_string_dtype(df[c]))
+        ]
+        if not obj_cols:
+            return df
+        df = df.copy()
+        for c in obj_cols:
+            df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
+        logger.info("coerced %d object feature column(s) to numeric: %s", len(obj_cols), obj_cols)
+        return df
 
     @staticmethod
     def __downcast_floats(df):

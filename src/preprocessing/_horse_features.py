@@ -599,9 +599,11 @@ def add_race_class_stats(
     if "race_class" not in results.columns or name_col not in horse_results.columns:
         return results
 
-    # 今回クラスの順序値（馬ごと）
+    # 今回クラスの順序値（馬ごと）。race_class_level は不明クラスに None を返すため
+    # numeric 強制（None→NaN）で列を float64 に保つ。object 混在のままだと best_class_won
+    # 等が object dtype になり LightGBM が "pandas dtypes must be int/float/bool" で落ちる。
     cur = results[["horse_id", "race_class"]].drop_duplicates("horse_id").copy()
-    cur["_cur_level"] = cur["race_class"].map(race_class_level)
+    cur["_cur_level"] = pd.to_numeric(cur["race_class"].map(race_class_level), errors="coerce")
 
     hr = horse_results.copy()
     hr["_is_win"] = (pd.to_numeric(hr[rank_col], errors="coerce") == 1).astype(float)
@@ -609,10 +611,12 @@ def add_race_class_stats(
         hr["_rel_rank"] = pd.to_numeric(hr[rank_col], errors="coerce") / pd.to_numeric(
             hr[n_horses_col], errors="coerce"
         )
-    # ユニークなレース名だけ格判定（正規表現コストの重複回避）
+    # ユニークなレース名だけ格判定（正規表現コストの重複回避）。旧年代の分類不能な
+    # レース名は None を返すため numeric 強制（None→NaN）で _past_level を float64 に保つ。
+    # object のままだと best_class_won = groupby.max() が object になり学習で落ちる。
     names = hr[name_col].astype(str)
     level_by_name = {n: race_class_level(classify_race_class(n)) for n in names.unique()}
-    hr["_past_level"] = names.map(level_by_name)
+    hr["_past_level"] = pd.to_numeric(names.map(level_by_name), errors="coerce")
 
     hr_reset = hr.reset_index()
     merged = hr_reset.merge(cur[["horse_id", "_cur_level"]], on="horse_id")

@@ -95,6 +95,38 @@ class TestChakujunNotLeaked:
             assert col not in ds.X_calib.columns
 
 
+class TestObjectFeatureCoercion:
+    """object dtype の特徴量列（best_class_won 等）を数値へ強制するセーフティネット。
+
+    脚質集計の best_class_won は race_class_level が None を返すと object dtype に
+    なり得る。DataSplitter が学習入力を数値化しないと LightGBM が
+    "pandas dtypes must be int, float or bool" で落ちる。既存 parquet を再ビルド
+    せず学習可能にするため、DataSplitter が object 特徴量列を数値化することを保証する。
+    """
+
+    def test_object_feature_column_coerced_to_numeric(self):
+        df = _make_featured_with_chakujun()
+        # best_class_won を "3"/"未勝利"(非数値) 混在の object 列として注入
+        vals = ["3" if i % 2 == 0 else "未勝利" for i in range(len(df))]
+        df = df.assign(best_class_won=pd.Series(vals, index=df.index, dtype="object"))
+        assert df["best_class_won"].dtype == object
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        # 学習特徴量として数値化されている（非数値→NaN、float 化）
+        assert ds.X_train["best_class_won"].dtype.kind == "f"
+        # .values が object にならず float 行列として取り出せる（LightGBM 契約）
+        arr = ds.X_train.drop(columns=[c for c in ds.X_train.columns
+                                       if ds.X_train[c].dtype == object], errors="ignore").values
+        assert arr.dtype.kind == "f"
+
+    def test_protected_non_numeric_columns_survive(self):
+        # date/horse_id は数値化せず保持（date は時系列分割キー）
+        df = _make_featured_with_chakujun()
+        df = df.assign(horse_id=[f"h{i}" for i in range(len(df))])
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        # date はそのまま（分割が機能している＝train/test が非空）
+        assert len(ds.X_train) > 0 and len(ds.X_test) > 0
+
+
 class TestTargetColumn:
     """target_col で Place(rank) / Win(rank_win) ヘッドを切替える。"""
 
