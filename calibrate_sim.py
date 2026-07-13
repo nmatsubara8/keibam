@@ -41,13 +41,16 @@ PARAM_BOUNDS = {
     "turn_gain": (0.0, 0.15),
 }
 
-# 目的の重み（一致項は |sim-real|、最大化項は係数付きで負に加える）
+# 目的の重み（一致項は |sim-real|、最大化項は係数付きで負に加える）。
+# 初回較正で draw_bias が実測の約2倍に過剰化し、非有界な最大化項(pos_direct/pace_shape)が
+# パラメータを物理天井へ押し上げた反省から、draw_bias 一致を強く罰し・最大化項を弱めた既定。
+# すべて CLI(--w-*)で上書き可能。
 WEIGHTS = {
     "style_pos_match": 1.0,     # |sim-real| corr(脚質,序盤位置)
-    "draw_bias_match": 1.0,     # |sim-real| corr(枠順,着順)
+    "draw_bias_match": 3.0,     # |sim-real| corr(枠順,着順)  ← 過剰を強く罰する
     "backness_match": 0.5,      # |sim-real| 展開signal
-    "pos_direct_max": 1.0,      # -corr(sim序盤位置, 実第1コーナー)
-    "pace_shape_max": 0.5,      # -pace_shape_corr
+    "pos_direct_max": 0.5,      # -corr(sim序盤位置, 実第1コーナー)  ← 天井押し上げを緩和
+    "pace_shape_max": 0.3,      # -pace_shape_corr               ← 同上
 }
 
 
@@ -77,25 +80,26 @@ def real_stats(rows: dict) -> dict:
     return out
 
 
-def objective_distance(sim_stats: dict, real: dict, has_pace: bool) -> float:
-    """集約統計の距離（最小化対象）。一致項＋最大化項（負）。"""
+def objective_distance(sim_stats: dict, real: dict, has_pace: bool, weights: dict | None = None) -> float:
+    """集約統計の距離（最小化対象）。一致項＋最大化項（負）。weights 省略時は既定 WEIGHTS。"""
     import numpy as np
+    w = weights or WEIGHTS
     d = 0.0
 
     def _absdiff(k):
         a, b = sim_stats.get(k), real.get(k)
         return abs(a - b) if (a is not None and b is not None and np.isfinite(a) and np.isfinite(b)) else 0.0
-    d += WEIGHTS["style_pos_match"] * _absdiff("style_pos")
-    d += WEIGHTS["draw_bias_match"] * _absdiff("draw_bias")
+    d += w["style_pos_match"] * _absdiff("style_pos")
+    d += w["draw_bias_match"] * _absdiff("draw_bias")
     if "backness" in real:
-        d += WEIGHTS["backness_match"] * _absdiff("backness")
+        d += w["backness_match"] * _absdiff("backness")
     pm = sim_stats.get("pos_direct")
     if pm is not None and np.isfinite(pm):
-        d -= WEIGHTS["pos_direct_max"] * pm
+        d -= w["pos_direct_max"] * pm
     if has_pace:
         ps = sim_stats.get("pace_shape")
         if ps is not None and np.isfinite(ps):
-            d -= WEIGHTS["pace_shape_max"] * ps
+            d -= w["pace_shape_max"] * ps
     return float(d)
 
 
@@ -111,7 +115,17 @@ def main():
     ap.add_argument("--val-min-year", type=int, default=2017)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", type=str, default="models/sim_calibration.json")
+    # 目的の重み（既定は WEIGHTS。draw_bias 過剰・天井張り付きの再調整用に個別上書き可能）
+    ap.add_argument("--w-style-pos", type=float, default=WEIGHTS["style_pos_match"])
+    ap.add_argument("--w-draw-bias", type=float, default=WEIGHTS["draw_bias_match"])
+    ap.add_argument("--w-backness", type=float, default=WEIGHTS["backness_match"])
+    ap.add_argument("--w-pos-direct", type=float, default=WEIGHTS["pos_direct_max"])
+    ap.add_argument("--w-pace-shape", type=float, default=WEIGHTS["pace_shape_max"])
     args = ap.parse_args()
+    weights = {"style_pos_match": args.w_style_pos, "draw_bias_match": args.w_draw_bias,
+               "backness_match": args.w_backness, "pos_direct_max": args.w_pos_direct,
+               "pace_shape_max": args.w_pace_shape}
+    print(f"[weights] {weights}")
 
     import numpy as np
     import pandas as pd
@@ -236,7 +250,7 @@ def main():
     def obj(trial):
         params = suggest(trial)
         st = evaluate(train_ids, real_train, make_cfg(params), seed=args.seed)
-        return objective_distance(st, R_train, has_pace=race_pace is not None)
+        return objective_distance(st, R_train, has_pace=race_pace is not None, weights=weights)
 
     sampler = optuna.samplers.TPESampler(seed=args.seed)
     study = optuna.create_study(direction="minimize", sampler=sampler)
@@ -269,7 +283,7 @@ def main():
 
     out = {"best_params": best, "top20_spread": spread,
            "train_stats": st_train, "val_stats": st_val,
-           "real_train": R_train, "real_val": R_val,
+           "real_train": R_train, "real_val": R_val, "weights": weights,
            "config": {"limit": args.limit, "n_sim": args.n_sim, "trials": args.trials,
                       "train_max_year": args.train_max_year, "val_min_year": args.val_min_year}}
     outp = Path(args.out)
