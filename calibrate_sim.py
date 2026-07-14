@@ -49,6 +49,12 @@ _NON_CFG_PARAMS = ("ability_sigma",)
 
 # 2D エンジン(SimConfig2D)用の較正パラメータ。pos_gain(位置ターゲットの強さ)は 1D+ノイズで
 # 崩せなかった過決定(style_pos)を下げうる 2D 固有 lever。swing_step は外持ち出しの機敏さ。
+#
+# 【拡張（2026-07-14）】§10-7 で style_pos(過決定)と pace形が pos_gain を介しトレードオフと判明。
+# pos_gain を潰さずに pace形/隊列を作れるか探るため、pace形を駆動する物理 knob を解放:
+#   break_speed/stamina_cost = 序盤の飛ばしと終盤の枯れ（early−late 速度差＝pace形の源）
+#   stalker_*/closer_*/switch = 脚質別の目標隊列位置と早→遅切替（隊列と展開機構の細かい制御）
+#   interf_mult = 詰まりの減速。探索次元↑＝過学習リスク、time-series val(train≈val)で監視。
 PARAM_BOUNDS_2D = {
     "turn_k": (0.0, 0.03),
     "lane_return": (0.0, 0.15),
@@ -61,6 +67,15 @@ PARAM_BOUNDS_2D = {
     "turn_gain": (0.0, 0.15),
     "noise_mult": (0.5, 3.0),
     "ability_sigma": (0.10, 0.80),
+    # ── pace形/隊列を作る物理（両立点探索のため解放）──
+    "break_speed": (0.30, 0.80),     # 発走速度（高＝序盤前傾）
+    "stamina_cost": (0.005, 0.030),  # スタミナ消費（高＝前が終盤枯れる＝pace形の源）
+    "interf_mult": (0.60, 0.95),     # 詰まって出せない時の減速
+    "switch": (0.40, 0.75),          # 脚質目標の早→遅 切替 phase
+    "stalker_early": (0.35, 0.60),   # 差しの序盤目標位置（0=先頭..1=最後方）
+    "stalker_late": (0.20, 0.45),    # 差しの終盤目標位置
+    "closer_early": (0.65, 0.95),    # 追込の序盤目標位置
+    "closer_late": (0.30, 0.60),     # 追込の終盤目標位置
 }
 
 # 目的の重み（一致項は |sim-real|、最大化項は係数付きで負に加える）。
