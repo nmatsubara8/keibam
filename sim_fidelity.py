@@ -37,6 +37,9 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--calibrated", action="store_true",
                     help="models/sim_calibration.json の best_params(較正済み物理定数)を適用して測る。")
+    ap.add_argument("--override", nargs="*", default=[], metavar="KEY=VAL",
+                    help="較正/既定パラメータを個別上書き（アブレーション用）。"
+                         "例: --override noise_mult=1.0 pos_gain=0.6")
     args = ap.parse_args()
 
     import numpy as np
@@ -96,15 +99,35 @@ def main():
               + f", ability_sigma={eff_absig:.4f}")
         return cal_params, eff_absig
 
+    def _apply_overrides(cal_params, eff_absig, cfg_cls):
+        """--override KEY=VAL を較正/既定パラメータへ上書き（アブレーション用）。
+        ability_sigma は monte_carlo 引数なので別扱い。無効キーは警告して無視。"""
+        if not args.override:
+            return cal_params, eff_absig
+        valid = {f.name for f in dataclasses.fields(cfg_cls)}
+        for kv in args.override:
+            k, _, v = kv.partition("=")
+            fv = float(v)
+            if k == "ability_sigma":
+                eff_absig = fv
+            elif k in valid:
+                cal_params[k] = fv
+            else:
+                print(f"[override] 無効なキー {k} を無視（{cfg_cls.__name__} に無い）")
+        print("[override] " + ", ".join(args.override))
+        return cal_params, eff_absig
+
     if args.engine == "2d":
         from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
         cal_params, eff_ability_sigma = _load_calibration(SimConfig2D, "sim_calibration_2d.json")
+        cal_params, eff_ability_sigma = _apply_overrides(cal_params, eff_ability_sigma, SimConfig2D)
         cfg = SimConfig2D(T=steps, dt=args.dt, **cal_params)
         run_sim = lambda fld, sd: monte_carlo_2d(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
             ability_sigma=eff_ability_sigma, track_dynamics=True)
     else:
         cal_params, eff_ability_sigma = _load_calibration(SimConfig, "sim_calibration.json")
+        cal_params, eff_ability_sigma = _apply_overrides(cal_params, eff_ability_sigma, SimConfig)
         cfg = SimConfig(T=steps, dt=args.dt, **cal_params)
         run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
