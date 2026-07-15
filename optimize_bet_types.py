@@ -25,6 +25,8 @@ def main():
     ap = argparse.ArgumentParser(description="券種別 EV パラメータの Optuna 最適化（時系列val・頑健目的）")
     ap.add_argument("--version", default=None, help="モデルバージョン（既定=最新）")
     ap.add_argument("--since-year", type=int, default=None, help="指定年以降の featured のみ使用（メモリ節約）")
+    ap.add_argument("--no-rating-features", action="store_true",
+                    help="retrain --no-rating-features のモデルと列を一致（Elo 9列を featured から除外）")
     ap.add_argument("--bet-types", nargs="*", default=None, help="対象券種（既定=最適化対象全券種）")
     ap.add_argument("--n-trials", type=int, default=60)
     ap.add_argument("--objective", default="trimmed_return_rate",
@@ -59,6 +61,16 @@ def main():
         before = len(featured)
         featured = featured[yr >= args.since_year]
         print(f"[since-year] {args.since_year}: {before:,}→{len(featured):,} 行")
+
+    # --no-rating-features: retrain --no-rating-features で学習したモデル（Elo 9列を除いた列数）と
+    # featured の列を一致させる（backtest --no-rating-features と同じ列揃え）。付けないと Elo 込み
+    # featured を Elo 抜きモデルに食わせて LightGBM の feature 数不一致で落ちる。
+    if args.no_rating_features:
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+        rating_cols = ELO_FEATURE_COLS + [f"{c}_z" for c in ELO_FEATURE_COLS]
+        present = [c for c in rating_cols if c in featured.columns]
+        featured = featured.drop(columns=present, errors="ignore")
+        print(f"[no-rating-features] Elo 由来 {len(present)} 列を除外: {present}")
 
     version = args.version
     if version is None:
