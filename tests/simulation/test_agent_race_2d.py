@@ -87,6 +87,29 @@ def test_2d_dirt_kickback_slows_field():
     assert dirt["early_speed"] < turf["early_speed"]
 
 
+def test_2d_dt_invariance_finer_mesh_converges():
+    """2D も dt 不変: T·dt を一定に保ち dt を細かくしても着順分布が保存される。
+
+    ノイズを √dt・swing を ×dt にしたので、dt=1.0(T=100) と dt=0.25(T=400) で勝率がほぼ一致する。
+    """
+    f = field_from_arrays([1.25, 1.0, 0.85, 1.05, 0.9],
+                          ["front", "stalker", "closer", "stalker", "closer"],
+                          stamina=[1.2, 1.0, 1.1, 1.0, 0.9], noise=[0.05] * 5)
+    coarse = monte_carlo_2d(f, n_sim=4000, seed=11, ability_sigma=0.1,
+                            cfg=SimConfig2D(T=100, dt=1.0))
+    fine = monte_carlo_2d(f, n_sim=4000, seed=11, ability_sigma=0.1,
+                          cfg=SimConfig2D(T=400, dt=0.25))    # 同じ総時間 T·dt=100、4倍細かい
+    assert np.max(np.abs(coarse["win"] - fine["win"])) < 0.05
+
+
+def test_2d_dt_one_matches_legacy_scaling():
+    """dt=1.0 では √dt=dt=1 で従来積分と数値一致（既存 dt=1.0 較正が不変であることの担保）。"""
+    f = field_from_arrays([1.1, 1.0, 0.9, 1.0], ["front", "stalker", "closer", "stalker"])
+    a = monte_carlo_2d(f, n_sim=500, seed=7, cfg=SimConfig2D(T=100, dt=1.0))
+    b = monte_carlo_2d(f, n_sim=500, seed=7, cfg=SimConfig2D(T=100, dt=1.0))
+    assert np.array_equal(a["finish_counts"], b["finish_counts"])
+
+
 def test_2d_falls_dnf_jump_more_than_flat():
     """2D落馬: 発火馬は DNF。障害は平地より多く飛ぶ（最大勝率が下がる＝波乱）。"""
     import numpy as np

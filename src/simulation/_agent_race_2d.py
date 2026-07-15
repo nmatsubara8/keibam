@@ -11,6 +11,10 @@
 
 忠実度検証(sim_fidelity)で 1D と比較し、(1)(3) が改善するかを測るための実装。予測でなく物理再現が目的。
 状態は (n_sim, n_horses) 配列、干渉のみ (n_sim,n,n) のペアワイズで判定する。
+
+**dt 不変**（1D と同規約）: 決定項・実走距離・スタミナ・swing・落馬確率は ×dt、加速度ノイズのみ
+Wiener 過程で ×√dt。総時間 T·dt を保存したまま dt を細かく（steps=round(T/dt)）しても集約統計が収束する。
+dt=1.0 では √dt=dt=1 なので従来値と数値一致（既存の dt=1.0 較正 `sim_calibration_2d.json` はそのまま有効）。
 """
 from __future__ import annotations
 
@@ -153,7 +157,8 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
         swing_dir = np.where(swing_dir == 0, 1.0, swing_dir)
         # 詰まった馬は外へ持ち出し(y↑)、空いていれば内ラチ(y→0)へ戻る。外を回るコストは
         # 速度ペナルティでなく下段の実走距離ロス(1−turn_k·y)で払う＝物理的に正しい距離増。
-        y = np.where(blocked, np.clip(y + swing_dir * cfg.swing_step, 0.0, 1.0),
+        # swing_step は横移動「速度」（レーン/単位時間）として ×dt＝dt 不変（dt=1.0 で従来と同値）。
+        y = np.where(blocked, np.clip(y + swing_dir * cfg.swing_step * cfg.dt, 0.0, 1.0),
                      np.clip(y - cfg.lane_return * cfg.dt, 0.0, 1.0))
         # まだ真後ろが塞がったまま(端で外へ出られない)なら減速
         boxed = blocked & ((y <= 0.001) | (y >= 0.999))
@@ -163,8 +168,11 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
             kb = np.clip(cfg.kickback_k * np.minimum(cnt, 3) / 3.0 * (1.0 + float(field.going)), 0.0, 0.9)
             v_target = v_target * (1.0 - kb)
 
-        a = (v_target - v) * cfg.accel_k + cfg.noise_mult * rng.normal(0, 1, (n_sim, n)) * noise
-        v = np.clip(v + a * cfg.dt, 0.0, None)
+        # dt 不変な時間積分: 決定項は ×dt、ノイズは Wiener 過程で ×√dt（総時間 T·dt 固定で dt を細かく
+        # しても分散が保存）。dt=1.0 では √dt=dt=1 で従来と数値一致・RNG 消費も1ステップ1ドローで不変。
+        dv_det = (v_target - v) * cfg.accel_k * cfg.dt
+        dv_noise = cfg.noise_mult * noise * np.sqrt(cfg.dt) * rng.normal(0, 1, (n_sim, n))
+        v = np.clip(v + dv_det + dv_noise, 0.0, None)
         # 実走距離ロス: 外レーン(y大)ほど縦進行が減る＝同じ速度でも距離を余計に走る（可変距離）。
         x = x + v * cfg.dt * (1.0 - cfg.turn_k * y)
         s = np.clip(s - stamina_cost_eff * v * v * cfg.dt, 0.0, None)

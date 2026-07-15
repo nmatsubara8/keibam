@@ -29,7 +29,7 @@ def main():
                     help="レース総時間（dt=1.0 換算のステップ数）。実ステップ数は round(T/dt)。")
     ap.add_argument("--dt", type=float, default=1.0,
                     help="時間刻み。細かいほど一瞬の駆け引きを解像（総時間 T·dt は保存）。"
-                         "1d エンジンは dt 不変(√dtノイズ)で収束。計算量 ∝ 1/dt。")
+                         "1d/2d 両エンジンとも dt 不変(√dtノイズ)で収束。計算量 ∝ 1/dt。")
     ap.add_argument("--ability-spread", type=float, default=0.20)
     ap.add_argument("--ability-sigma", type=float, default=0.35)
     ap.add_argument("--engine", choices=["1d", "2d"], default="1d",
@@ -133,7 +133,7 @@ def main():
             fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
             ability_sigma=eff_ability_sigma, track_dynamics=True)
     print(f"[engine] {args.engine} / dt={args.dt} / 実ステップ数={steps}（総時間 T·dt={args.T}）"
-          + ("" if args.engine == "1d" else "  ※dt不変は1dのみ（2dは近似）"))
+          "  ※1d/2d とも dt 不変（ノイズ√dt）")
     rng = np.random.default_rng(args.seed)
 
     # 収集: レース単位（sim/実ペース）と 馬単位（脚質・相対着順・序盤位置）
