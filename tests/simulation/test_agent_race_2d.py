@@ -87,6 +87,24 @@ def test_2d_dirt_kickback_slows_field():
     assert dirt["early_speed"] < turf["early_speed"]
 
 
+def test_2d_track_exotics_top3_consistent():
+    """track_exotics=True で各試行の上位3頭 index を返し、1着列は勝率最大馬と整合。"""
+    import numpy as np
+    from src.simulation._agent_race import RaceField, STYLE_STALKER
+    n = 8
+    ab = np.ones(n); ab[2] = 1.7                       # 明確な本命 idx2
+    f = RaceField(ability=ab, style=np.full(n, STYLE_STALKER),
+                  stamina=np.full(n, 2.0), noise=np.full(n, 0.02))
+    r = monte_carlo_2d(f, n_sim=1500, seed=1, ability_sigma=0.0, track_exotics=True)
+    top3 = r["top3"]
+    assert top3.shape == (1500, 3)
+    # 上位3頭は各試行で相異なる馬
+    assert all(len(set(row)) == 3 for row in top3[:50])
+    # 1着列の最頻値＝勝率最大馬（本命 idx2）
+    assert np.bincount(top3[:, 0], minlength=n).argmax() == 2
+    assert np.argmax(r["win"]) == 2
+
+
 def test_2d_dt_invariance_finer_mesh_converges():
     """2D も dt 不変: T·dt を一定に保ち dt を細かくしても着順分布が保存される。
 

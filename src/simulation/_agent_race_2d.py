@@ -82,11 +82,13 @@ def _target_position(style: np.ndarray, phase: float, cfg: SimConfig2D) -> np.nd
 
 def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None = None,
                    seed: int = 0, place_k: int = 3, ability_sigma: float = 0.35,
-                   track_dynamics: bool = False) -> dict:
+                   track_dynamics: bool = False, track_exotics: bool = False) -> dict:
     """2次元・個体別物理でモンテカルロ。返り値は _agent_race.monte_carlo と同形。
 
     track_dynamics=True で忠実度検証用の要約（early_pos_rank / early_speed / late_speed）も返す。
     early/late_speed は**発走直後の加速相を除いた**巡航区間で測る（実の前半3F/上がり3F に対応）。
+    track_exotics=True で各試行の着順上位3頭の馬 index（top3, shape (n_sim, ≤3)）を返す
+    ＝連系(馬連・3連複)の同時分布（共起依存）を実測と比較するため。
     """
     cfg = cfg or SimConfig2D()
     n = field.n
@@ -209,4 +211,9 @@ def monte_carlo_2d(field: RaceField, n_sim: int = 800, cfg: SimConfig2D | None =
         out["early_pos_rank"] = early_pos_rank.mean(axis=0)
         out["early_speed"] = float(early_v.mean() / max(e1 - e0, 1))
         out["late_speed"] = float(late_v.mean() / max(l1 - l0, 1))
+    if track_exotics:
+        # 各試行の着順（(-x) 昇順＝x 降順＝1着が先頭）。上位3頭の馬 index を返す。
+        # 落馬馬は x=-inf で自動的に末尾＝top3 に入らない。
+        order = (-x).argsort(axis=1)
+        out["top3"] = order[:, :min(3, n)].astype(int)
     return out
