@@ -170,6 +170,136 @@ def optimize_all(
     return params_map, metrics_map, all_results
 
 
+def default_bounds() -> dict:
+    """Optuna(TPE) 探索の物理prior bounds（EV閾値 × 温度 × 確率較正）。grid より連続・広い。"""
+    return {
+        "ev_threshold": (1.0, 3.0),
+        "temperature": (0.5, 2.0),
+        "prob_scale": (0.5, 1.5),
+    }
+
+
+def time_split(featured_slice: pd.DataFrame, val_frac: float = 0.3) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """race_id を時系列順（YYYY…昇順）で train/val に分割（先=train, 後=val）。
+
+    in-sample ROI 最適化は万馬券分散に過適合するため、train で最適化し val で汎化を確認する
+    ための分割。race_id は日付を先頭に持ち文字列ソートで時系列になる。
+    """
+    ids = sorted({str(r) for r in featured_slice.index})
+    if len(ids) < 2:
+        return featured_slice, featured_slice.iloc[0:0]
+    k = max(1, int(len(ids) * (1.0 - val_frac)))
+    train_ids, val_ids = set(ids[:k]), set(ids[k:])
+    idx = featured_slice.index.astype(str)
+    return featured_slice[idx.isin(train_ids)], featured_slice[idx.isin(val_ids)]
+
+
+def robust_metric(summary: dict, per_race: pd.DataFrame | None, objective: str) -> float:
+    """万馬券分散に頑健な目的値（最大化対象）。summary 空なら -inf。
+
+    - ``return_rate``         : 生回収率（参考・単一万馬券に過敏で過適合しやすい）。
+    - ``sharpe_ratio``        : 分散調整済み（単一万馬券に鈍感）。
+    - ``trimmed_return_rate`` : 最大払戻レース1本を除いた回収率（万馬券ガード・既定）。
+    """
+    if not summary:
+        return float("-inf")
+    if objective == "sharpe_ratio":
+        v = summary.get("sharpe_ratio")
+        return float(v) if v is not None else float("-inf")
+    if objective == "trimmed_return_rate":
+        if per_race is None or per_race.empty or "return_amount" not in per_race.columns:
+            v = summary.get("return_rate")
+            return float(v) if v is not None else float("-inf")
+        pr = per_race
+        if len(pr) > 1:                                   # 最大払戻レース1本を除外
+            pr = pr.drop(index=pr["return_amount"].idxmax())
+        tot = float(pr["bet_amount"].sum())
+        return float(pr["return_amount"].sum() / tot) if tot > 0 else float("-inf")
+    v = summary.get(objective)
+    return float(v) if v is not None else float("-inf")
+
+
+def optimize_bet_type_tpe(
+    ai,
+    featured_slice: pd.DataFrame,
+    return_processor,
+    bet_type: str,
+    *,
+    n_trials: int = 60,
+    bounds: dict | None = None,
+    objective: str = "trimmed_return_rate",
+    min_bets: int = 30,
+    val_frac: float = 0.3,
+    takeout: float | Mapping[str, float] = 0.2,
+    seed: int = 0,
+) -> dict:
+    """1 券種を Optuna(TPE) で最適化する（時系列 train/val・頑健目的・prob_scale 連続探索）。
+
+    規律: in-sample の生 ROI 最大化は万馬券に過適合するため、**train で頑健目的を最大化 →
+    best を val で汎化確認**し、さらに **default params の val も併記**する。判定は
+    「val_metric(最適化) が val_metric_default(既定) を out-of-sample で上回るか」で行う。
+    上回らなければ最適化は過適合＝採用しない、という negative も明示できる設計。
+
+    Returns（best が min_bets を満たさないときは best_params=None）:
+      {bet_type, best_params, objective, train_metric, val_metric, val_metric_default,
+       train_summary, val_summary, val_default_summary, n_trials, n_train_races, n_val_races}
+    """
+    import optuna
+
+    from src.policies._bet_type_params import BetTypeParams
+    from src.policies._bet_type_params import default_params
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    bd = bounds or default_bounds()
+    train, val = time_split(featured_slice, val_frac)
+    n_train = len(set(train.index.astype(str)))
+    n_val = len(set(val.index.astype(str)))
+
+    def _eval(fslice, params):
+        if fslice is None or fslice.empty:
+            return {}, None
+        return backtest_bet_type(ai, fslice, return_processor, bet_type, params, takeout)
+
+    def _obj(trial):
+        params = BetTypeParams(
+            ev_threshold=trial.suggest_float("ev_threshold", *bd["ev_threshold"]),
+            temperature=trial.suggest_float("temperature", *bd["temperature"]),
+            prob_scale=trial.suggest_float("prob_scale", *bd["prob_scale"]),
+        )
+        summary, per_race = _eval(train, params)
+        if not summary or summary.get("n_bets", 0) < min_bets:
+            return -1e9                                   # 賭け不足は強く忌避
+        return robust_metric(summary, per_race, objective)
+
+    study = optuna.create_study(
+        direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed))
+    study.optimize(_obj, n_trials=n_trials, show_progress_bar=False)
+
+    base = {"bet_type": bet_type, "objective": objective, "n_trials": n_trials,
+            "n_train_races": n_train, "n_val_races": n_val}
+    if not study.best_trial or study.best_value <= -1e9:
+        return {**base, "best_params": None}              # min_bets を満たす点が無かった
+
+    bp = BetTypeParams(
+        ev_threshold=study.best_params["ev_threshold"],
+        temperature=study.best_params["temperature"],
+        prob_scale=study.best_params["prob_scale"],
+    )
+    tr_s, tr_pr = _eval(train, bp)
+    va_s, va_pr = _eval(val, bp)
+    vd_s, vd_pr = _eval(val, default_params(bet_type))
+    return {
+        **base,
+        "best_params": bp,
+        "train_metric": robust_metric(tr_s, tr_pr, objective),
+        "val_metric": robust_metric(va_s, va_pr, objective),
+        "val_metric_default": robust_metric(vd_s, vd_pr, objective),
+        "train_summary": tr_s,
+        "val_summary": va_s,
+        "val_default_summary": vd_s,
+    }
+
+
 def results_to_frame(optimize_result: dict) -> pd.DataFrame:
     """optimize_bet_type の results を比較表に整形する（objective 降順）。"""
     rows = []

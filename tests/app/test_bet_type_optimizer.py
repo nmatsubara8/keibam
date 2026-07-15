@@ -177,3 +177,81 @@ def test_optimize_all_smoke():
 def test_default_grid_shape():
     g = default_grid()
     assert g["ev_thresholds"] and g["temperatures"]
+
+
+# --- Phase 2: Optuna(TPE) 規律版（時系列 train/val・頑健目的・prob_scale 連続探索）---
+
+class _SliceAwareAI:
+    """calc_score が featured_slice の race_id に対応する行だけ返す（train/val 分離を尊重）。"""
+
+    def __init__(self, table: pd.DataFrame) -> None:
+        self._table = table
+
+    def calc_score(self, X, policy):  # noqa: ANN001
+        if X is None or len(X) == 0:
+            return self._table
+        ids = set(X.index.astype(str))
+        return self._table[self._table.index.astype(str).isin(ids)]
+
+
+def _featured_index(n_races=25) -> pd.DataFrame:
+    """race_id を index に持つダミー featured（time_split 用・順序は race_id で時系列）。"""
+    ids = [str(202601010000 + r) for r in range(n_races)]
+    df = pd.DataFrame({"_dummy": range(n_races)}, index=ids)
+    df.index.name = "race_id"
+    return df
+
+
+def test_time_split_chronological_disjoint():
+    from app._bet_type_optimizer import time_split
+    feat = _featured_index(20).sample(frac=1.0, random_state=1)   # 入力順シャッフル
+    train, val = time_split(feat, val_frac=0.3)
+    tr_ids = sorted(train.index.astype(str))
+    va_ids = sorted(val.index.astype(str))
+    assert set(tr_ids).isdisjoint(va_ids)                          # 重複なし
+    assert len(tr_ids) + len(va_ids) == 20
+    assert max(tr_ids) < min(va_ids)                               # train は val より前（時系列）
+
+
+def test_robust_metric_trimmed_drops_jackpot():
+    from app._bet_type_optimizer import robust_metric
+    per_race = pd.DataFrame(
+        {"n_bets": [1, 1, 1, 1], "bet_amount": [1, 1, 1, 1],
+         "return_amount": [0, 0, 0, 100], "hit_or_not": [0, 0, 0, 1]},
+        index=["r1", "r2", "r3", "r4"],
+    )
+    summary = {"return_rate": 25.0, "sharpe_ratio": 0.5, "n_bets": 4}
+    assert robust_metric(summary, per_race, "return_rate") == 25.0        # 生は万馬券込み
+    assert robust_metric(summary, per_race, "trimmed_return_rate") == 0.0  # 最大払戻1本除外→0
+    assert robust_metric(summary, per_race, "sharpe_ratio") == 0.5
+    assert robust_metric({}, per_race, "return_rate") == float("-inf")     # 空 summary
+
+
+def test_optimize_bet_type_tpe_reports_generalization():
+    from app._bet_type_optimizer import optimize_bet_type_tpe
+    ai = _SliceAwareAI(_ev_score_table(25))
+    rp = _return_tables(25)
+    res = optimize_bet_type_tpe(
+        ai, _featured_index(25), rp, BetType.UMAREN,
+        n_trials=6, bounds={"ev_threshold": (1.0, 1.2), "temperature": (0.8, 1.2),
+                            "prob_scale": (0.9, 1.1)},
+        objective="trimmed_return_rate", min_bets=1, val_frac=0.3, seed=0,
+    )
+    assert res["bet_type"] == BetType.UMAREN
+    assert isinstance(res["best_params"], BetTypeParams)
+    # 汎化判定に必要な val 系フィールドが揃う（最適化 vs 既定を out-of-sample で比較できる）
+    for k in ("train_metric", "val_metric", "val_metric_default", "n_train_races", "n_val_races"):
+        assert k in res
+    assert res["n_train_races"] + res["n_val_races"] == 25
+    assert res["n_val_races"] > 0
+
+
+def test_optimize_bet_type_tpe_min_bets_unmet_returns_none():
+    from app._bet_type_optimizer import optimize_bet_type_tpe
+    ai = _SliceAwareAI(_ev_score_table(25))
+    rp = _return_tables(25)
+    res = optimize_bet_type_tpe(
+        ai, _featured_index(25), rp, BetType.UMAREN,
+        n_trials=4, min_bets=10_000, seed=0,      # 到底満たせない
+    )
+    assert res["best_params"] is None
