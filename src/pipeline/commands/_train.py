@@ -106,6 +106,18 @@ def _retrain(args: argparse.Namespace) -> None:
             logger.error("[retrain] 除外後の学習データが空です（holdout-years が広すぎ）")
             return
 
+    # --since-year: 指定年以降の行だけで学習（メモリ/時間節約・A/B 検証用）。全40年 177万行が
+    # メモリに載らない環境で、直近数年に絞って Elo 有無等の A/B を回すための行数上限。
+    since_year = getattr(args, "since_year", None)
+    if since_year:
+        before = len(featured_data)
+        yr = pd.to_numeric(featured_data.index.astype(str).str[:4], errors="coerce")
+        featured_data = featured_data[yr >= since_year]
+        logger.info("[retrain] --since-year %d: 直近のみで学習 %d→%d 行", since_year, before, len(featured_data))
+        if featured_data.empty:
+            logger.error("[retrain] --since-year 後の学習データが空です（年が新しすぎ/race_id 形式不一致）")
+            return
+
     # --no-odds-features: オッズ由来の派生特徴（単勝_log・市場歪み overlay 等）を学習から
     # 除外する。マーケット・エコー検証（r̂ が市場の写しでないかの A/B）用。Place/Win 両ヘッドに
     # 適用される（この時点では DataFrame なので prepared_from_gbdt 変換の前に落とす）。

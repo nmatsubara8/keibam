@@ -64,6 +64,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
         help="指定年を学習から除外（out-of-sample 評価用）。例: --holdout-years 2025 → backtest --years 2025",
     )
     retrain_p.add_argument(
+        "--since-year", type=int, default=None, metavar="YYYY",
+        help="指定年以降の行だけで学習（メモリ/時間節約・A/B 用）。例: --since-year 2016 で直近のみ。"
+             "全40年がメモリに載らない環境で Elo 有無等の A/B を回すための行数上限。",
+    )
+    retrain_p.add_argument(
         "--params-rank",
         type=int,
         default=None,
