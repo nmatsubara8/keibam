@@ -325,6 +325,9 @@ def optimize_bet_type_tpe(
         "train_metric": robust_metric(tr_s, tr_pr, objective),
         "val_metric": robust_metric(va_s, va_pr, objective),
         "val_metric_default": robust_metric(vd_s, vd_pr, objective),
+        "train_n_bets": int(tr_s.get("n_bets", 0)),
+        "val_n_bets": int(va_s.get("n_bets", 0)),        # val 買い目数（希薄なら val 指標は不信）
+        "val_default_n_bets": int(vd_s.get("n_bets", 0)),
         "train_summary": tr_s,
         "val_summary": va_s,
         "val_default_summary": vd_s,

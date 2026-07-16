@@ -87,11 +87,12 @@ def main():
     targets = args.bet_types or list(OPTIMIZABLE_BET_TYPES)
     print(f"[model] {version} / objective={args.objective} / n_trials={args.n_trials} / "
           f"min_bets={args.min_bets} / val_frac={args.val_frac}")
-    print("=" * 84)
-    print("規律: val(最適化) が val(既定) を out-of-sample で上回った券種のみ採用（他は既定に据置）")
-    print("-" * 84)
-    print(f"{'券種':<8}{'train':>10}{'val(最適)':>12}{'val(既定)':>12}{'Δval':>9}  採用  best(ev/temp/scale)")
-    print("-" * 84)
+    print("=" * 96)
+    print("規律: val で①既定を上回り かつ ②買い目が min_bets 以上（希薄=不信）の券種のみ採用")
+    print("-" * 96)
+    print(f"{'券種':<8}{'train':>9}{'val(最適)':>11}{'val(既定)':>11}{'Δval':>8}"
+          f"{'val買い目':>9}{'既定買い目':>10}  採用  best(ev/temp/scale)")
+    print("-" * 96)
 
     params_map: dict = {}
     metrics_map: dict = {}
@@ -107,23 +108,27 @@ def main():
         if bp is None:
             params_map[bt] = default_params(bt)
             metrics_map[bt] = {}
-            print(f"{label:<8}{'—':>10}{'—':>12}{'—':>12}{'—':>9}  既定  (min_bets 未達で探索不成立)")
+            print(f"{label:<8}{'—':>9}{'—':>11}{'—':>11}{'—':>8}{'—':>9}{'—':>10}  既定  (min_bets 未達で探索不成立)")
             continue
         tr, vo, vd = res["train_metric"], res["val_metric"], res["val_metric_default"]
-        beats = vo > vd                                  # out-of-sample で既定超えか
-        mark = "✓採用" if beats else "×既定"
+        vn, dn = res["val_n_bets"], res["val_default_n_bets"]
+        # 採用条件: val で既定超え かつ val 買い目が min_bets 以上（希薄な val 指標は信用しない）
+        enough = vn >= args.min_bets
+        beats = (vo > vd) and enough
+        mark = "✓採用" if beats else ("×希薄" if not enough else "×既定")
         if beats:
             params_map[bt] = bp
             adopted += 1
         else:
-            params_map[bt] = default_params(bt)          # 過適合＝既定に戻す
+            params_map[bt] = default_params(bt)          # 過適合/希薄＝既定に戻す
         metrics_map[bt] = res.get("val_summary", {})
-        print(f"{label:<8}{tr:>10.3f}{vo:>12.3f}{vd:>12.3f}{vo - vd:>+9.3f}  {mark}  "
+        print(f"{label:<8}{tr:>9.3f}{vo:>11.3f}{vd:>11.3f}{vo - vd:>+8.3f}{vn:>9d}{dn:>10d}  {mark}  "
               f"({bp.ev_threshold:.2f}/{bp.temperature:.2f}/{bp.prob_scale:.2f})")
 
-    print("-" * 84)
-    print(f"採用 {adopted}/{len(targets)} 券種（val で既定を上回ったもののみ）。"
+    print("-" * 96)
+    print(f"採用 {adopted}/{len(targets)} 券種（val で既定超え かつ 買い目 ≥{args.min_bets}）。"
           "0 なら『最適化は out-of-sample で効かず＝過適合』が結論。")
+    print("※ ×希薄=val 買い目が少なく指標が退化（0.000 等）＝判定不能。val 数値が窓/seed で暴れるのも過適合の兆候。")
     print(f"※目的={args.objective}・val は held-out。市場エッジの話ではなくリスク管理（買い目選別）の最適化。")
     if args.save:
         path = bet_type_params_path("models")

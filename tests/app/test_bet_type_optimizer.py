@@ -240,7 +240,8 @@ def test_optimize_bet_type_tpe_reports_generalization():
     assert res["bet_type"] == BetType.UMAREN
     assert isinstance(res["best_params"], BetTypeParams)
     # 汎化判定に必要な val 系フィールドが揃う（最適化 vs 既定を out-of-sample で比較できる）
-    for k in ("train_metric", "val_metric", "val_metric_default", "n_train_races", "n_val_races"):
+    for k in ("train_metric", "val_metric", "val_metric_default", "n_train_races", "n_val_races",
+              "val_n_bets", "val_default_n_bets"):
         assert k in res
     assert res["n_train_races"] + res["n_val_races"] == 25
     assert res["n_val_races"] > 0
