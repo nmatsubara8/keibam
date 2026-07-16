@@ -19,13 +19,70 @@ from src.constants._local_paths import LocalPaths
 from src.preparing.odds_scheduler import load_snapshots
 
 
+def diag_db() -> None:
+    """DB `raw_odds_snapshots` を直読みし、captured_at 単位の真の時系列を診断する。
+
+    pickle は (race_id, bet_type, combo, **phase**) で dedup するため、同一レースを
+    同一 phase 内で複数回取得しても最新1件へ潰れる（＝時間解像度を失う）。一方 DB は
+    主キーに **captured_at** を含むため取得時刻ごとの全行が残る。ユーザーの言う
+    「蓄積されたデータ」から軌跡を復元できるかは、ここ（DB の captured_at 粒度）で決まる。
+    """
+    import pandas as pd
+    from sqlalchemy import text
+
+    from src.storage._db import get_engine
+
+    try:
+        eng = get_engine()
+        with eng.connect() as conn:
+            has = conn.execute(text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_odds_snapshots'"
+            )).fetchone()
+            if not has:
+                print("\n[DB] raw_odds_snapshots テーブル無し（このマシンで DB 未生成）。")
+                return
+            df = pd.read_sql("SELECT race_id, captured_at, bet_type FROM raw_odds_snapshots", conn)
+    except Exception as e:  # noqa: BLE001
+        print(f"\n[DB] 読込失敗（非致命）: {e}")
+        return
+
+    print(f"\n{'='*60}\n[DB raw_odds_snapshots] 行数 = {len(df):,}")
+    if df.empty:
+        print("→ DB も空。pickle と同様、蓄積そのものが無い。")
+        return
+
+    df["captured_at"] = pd.to_datetime(df["captured_at"], errors="coerce", utc=False)
+    # レースごとの「異なる取得時刻」の数と広がり（phase 非依存・生 captured_at）。
+    g = df.groupby("race_id")["captured_at"]
+    ndistinct = g.nunique()
+    span_min = (g.max() - g.min()).dt.total_seconds() / 60.0
+    nd = sorted(ndistinct.tolist())
+    n = len(nd)
+    print(f"レース数 = {n:,}")
+    print(f"異なる captured_at 数/レース: min={nd[0]} p50={nd[n//2]} p90={nd[min(n-1, 9*n//10)]} max={nd[-1]}")
+    for k in (2, 3, 5):
+        c = int((ndistinct >= k).sum())
+        print(f"  captured_at が {k}種類以上のレース = {c:,} / {n:,}（={c/n:.1%}）")
+    sp = sorted(span_min.dropna().tolist())
+    if sp:
+        m = len(sp)
+        print(f"取得時刻の広がり span(分): min={sp[0]:.1f} p50={sp[m//2]:.1f} "
+              f"p90={sp[min(m-1, 9*m//10)]:.1f} max={sp[-1]:.1f}")
+        for thr in (5.0, 10.0, 30.0):
+            c = sum(1 for s in sp if s >= thr)
+            print(f"  span ≥ {thr:>4.0f}分 のレース = {c:,} / {m:,}（={c/m:.1%}: 早→遅の軌跡を復元できる候補）")
+    print("→ captured_at が2種類以上 & span が十分なレースがあれば、pickle が潰した軌跡を")
+    print("  DB から復元し、post_time で phase を振り直して評価データを生成できる（＝ユーザー仮説が成立）。")
+
+
 def main() -> None:
     path = LocalPaths.RAW_ODDS_SNAPSHOT_PATH
     snaps = load_snapshots(path)
     print(f"path = {path}")
     print(f"total snapshots = {len(snaps):,}")
     if not snaps:
-        print("→ 空。cron の保存先がこのパスと違う可能性（別マシン/別 RAW_DIR）。")
+        print("→ pickle は空（phase dedup 済みのビュー）。真の時系列は DB を見る。")
+        diag_db()
         return
 
     caps = [s.captured_at for s in snaps if s.captured_at is not None]
@@ -80,6 +137,9 @@ def main() -> None:
     print("\n例（先頭5レースの位相内訳）:")
     for rid, phs in list(all_rp.items())[:5]:
         print(f"  {rid}: {sorted(phs)}")
+
+    # pickle は phase 単位で dedup 済み。真の時系列は DB（captured_at 粒度）にある。
+    diag_db()
 
 
 if __name__ == "__main__":
