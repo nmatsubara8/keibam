@@ -18,11 +18,14 @@
     # 起動日時・時刻を制御（早めに常駐させ 9:30 開始・16:30 自動終了）:
     python -m src.pipeline.odds_watch --loop --start-at 09:30 --stop-at 16:30
     python -m src.pipeline.odds_watch --loop --start-at 2026-07-20T09:30 --stop-at 2026-07-20T16:30
+    # 連休など複数開催日を事前予約（各日 start まで待って stop まで取得し順に実行）:
+    python -m src.pipeline.odds_watch --schedule configs/odds_watch_schedule.example.json
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import logging
 import os
@@ -420,6 +423,113 @@ def should_stop(stop_at: dt.datetime | None, now: dt.datetime) -> bool:
     return stop_at is not None and now >= stop_at
 
 
+# ---------------------------------------------------------------------------
+# 複数開催日の起動予定（連休対応スケジュール）
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class CaptureSession:
+    """スケジュール中の1開催日: date_str(YYYYMMDD) と当日の取得開始/終了 datetime。"""
+
+    date_str: str
+    start: dt.datetime
+    stop: dt.datetime
+
+
+def _parse_session_time(date_str: str, value: str) -> dt.datetime:
+    """セッションの時刻文字列を datetime へ。ISO 完全形はそのまま、'HH:MM' は当該日の時刻。"""
+    value = value.strip()
+    try:
+        return dt.datetime.fromisoformat(value)  # 日付込み ISO（"2026-07-20T09:30"）
+    except ValueError:
+        base = dt.datetime.strptime(date_str, "%Y%m%d")
+        hh, mm = value.split(":")
+        return base.replace(hour=int(hh), minute=int(mm))
+
+
+def parse_schedule(data: dict) -> tuple[list[CaptureSession], int | None]:
+    """スケジュール dict を (sessions, interval) へ検証しつつ変換する（純粋関数）。
+
+    形式: ``{"interval": 120, "sessions": [{"date":"2026-07-20","start":"09:30","stop":"16:30"}, ...]}``
+    date は "YYYY-MM-DD" / "YYYYMMDD" 両対応、start/stop は当日 'HH:MM' か ISO 完全形。
+    stop ≤ start や日付不正は ValueError。sessions は start 昇順で返す。
+    """
+    raw = data.get("sessions")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("schedule に 'sessions' 配列がありません")
+    sessions: list[CaptureSession] = []
+    for i, e in enumerate(raw):
+        date_str = str(e["date"]).replace("-", "")
+        if len(date_str) != 8 or not date_str.isdigit():
+            raise ValueError(f"sessions[{i}].date は YYYY-MM-DD か YYYYMMDD: {e['date']!r}")
+        start = _parse_session_time(date_str, str(e["start"]))
+        stop = _parse_session_time(date_str, str(e["stop"]))
+        if stop <= start:
+            raise ValueError(f"sessions[{i}]: stop({stop}) は start({start}) より後にしてください")
+        sessions.append(CaptureSession(date_str, start, stop))
+    sessions.sort(key=lambda s: s.start)
+    interval = data.get("interval")
+    return sessions, (int(interval) if interval is not None else None)
+
+
+def load_schedule(path: str) -> tuple[list[CaptureSession], int | None]:
+    """スケジュール JSON を読み込んで parse_schedule に委譲する。"""
+    import json
+
+    with open(path, encoding="utf-8") as f:
+        return parse_schedule(json.load(f))
+
+
+def pending_sessions(sessions: list[CaptureSession], now: dt.datetime) -> list[CaptureSession]:
+    """まだ終わっていない（stop > now）セッションを start 昇順で返す（純粋関数）。
+
+    既に終了時刻を過ぎた過去の開催日は自動的に読み飛ばす。連休の途中から起動しても、
+    残りの開催日だけを順に実行できる。
+    """
+    return [s for s in sorted(sessions, key=lambda s: s.start) if s.stop > now]
+
+
+def _run_capture_window(
+    source,
+    date_str: str | None,
+    start_at: dt.datetime | None,
+    stop_at: dt.datetime | None,
+    interval: int,
+) -> None:
+    """1つの取得ウィンドウを実行する（start_at まで待機 → stop_at まで interval おきに取得）。
+
+    --loop（単一ウィンドウ）と --schedule（連休の各開催日）の共通実行部。
+    """
+    delay = wait_seconds(start_at, dt.datetime.now())
+    if delay > 0:
+        logger.info("[odds_watch] 開始待機: %s まで %.0f 秒スリープ", start_at, delay)
+        time.sleep(delay)
+    logger.info(
+        "[odds_watch] 取得開始 date=%s (interval=%ds%s)",
+        date_str or "today", interval, f" / 終了予定 {stop_at}" if stop_at else "",
+    )
+    # 締切確定レースをティック間で保持し、確定後は再取得しない（当日分の早期停止）。
+    confirmed: set[str] = set()
+    last_date: str | None = None
+    while True:
+        if should_stop(stop_at, dt.datetime.now()):
+            logger.info("[odds_watch] 終了時刻 %s に到達 → ウィンドウ終了（正常）", stop_at)
+            break
+        today = date_str or dt.datetime.now().strftime("%Y%m%d")
+        if today != last_date:
+            confirmed = set()  # 日付が変わったら確定集合をリセット
+            last_date = today
+        result = run_once(source, date_str=date_str, confirmed=confirmed)
+        logger.info("[odds_watch] %s", result)
+        # 各ティックで蓄積を自己点検し、単一時刻化（=軌跡が作れない）を即警告する。
+        check_capture_health(date_str=date_str)
+        if should_stop(stop_at, dt.datetime.now()):
+            logger.info("[odds_watch] 終了時刻 %s に到達 → ウィンドウ終了（正常）", stop_at)
+            break
+        time.sleep(interval)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     from src.constants._bet_types import BetType
     from src.constants._logging_config import setup_logging
@@ -439,6 +549,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--stop-at", default=None,
         help="--loop 終了時刻。この時刻に達したらループを抜けて正常終了する（ISO or 当日 'HH:MM'）",
+    )
+    parser.add_argument(
+        "--schedule", default=None,
+        help="連休など複数開催日の起動予定 JSON。各開催日を start まで待って stop まで取得し順に実行する"
+             "（例 configs/odds_watch_schedule.example.json）",
     )
     parser.add_argument(
         "--status", action="store_true",
@@ -466,35 +581,24 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     source = create_odds_source(args.source)
     try:
-        if args.loop:
-            # --start-at: 指定時刻まで待ってから取得を開始する（早く起動しておいて定刻発火）。
-            delay = wait_seconds(start_at, dt.datetime.now())
-            if delay > 0:
-                logger.info("[odds_watch] 開始待機: %s まで %.0f 秒スリープ", start_at, delay)
-                time.sleep(delay)
+        if args.schedule:
+            # 連休など複数開催日の起動予定。過去日を読み飛ばし、残りを start→stop 順に実行する。
+            sessions, sched_interval = load_schedule(args.schedule)
+            interval = sched_interval or args.interval
+            pend = pending_sessions(sessions, dt.datetime.now())
+            if not pend:
+                logger.info("[odds_watch] スケジュールに未実施の開催日がありません（全て終了時刻を経過）")
+                return
             logger.info(
-                "[odds_watch] 常駐モード開始 (interval=%ds%s)",
-                args.interval, f" / 終了予定 {stop_at}" if stop_at else "",
+                "[odds_watch] スケジュール: %d 開催日を実行予定 %s",
+                len(pend),
+                [f"{s.date_str} {s.start:%H:%M}-{s.stop:%H:%M}" for s in pend],
             )
-            # 締切確定レースをティック間で保持し、確定後は再取得しない（当日分の早期停止）。
-            confirmed: set[str] = set()
-            last_date: str | None = None
-            while True:
-                if should_stop(stop_at, dt.datetime.now()):
-                    logger.info("[odds_watch] 終了時刻 %s に到達 → ループ終了（正常）", stop_at)
-                    break
-                today = args.date or dt.datetime.now().strftime("%Y%m%d")
-                if today != last_date:
-                    confirmed = set()  # 日付が変わったら確定集合をリセット
-                    last_date = today
-                result = run_once(source, date_str=args.date, confirmed=confirmed)
-                logger.info("[odds_watch] %s", result)
-                # 各ティックで蓄積を自己点検し、単一時刻化（=軌跡が作れない）を即警告する。
-                check_capture_health(date_str=args.date)
-                if should_stop(stop_at, dt.datetime.now()):
-                    logger.info("[odds_watch] 終了時刻 %s に到達 → ループ終了（正常）", stop_at)
-                    break
-                time.sleep(args.interval)
+            for s in pend:
+                _run_capture_window(source, s.date_str, s.start, s.stop, interval)
+            logger.info("[odds_watch] スケジュール完了（全 %d 開催日）", len(pend))
+        elif args.loop:
+            _run_capture_window(source, args.date, start_at, stop_at, args.interval)
         else:
             result = run_once(source, date_str=args.date)
             logger.info("[odds_watch] %s", result)

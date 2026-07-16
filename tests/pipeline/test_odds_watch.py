@@ -243,6 +243,62 @@ class TestSchedule:
         assert should_stop(None, dt.datetime(2026, 7, 20, 23, 59)) is False  # 未指定→無期限
 
 
+class TestSchedule:
+    """連休対応の複数開催日スケジュール（parse_schedule / pending_sessions）。"""
+
+    def _data(self):
+        return {
+            "interval": 90,
+            "sessions": [
+                # 意図的に日付逆順で渡し、start 昇順ソートを確認する
+                {"date": "2026-07-20", "start": "09:20", "stop": "16:40"},
+                {"date": "2026-07-18", "start": "09:20", "stop": "16:40"},
+                {"date": "2026-07-19", "start": "2026-07-19T09:20", "stop": "16:40"},
+            ],
+        }
+
+    def test_parse_schedule_sorts_and_reads_interval(self):
+        from src.pipeline.odds_watch import parse_schedule
+
+        sessions, interval = parse_schedule(self._data())
+        assert interval == 90
+        assert [s.date_str for s in sessions] == ["20260718", "20260719", "20260720"]
+        # 'HH:MM' も ISO 完全形も同じ datetime に解決される
+        assert sessions[1].start == dt.datetime(2026, 7, 19, 9, 20)
+        assert sessions[1].stop == dt.datetime(2026, 7, 19, 16, 40)
+
+    def test_parse_schedule_rejects_bad_date_and_range(self):
+        from src.pipeline.odds_watch import parse_schedule
+
+        with pytest.raises(ValueError):
+            parse_schedule({"sessions": [{"date": "2026-7-20", "start": "09:00", "stop": "16:00"}]})
+        with pytest.raises(ValueError):  # stop <= start
+            parse_schedule({"sessions": [{"date": "20260720", "start": "16:00", "stop": "09:00"}]})
+        with pytest.raises(ValueError):  # sessions 空
+            parse_schedule({"sessions": []})
+
+    def test_pending_skips_past_days(self):
+        from src.pipeline.odds_watch import parse_schedule, pending_sessions
+
+        sessions, _ = parse_schedule(self._data())
+        # 7/19 の途中で起動 → 7/18 は済み・7/19,7/20 が残る
+        now = dt.datetime(2026, 7, 19, 12, 0)
+        pend = pending_sessions(sessions, now)
+        assert [s.date_str for s in pend] == ["20260719", "20260720"]
+        # 全日程後は空
+        assert pending_sessions(sessions, dt.datetime(2026, 7, 21, 0, 0)) == []
+
+    def test_load_schedule_roundtrip(self, tmp_path):
+        import json
+
+        from src.pipeline.odds_watch import load_schedule
+
+        p = tmp_path / "sched.json"
+        p.write_text(json.dumps(self._data()), encoding="utf-8")
+        sessions, interval = load_schedule(str(p))
+        assert interval == 90 and len(sessions) == 3
+
+
 class TestRunOnce:
     def test_full_cycle_with_stub_source(self, tmp_path, monkeypatch):
         """スタブソースで 取得 → 永続化 → 再計算 → 予測保存 の 1 サイクルを検証。"""

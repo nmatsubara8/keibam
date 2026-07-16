@@ -17,6 +17,9 @@
 #   ODDS_WATCH_ARGS='--start-at 09:30 --stop-at 16:30' tmux new -d -s odds 'scripts/odds_watch_loop.sh'
 #   # 特定日を指定（前夜から起動しておく）
 #   ODDS_WATCH_ARGS='--start-at 2026-07-20T09:30 --stop-at 2026-07-20T16:30' scripts/odds_watch_loop.sh
+#   # 連休など複数開催日を事前予約（JSON に各日 start/stop を書いて一度起動するだけ）
+#   ODDS_WATCH_ARGS='--schedule configs/odds_watch_schedule.example.json' \
+#     tmux new -d -s odds 'scripts/odds_watch_loop.sh'
 #
 # 環境変数:
 #   ODDS_WATCH_INTERVAL  取得間隔秒（既定 120）。発走30分前から2分おきに取得する。
