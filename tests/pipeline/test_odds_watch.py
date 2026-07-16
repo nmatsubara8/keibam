@@ -213,6 +213,36 @@ class TestStatusSummary:
         assert "⚠" in rep and "r2" in rep and "単一ティック" in rep
 
 
+class TestSchedule:
+    """--start-at / --stop-at の起動・終了スケジュール（純粋ロジック）。"""
+
+    def test_parse_when_iso_and_time_only(self):
+        from src.pipeline.odds_watch import parse_when
+
+        now = dt.datetime(2026, 7, 20, 8, 0)
+        assert parse_when("2026-07-21T09:30", now) == dt.datetime(2026, 7, 21, 9, 30)
+        assert parse_when("2026-07-20 16:30", now) == dt.datetime(2026, 7, 20, 16, 30)
+        # 'HH:MM' は now の当日そのままの時刻（秒以下は切り捨て）
+        assert parse_when("09:30", now) == dt.datetime(2026, 7, 20, 9, 30)
+
+    def test_wait_seconds_future_past_none(self):
+        from src.pipeline.odds_watch import wait_seconds
+
+        now = dt.datetime(2026, 7, 20, 9, 0)
+        assert wait_seconds(dt.datetime(2026, 7, 20, 9, 30), now) == 1800.0  # 30分後
+        assert wait_seconds(dt.datetime(2026, 7, 20, 8, 30), now) == 0.0      # 過去→即時
+        assert wait_seconds(None, now) == 0.0                                 # 未指定→即時
+
+    def test_should_stop_boundary_and_none(self):
+        from src.pipeline.odds_watch import should_stop
+
+        stop = dt.datetime(2026, 7, 20, 16, 30)
+        assert should_stop(stop, dt.datetime(2026, 7, 20, 16, 29)) is False
+        assert should_stop(stop, dt.datetime(2026, 7, 20, 16, 30)) is True   # 境界は停止
+        assert should_stop(stop, dt.datetime(2026, 7, 20, 16, 31)) is True
+        assert should_stop(None, dt.datetime(2026, 7, 20, 23, 59)) is False  # 未指定→無期限
+
+
 class TestRunOnce:
     def test_full_cycle_with_stub_source(self, tmp_path, monkeypatch):
         """スタブソースで 取得 → 永続化 → 再計算 → 予測保存 の 1 サイクルを検証。"""

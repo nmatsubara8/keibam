@@ -15,6 +15,9 @@
     python -m src.pipeline.odds_watch --once                # 1 サイクル（cron 用）
     python -m src.pipeline.odds_watch --loop --interval 180 # 常駐（3分おき）
     python -m src.pipeline.odds_watch --once --source jravan
+    # 起動日時・時刻を制御（早めに常駐させ 9:30 開始・16:30 自動終了）:
+    python -m src.pipeline.odds_watch --loop --start-at 09:30 --stop-at 16:30
+    python -m src.pipeline.odds_watch --loop --start-at 2026-07-20T09:30 --stop-at 2026-07-20T16:30
 """
 
 from __future__ import annotations
@@ -390,6 +393,33 @@ def check_capture_health(
     return stuck
 
 
+def parse_when(value: str, now: dt.datetime) -> dt.datetime:
+    """--start-at / --stop-at の文字列を datetime へ変換する（純粋関数）。
+
+    受理する形式: ISO 完全形（"2026-07-20T09:00" / "2026-07-20 09:00"）または
+    "HH:MM"（＝当日のその時刻）。曜日や相対指定は扱わない（曖昧さ回避）。
+    """
+    value = value.strip()
+    try:
+        return dt.datetime.fromisoformat(value)
+    except ValueError:
+        pass
+    hh, mm = value.split(":")
+    return now.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+
+
+def wait_seconds(start_at: dt.datetime | None, now: dt.datetime) -> float:
+    """start_at まで待機すべき秒数（未指定・過去なら 0）。純粋関数。"""
+    if start_at is None:
+        return 0.0
+    return max(0.0, (start_at - now).total_seconds())
+
+
+def should_stop(stop_at: dt.datetime | None, now: dt.datetime) -> bool:
+    """stop_at 以降に達したか（未指定なら常に False＝無期限）。純粋関数。"""
+    return stop_at is not None and now >= stop_at
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     from src.constants._bet_types import BetType
     from src.constants._logging_config import setup_logging
@@ -402,6 +432,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--once", action="store_true", help="1 サイクルだけ実行（cron 用）")
     parser.add_argument("--loop", action="store_true", help="常駐ループ実行")
     parser.add_argument("--interval", type=int, default=120, help="--loop 時の実行間隔（秒）")
+    parser.add_argument(
+        "--start-at", default=None,
+        help="--loop 開始時刻。この時刻まで待ってから取得を始める（ISO 'YYYY-MM-DDTHH:MM' or 当日 'HH:MM'）",
+    )
+    parser.add_argument(
+        "--stop-at", default=None,
+        help="--loop 終了時刻。この時刻に達したらループを抜けて正常終了する（ISO or 当日 'HH:MM'）",
+    )
     parser.add_argument(
         "--status", action="store_true",
         help="本日（or --date）の取得状況をレース単位で一覧表示して終了（取得・ネットワークなし）",
@@ -420,14 +458,31 @@ def main(argv: Sequence[str] | None = None) -> None:
         check_capture_health(date_str=on_date)
         return
 
+    # 開始/終了スケジュール（--loop 時のみ有効）。cron 不安定な環境でもアプリ内で
+    # 「いつ起動し・いつ止めるか」を確定させる。now は解釈基準（当日 'HH:MM' 用）。
+    _now0 = dt.datetime.now()
+    start_at = parse_when(args.start_at, _now0) if args.start_at else None
+    stop_at = parse_when(args.stop_at, _now0) if args.stop_at else None
+
     source = create_odds_source(args.source)
     try:
         if args.loop:
-            logger.info("[odds_watch] 常駐モード開始 (interval=%ds)", args.interval)
+            # --start-at: 指定時刻まで待ってから取得を開始する（早く起動しておいて定刻発火）。
+            delay = wait_seconds(start_at, dt.datetime.now())
+            if delay > 0:
+                logger.info("[odds_watch] 開始待機: %s まで %.0f 秒スリープ", start_at, delay)
+                time.sleep(delay)
+            logger.info(
+                "[odds_watch] 常駐モード開始 (interval=%ds%s)",
+                args.interval, f" / 終了予定 {stop_at}" if stop_at else "",
+            )
             # 締切確定レースをティック間で保持し、確定後は再取得しない（当日分の早期停止）。
             confirmed: set[str] = set()
             last_date: str | None = None
             while True:
+                if should_stop(stop_at, dt.datetime.now()):
+                    logger.info("[odds_watch] 終了時刻 %s に到達 → ループ終了（正常）", stop_at)
+                    break
                 today = args.date or dt.datetime.now().strftime("%Y%m%d")
                 if today != last_date:
                     confirmed = set()  # 日付が変わったら確定集合をリセット
@@ -436,6 +491,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 logger.info("[odds_watch] %s", result)
                 # 各ティックで蓄積を自己点検し、単一時刻化（=軌跡が作れない）を即警告する。
                 check_capture_health(date_str=args.date)
+                if should_stop(stop_at, dt.datetime.now()):
+                    logger.info("[odds_watch] 終了時刻 %s に到達 → ループ終了（正常）", stop_at)
+                    break
                 time.sleep(args.interval)
         else:
             result = run_once(source, date_str=args.date)
