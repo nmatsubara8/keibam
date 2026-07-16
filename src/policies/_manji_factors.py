@@ -13,6 +13,9 @@
 """
 from __future__ import annotations
 
+from typing import Any
+from typing import Callable
+
 import numpy as np
 import pandas as pd
 
@@ -450,7 +453,7 @@ def f_sire_line(df: pd.DataFrame) -> pd.Series:
 
 
 # 因子レジストリ（名前 → 抽出関数）。Model 2 はこの名前で点数を較正する。
-FACTORS: dict[str, callable] = {
+FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "umaban_parity": f_umaban_parity,
     "sex": f_sex,
     "age": f_age,
@@ -501,6 +504,7 @@ def factor_series(df: pd.DataFrame, name: str) -> pd.Series:
         m = (s == NA)
         combo = s.astype(str) if combo is None else combo + "|" + s.astype(str)
         na_mask = m if na_mask is None else (na_mask | m)
+    assert combo is not None and na_mask is not None  # parts は必ず1要素以上（ループが回る）
     return combo.where(~na_mask, NA)
 
 

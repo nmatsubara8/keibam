@@ -272,10 +272,10 @@ def regime_strategy(races: Races, config: MarketConfig, *, threshold: float = 0.
     """
     post = regime_posterior(races.signal, config)
     bet_mask = post > threshold
-    nets = []
+    net_list: list[float] = []
     for t in np.nonzero(bet_mask)[0]:
-        nets.append(bet_net(races, int(t), int(races.regime_pick_idx[t])))
-    nets = np.array(nets) if nets else np.array([])
+        net_list.append(bet_net(races, int(t), int(races.regime_pick_idx[t])))
+    nets = np.array(net_list) if net_list else np.array([])
     n_bets = int(nets.size)
     return {
         "mean_net_per_bet": float(nets.mean()) if n_bets else 0.0,
@@ -317,8 +317,8 @@ class ContextualBandit:
 
     n_post_bins: int = 3
     n_noise_bins: int = 5
-    q: np.ndarray = dataclasses.field(default=None, repr=False)
-    counts: np.ndarray = dataclasses.field(default=None, repr=False)
+    q: np.ndarray = dataclasses.field(init=False, repr=False)
+    counts: np.ndarray = dataclasses.field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.q = np.zeros((self.n_post_bins, self.n_noise_bins, N_ACTIONS))
