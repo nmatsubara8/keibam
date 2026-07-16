@@ -54,6 +54,29 @@ def main() -> None:
           f"（うち TANSHO で ≥2 位相 = {sum(1 for v in tansho_rp.values() if len(v) >= 2):,}）")
     print("→ 評価に使えるのは『TANSHO かつ ≥2 位相』のレース。ここが 0 なら全 NaN の直接原因。")
 
+    # --- 生タイムスタンプ粒度の検証（phase バケットを無視した実測の広がり）---------------
+    # 「captured_at × race_id から正解を作れるのでは？」の厳密検証。phase が単一でも、
+    # 各レース内の minutes_to_post が実際に広がっていれば（＝別時刻に複数回取得できていれば）、
+    # phase 再定義で軌跡を復元できる余地がある。逆に span≈0 なら、どう再バケットしても
+    # 単一時刻のスナップショットしか無く、早→遅の軌跡は物理的に存在しない。
+    race_mtp: dict[str, list[float]] = defaultdict(list)
+    for s in snaps:
+        if s.minutes_to_post is not None:
+            race_mtp[s.race_id].append(float(s.minutes_to_post))
+    spans = sorted((max(v) - min(v)) for v in race_mtp.values() if v)
+    counts = sorted(len(v) for v in race_mtp.values() if v)
+    if spans:
+        n = len(spans)
+        print("\n[生タイムスタンプ粒度] レース内 minutes_to_post の広がり（phase 非依存）:")
+        print(f"  取得回数/レース: min={counts[0]} p50={counts[n//2]} max={counts[-1]}")
+        print(f"  span(分): min={spans[0]:.1f} p50={spans[n//2]:.1f} "
+              f"p90={spans[min(n-1, 9*n//10)]:.1f} max={spans[-1]:.1f}")
+        for thr in (2.0, 5.0, 10.0):
+            k = sum(1 for sp in spans if sp >= thr)
+            print(f"  span ≥ {thr:>4.0f}分 のレース = {k:,} / {n:,}  "
+                  f"（={k/n:.1%}: 早→遅の軌跡を復元できる候補）")
+        print("→ span がほぼ 0 のレースばかりなら、再バケットしても単一時刻しか無く軌跡は作れない。")
+
     print("\n例（先頭5レースの位相内訳）:")
     for rid, phs in list(all_rp.items())[:5]:
         print(f"  {rid}: {sorted(phs)}")
