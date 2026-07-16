@@ -29,6 +29,8 @@ def main():
                     help="retrain --no-rating-features のモデルと列を一致（Elo 9列を featured から除外）")
     ap.add_argument("--bet-types", nargs="*", default=None, help="対象券種（既定=最適化対象全券種）")
     ap.add_argument("--n-trials", type=int, default=60)
+    ap.add_argument("--jobs", type=int, default=None,
+                    help="Optuna トライアルの並列数（既定=CPUコア数-2）。遊休コアを使い高速化。")
     ap.add_argument("--objective", default="trimmed_return_rate",
                     choices=["trimmed_return_rate", "sharpe_ratio", "return_rate"])
     ap.add_argument("--min-bets", type=int, default=30, help="train でこの買い目数未満の点は忌避")
@@ -85,8 +87,10 @@ def main():
     rp = _load_return_processor()
 
     targets = args.bet_types or list(OPTIMIZABLE_BET_TYPES)
+    import os
+    jobs = args.jobs if args.jobs and args.jobs > 0 else max(1, (os.cpu_count() or 2) - 2)
     print(f"[model] {version} / objective={args.objective} / n_trials={args.n_trials} / "
-          f"min_bets={args.min_bets} / val_frac={args.val_frac}")
+          f"jobs={jobs} / min_bets={args.min_bets} / val_frac={args.val_frac}")
     print("=" * 96)
     print("規律: val で①既定を上回り かつ ②買い目が min_bets 以上（希薄=不信）の券種のみ採用")
     print("-" * 96)
@@ -100,7 +104,7 @@ def main():
     for bt in targets:
         res = optimize_bet_type_tpe(
             ai, featured, rp, bt,
-            n_trials=args.n_trials, objective=args.objective, min_bets=args.min_bets,
+            n_trials=args.n_trials, n_jobs=jobs, objective=args.objective, min_bets=args.min_bets,
             val_frac=args.val_frac, max_races=args.max_races, takeout=args.takeout, seed=args.seed,
         )
         label = BET_TYPE_LABELS.get(bt, bt)

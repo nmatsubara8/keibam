@@ -250,6 +250,7 @@ def optimize_bet_type_tpe(
     bet_type: str,
     *,
     n_trials: int = 60,
+    n_jobs: int = 1,
     bounds: dict | None = None,
     objective: str = "trimmed_return_rate",
     min_bets: int = 30,
@@ -304,7 +305,9 @@ def optimize_bet_type_tpe(
 
     study = optuna.create_study(
         direction="maximize", sampler=optuna.samplers.TPESampler(seed=seed))
-    study.optimize(_obj, n_trials=n_trials, show_progress_bar=False)
+    # n_jobs>1 でトライアルを並列実行（judge は pandas/numpy 主体で GIL を要所で手放すため、
+    # 遊休コアを使って高速化。prep_*/return_processor は read-only 共有・Simulator は各評価で新規）。
+    study.optimize(_obj, n_trials=n_trials, n_jobs=n_jobs, show_progress_bar=False)
 
     base = {"bet_type": bet_type, "objective": objective, "n_trials": n_trials,
             "n_train_races": n_train, "n_val_races": n_val}
