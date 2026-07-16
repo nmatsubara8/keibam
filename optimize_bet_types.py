@@ -33,6 +33,8 @@ def main():
                     choices=["trimmed_return_rate", "sharpe_ratio", "return_rate"])
     ap.add_argument("--min-bets", type=int, default=30, help="train でこの買い目数未満の点は忌避")
     ap.add_argument("--val-frac", type=float, default=0.3)
+    ap.add_argument("--max-races", type=int, default=None,
+                    help="探索を直近 N レースに限定（3連系の組合せ爆発を抑え高速化）。例: --max-races 6000")
     ap.add_argument("--takeout", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--save", action="store_true",
@@ -98,7 +100,7 @@ def main():
         res = optimize_bet_type_tpe(
             ai, featured, rp, bt,
             n_trials=args.n_trials, objective=args.objective, min_bets=args.min_bets,
-            val_frac=args.val_frac, takeout=args.takeout, seed=args.seed,
+            val_frac=args.val_frac, max_races=args.max_races, takeout=args.takeout, seed=args.seed,
         )
         label = BET_TYPE_LABELS.get(bt, bt)
         bp = res.get("best_params")

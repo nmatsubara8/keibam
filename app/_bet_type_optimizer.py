@@ -40,6 +40,52 @@ def default_grid() -> dict:
     }
 
 
+def prepare_scoring(ai, featured_slice: pd.DataFrame, takeout: float | Mapping[str, float] = 0.2):
+    """params 非依存の前計算（モデル予測 score_table + odds_provider）を1度だけ作る。
+
+    score_table（各馬の勝率）と odds_provider は ev_threshold/temperature/prob_scale に依存しない
+    ——パラメータは下流の judge でしか効かない——ので、**トライアル間で使い回す**ことでモデル予測の
+    重複実行（最適化の主要ボトルネック）を排す。空スライスは None。
+    """
+    from src.constants._results_cols import ResultsCols
+    from src.policies._odds_provider import HistoricalOddsProvider
+    from src.policies._score_policy import CURRENT_ODDS
+    from src.policies._score_policy import ExpectedValueScorePolicy
+
+    if featured_slice is None:
+        return None
+    score_table = ai.calc_score(featured_slice, ExpectedValueScorePolicy)
+    if score_table is None or len(score_table) == 0:      # 実データで空スライスなら score も空
+        return None
+    odds_provider = HistoricalOddsProvider.from_score_table(
+        score_table, ResultsCols.UMABAN, CURRENT_ODDS, takeout=takeout
+    )
+    return {"score_table": score_table, "odds_provider": odds_provider}
+
+
+def backtest_from_prepared(prepared, return_processor, bet_type: str, params) -> tuple[dict, pd.DataFrame]:
+    """prepare_scoring の結果を使い 1(券種, params) をバックテスト（judge + 清算のみ・再スコアなし）。"""
+    from src.policies._bet_policy import ExpectedValueBetPolicy
+    from src.simulation._metrics import summarize_returns
+    from src.simulation._simulator import Simulator
+
+    if not prepared:
+        return {}, None
+    policy = ExpectedValueBetPolicy(
+        prepared["odds_provider"],
+        {bet_type: params.ev_threshold},
+        bet_types=[bet_type],
+        ev_max=params.ev_max,
+        bet_type_params={bet_type: params},
+    )
+    # race_id は featured も払戻テーブル(DB復元)も str。Simulator/BettingTickets 側でも str に
+    # 正規化して照合するため、ここも str に揃える。
+    actions = {str(rid): bets for rid, bets in policy.judge(prepared["score_table"]).items()}
+    per_race = Simulator(return_processor).calc_returns_per_race(actions)
+    summary = summarize_returns(per_race) if (per_race is not None and not per_race.empty) else {}
+    return summary, per_race
+
+
 def backtest_bet_type(
     ai,
     featured_slice: pd.DataFrame,
@@ -48,38 +94,15 @@ def backtest_bet_type(
     params,
     takeout: float | Mapping[str, float] = 0.2,
 ) -> tuple[dict, pd.DataFrame]:
-    """1 券種・1 パラメータでバックテストし (summary, per_race) を返す。
+    """1 券種・1 パラメータでバックテストし (summary, per_race) を返す（薄いラッパ・後方互換）。
 
     summary は summarize_returns 出力（return_rate / hit_rate / sharpe_ratio /
     n_bets / n_races / profit / max_drawdown 等）。賭けが成立しなければ空 dict。
+    複数 params を同一スライスで評価するときは prepare_scoring + backtest_from_prepared を直接使い、
+    モデル予測の再計算を避けること（optimize_* は内部でそうしている）。
     """
-    from src.policies._bet_policy import ExpectedValueBetPolicy
-    from src.policies._odds_provider import HistoricalOddsProvider
-    from src.policies._score_policy import CURRENT_ODDS
-    from src.policies._score_policy import ExpectedValueScorePolicy
-    from src.constants._results_cols import ResultsCols
-    from src.simulation._simulator import Simulator
-
-    score_table = ai.calc_score(featured_slice, ExpectedValueScorePolicy)
-    odds_provider = HistoricalOddsProvider.from_score_table(
-        score_table, ResultsCols.UMABAN, CURRENT_ODDS, takeout=takeout
-    )
-    policy = ExpectedValueBetPolicy(
-        odds_provider,
-        {bet_type: params.ev_threshold},
-        bet_types=[bet_type],
-        ev_max=params.ev_max,
-        bet_type_params={bet_type: params},
-    )
-    actions = policy.judge(score_table)
-    # race_id は featured も払戻テーブル(DB復元)も str。Simulator/BettingTickets 側でも
-    # str に正規化して照合するため、ここも str に揃える。
-    actions = {str(race_id): bets for race_id, bets in actions.items()}
-
-    simulator = Simulator(return_processor)
-    per_race = simulator.calc_returns_per_race(actions)
-    summary = simulator.calc_returns(actions)
-    return summary, per_race
+    prepared = prepare_scoring(ai, featured_slice, takeout)
+    return backtest_from_prepared(prepared, return_processor, bet_type, params)
 
 
 def optimize_bet_type(
@@ -109,12 +132,13 @@ def optimize_bet_type(
     from src.policies._bet_type_params import BetTypeParams
 
     grid = grid or default_grid()
+    prepared = prepare_scoring(ai, featured_slice, takeout)   # モデル予測は1度（grid 点間で再利用）
     results = []
     for ev_th, temp, scale in itertools.product(
         grid["ev_thresholds"], grid["temperatures"], grid.get("prob_scales", [1.0])
     ):
         params = BetTypeParams(ev_threshold=ev_th, temperature=temp, prob_scale=scale)
-        summary, _ = backtest_bet_type(ai, featured_slice, return_processor, bet_type, params, takeout)
+        summary, _ = backtest_from_prepared(prepared, return_processor, bet_type, params)
         if not summary:
             continue
         results.append({"params": params, "summary": summary})
@@ -230,6 +254,7 @@ def optimize_bet_type_tpe(
     objective: str = "trimmed_return_rate",
     min_bets: int = 30,
     val_frac: float = 0.3,
+    max_races: int | None = None,
     takeout: float | Mapping[str, float] = 0.2,
     seed: int = 0,
 ) -> dict:
@@ -251,14 +276,20 @@ def optimize_bet_type_tpe(
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     bd = bounds or default_bounds()
+    # max_races: 探索コスト（特に3連系の組合せ爆発）を抑えるため直近 max_races レースに限定。
+    if max_races and featured_slice is not None and not featured_slice.empty:
+        keep = set(sorted({str(r) for r in featured_slice.index})[-max_races:])
+        featured_slice = featured_slice[featured_slice.index.astype(str).isin(keep)]
     train, val = time_split(featured_slice, val_frac)
     n_train = len(set(train.index.astype(str)))
     n_val = len(set(val.index.astype(str)))
+    # モデル予測(calc_score)は params 非依存 → train/val ごとに1度だけ前計算し全トライアルで再利用。
+    # これが最適化の主要ボトルネック（旧: 80トライアル×再スコア）の構造的解消。
+    prep_train = prepare_scoring(ai, train, takeout)
+    prep_val = prepare_scoring(ai, val, takeout)
 
-    def _eval(fslice, params):
-        if fslice is None or fslice.empty:
-            return {}, None
-        return backtest_bet_type(ai, fslice, return_processor, bet_type, params, takeout)
+    def _eval_prepared(prepared, params):
+        return backtest_from_prepared(prepared, return_processor, bet_type, params)
 
     def _obj(trial):
         params = BetTypeParams(
@@ -266,7 +297,7 @@ def optimize_bet_type_tpe(
             temperature=trial.suggest_float("temperature", *bd["temperature"]),
             prob_scale=trial.suggest_float("prob_scale", *bd["prob_scale"]),
         )
-        summary, per_race = _eval(train, params)
+        summary, per_race = _eval_prepared(prep_train, params)
         if not summary or summary.get("n_bets", 0) < min_bets:
             return -1e9                                   # 賭け不足は強く忌避
         return robust_metric(summary, per_race, objective)
@@ -285,9 +316,9 @@ def optimize_bet_type_tpe(
         temperature=study.best_params["temperature"],
         prob_scale=study.best_params["prob_scale"],
     )
-    tr_s, tr_pr = _eval(train, bp)
-    va_s, va_pr = _eval(val, bp)
-    vd_s, vd_pr = _eval(val, default_params(bet_type))
+    tr_s, tr_pr = _eval_prepared(prep_train, bp)
+    va_s, va_pr = _eval_prepared(prep_val, bp)
+    vd_s, vd_pr = _eval_prepared(prep_val, default_params(bet_type))
     return {
         **base,
         "best_params": bp,
