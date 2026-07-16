@@ -20,6 +20,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# プロセスワーカが参照する共有オブジェクト（親で読み込み、fork で子に COW 継承＝再ロード/pickle 不要）。
+_SHARED: dict = {}
+
+
+def _worker(task):
+    """1 券種を最適化するプロセスワーカ。ai/featured/rp は fork で親から継承する（_SHARED）。
+
+    optuna の n_jobs(スレッド)は judge が純Python主体で GIL に阻まれ効かないため、**券種単位で
+    プロセス並列**して遊休コアを使う。ワーカ内の optuna は n_jobs=1。
+    """
+    bet_type, opt = task
+    from app._bet_type_optimizer import optimize_bet_type_tpe
+    res = optimize_bet_type_tpe(
+        _SHARED["ai"], _SHARED["featured"], _SHARED["rp"], bet_type, n_jobs=1, **opt)
+    return bet_type, res
+
 
 def main():
     ap = argparse.ArgumentParser(description="券種別 EV パラメータの Optuna 最適化（時系列val・頑健目的）")
@@ -46,7 +62,6 @@ def main():
     import pandas as pd
 
     from app._bet_type_optimizer import BET_TYPE_LABELS
-    from app._bet_type_optimizer import optimize_bet_type_tpe
     from app._data_loader import list_model_versions
     from app._data_loader import load_model_by_version
     from app._model_eval import _load_return_processor
@@ -86,11 +101,36 @@ def main():
     ai = load_model_by_version(version)
     rp = _load_return_processor()
 
-    targets = args.bet_types or list(OPTIMIZABLE_BET_TYPES)
+    targets = list(args.bet_types or OPTIMIZABLE_BET_TYPES)
     import os
     jobs = args.jobs if args.jobs and args.jobs > 0 else max(1, (os.cpu_count() or 2) - 2)
+    jobs = min(jobs, len(targets))
     print(f"[model] {version} / objective={args.objective} / n_trials={args.n_trials} / "
-          f"jobs={jobs} / min_bets={args.min_bets} / val_frac={args.val_frac}")
+          f"jobs={jobs}（券種プロセス並列）/ min_bets={args.min_bets} / val_frac={args.val_frac}")
+
+    # 親で読み込んだ ai/featured/rp を _SHARED に置く → fork ワーカが COW 継承（再ロード/pickle 不要）。
+    _SHARED["ai"], _SHARED["featured"], _SHARED["rp"] = ai, featured, rp
+    opt = dict(n_trials=args.n_trials, objective=args.objective, min_bets=args.min_bets,
+               val_frac=args.val_frac, max_races=args.max_races, takeout=args.takeout, seed=args.seed)
+    tasks = [(bt, opt) for bt in targets]
+
+    results: dict = {}
+    if jobs > 1 and len(tasks) > 1:
+        import concurrent.futures as cf
+        import multiprocessing as mp
+        ctx = mp.get_context("fork")            # Linux/WSL2: featured を COW 共有（メモリ増やさない）
+        print(f"[並列] {jobs} プロセスで券種を同時最適化…（完了順に表示）")
+        with cf.ProcessPoolExecutor(max_workers=jobs, mp_context=ctx) as ex:
+            futs = {ex.submit(_worker, t): t[0] for t in tasks}
+            for fut in cf.as_completed(futs):
+                bt, res = fut.result()
+                results[bt] = res
+                print(f"  … 完了: {BET_TYPE_LABELS.get(bt, bt)}")
+    else:
+        for t in tasks:
+            bt, res = _worker(t)
+            results[bt] = res
+
     print("=" * 96)
     print("規律: val で①既定を上回り かつ ②買い目が min_bets 以上（希薄=不信）の券種のみ採用")
     print("-" * 96)
@@ -102,11 +142,7 @@ def main():
     metrics_map: dict = {}
     adopted = 0
     for bt in targets:
-        res = optimize_bet_type_tpe(
-            ai, featured, rp, bt,
-            n_trials=args.n_trials, n_jobs=jobs, objective=args.objective, min_bets=args.min_bets,
-            val_frac=args.val_frac, max_races=args.max_races, takeout=args.takeout, seed=args.seed,
-        )
+        res = results[bt]
         label = BET_TYPE_LABELS.get(bt, bt)
         bp = res.get("best_params")
         if bp is None:
