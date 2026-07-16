@@ -241,6 +241,46 @@ def test_retrain_job_injects_lgb_params(tmp_path):
     assert meta["lgb_params"] == params
 
 
+def test_retrain_job_saves_tuned_base_models_config(tmp_path):
+    """tune_per_model 探索後、完成 config が tuned_base_models.json に保存され読み戻せる。"""
+    import json
+
+    from src.training._base_models_config import from_dict, load_base_models_config
+
+    class _TunedAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            # tune_nn 後にマージされた完成 config を模す（arch/構造が反映済み）
+            self.tuned_base_models_config = from_dict({
+                "models": ["lightgbm", "nn"],
+                "tune_per_model": True,
+                "nn_params": {"arch": "mlp", "hidden_dims": [96], "dropout": 0.33, "lr": 0.0007},
+            })
+
+    class _TunedFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _TunedAI(featured_data)
+
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True)
+    RetrainJob(_TunedFactory(), cfg).run(_make_featured(), vname="tv1", with_tuning=False)
+
+    out = tmp_path / "tuned_base_models.json"
+    assert out.exists()
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert saved["tune_per_model"] is True
+    assert saved["nn_params"]["hidden_dims"] == [96]
+    # 保存 JSON はそのまま固定運用 config として読み戻せる（往復）
+    cfg2 = load_base_models_config(str(out))
+    assert cfg2.nn_params["dropout"] == 0.33
+
+
+def test_retrain_job_skips_tuned_config_when_absent(tmp_path):
+    """通常学習（tuned_base_models_config 無し）では JSON を作らない。"""
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False)
+    RetrainJob(_StubFactory(), cfg).run(_make_featured(), vname="v1", with_tuning=False)
+    assert not (tmp_path / "tuned_base_models.json").exists()
+
+
 # ---------------------------------------------------------------------------
 # Stage B: Win ヘッド併行学習（lightgbm/DataSplitter 非依存の軽量スタブ）
 # ---------------------------------------------------------------------------

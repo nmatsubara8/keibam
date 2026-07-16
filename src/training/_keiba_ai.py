@@ -23,6 +23,7 @@ class KeibaAI:
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
         self.feature_names_: list[str] | None = None  # 学習時の列順序（推論時の列整合用）
+        self._tuned_base_models_config: Any = None  # tune_per_model 探索後の完成 config（書き戻し用）
 
     @property
     def datasets(self):
@@ -32,6 +33,15 @@ class KeibaAI:
     def tuning_study_(self):
         """直近の Optuna 探索 study（未実行なら None）。全 trial の成績・パラメータを持つ。"""
         return getattr(self.__model_wrapper, "last_study_", None)
+
+    @property
+    def tuned_base_models_config(self):
+        """tune_per_model 探索後の完成 BaseModelsConfig（xgboost/catboost/nn の best 反映済み）。
+
+        探索を伴わない学習では None。retrain 側がこれを JSON 保存し、そのまま固定運用の
+        base_models config に書き戻せるようにする（§5⑤ の「書き戻し」を機械化）。
+        """
+        return self._tuned_base_models_config
 
     def set_lgb_params(self, params: dict) -> None:
         """LightGBM ハイパーパラメータを外部から注入する。
@@ -160,6 +170,11 @@ class KeibaAI:
                 kw["catboost_params"] = merged
             if kw:
                 bm_cfg = dataclasses.replace(bm_cfg, **kw)
+
+        # 探索済みの完成 config（xgboost/catboost/nn の best を反映済み）を公開する。
+        # tune_per_model 時のみ意味を持ち、retrain が JSON 保存＝固定運用へ書き戻せる。
+        if getattr(bm_cfg, "tune_per_model", False):
+            self._tuned_base_models_config = bm_cfg
 
         specs = build_base_models(bm_cfg, params, TrainingWeights.SCALE_POS_WEIGHT)
         self.base_model_names_ = [s.name for s in specs]

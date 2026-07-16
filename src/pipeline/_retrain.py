@@ -200,6 +200,23 @@ class RetrainJob:
             except Exception as e:  # noqa: BLE001 — 履歴保存失敗で学習結果を失わない
                 logger.warning("[retrain] tuning_history 保存失敗 (non-fatal): %s", e)
 
+        # tune_per_model（NN/xgboost/catboost の per-model 探索）を行った場合は、探索済みの
+        # 完成 config を JSON 保存する。ユーザーはこれをそのまま固定運用の base_models config
+        # として使う／コピーできる（§5⑤ の「ベストパラメータを書き戻して固定運用へ」を機械化）。
+        tuned_cfg = getattr(ai, "tuned_base_models_config", None)
+        if tuned_cfg is not None:
+            try:
+                out_path = os.path.join(self._cfg.models_dir, "tuned_base_models.json")
+                os.makedirs(self._cfg.models_dir, exist_ok=True)
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump(tuned_cfg.to_dict(), f, ensure_ascii=False, indent=2)
+                logger.info(
+                    "[retrain] 探索済み base_models config を保存: %s（固定運用へはこれを使う/コピー）",
+                    out_path,
+                )
+            except Exception as e:  # noqa: BLE001 — 保存失敗で学習結果を失わない
+                logger.warning("[retrain] tuned_base_models.json 保存失敗 (non-fatal): %s", e)
+
         metrics = evaluate_test(ai.effective_model, ai.datasets.X_test, ai.datasets.y_test)
         _fd = featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data
         meta: dict[str, Any] = {
