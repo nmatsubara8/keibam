@@ -66,6 +66,7 @@ class NnWinModel:
         conv_channels=(32, 64),
         kernel_size: int = 3,
         pre_norm: str | None = None,
+        weight_decay: float = 0.0,
     ) -> None:
         self._cat_cards = categorical_cardinalities or {}
         self._n_numeric = n_numeric
@@ -80,6 +81,8 @@ class NnWinModel:
         self._epochs = epochs
         self._lr = lr
         self._batch_size = batch_size
+        # Adam の L2 正則化（重み減衰）。0.0=無効（既定）。過学習抑制の探索ノブ。
+        self._weight_decay = weight_decay
         self._seed = seed
         self._pos_weight = pos_weight
         self._rank_threshold = rank_threshold
@@ -203,7 +206,7 @@ class NnWinModel:
             x_val = y_val = None
 
         self._net = self._build_net().to(device)
-        opt = torch.optim.Adam(self._net.parameters(), lr=self._lr)
+        opt = torch.optim.Adam(self._net.parameters(), lr=self._lr, weight_decay=self._weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(self._epochs, 1))
 
         pw = (

@@ -106,6 +106,10 @@ def _suggest_nn_params(trial, search_space: dict) -> dict:
         "batch_size": trial.suggest_categorical("batch_size", ss.get("batch_size", [256, 512])),
         "pre_norm": trial.suggest_categorical("pre_norm", ss.get("pre_norm", ["layer_norm", "none"])),
     }
+    # weight_decay（Adam L2）は search_space にキーがある時だけ探索する（後方互換：
+    # 旧 config・空間指定なしでは 0.0 のまま＝従来挙動）。過学習抑制の主ノブ。
+    if "weight_decay" in ss:
+        params["weight_decay"] = trial.suggest_float("weight_decay", *ss["weight_decay"], log=True)
     if params["pre_norm"] == "none":
         params["pre_norm"] = None
     if arch == "cnn":

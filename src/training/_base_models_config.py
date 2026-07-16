@@ -79,10 +79,11 @@ DEFAULT_NN_SEARCH_SPACE = {
     "arch": ["mlp"],
     "lr": [1e-4, 5e-3],
     "dropout": [0.1, 0.5],
-    "batch_size": [256, 512],
-    "pre_norm": ["layer_norm", "none"],
-    "n_layers": [1, 3],
-    "layer_width": [64, 128, 256],
+    "weight_decay": [1e-7, 1e-3],  # Adam L2（過学習抑制の主ノブ。log スケール探索）
+    "batch_size": [256, 512, 1024],
+    "pre_norm": ["layer_norm", "batch_norm", "none"],
+    "n_layers": [1, 4],            # より深い MLP まで許容
+    "layer_width": [64, 128, 256, 512],  # より広い層まで許容
     "n_conv": [1, 3],
     "conv_width": [16, 32, 64],
     "kernel_size": [3, 5],

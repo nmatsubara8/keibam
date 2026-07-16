@@ -200,6 +200,7 @@ class KeibaAI:
                     if k in (
                         "hidden_dims", "epochs", "lr", "batch_size", "max_train_rows",
                         "arch", "dropout", "conv_channels", "kernel_size", "pre_norm",
+                        "weight_decay",
                     )
                 }
                 base_models.append(
