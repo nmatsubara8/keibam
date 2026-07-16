@@ -45,6 +45,7 @@ def optimize_manji_config(
     Returns: {points, weights, zone(odds_lo,odds_hi), top_k, value(valid回収率), n_active}
     """
     import optuna
+    import optuna.logging  # 明示 submodule import（環境により optuna.logging が自動公開されない）
 
     from src.policies._manji_factors import buckets
 

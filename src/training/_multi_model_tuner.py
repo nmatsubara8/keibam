@@ -141,6 +141,7 @@ def tune_nn(
     dict : best な nn_params（arch, lr, dropout, hidden_dims/conv_channels 等）
     """
     import optuna
+    import optuna.logging  # 明示 submodule import（環境により optuna.logging が自動公開されない）
     from sklearn.metrics import roc_auc_score
 
     from ._nn_win_model import NnWinModel
@@ -208,6 +209,7 @@ def tune_model(
     dict : study.best_params
     """
     import optuna
+    import optuna.logging  # 明示 submodule import（環境により optuna.logging が自動公開されない）
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     sampler = optuna.samplers.TPESampler(seed=seed)

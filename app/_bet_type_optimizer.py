@@ -271,6 +271,7 @@ def optimize_bet_type_tpe(
        train_summary, val_summary, val_default_summary, n_trials, n_train_races, n_val_races}
     """
     import optuna
+    import optuna.logging  # 明示 submodule import（環境により optuna.logging が自動公開されない）
 
     from src.policies._bet_type_params import BetTypeParams
     from src.policies._bet_type_params import default_params

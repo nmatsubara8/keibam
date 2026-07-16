@@ -24,7 +24,7 @@ JRA 単勝市場は効率的（echo≈0.989, ΔR²≈0）で、公開データ�
 
 from __future__ import annotations
 
-from src.constants._bet_types import BetType
+from ._bet_types import BetType
 
 # 券種 → 標準控除率（takeout）。値が低いほど期待損失が小さい。
 # 払戻率(=1-takeout): 単勝/複勝 80.0% / 枠連・馬連・ワイド 77.5% / 馬単・三連複 75.0% / 三連単 72.5%
