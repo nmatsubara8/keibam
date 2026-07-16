@@ -49,9 +49,16 @@ def _evaluate_odds_dynamics(args: argparse.Namespace) -> None:
     evaluation = evaluate_dynamics_models(sequences, holdout_frac=args.holdout_frac, winners=winners)
     save_dynamics_eval(evaluation, dynamics_eval_path("models"))
     save_gravity(evaluation["gravity"], gravity_path("models"))
+    if all(m.get("n_test_races", 0) == 0 for m in evaluation["results"].values()):
+        logger.warning(
+            "[odds-dynamics] 評価対象レース=0（全メトリクス NaN）。各レースに『締切直前(T0)＋"
+            "それ以前の位相の両方・共通2頭以上』が必要ですが、現状は各レースが単一位相＝オッズ変動が"
+            "未捕捉です。odds_watch を締切の30分前〜直前(T0)まで複数位相にわたって蓄積してから再実行してください。"
+        )
     for name, metrics in evaluation["results"].items():
-        logger.info("[odds-dynamics] %s: KL=%.4f mae=%.4f mape=%.3f",
-                    name, metrics["kl_mean"], metrics["share_mae"], metrics["odds_mape"])
+        logger.info("[odds-dynamics] %s: KL=%.4f mae=%.4f mape=%.3f  (n_test=%d)",
+                    name, metrics["kl_mean"], metrics["share_mae"], metrics["odds_mape"],
+                    metrics.get("n_test_races", 0))
 
 
 def _filter_final_odds_race_ids(race_ids, *, done=None, years=None, force=False, limit=None) -> list[str]:
