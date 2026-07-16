@@ -60,6 +60,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
     )
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
     retrain_p.add_argument(
+        "--gpu", action="store_true",
+        help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
+             "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は CPU 据え置き。",
+    )
+    retrain_p.add_argument(
         "--holdout-years", type=int, nargs="+", default=None, metavar="YYYY",
         help="指定年を学習から除外（out-of-sample 評価用）。例: --holdout-years 2025 → backtest --years 2025",
     )

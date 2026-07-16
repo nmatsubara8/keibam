@@ -35,6 +35,19 @@ def _retrain(args: argparse.Namespace) -> None:
     # Phase 1: pickle → DB の自動移行（DB が空の場合のみ実行される）
     _auto_migrate_db()
 
+    # --gpu: GBDT を GPU で学習（KEIBA_USE_GPU=1 を立て、tuner/factory が xgboost/catboost に反映）。
+    # CUDA 不可なら CPU にフォールバック。NN は torch 側で自動検出するため本フラグと独立。
+    if getattr(args, "gpu", False):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                os.environ["KEIBA_USE_GPU"] = "1"
+                logger.info("[retrain] --gpu: GBDT を GPU で学習（xgboost device=cuda / catboost task_type=GPU）")
+            else:
+                logger.warning("[retrain] --gpu 指定だが CUDA 利用不可 → GBDT は CPU で続行")
+        except Exception:  # noqa: BLE001 — torch 不在等でも CPU で継続
+            logger.warning("[retrain] --gpu 指定だが torch/CUDA 確認に失敗 → GBDT は CPU で続行")
+
     cfg = RetrainConfig(
         use_stacking=not args.no_stacking,
         train_win_head=not getattr(args, "no_win_head", False),

@@ -38,12 +38,15 @@ def _objective(trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_
             k: _suggest(trial, k, v, _XGB_LOG_PARAMS, _XGB_INT_PARAMS)
             for k, v in search_space.items()
         }
+        from src.training._gpu_config import xgb_gpu_params
+
         params["objective"] = "binary:logistic"
         params["eval_metric"] = "logloss"
         params["tree_method"] = "hist"
         params["seed"] = 100
         params["scale_pos_weight"] = scale_pos_weight
         params["early_stopping_rounds"] = 50  # XGBoost>=2.0 は __init__ で指定
+        params.update(xgb_gpu_params())        # --gpu 時のみ device=cuda
 
         model = xgb.XGBClassifier(**params)
         model.fit(
@@ -63,9 +66,12 @@ def _objective(trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_
             k: _suggest(trial, k, v, _CAT_LOG_PARAMS, _CAT_INT_PARAMS)
             for k, v in search_space.items()
         }
+        from src.training._gpu_config import catboost_gpu_params
+
         params["verbose"] = 0
         params["random_seed"] = 100
         params["class_weights"] = [1.0, scale_pos_weight]
+        params.update(catboost_gpu_params())   # --gpu 時のみ task_type=GPU
 
         model = CatBoostClassifier(**params)
         model.fit(

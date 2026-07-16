@@ -140,8 +140,11 @@ def build_base_models(
             try:
                 import xgboost as xgb
 
+                from src.training._gpu_config import xgb_gpu_params
+
                 params = dict(cfg.xgboost_params)
                 params["scale_pos_weight"] = scale_pos_weight
+                params.update(xgb_gpu_params())     # --gpu 時のみ device=cuda
                 # _NumericArrayAdapter で category 型を float に正規化
                 specs.append(BaseModelSpec(
                     _NumericArrayAdapter(xgb.XGBClassifier(**params)), name="XGBoost"
@@ -152,8 +155,11 @@ def build_base_models(
             try:
                 from catboost import CatBoostClassifier
 
+                from src.training._gpu_config import catboost_gpu_params
+
                 params = dict(cfg.catboost_params)
                 params["class_weights"] = [1.0, scale_pos_weight]
+                params.update(catboost_gpu_params())    # --gpu 時のみ task_type=GPU
                 # _NumericArrayAdapter で category 型を float に正規化
                 specs.append(BaseModelSpec(
                     _NumericArrayAdapter(CatBoostClassifier(**params)), name="CatBoost"
