@@ -53,6 +53,14 @@ def _retrain(args: argparse.Namespace) -> None:
         train_win_head=not getattr(args, "no_win_head", False),
     )
 
+    # --resume-tuning: Optuna study を models_dir 配下の SQLite に永続化し、再実行で探索を
+    # 再開する（trial 追記＝best 単調改善）。TPE 系（xgboost/catboost/nn・手書き LightGBM）が対象。
+    if getattr(args, "resume_tuning", False):
+        db_path = os.path.join(cfg.models_dir, "optuna_studies.db")
+        os.makedirs(cfg.models_dir, exist_ok=True)
+        os.environ["KEIBA_TUNING_STORAGE"] = f"sqlite:///{db_path}"
+        logger.info("[retrain] --resume-tuning: Optuna 探索を永続化・再開します（%s）", db_path)
+
     # --featured-path 指定時はその featured で学習（seed など別コーパスの検証用）。既定は本番 featured。
     featured_path = getattr(args, "featured_path", None) or LocalPaths.FEATURED_DATA_PATH
     if getattr(args, "featured_path", None):

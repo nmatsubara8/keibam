@@ -20,6 +20,23 @@ def test_lightgbm_only():
     assert specs[0].name == "LightGBM"
 
 
+def test_lightgbm_params_override_from_config():
+    """cfg.lightgbm_params が非空なら lgb_params を上書きする（探索済み config の固定運用）。"""
+    cfg = BaseModelsConfig(models=("lightgbm",), lightgbm_params={"num_leaves": 7, "learning_rate": 0.033})
+    specs = build_base_models(cfg, {"num_leaves": 99, "objective": "binary"}, _SPW)
+    params = specs[0].model.get_params()
+    assert params["num_leaves"] == 7          # config が lgb_params(99) を上書き
+    assert params["learning_rate"] == 0.033
+    assert params["scale_pos_weight"] == _SPW
+
+
+def test_empty_lightgbm_params_keeps_tuner_params():
+    """cfg.lightgbm_params が空なら従来どおり渡された lgb_params を使う。"""
+    cfg = BaseModelsConfig(models=("lightgbm",))  # lightgbm_params 既定 = 空
+    specs = build_base_models(cfg, {"num_leaves": 42, "objective": "binary"}, _SPW)
+    assert specs[0].model.get_params()["num_leaves"] == 42
+
+
 def test_skip_missing_xgboost(caplog):
     cfg = BaseModelsConfig(models=("xgboost",))
     with patch("builtins.__import__", side_effect=ImportError("xgboost")):

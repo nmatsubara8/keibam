@@ -171,10 +171,14 @@ class KeibaAI:
             if kw:
                 bm_cfg = dataclasses.replace(bm_cfg, **kw)
 
-        # 探索済みの完成 config（xgboost/catboost/nn の best を反映済み）を公開する。
+        # 探索済みの完成 config（lightgbm/xgboost/catboost/nn の best を全て反映）を公開する。
         # tune_per_model 時のみ意味を持ち、retrain が JSON 保存＝固定運用へ書き戻せる。
+        # LightGBM の best（params: 主チューナ結果）は bm_cfg に無いため lightgbm_params に載せ、
+        # 4 モデル全部の best が 1 ファイルに揃うようにする（--base-models-config で固定運用可）。
         if getattr(bm_cfg, "tune_per_model", False):
-            self._tuned_base_models_config = bm_cfg
+            self._tuned_base_models_config = dataclasses.replace(
+                bm_cfg, lightgbm_params=dict(params)
+            )
 
         specs = build_base_models(bm_cfg, params, TrainingWeights.SCALE_POS_WEIGHT)
         self.base_model_names_ = [s.name for s in specs]

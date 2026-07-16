@@ -40,6 +40,20 @@ def test_unknown_key_ignored():
     assert cfg.models == ("lightgbm",)
 
 
+def test_lightgbm_params_default_empty_and_preserved():
+    # 既定は空（チューナ/既定値に委ねる）
+    assert BaseModelsConfig().lightgbm_params == {}
+    # 明示指定はそのまま保持される（探索済み config の書き戻し経路）
+    cfg = from_dict({"models": ["lightgbm", "nn"], "lightgbm_params": {"num_leaves": 15, "learning_rate": 0.03}})
+    assert cfg.lightgbm_params == {"num_leaves": 15, "learning_rate": 0.03}
+
+
+def test_tuned_config_ignores_score_metadata_keys():
+    # tuned_base_models.json は _auc_test/_version を持つが from_dict は無視して読める
+    cfg = from_dict({"models": ["lightgbm"], "lightgbm_params": {"num_leaves": 7}, "_auc_test": 0.83, "_version": "v1"})
+    assert cfg.lightgbm_params == {"num_leaves": 7}
+
+
 def test_default_meta_model_is_logistic():
     cfg = BaseModelsConfig()
     assert cfg.meta_model == "logistic"

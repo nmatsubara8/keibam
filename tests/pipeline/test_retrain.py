@@ -281,6 +281,39 @@ def test_retrain_job_skips_tuned_config_when_absent(tmp_path):
     assert not (tmp_path / "tuned_base_models.json").exists()
 
 
+def test_retrain_job_keeps_better_existing_tuned_config(tmp_path):
+    """歴代 best 保持: 既存ファイルの auc_test が高ければ今回の学習で上書きしない。"""
+    import json
+
+    from src.training._base_models_config import from_dict
+
+    out = tmp_path / "tuned_base_models.json"
+    # 到達不能に高い _auc_test を持つ既存 best を置く（今回の auc_test ≤ 1.0 は必ず下回る）
+    out.write_text(
+        json.dumps({"models": ["lightgbm", "nn"], "nn_params": {"hidden_dims": [7]}, "_auc_test": 999.0}),
+        encoding="utf-8",
+    )
+
+    class _TunedAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            self.tuned_base_models_config = from_dict({
+                "models": ["lightgbm", "nn"], "tune_per_model": True,
+                "nn_params": {"hidden_dims": [96]},
+            })
+
+    class _TunedFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _TunedAI(featured_data)
+
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True)
+    RetrainJob(_TunedFactory(), cfg).run(_make_featured(), vname="tv2", with_tuning=False)
+
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert saved["_auc_test"] == 999.0                 # 据え置き（上書きされない）
+    assert saved["nn_params"]["hidden_dims"] == [7]    # 既存 best を維持
+
+
 # ---------------------------------------------------------------------------
 # Stage B: Win ヘッド併行学習（lightgbm/DataSplitter 非依存の軽量スタブ）
 # ---------------------------------------------------------------------------

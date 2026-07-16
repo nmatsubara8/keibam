@@ -174,9 +174,12 @@ def tune_nn(
         trial.set_user_attr("nn_params", params)
         return auc
 
+    from ._tuning_storage import study_kwargs
+
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     sampler = optuna.samplers.TPESampler(seed=seed)
-    study = optuna.create_study(direction="maximize", sampler=sampler)
+    # --resume-tuning 時は永続 study を再開（trial 追記＝best 単調改善）。
+    study = optuna.create_study(direction="maximize", sampler=sampler, **study_kwargs("nn"))
     study.optimize(objective, n_trials=n_trials, timeout=timeout)
     best = study.best_trial.user_attrs.get("nn_params", {})
     logger.info(
@@ -217,9 +220,14 @@ def tune_model(
     import optuna
     import optuna.logging  # 明示 submodule import（環境により optuna.logging が自動公開されない）
 
+    from ._tuning_storage import study_kwargs
+
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     sampler = optuna.samplers.TPESampler(seed=seed)
-    study = optuna.create_study(direction="minimize", sampler=sampler)
+    # --resume-tuning 時はモデル別の永続 study を再開（trial 追記＝best 単調改善）。
+    study = optuna.create_study(
+        direction="minimize", sampler=sampler, **study_kwargs(model_name)
+    )
     study.optimize(
         lambda trial: _objective(
             trial, model_name, x_tr, y_tr, x_val, y_val, search_space, scale_pos_weight

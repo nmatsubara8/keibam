@@ -133,6 +133,9 @@ def build_base_models(
             import lightgbm as lgb
 
             params = dict(lgb_params)
+            # cfg.lightgbm_params が非空なら上書き（探索済み config を --base-models-config で
+            # 固定運用する経路。空なら従来どおりチューナ/既定の lgb_params を使う）。
+            params.update(getattr(cfg, "lightgbm_params", None) or {})
             params.setdefault("scale_pos_weight", scale_pos_weight)
             # LightGBM は category 型・.values を両方吸収するためラッパー不要
             specs.append(BaseModelSpec(lgb.LGBMClassifier(**params), name="LightGBM"))

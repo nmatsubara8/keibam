@@ -108,6 +108,9 @@ class BaseModelsConfig:
     tune_per_model: bool = False
     n_trials: int = 50
     timeout: float | None = None
+    # LightGBM の明示パラメータ。既定は空＝チューナ/既定値に委ねる。探索済み config
+    # （tuned_base_models.json）はここに best を載せ、--base-models-config で固定運用できる。
+    lightgbm_params: dict = field(default_factory=dict)
     xgboost_params: dict = field(default_factory=lambda: dict(DEFAULT_XGB_PARAMS))
     catboost_params: dict = field(default_factory=lambda: dict(DEFAULT_CATBOOST_PARAMS))
     nn_params: dict = field(default_factory=lambda: dict(DEFAULT_NN_PARAMS))

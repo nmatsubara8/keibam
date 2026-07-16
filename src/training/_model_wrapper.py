@@ -84,9 +84,13 @@ class ModelWrapper:
         from ._tuning_history import _LGBM_PARAMS_ATTR
 
         if study is None:
+            from ._tuning_storage import study_kwargs
+
+            # --resume-tuning 時は永続 study を再開（手書き TPE 探索のみ。best 単調改善）。
             study = optuna.create_study(
                 direction="minimize",
                 sampler=optuna.samplers.TPESampler(seed=cfg.seed),
+                **study_kwargs("lightgbm"),
             )
         self.last_study_ = study
 

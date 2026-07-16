@@ -200,24 +200,40 @@ class RetrainJob:
             except Exception as e:  # noqa: BLE001 — 履歴保存失敗で学習結果を失わない
                 logger.warning("[retrain] tuning_history 保存失敗 (non-fatal): %s", e)
 
-        # tune_per_model（NN/xgboost/catboost の per-model 探索）を行った場合は、探索済みの
-        # 完成 config を JSON 保存する。ユーザーはこれをそのまま固定運用の base_models config
-        # として使う／コピーできる（§5⑤ の「ベストパラメータを書き戻して固定運用へ」を機械化）。
+        metrics = evaluate_test(ai.effective_model, ai.datasets.X_test, ai.datasets.y_test)
+
+        # tune_per_model（lightgbm/xgboost/catboost/nn の探索）を行った場合、4 モデル全部の best を
+        # 反映した完成 config を JSON 保存する（§5⑤ の「書き戻して固定運用へ」を機械化）。
+        # 歴代 best を守るため、既存ファイルより auc_test が良い時だけ上書きする（初回は無条件保存）。
+        # 保存 JSON は from_dict が未知キー（_auc_test/_version）を無視するため、そのまま
+        # --base-models-config で読み戻せる。
         tuned_cfg = getattr(ai, "tuned_base_models_config", None)
         if tuned_cfg is not None:
             try:
                 out_path = os.path.join(self._cfg.models_dir, "tuned_base_models.json")
                 os.makedirs(self._cfg.models_dir, exist_ok=True)
-                with open(out_path, "w", encoding="utf-8") as f:
-                    json.dump(tuned_cfg.to_dict(), f, ensure_ascii=False, indent=2)
-                logger.info(
-                    "[retrain] 探索済み base_models config を保存: %s（固定運用へはこれを使う/コピー）",
-                    out_path,
-                )
+                new_auc = float(metrics.get("auc_test", float("nan")))
+                prev_auc = float("-inf")
+                if os.path.exists(out_path):
+                    with open(out_path, encoding="utf-8") as f:
+                        prev_auc = float(json.load(f).get("_auc_test", float("-inf")))
+                first_time = not os.path.exists(out_path)
+                if first_time or new_auc >= prev_auc:
+                    payload = {**tuned_cfg.to_dict(), "_auc_test": new_auc, "_version": vname}
+                    with open(out_path, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=2)
+                    logger.info(
+                        "[retrain] tuned_base_models.json 更新: auc_test=%.4f（前回 best=%.4f）→ %s",
+                        new_auc, prev_auc, out_path,
+                    )
+                else:
+                    logger.info(
+                        "[retrain] 今回 auc_test=%.4f ≤ 既存 best=%.4f → tuned_base_models.json 据え置き",
+                        new_auc, prev_auc,
+                    )
             except Exception as e:  # noqa: BLE001 — 保存失敗で学習結果を失わない
                 logger.warning("[retrain] tuned_base_models.json 保存失敗 (non-fatal): %s", e)
 
-        metrics = evaluate_test(ai.effective_model, ai.datasets.X_test, ai.datasets.y_test)
         _fd = featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data
         meta: dict[str, Any] = {
             "version": vname,

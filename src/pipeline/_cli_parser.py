@@ -60,6 +60,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
     )
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
     retrain_p.add_argument(
+        "--resume-tuning", action="store_true",
+        help="Optuna 探索を永続化して再開する（models/optuna_studies.db）。再実行で trial を追記し "
+             "xgboost/catboost/nn（と手書き LightGBM 探索）の best が単調改善する。既定は毎回新規探索。",
+    )
+    retrain_p.add_argument(
         "--gpu", action="store_true",
         help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
              "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は CPU 据え置き。",
