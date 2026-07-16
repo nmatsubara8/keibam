@@ -172,6 +172,9 @@ class NnWinModel:
         import torch
         from torch import nn
 
+        # GPU があれば使う（無ければ CPU）。VPS/CI 等 GPU 無し環境は自動で CPU にフォールバック。
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         x_arr = np.asarray(x, dtype=np.float32)
         y_arr = self._binarize_targets(y).astype(np.float32)
         w_arr = np.asarray(sample_weight, dtype=np.float32) if sample_weight is not None else None
@@ -184,9 +187,9 @@ class NnWinModel:
             if w_arr is not None:
                 w_arr = w_arr[idx]
 
-        x_full = torch.as_tensor(x_arr)
-        y_full = torch.as_tensor(y_arr)
-        w_full = torch.as_tensor(w_arr) if w_arr is not None else None
+        x_full = torch.as_tensor(x_arr).to(device)
+        y_full = torch.as_tensor(y_arr).to(device)
+        w_full = torch.as_tensor(w_arr).to(device) if w_arr is not None else None
 
         # Early Stopping 用の内部検証ホールドアウト分割（時系列順は呼び出し側で担保済み）
         n = len(x_full)
@@ -199,12 +202,12 @@ class NnWinModel:
             x_tr, y_tr, w_tr = x_full, y_full, w_full
             x_val = y_val = None
 
-        self._net = self._build_net()
+        self._net = self._build_net().to(device)
         opt = torch.optim.Adam(self._net.parameters(), lr=self._lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(self._epochs, 1))
 
         pw = (
-            torch.tensor([self._pos_weight], dtype=torch.float32)
+            torch.tensor([self._pos_weight], dtype=torch.float32).to(device)
             if self._pos_weight is not None
             else None
         )
@@ -218,19 +221,20 @@ class NnWinModel:
         epochs_no_improve = 0
         n_tr = len(x_tr)
         _log.info(
-            "[NN] fit 開始: train=%d val=%d epochs=%d batch=%d lr=%g",
+            "[NN] fit 開始: train=%d val=%d epochs=%d batch=%d lr=%g device=%s",
             n_tr,
             len(x_val) if x_val is not None else 0,
             self._epochs,
             self._batch_size,
             self._lr,
+            device.type,
         )
 
         epoch_run = 0
         for epoch in range(self._epochs):
             epoch_run = epoch + 1
             self._net.train()  # BatchNorm/Dropout を学習モードに（KB shard-38）
-            perm = torch.randperm(n_tr)
+            perm = torch.randperm(n_tr, device=device)
             train_loss_sum = 0.0
             train_batches = 0
             for start in range(0, n_tr, self._batch_size):
@@ -297,9 +301,10 @@ class NnWinModel:
 
         self._net.eval()  # BatchNorm/Dropout を評価モードに（KB shard-38）
         x_in = np.nan_to_num(np.asarray(x, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        dev = next(self._net.parameters()).device      # 学習時のデバイス（cuda/cpu）に合わせる
         with torch.no_grad():
-            logits = self._net(torch.as_tensor(x_in))
-            p = torch.sigmoid(logits).numpy()
+            logits = self._net(torch.as_tensor(x_in).to(dev))
+            p = torch.sigmoid(logits).cpu().numpy()
         # 万一 NaN が出ても meta 学習器（NaN 不可）を壊さないよう 0.5 に丸める
         p = np.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
         return np.column_stack([1.0 - p, p])
