@@ -345,7 +345,49 @@ def format_status_report(rows: list[dict], now: dt.datetime | None = None) -> st
             f"{r['last_phase']:>11}{r['last_capture'].strftime('%H:%M'):>8}{avg:>6.1f}分{ago:>6.1f}分"
         )
     lines.append("\n（取得回=3分おきの取得回数 / 最終mtp=最後の取得時の締切まで分 / 経過分=最後の取得からの経過）")
+    stuck = past_post_single_tick(rows, now)
+    if stuck:
+        lines.append(
+            f"⚠ 発走済みで単一ティックのレース {len(stuck)} 本 = 軌跡を作れず力学評価が NaN: "
+            f"{stuck[:10]}（ループが継続起動しているか確認）"
+        )
     return "\n".join(lines)
+
+
+def past_post_single_tick(rows: list[dict], now: dt.datetime) -> list[str]:
+    """発走を過ぎたのに取得が1ティックしか無いレース ID を返す（純粋関数）。
+
+    rows は `summarize_status` の出力。est_post ≤ now（発走済み）かつ n_ticks < 2 の
+    レースは、同一レースの複数時刻オッズが無い＝軌跡を作れず evaluate-odds-dynamics が
+    NaN になる（2026-07 に実際に踏んだ失敗）。この状態を早期検知するためのガード。
+    """
+    return [str(r["race_id"]) for r in rows if r["est_post"] <= now and int(r["n_ticks"]) < 2]
+
+
+def check_capture_health(
+    now: dt.datetime | None = None, date_str: str | None = None
+) -> list[str]:
+    """当日の取得状況を点検し、単一ティックで発走済みのレースがあれば警告する。
+
+    ループ運用中に「取得ランタイムが繰り返し発火していない（=単一時刻化）」を即検知する
+    ためのガード。戻り値は警告対象 race_id（テスト用）。ネットワークは使わず蓄積のみ読む。
+    """
+    from src.constants._bet_types import BetType
+    from src.preparing.odds_scheduler import load_snapshots
+
+    now = now or dt.datetime.now()
+    date_str = date_str or now.strftime("%Y%m%d")
+    snaps = load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
+    rows = summarize_status(snaps, on_date=date_str, bet_type=BetType.TANSHO)
+    stuck = past_post_single_tick(rows, now)
+    if stuck:
+        logger.warning(
+            "[odds_watch] ⚠ 発走済みなのに単一ティックのレースが %d 本あります"
+            "（同一レースの複数時刻オッズが無く evaluate-odds-dynamics が NaN になります）: %s"
+            " — ループが継続起動しているか（--once の単発になっていないか）確認してください。",
+            len(stuck), stuck[:10],
+        )
+    return stuck
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -374,6 +416,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         snaps = load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
         rows = summarize_status(snaps, on_date=on_date, bet_type=BetType.TANSHO)
         print(format_status_report(rows))
+        # 発走済みで単一ティックのレースを明示警告（軌跡が作れない＝ NaN の予兆）。
+        check_capture_health(date_str=on_date)
         return
 
     source = create_odds_source(args.source)
@@ -390,6 +434,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                     last_date = today
                 result = run_once(source, date_str=args.date, confirmed=confirmed)
                 logger.info("[odds_watch] %s", result)
+                # 各ティックで蓄積を自己点検し、単一時刻化（=軌跡が作れない）を即警告する。
+                check_capture_health(date_str=args.date)
                 time.sleep(args.interval)
         else:
             result = run_once(source, date_str=args.date)

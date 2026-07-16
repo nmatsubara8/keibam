@@ -193,6 +193,25 @@ class TestStatusSummary:
         rep = format_status_report(summarize_status(self._snaps(), bet_type="tansho"))
         assert "r1" in rep and "取得状況" in rep
 
+    def test_single_tick_guard_flags_past_post_single_tick(self):
+        """発走済み & 1ティックのレースだけを警告対象にする（複数ティックは除外）。"""
+        from src.pipeline.odds_watch import past_post_single_tick, summarize_status
+
+        rows = summarize_status(self._snaps(), bet_type="tansho")
+        # 両レース発走後（16:20）: r1 は2ティックで安全、r2 は1ティックで警告。
+        stuck = past_post_single_tick(rows, dt.datetime(2026, 6, 7, 16, 20))
+        assert stuck == ["r2"]
+        # r2 発走前（15:50）: 発走済みは r1 のみ・2ティック → 警告ゼロ。
+        assert past_post_single_tick(rows, dt.datetime(2026, 6, 7, 15, 50)) == []
+
+    def test_status_report_shows_single_tick_warning(self):
+        """format_status_report は発走済み単一ティックを ⚠ 行で明示する。"""
+        from src.pipeline.odds_watch import format_status_report, summarize_status
+
+        rows = summarize_status(self._snaps(), bet_type="tansho")
+        rep = format_status_report(rows, now=dt.datetime(2026, 6, 7, 16, 20))
+        assert "⚠" in rep and "r2" in rep and "単一ティック" in rep
+
 
 class TestRunOnce:
     def test_full_cycle_with_stub_source(self, tmp_path, monkeypatch):
