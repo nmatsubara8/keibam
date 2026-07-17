@@ -10,7 +10,8 @@
 #
 # 使い方:
 #   scripts/build_lightgbm_gpu.sh            # OpenCL(USE_GPU=ON) ビルド（既定・推奨）
-#   LGB_BACKEND=cuda scripts/build_lightgbm_gpu.sh   # CUDA(USE_CUDA=ON) ※要 gcc-13
+#   LGB_BACKEND=cuda scripts/build_lightgbm_gpu.sh   # CUDA(USE_CUDA=ON) ※要 gcc-13 + CUDA Toolkit 12.8+
+#     （RTX 50xx/Blackwell は sm_120 が 12.8 以上でのみ生成される。12.7 以下だと実行時に落ちる）
 #   LGB_VERSION=4.6.0 scripts/build_lightgbm_gpu.sh  # clone するタグ（既定 4.6.0）
 #
 # ビルド後（コード側は配線済み）:
@@ -43,9 +44,30 @@ if [[ "${BACKEND}" == "opencl" ]]; then
 else
     # CUDA: nvcc が gcc<=13 を要求。gcc-13 を CUDA ホストコンパイラに指定する。
     command -v git >/dev/null 2>&1 || { echo "git が必要です: sudo apt-get install -y git"; exit 1; }
+    # nvcc（CUDA ツールキット）が必須。LightGBM の CUDA ビルドは nvcc でカーネルを生成する。
+    if ! command -v nvcc >/dev/null 2>&1; then
+        echo "[build_lightgbm_gpu] nvcc が見つかりません。CUDA Toolkit を導入してください:"
+        echo "    sudo apt-get install -y cuda-toolkit-12-8   # 例。12.8 以上が必要（後述）"
+        echo "    （nvidia-smi が動いても nvcc は別パッケージ。PATH に /usr/local/cuda/bin を通す）"
+        exit 1
+    fi
+    # Blackwell(sm_120, RTX 50xx) の実行バイナリは CUDA Toolkit 12.8 以上でのみ生成される。
+    # 12.7 以下だと build は通っても実行時に "no kernel image is available" で落ちる。
+    _cuda_ver="$(nvcc --version 2>/dev/null | grep -oE 'release [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+    _cuda_major="${_cuda_ver%%.*}"; _cuda_minor="${_cuda_ver##*.}"
+    if [[ -n "${_cuda_ver}" ]] && { [[ "${_cuda_major}" -lt 12 ]] || { [[ "${_cuda_major}" -eq 12 ]] && [[ "${_cuda_minor}" -lt 8 ]]; }; }; then
+        echo "[build_lightgbm_gpu] 警告: CUDA Toolkit ${_cuda_ver} を検出。RTX 50xx(Blackwell/sm_120) は"
+        echo "    12.8 以上でないとカーネルが生成されず、実行時に 'no kernel image is available' になります。"
+        echo "    12.8+ に更新してください（続行はしますが Blackwell では動きません）。"
+    else
+        echo "[build_lightgbm_gpu] CUDA Toolkit ${_cuda_ver:-?} を検出（12.8+ なら sm_120/Blackwell 対応）"
+    fi
     if [[ -z "${CUDAHOSTCXX:-}" ]] && command -v g++-13 >/dev/null 2>&1; then
         export CUDAHOSTCXX=g++-13
         echo "[build_lightgbm_gpu] CUDAHOSTCXX=g++-13 を自動設定（未導入なら: sudo apt-get install -y gcc-13 g++-13）"
+    elif [[ -z "${CUDAHOSTCXX:-}" ]]; then
+        echo "[build_lightgbm_gpu] 警告: g++-13 が無く CUDAHOSTCXX 未設定。nvcc は gcc<=13 を要求するため"
+        echo "    gcc-15 既定環境ではコンパイルに失敗します: sudo apt-get install -y gcc-13 g++-13"
     fi
     BUILD_FLAG="--cuda"
     PATCH_BOOST_SYSTEM=0
