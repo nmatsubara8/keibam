@@ -28,6 +28,19 @@ if [[ "${BACKEND}" == "opencl" ]]; then
     #   sudo apt-get install -y ocl-icd-opencl-dev libboost-dev libboost-system-dev \
     #        libboost-filesystem-dev cmake build-essential
     echo "[build_lightgbm_gpu] OpenCL(USE_GPU=ON) でソースビルドします（nvcc 不要）"
+    # 依存プリフライト（長いビルド前に不足を検知）: Boost（boost::compute）と OpenCL ICD ローダ。
+    _missing=()
+    if ! ls /usr/include/boost/version.hpp >/dev/null 2>&1; then
+        _missing+=("libboost-dev" "libboost-system-dev" "libboost-filesystem-dev")
+    fi
+    if ! ldconfig -p 2>/dev/null | grep -q "libOpenCL.so"; then
+        _missing+=("ocl-icd-opencl-dev")
+    fi
+    if [[ ${#_missing[@]} -gt 0 ]]; then
+        echo "[build_lightgbm_gpu] 依存が不足しています。先にインストールしてください:"
+        echo "    sudo apt-get install -y ${_missing[*]}"
+        exit 1
+    fi
     CMAKE_DEF="cmake.define.USE_GPU=ON"
 else
     # --- CUDA 依存（nvcc が gcc<=13 を要求）--------------------------------
