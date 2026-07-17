@@ -29,16 +29,20 @@ if [[ "${BACKEND}" == "opencl" ]]; then
     #        libboost-filesystem-dev cmake build-essential
     echo "[build_lightgbm_gpu] OpenCL(USE_GPU=ON) でソースビルドします（nvcc 不要）"
     # 依存プリフライト（長いビルド前に不足を検知）: Boost（boost::compute）と OpenCL ICD ローダ。
+    # LightGBM は find_package(Boost COMPONENTS filesystem system) を要求する。Boost 1.90 の
+    # 分割パッケージでは system の cmake 設定が libboost-dev だけでは入らないため、確実な
+    # libboost-all-dev を推奨する（boost_systemConfig.cmake 等のコンポーネント設定を揃える）。
+    _need_boost=0
+    if ! ls /usr/include/boost/version.hpp >/dev/null 2>&1; then _need_boost=1; fi
+    if ! ls /usr/lib/*/cmake/boost_system-*/boost_systemConfig.cmake >/dev/null 2>&1 \
+       && ! ls /usr/lib/*/cmake/Boost-*/BoostConfig.cmake >/dev/null 2>&1; then _need_boost=1; fi
     _missing=()
-    if ! ls /usr/include/boost/version.hpp >/dev/null 2>&1; then
-        _missing+=("libboost-dev" "libboost-system-dev" "libboost-filesystem-dev")
-    fi
-    if ! ldconfig -p 2>/dev/null | grep -q "libOpenCL.so"; then
-        _missing+=("ocl-icd-opencl-dev")
-    fi
+    [[ $_need_boost -eq 1 ]] && _missing+=("libboost-all-dev")
+    if ! ldconfig -p 2>/dev/null | grep -q "libOpenCL.so"; then _missing+=("ocl-icd-opencl-dev"); fi
     if [[ ${#_missing[@]} -gt 0 ]]; then
         echo "[build_lightgbm_gpu] 依存が不足しています。先にインストールしてください:"
         echo "    sudo apt-get install -y ${_missing[*]}"
+        echo "  （Boost コンポーネント設定が揃わず boost_system 等で失敗する場合も libboost-all-dev で解消）"
         exit 1
     fi
     CMAKE_DEF="cmake.define.USE_GPU=ON"
