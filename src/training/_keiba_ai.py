@@ -91,8 +91,16 @@ class KeibaAI:
         from ._multi_model_tuner import tune_model, tune_nn
         from ._stacking_model import StackingModel, derive_nn_input
 
+        bm_cfg = base_models_config or BaseModelsConfig()
+        # --tune-models（tune_only）: 空なら全モデル探索、指定時はそのモデルだけ探索し他は固定。
+        tune_only = set(getattr(bm_cfg, "tune_only", ()) or ())
+
+        def _want(model_name: str) -> bool:
+            return not tune_only or model_name in tune_only
+
         self.__datasets.make_stacking_splits(meta_ratio=meta_ratio, build_optuna_datasets=with_tuning)
-        if with_tuning:
+        # LightGBM 探索は with_tuning かつ tune_only が lightgbm を含む（or 空）時のみ。
+        if with_tuning and _want("lightgbm"):
             self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
 
         x_base = self.__datasets.X_base_train.values
@@ -100,8 +108,6 @@ class KeibaAI:
 
         # §2: ブートストラップ予測 → EV境界 sigmoid 重み（レース内正規化）
         ev_weights = self.__compute_base_ev_weights(x_base, y_base)
-
-        bm_cfg = base_models_config or BaseModelsConfig()
 
         params = dict(self.__model_wrapper.params)
         params.setdefault("scale_pos_weight", TrainingWeights.SCALE_POS_WEIGHT)
@@ -117,7 +123,7 @@ class KeibaAI:
             x_bt, y_bt = x_base[:split], y_base[:split]
             x_bv, y_bv = x_base[split:], y_base[split:]
             for mname in bm_cfg.models:
-                if mname in ("xgboost", "catboost"):
+                if mname in ("xgboost", "catboost") and _want(mname):
                     space = (
                         bm_cfg.xgboost_search_space
                         if mname == "xgboost"
@@ -132,7 +138,8 @@ class KeibaAI:
                     extra_tuned[mname] = best
 
         # NN の per-model Optuna 探索（構造・学習率・正規化を最適化）。with_tuning を要求。
-        if with_tuning and bm_cfg.tune_per_model and "nn" in bm_cfg.models and self.__datasets.has_nn_stream:
+        if (with_tuning and bm_cfg.tune_per_model and _want("nn")
+                and "nn" in bm_cfg.models and self.__datasets.has_nn_stream):
             try:
                 scaler = self.__datasets.nn_scaler
                 cards = self.__datasets.nn_categorical_cardinalities or {}
@@ -177,12 +184,12 @@ class KeibaAI:
         # 探索済みの完成 config（lightgbm/xgboost/catboost/nn の best を全て反映）を公開する。
         # 実際に探索した時（with_tuning かつ tune_per_model）のみ意味を持つ。固定運用（探索なし）の
         # 再実行では公開しない＝tuned_base_models.json を上書き・比較しない。
-        # LightGBM の best（params: 主チューナ結果）は bm_cfg に無いため lightgbm_params に載せ、
-        # 4 モデル全部の best が 1 ファイルに揃うようにする（--base-models-config で固定運用可）。
+        # LightGBM の best（params: 主チューナ結果）は bm_cfg に無いため lightgbm_params に載せる。
+        # ただし --tune-models で LightGBM を探索しなかった時は params が既定値なので、既存の
+        # bm_cfg.lightgbm_params（stored best）を保持する（未探索モデルの best を defaults で潰さない）。
         if with_tuning and getattr(bm_cfg, "tune_per_model", False):
-            self._tuned_base_models_config = dataclasses.replace(
-                bm_cfg, lightgbm_params=dict(params)
-            )
+            lgb_p = dict(params) if _want("lightgbm") else dict(getattr(bm_cfg, "lightgbm_params", {}) or {})
+            self._tuned_base_models_config = dataclasses.replace(bm_cfg, lightgbm_params=lgb_p)
 
         specs = build_base_models(bm_cfg, params, TrainingWeights.SCALE_POS_WEIGHT)
         self.base_model_names_ = [s.name for s in specs]

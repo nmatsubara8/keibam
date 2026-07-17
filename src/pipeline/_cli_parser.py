@@ -65,6 +65,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
              "xgboost/catboost/nn（と手書き LightGBM 探索）の best が単調改善する。既定は毎回新規探索。",
     )
     retrain_p.add_argument(
+        "--tune-models", default=None, metavar="M1,M2",
+        help="探索対象モデルを絞る（カンマ区切り: lightgbm/xgboost/catboost/nn）。指定モデルだけ探索し "
+             "他は stored/既定値で固定。指定すると自動で --with-tuning を有効化する。既定は全モデル探索。",
+    )
+    retrain_p.add_argument(
         "--gpu", action="store_true",
         help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
              "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は CPU 据え置き。",

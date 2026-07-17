@@ -198,6 +198,26 @@ def _retrain(args: argparse.Namespace) -> None:
 
     base_models_config = _build_base_models_config(args)
 
+    # --tune-models: 探索対象モデルを絞る（指定モデルだけ探索・他は固定）。自動で --with-tuning 有効化。
+    tune_models = getattr(args, "tune_models", None)
+    if tune_models:
+        import dataclasses
+
+        from src.training._base_models_config import BaseModelsConfig
+
+        valid = {"lightgbm", "xgboost", "catboost", "nn"}
+        selected = tuple(m.strip() for m in tune_models.split(",") if m.strip())
+        bad = [m for m in selected if m not in valid]
+        if bad:
+            raise SystemExit(f"--tune-models に不正なモデル名: {bad}（有効: {sorted(valid)}）")
+        if base_models_config is None:
+            base_models_config = BaseModelsConfig()
+        base_models_config = dataclasses.replace(base_models_config, tune_only=selected)
+        if not args.with_tuning:
+            args.with_tuning = True
+            logger.info("[retrain] --tune-models 指定のため --with-tuning を有効化します")
+        logger.info("[retrain] --tune-models: %s のみ探索（他は stored/既定値で固定）", list(selected))
+
     # NN base を使う場合は 2 系統（gbdt+nn）の PreparedFeatures を構成する。
     # entity/numeric 列は gbdt 内に共存するため列選択のみで導出でき、キャッシュ済み
     # featured_data からも特徴量エンジニアリング再実行なしで NN ストリームを作れる。

@@ -107,6 +107,9 @@ class BaseModelsConfig:
 
     models: tuple = ("lightgbm",)
     tune_per_model: bool = False
+    # 探索対象モデルの絞り込み（空=全モデル）。指定したモデルだけ探索し、他は stored/既定値で固定。
+    # CLI --tune-models で設定する。値は models の部分集合（lightgbm/xgboost/catboost/nn）。
+    tune_only: tuple = ()
     n_trials: int = 50
     timeout: float | None = None
     # LightGBM の明示パラメータ。既定は空＝チューナ/既定値に委ねる。探索済み config
@@ -139,6 +142,8 @@ def from_dict(raw: dict) -> BaseModelsConfig:
 
     if "models" in filtered:
         filtered["models"] = tuple(filtered["models"])
+    if "tune_only" in filtered:
+        filtered["tune_only"] = tuple(filtered["tune_only"])
 
     if "meta_model" in filtered:
         meta = str(filtered["meta_model"]).lower()

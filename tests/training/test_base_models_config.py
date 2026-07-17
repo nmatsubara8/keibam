@@ -48,6 +48,12 @@ def test_lightgbm_params_default_empty_and_preserved():
     assert cfg.lightgbm_params == {"num_leaves": 15, "learning_rate": 0.03}
 
 
+def test_tune_only_default_empty_and_tuple():
+    assert BaseModelsConfig().tune_only == ()
+    cfg = from_dict({"models": ["lightgbm", "xgboost", "nn"], "tune_only": ["xgboost", "nn"]})
+    assert cfg.tune_only == ("xgboost", "nn")
+
+
 def test_tuned_config_ignores_score_metadata_keys():
     # tuned_base_models.json は _auc_test/_version を持つが from_dict は無視して読める
     cfg = from_dict({"models": ["lightgbm"], "lightgbm_params": {"num_leaves": 7}, "_auc_test": 0.83, "_version": "v1"})

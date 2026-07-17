@@ -126,3 +126,31 @@ def test_per_model_tuning_gated_on_with_tuning(monkeypatch):
     ai2.train_with_stacking(with_tuning=True, base_models_config=cfg)
     assert calls["n"] >= 1
     assert ai2.tuned_base_models_config is not None
+
+
+def test_tune_only_restricts_searched_models(monkeypatch):
+    """--tune-models（tune_only）で指定したモデルだけ探索し、他は探索しない。"""
+    import src.training._model_wrapper as mw
+    import src.training._multi_model_tuner as mmt
+
+    from src.training._base_models_config import from_dict
+    from src.training._keiba_ai_factory import KeibaAIFactory
+
+    tuned = []
+    monkeypatch.setattr(mmt, "tune_model", lambda mname, *a, **k: (tuned.append(mname) or {}))
+    lgb_calls = {"n": 0}
+    monkeypatch.setattr(
+        mw.ModelWrapper, "tune_hyper_params",
+        lambda self, *a, **k: lgb_calls.__setitem__("n", lgb_calls["n"] + 1),
+    )
+
+    # xgboost だけ探索対象にする（lightgbm・catboost は除外）
+    cfg = from_dict({
+        "models": ["lightgbm", "xgboost", "catboost"],
+        "tune_per_model": True, "n_trials": 2, "tune_only": ["xgboost"],
+    })
+    ai = KeibaAIFactory().create(_make_featured(n_races=80), test_size=0.3, valid_size=0.3)
+    ai.train_with_stacking(with_tuning=True, base_models_config=cfg)
+
+    assert tuned == ["xgboost"]   # xgboost のみ探索・catboost は除外
+    assert lgb_calls["n"] == 0    # lightgbm も除外（tune_only に無い）
