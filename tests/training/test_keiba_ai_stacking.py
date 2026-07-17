@@ -102,12 +102,16 @@ def test_per_model_tuning_gated_on_with_tuning(monkeypatch):
     固定運用では探索せず stored params で学習する、という一貫化の回帰テスト。
     """
     import src.training._multi_model_tuner as mmt
+    import src.training._model_wrapper as mw
 
     from src.training._base_models_config import from_dict
     from src.training._keiba_ai_factory import KeibaAIFactory
 
     calls = {"n": 0}
     monkeypatch.setattr(mmt, "tune_model", lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1) or {}))
+    # LightGBM チューナ（optuna.integration.lightgbm.train）は本テストの対象外かつ環境依存
+    # （optuna 4.x で integration は別パッケージ）。no-op 化して per-model 探索のゲートだけを検証する。
+    monkeypatch.setattr(mw.ModelWrapper, "tune_hyper_params", lambda self, *a, **k: None)
 
     cfg = from_dict({"models": ["lightgbm", "xgboost"], "tune_per_model": True, "n_trials": 2})
 
