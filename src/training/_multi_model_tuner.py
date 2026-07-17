@@ -120,9 +120,13 @@ def _suggest_nn_params(trial, search_space: dict) -> dict:
         params["kernel_size"] = trial.suggest_categorical("kernel_size", ss.get("kernel_size", [3, 5]))
     else:
         n_layers = trial.suggest_int("n_layers", *ss.get("n_layers", [1, 3]))
-        width = trial.suggest_categorical("layer_width", ss.get("layer_width", [64, 128, 256]))
-        # 段階的に幅を絞る（width, width/2, ...、最小 32）
-        params["hidden_dims"] = [max(32, width // (2**i)) for i in range(n_layers)]
+        width_choices = ss.get("layer_width", [64, 128, 256])
+        # 各中間層のユニット数を独立に探索する（layer_width_0, layer_width_1, ...）。
+        # 半減ファンネル固定ではなく、任意の形（例 [128, 256, 64]）も表現できる。
+        params["hidden_dims"] = [
+            trial.suggest_categorical(f"layer_width_{i}", width_choices)
+            for i in range(n_layers)
+        ]
     return params
 
 
