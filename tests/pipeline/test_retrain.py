@@ -281,6 +281,36 @@ def test_retrain_job_skips_tuned_config_when_absent(tmp_path):
     assert not (tmp_path / "tuned_base_models.json").exists()
 
 
+def test_retrain_job_logs_search_before_after_summary(tmp_path, caplog):
+    """末尾に「モデル探索の前後」サマリ（前回best→今回）が出力される。"""
+    import json
+    import logging
+
+    from src.training._base_models_config import from_dict
+
+    out = tmp_path / "tuned_base_models.json"
+    out.write_text(json.dumps({"models": ["lightgbm", "nn"], "_auc_test": 0.5}), encoding="utf-8")
+
+    class _TunedAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            self.tuned_base_models_config = from_dict({
+                "models": ["lightgbm", "nn"], "tune_per_model": True,
+            })
+
+    class _TunedFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _TunedAI(featured_data)
+
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True)
+    with caplog.at_level(logging.INFO, logger="src.pipeline._retrain"):
+        RetrainJob(_TunedFactory(), cfg).run(_make_featured(), vname="sv1", with_tuning=False)
+
+    text = "\n".join(r.message for r in caplog.records)
+    assert "モデル探索の前後" in text
+    assert "前回best" in text and "今回" in text  # 既存 0.5 との前後比較
+
+
 def test_retrain_job_keeps_better_existing_tuned_config(tmp_path):
     """歴代 best 保持: 既存ファイルの auc_test が高ければ今回の学習で上書きしない。"""
     import json

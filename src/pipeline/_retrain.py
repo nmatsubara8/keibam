@@ -207,6 +207,8 @@ class RetrainJob:
         # 歴代 best を守るため、既存ファイルより auc_test が良い時だけ上書きする（初回は無条件保存）。
         # 保存 JSON は from_dict が未知キー（_auc_test/_version）を無視するため、そのまま
         # --base-models-config で読み戻せる。
+        # 探索の前後サマリ（末尾に表示するため情報を退避する）。tune_per_model 実行時のみ。
+        search_summary: dict | None = None
         tuned_cfg = getattr(ai, "tuned_base_models_config", None)
         if tuned_cfg is not None:
             try:
@@ -218,7 +220,8 @@ class RetrainJob:
                     with open(out_path, encoding="utf-8") as f:
                         prev_auc = float(json.load(f).get("_auc_test", float("-inf")))
                 first_time = not os.path.exists(out_path)
-                if first_time or new_auc >= prev_auc:
+                adopted = first_time or new_auc >= prev_auc
+                if adopted:
                     payload = {**tuned_cfg.to_dict(), "_auc_test": new_auc, "_version": vname}
                     with open(out_path, "w", encoding="utf-8") as f:
                         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -231,6 +234,12 @@ class RetrainJob:
                         "[retrain] 今回 auc_test=%.4f ≤ 既存 best=%.4f → tuned_base_models.json 据え置き",
                         new_auc, prev_auc,
                     )
+                search_summary = {
+                    "prev": None if first_time else prev_auc,
+                    "new": new_auc,
+                    "adopted": adopted,
+                    "path": out_path,
+                }
             except Exception as e:  # noqa: BLE001 — 保存失敗で学習結果を失わない
                 logger.warning("[retrain] tuned_base_models.json 保存失敗 (non-fatal): %s", e)
 
@@ -269,8 +278,43 @@ class RetrainJob:
                 meta["win_head"] = win_metrics
 
         save_metadata(meta, metadata_path(self._cfg.models_dir))
-        logger.info("[retrain] version=%s auc_test=%s", vname, metrics["auc_test"])
+
+        # 末尾サマリ: 大量の学習ログの後でも探索の前後が一目で分かるよう最後にまとめて出す。
+        self._log_final_summary(vname, metrics, meta.get("win_head"), search_summary)
         return meta
+
+    @staticmethod
+    def _log_final_summary(vname, metrics, win_head, search_summary) -> None:
+        """実行末尾に「モデル探索の前後」を一目で分かる形で出力する。
+
+        search_summary（tune_per_model 時のみ非 None）は prev（前回 best auc_test・初回は None）、
+        new（今回 auc_test）、adopted（採用=更新したか）、path を持つ。
+        """
+        place_auc = metrics.get("auc_test")
+        lines = ["===== モデル探索の前後（サマリ）====="]
+        if search_summary is not None:
+            prev = search_summary["prev"]
+            new = search_summary["new"]
+            if prev is None:
+                lines.append(f"Place(stacking) auc_test: 初回 → {new:.4f}")
+            else:
+                delta = new - prev
+                verdict = "更新" if search_summary["adopted"] else "据え置き"
+                lines.append(
+                    f"Place(stacking) auc_test: 前回best {prev:.4f} → 今回 {new:.4f} "
+                    f"（{delta:+.4f}・{verdict}）"
+                )
+            best_kept = new if search_summary["adopted"] else prev
+            if best_kept is not None:
+                lines.append(f"保持中の best: {best_kept:.4f} → {search_summary['path']}")
+        else:
+            # tune_per_model 以外（既定/LightGBM 探索のみ）は今回値のみ
+            lines.append(f"Place(stacking) auc_test: {place_auc}")
+        if win_head and win_head.get("auc_test") is not None:
+            lines.append(f"Win head auc_test: {win_head['auc_test']:.4f}")
+        lines.append(f"version={vname}")
+        lines.append("====================================")
+        logger.info("\n%s", "\n".join(lines))
 
     def _train_and_save_win_head(
         self, featured_data, vname, lgb_params, base_models_config
