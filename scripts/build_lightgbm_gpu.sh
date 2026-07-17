@@ -1,67 +1,72 @@
 #!/usr/bin/env bash
 # build_lightgbm_gpu.sh — LightGBM を GPU 有効でビルドして現在の venv に入れる。
 #
-# 背景: 前回失敗したのは CUDA ビルド（-DUSE_CUDA=ON）で、nvcc が gcc<=13 を要求するため
-# gcc 15.2（Ubuntu 26.04）で不可だった。**OpenCL ビルド（-DUSE_GPU=ON）は nvcc を使わず
-# gcc で直接コンパイルする**ので gcc 15 でも通る。まずは OpenCL 経路を推奨。
+# 背景:
+#  - CUDA ビルド(-DUSE_CUDA=ON)は nvcc が gcc<=13 を要求し gcc15 で不可だった。
+#    → OpenCL ビルド(-DUSE_GPU=ON)は nvcc を使わず gcc で直接コンパイルするので gcc15 で通る。
+#  - さらに Ubuntu 26.04 の Boost 1.90 は `system` コンポーネントを廃止（ヘッダオンリー化）した
+#    ため、LightGBM 4.6 の find_package(Boost COMPONENTS filesystem system) が失敗する。
+#    → ソースを clone し CMakeLists から `system` 要求を除去してからビルドする（system はリンク不要）。
 #
 # 使い方:
 #   scripts/build_lightgbm_gpu.sh            # OpenCL(USE_GPU=ON) ビルド（既定・推奨）
 #   LGB_BACKEND=cuda scripts/build_lightgbm_gpu.sh   # CUDA(USE_CUDA=ON) ※要 gcc-13
+#   LGB_VERSION=4.6.0 scripts/build_lightgbm_gpu.sh  # clone するタグ（既定 4.6.0）
 #
-# ビルド後の使い方（コード側は配線済み）:
+# ビルド後（コード側は配線済み）:
 #   retrain ... --lgb-gpu gpu     # OpenCL ビルドを使う（device_type=gpu）
 #   retrain ... --lgb-gpu cuda    # CUDA ビルドを使う（device_type=cuda）
 #   単体確認:  python -c "import lightgbm as lgb, numpy as np; \
-#     X=np.random.rand(2000,20); y=(X[:,0]>0.5).astype(int); \
-#     lgb.train({'objective':'binary','device_type':'gpu','verbose':1}, lgb.Dataset(X,y), num_boost_round=10)"
+#     X=np.random.rand(4000,30); y=(X[:,0]>0.5).astype(int); \
+#     lgb.train({'objective':'binary','device_type':'gpu','verbose':1}, lgb.Dataset(X,y), num_boost_round=20)"
 
 set -euo pipefail
 BACKEND="${LGB_BACKEND:-opencl}"
+LGB_VERSION="${LGB_VERSION:-4.6.0}"
 
-echo "[build_lightgbm_gpu] backend=${BACKEND}  gcc=$(gcc -dumpversion 2>/dev/null || echo '?')"
+echo "[build_lightgbm_gpu] backend=${BACKEND}  version=v${LGB_VERSION}  gcc=$(gcc -dumpversion 2>/dev/null || echo '?')"
 
+# --- バックエンド別の依存チェック & CMake フラグ -----------------------------
 if [[ "${BACKEND}" == "opencl" ]]; then
-    # --- OpenCL 依存（nvcc 不要・gcc15 可）---------------------------------
-    # Ubuntu/WSL2: OpenCL ICD ローダ + Boost。NVIDIA の OpenCL 実装はドライバ同梱
-    # （WSL2 は /usr/lib/wsl/lib に libnvidia-opencl）。未導入なら:
-    #   sudo apt-get install -y ocl-icd-opencl-dev libboost-dev libboost-system-dev \
-    #        libboost-filesystem-dev cmake build-essential
-    echo "[build_lightgbm_gpu] OpenCL(USE_GPU=ON) でソースビルドします（nvcc 不要）"
-    # 依存プリフライト（長いビルド前に不足を検知）: Boost（boost::compute）と OpenCL ICD ローダ。
-    # LightGBM は find_package(Boost COMPONENTS filesystem system) を要求する。Boost 1.90 の
-    # 分割パッケージでは system の cmake 設定が libboost-dev だけでは入らないため、確実な
-    # libboost-all-dev を推奨する（boost_systemConfig.cmake 等のコンポーネント設定を揃える）。
-    _need_boost=0
-    if ! ls /usr/include/boost/version.hpp >/dev/null 2>&1; then _need_boost=1; fi
-    if ! ls /usr/lib/*/cmake/boost_system-*/boost_systemConfig.cmake >/dev/null 2>&1 \
-       && ! ls /usr/lib/*/cmake/Boost-*/BoostConfig.cmake >/dev/null 2>&1; then _need_boost=1; fi
+    # OpenCL ICD ローダ + Boost。NVIDIA の OpenCL 実装はドライバ同梱（WSL2 は /usr/lib/wsl/lib）。
     _missing=()
-    [[ $_need_boost -eq 1 ]] && _missing+=("libboost-all-dev")
-    if ! ldconfig -p 2>/dev/null | grep -q "libOpenCL.so"; then _missing+=("ocl-icd-opencl-dev"); fi
+    ls /usr/include/boost/version.hpp >/dev/null 2>&1 || _missing+=("libboost-all-dev")
+    ldconfig -p 2>/dev/null | grep -q "libOpenCL.so" || _missing+=("ocl-icd-opencl-dev")
+    command -v git >/dev/null 2>&1 || _missing+=("git")
     if [[ ${#_missing[@]} -gt 0 ]]; then
-        echo "[build_lightgbm_gpu] 依存が不足しています。先にインストールしてください:"
+        echo "[build_lightgbm_gpu] 依存が不足しています。先に:"
         echo "    sudo apt-get install -y ${_missing[*]}"
-        echo "  （Boost コンポーネント設定が揃わず boost_system 等で失敗する場合も libboost-all-dev で解消）"
         exit 1
     fi
-    CMAKE_DEF="cmake.define.USE_GPU=ON"
+    BUILD_FLAG="--gpu"
+    PATCH_BOOST_SYSTEM=1   # Boost 1.90 で system 廃止 → CMakeLists から除去
 else
-    # --- CUDA 依存（nvcc が gcc<=13 を要求）--------------------------------
-    # gcc-15 では nvcc が失敗するため、gcc-13 を入れて CUDA ホストコンパイラに指定する:
-    #   sudo apt-get install -y gcc-13 g++-13
-    #   export CUDAHOSTCXX=g++-13  CC=gcc-13 CXX=g++-13
-    echo "[build_lightgbm_gpu] CUDA(USE_CUDA=ON) でソースビルドします（要 gcc-13 / CUDAHOSTCXX）"
+    # CUDA: nvcc が gcc<=13 を要求。gcc-13 を CUDA ホストコンパイラに指定する。
+    command -v git >/dev/null 2>&1 || { echo "git が必要です: sudo apt-get install -y git"; exit 1; }
     if [[ -z "${CUDAHOSTCXX:-}" ]] && command -v g++-13 >/dev/null 2>&1; then
         export CUDAHOSTCXX=g++-13
-        echo "[build_lightgbm_gpu] CUDAHOSTCXX=g++-13 を自動設定"
+        echo "[build_lightgbm_gpu] CUDAHOSTCXX=g++-13 を自動設定（未導入なら: sudo apt-get install -y gcc-13 g++-13）"
     fi
-    CMAKE_DEF="cmake.define.USE_CUDA=ON"
+    BUILD_FLAG="--cuda"
+    PATCH_BOOST_SYSTEM=0
 fi
 
-# 既存 CPU wheel を確実に置き換えるため no-binary でソースから再ビルドする。
-pip install --no-binary lightgbm --force-reinstall --no-cache-dir \
-    lightgbm --config-settings="${CMAKE_DEF}"
+# --- ソース取得 → パッチ → 公式 build-python.sh でビルド＆インストール --------
+TMPD="$(mktemp -d)"
+trap 'rm -rf "$TMPD"' EXIT
+echo "[build_lightgbm_gpu] LightGBM v${LGB_VERSION} を clone します..."
+git clone --recursive --depth 1 --branch "v${LGB_VERSION}" \
+    https://github.com/microsoft/LightGBM "$TMPD/LightGBM"
+
+if [[ "${PATCH_BOOST_SYSTEM}" == "1" ]]; then
+    # find_package(Boost ... COMPONENTS filesystem system ...) から system を除去
+    # （Boost 1.90 でヘッダオンリー化・リンク不要）。念のため CMakeLists 全体に適用。
+    sed -i 's/filesystem system/filesystem/g' "$TMPD/LightGBM/CMakeLists.txt"
+    echo "[build_lightgbm_gpu] CMakeLists の Boost 'system' 要求を除去しました"
+fi
+
+echo "[build_lightgbm_gpu] build-python.sh install ${BUILD_FLAG} を実行します（数分）..."
+( cd "$TMPD/LightGBM" && sh ./build-python.sh install "${BUILD_FLAG}" )
 
 echo "[build_lightgbm_gpu] 完了。lightgbm=$(python -c 'import lightgbm; print(lightgbm.__version__)')"
-echo "[build_lightgbm_gpu] 動作確認は上記コメントの python -c ワンライナーで（GPU が使われるか verbose=1 で確認）"
+echo "[build_lightgbm_gpu] 動作確認は冒頭コメントの python -c ワンライナーで（verbose=1 で GPU 使用を確認）"
