@@ -55,6 +55,56 @@ def train_nn_standalone(datasets, nn_params: dict | None = None, pos_weight: flo
     return model, {"auc_test": auc}
 
 
+def search_nn_standalone(
+    datasets,
+    search_space: dict,
+    *,
+    n_trials: int = 25,
+    timeout: float | None = None,
+    epochs: int = 15,
+    max_train_rows: int = 120000,
+    pos_weight: float | None = None,
+) -> dict:
+    """NN の構造・学習パラメータを Optuna で探索し、best nn_params を返す（分離ルート用）。
+
+    スタックルート（_keiba_ai.train_with_stacking）と同じ作法で、``X_train`` を NN ストリーム形式へ
+    derive し時系列 80/20 で train/val に分けて ``tune_nn`` に渡す。``X_test`` は一切使わないので
+    ハイパーパラメータ選択に test がリークしない。``--resume-tuning`` 時は tune_nn 内の
+    study_kwargs("nn") が永続 study を再開する（best は単調改善）。
+
+    Returns
+    -------
+    dict : best nn_params（arch/lr/dropout/hidden_dims 等）。探索不発なら空 dict。
+    """
+    from src.constants._bet_thresholds import TrainingWeights
+    from src.training._multi_model_tuner import tune_nn
+    from src.training._stacking_model import derive_nn_input
+
+    if not getattr(datasets, "has_nn_stream", False):
+        raise ValueError("NN ストリームがありません（PreparedFeatures を渡してください）。")
+
+    scaler = datasets.nn_scaler
+    cards = datasets.nn_categorical_cardinalities or {}
+    pw = pos_weight if pos_weight is not None else TrainingWeights.SCALE_POS_WEIGHT
+
+    nn_arr = derive_nn_input(scaler, datasets.X_train)
+    y = _as_1d(datasets.y_train)
+    nsplit = int(len(nn_arr) * 0.8)
+    best = tune_nn(
+        nn_arr[:nsplit], y[:nsplit],
+        nn_arr[nsplit:], y[nsplit:],
+        search_space,
+        categorical_cardinalities=cards,
+        n_numeric=len(scaler.numeric_cols),
+        n_trials=n_trials,
+        timeout=timeout,
+        scale_pos_weight=pw,
+        epochs=epochs,
+        max_train_rows=max_train_rows,
+    )
+    return best or {}
+
+
 def save_nn_standalone(
     nn_model: Any, nn_scaler: Any, version: str,
     suffix: str = "__nn_standalone", models_dir: str = "models",

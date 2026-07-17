@@ -193,12 +193,33 @@ def _retrain(args: argparse.Namespace) -> None:
         from src.training._keiba_ai_factory import KeibaAIFactory
 
         nn_params = None
+        nn_search_space = None
+        tune_cfg: dict = {}
         nn_config = getattr(args, "nn_config", None)
         if nn_config:
             with open(nn_config) as f:
-                nn_params = _json.load(f).get("nn_params")
+                _c = _json.load(f)
+            nn_params = _c.get("nn_params")
+            nn_search_space = _c.get("nn_search_space")
+            tune_cfg = {
+                "n_trials": _c.get("nn_tune_trials", 25),
+                "epochs": _c.get("nn_tune_epochs", 15),
+                "max_train_rows": _c.get("nn_tune_max_rows", 120000),
+                "timeout": _c.get("timeout"),
+            }
         prepared = prepared_from_gbdt(featured_data)
         ai = KeibaAIFactory().create(prepared, test_size=cfg.test_size, valid_size=cfg.valid_size)
+
+        # --with-tuning かつ nn_search_space があれば、まず構造を Optuna 探索して best を反映する
+        # （スタックルートと同じ作法。X_train を 80/20 分割して探索し X_test は未使用＝リーク回避）。
+        # --resume-tuning 時は tune_nn 内 study_kwargs("nn") が永続 study を再開する。
+        if getattr(args, "with_tuning", False) and nn_search_space:
+            from src.pipeline._nn_standalone import search_nn_standalone
+
+            best_nn = search_nn_standalone(ai.datasets, nn_search_space, **tune_cfg)
+            logger.info("[retrain] NN 構造探索 完了 best=%s", best_nn)
+            nn_params = {**(nn_params or {}), **best_nn}
+
         model, metrics = train_nn_standalone(ai.datasets, nn_params)
         vname = args.version_name or version_name()
         path = save_nn_standalone(model, ai.datasets.nn_scaler, vname, models_dir=cfg.models_dir)
