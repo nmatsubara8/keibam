@@ -159,6 +159,30 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = featured_data.drop(columns=present, errors="ignore")
         logger.info("[retrain] --no-rating-features: Elo 由来 %d 列を除外: %s", len(present), present)
 
+    # --nn-standalone: NN を GBDT スタックと分離して単体学習し保存する（分離NN + 遅延スタッキング）。
+    # GBDT スタックは別途 configs/base_models_gbdt.json で全データ学習し、build-combined で meta 融合する。
+    if getattr(args, "nn_standalone", False):
+        import json as _json
+
+        from src.pipeline._nn_standalone import save_nn_standalone
+        from src.pipeline._nn_standalone import train_nn_standalone
+        from src.pipeline._retrain import version_name
+        from src.preprocessing._prepared_features import prepared_from_gbdt
+        from src.training._keiba_ai_factory import KeibaAIFactory
+
+        nn_params = None
+        nn_config = getattr(args, "nn_config", None)
+        if nn_config:
+            with open(nn_config) as f:
+                nn_params = _json.load(f).get("nn_params")
+        prepared = prepared_from_gbdt(featured_data)
+        ai = KeibaAIFactory().create(prepared, test_size=cfg.test_size, valid_size=cfg.valid_size)
+        model, metrics = train_nn_standalone(ai.datasets, nn_params)
+        vname = args.version_name or version_name()
+        path = save_nn_standalone(model, ai.datasets.nn_scaler, vname, models_dir=cfg.models_dir)
+        logger.info("[retrain] NN 単体学習 完了: %s auc_test=%.4f → %s", vname, metrics["auc_test"], path)
+        return
+
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
     # --use-selected-params: UI（モデルラボ）で保存した選択（models/selected_params.json）を使う。
     lgb_params = None

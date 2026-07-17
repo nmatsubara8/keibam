@@ -70,6 +70,15 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
              "他は stored/既定値で固定。指定すると自動で --with-tuning を有効化する。既定は全モデル探索。",
     )
     retrain_p.add_argument(
+        "--nn-standalone", action="store_true",
+        help="NN を GBDT スタックと分離して単体学習・保存する（分離NN + 遅延スタッキング）。"
+             "GBDT は configs/base_models_gbdt.json で別途全データ学習し build-combined で meta 融合する。",
+    )
+    retrain_p.add_argument(
+        "--nn-config", default=None,
+        help="--nn-standalone 時の NN パラメータ JSON（nn_params キー）。未指定は既定。",
+    )
+    retrain_p.add_argument(
         "--gpu", action="store_true",
         help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
              "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は CPU 据え置き。",
@@ -376,5 +385,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_calibrate_takeout(sub)
     _add_calibrate_ev(sub)
     _add_backtest(sub)
+    _add_build_combined(sub)
     _add_doctor(sub)
     return parser
+
+
+def _add_build_combined(sub: argparse._SubParsersAction) -> None:
+    """build-combined サブコマンド（分離NN + 遅延スタッキングの融合）を登録する。"""
+    p = sub.add_parser("build-combined", help="GBDT スタックと NN 単体を meta 融合して保存")
+    p.add_argument("--gbdt-model", required=True, help="GBDT スタックの pickle パス（KeibaAIFactory.save 済み）")
+    p.add_argument("--nn-model", required=True, help="NN 単体の pickle パス（retrain --nn-standalone で保存）")
+    p.add_argument("--version-name", default=None, help="出力バージョン名（既定: 日付自動）")
+    p.add_argument("--featured-path", default=None, help="featured_data.pkl（既定: 本番）")
+    p.add_argument(
+        "--meta-years", type=int, nargs="+", default=None, metavar="YYYY",
+        help="meta 融合を学習する holdout 年（両 base が --holdout-years で除外した年を推奨＝リーク回避）",
+    )
+    p.add_argument("--test-size", type=float, default=0.3, help="holdout 内の test 比率（既定 0.3）")
+    p.add_argument("--valid-size", type=float, default=0.3, help="holdout 内の valid 比率（既定 0.3）")

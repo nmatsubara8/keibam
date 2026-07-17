@@ -40,6 +40,7 @@ def test_parse_args_dispatches_known_jobs():
         "fetch-final-odds": ["fetch-final-odds", "--from-results"],
         "calibrate-ev": ["calibrate-ev"],
         "backtest": ["backtest"],
+        "build-combined": ["build-combined", "--gbdt-model", "g.pkl", "--nn-model", "n.pkl"],
     }
     for name in _subcommand_names():
         argv = minimal.get(name, [name])
