@@ -1,0 +1,7 @@
+{
+  "_comment": "GBDT のみのスタック（NN 抜き）。NN 2系統 PreparedFeatures を作らないためメモリが半減し、--since-year 無しの全データ学習が通りやすい。NN は retrain --nn-standalone で別途学習し、build-combined でメタ融合する（分離NN + 遅延スタッキング）。探索する場合は --with-tuning + tune_per_model（or --tune-models）を併用。",
+  "models": ["lightgbm", "xgboost", "catboost"],
+  "tune_per_model": true,
+  "n_trials": 50,
+  "meta_model": "logistic"
+}
