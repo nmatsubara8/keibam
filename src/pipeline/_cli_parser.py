@@ -81,7 +81,12 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
     retrain_p.add_argument(
         "--gpu", action="store_true",
         help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
-             "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は CPU 据え置き。",
+             "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は --lgb-gpu で別途。",
+    )
+    retrain_p.add_argument(
+        "--lgb-gpu", choices=("gpu", "cuda"), default=None,
+        help="LightGBM を GPU で学習（要 GPU 有効ビルド）。'gpu'=OpenCL(USE_GPU=ON・nvcc 不要・gcc15可) / "
+             "'cuda'=CUDA(USE_CUDA=ON・nvcc は gcc<=13)。pip 既定の CPU ビルドでは指定しないこと。",
     )
     retrain_p.add_argument(
         "--holdout-years", type=int, nargs="+", default=None, metavar="YYYY",

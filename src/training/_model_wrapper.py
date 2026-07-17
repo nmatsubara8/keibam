@@ -55,7 +55,10 @@ class ModelWrapper:
             study = optuna.create_study(direction="minimize")
         self.last_study_ = study
 
+        from src.training._gpu_config import lgb_gpu_params
+
         params = {"objective": "binary", "verbose": -1}
+        params.update(lgb_gpu_params())  # KEIBA_LGB_GPU 時のみ device_type=gpu/cuda
 
         # チューニング実行
         lgb_clf_o = lgb_o.train(
@@ -68,8 +71,11 @@ class ModelWrapper:
             optuna_seed=100,  # optunaのseed固定
         )
 
-        # num_iterationsとearly_stopping_roundは今は使わないので削除
-        tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in ["num_iterations", "early_stopping_round"]}
+        # num_iterations/early_stopping は使わないので削除。device 系は環境属性なので stored params
+        # には残さない（build 時に lgb_gpu_params で再付与＝CPU 実行時に GPU 設定が焼き付かない）。
+        _drop = {"num_iterations", "early_stopping_round", "device_type", "device",
+                 "gpu_platform_id", "gpu_device_id"}
+        tunedParams = {k: v for k, v in lgb_clf_o.params.items() if k not in _drop}
 
         self.__lgb_model.set_params(**tunedParams)
         return study
@@ -82,6 +88,7 @@ class ModelWrapper:
 
         # tuning_history.json が読む system_attrs と同じキー（完全パラメータの記録先）
         from ._tuning_history import _LGBM_PARAMS_ATTR
+        from ._gpu_config import lgb_gpu_params
 
         if study is None:
             from ._tuning_storage import study_kwargs
@@ -109,8 +116,9 @@ class ModelWrapper:
             num_boost_round = params.pop("num_boost_round", cfg.num_boost_round)
             is_dart = params.get("boosting_type") == "dart"
             callbacks = [] if is_dart else [lgb.early_stopping(cfg.early_stopping_rounds, verbose=False)]
+            # device は stored params（user_attr / best）に残さず、この学習だけ GPU にする。
             booster = lgb.train(
-                params,
+                {**params, **lgb_gpu_params()},
                 train_set,
                 valid_sets=[valid_set],
                 num_boost_round=num_boost_round,

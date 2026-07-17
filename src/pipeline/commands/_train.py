@@ -48,6 +48,12 @@ def _retrain(args: argparse.Namespace) -> None:
         except Exception:  # noqa: BLE001 — torch 不在等でも CPU で継続
             logger.warning("[retrain] --gpu 指定だが torch/CUDA 確認に失敗 → GBDT は CPU で続行")
 
+    # --lgb-gpu: LightGBM を GPU で学習（要 GPU 有効ビルド）。build/tuner が device_type を反映。
+    lgb_gpu = getattr(args, "lgb_gpu", None)
+    if lgb_gpu:
+        os.environ["KEIBA_LGB_GPU"] = lgb_gpu
+        logger.info("[retrain] --lgb-gpu %s: LightGBM を GPU で学習（要 GPU 有効ビルド）", lgb_gpu)
+
     cfg = RetrainConfig(
         use_stacking=not args.no_stacking,
         train_win_head=not getattr(args, "no_win_head", False),

@@ -29,3 +29,23 @@ def test_disabled_values(gpu_cfg, monkeypatch, val):
     monkeypatch.setenv("KEIBA_USE_GPU", val)
     assert gpu_cfg.gpu_enabled() is False
     assert gpu_cfg.xgb_gpu_params() == {}
+
+
+def test_lgb_gpu_params_off_by_default(gpu_cfg, monkeypatch):
+    monkeypatch.delenv("KEIBA_LGB_GPU", raising=False)
+    assert gpu_cfg.lgb_gpu_params() == {}
+
+
+def test_lgb_gpu_params_opencl_and_cuda(gpu_cfg, monkeypatch):
+    monkeypatch.setenv("KEIBA_LGB_GPU", "gpu")
+    assert gpu_cfg.lgb_gpu_params() == {"device_type": "gpu"}
+    monkeypatch.setenv("KEIBA_LGB_GPU", "cuda")
+    assert gpu_cfg.lgb_gpu_params() == {"device_type": "cuda"}
+
+
+def test_lgb_gpu_independent_of_use_gpu_and_invalid(gpu_cfg, monkeypatch):
+    monkeypatch.setenv("KEIBA_USE_GPU", "1")   # xgb/cat 用。lightgbm には無関係
+    monkeypatch.delenv("KEIBA_LGB_GPU", raising=False)
+    assert gpu_cfg.lgb_gpu_params() == {}
+    monkeypatch.setenv("KEIBA_LGB_GPU", "invalid")
+    assert gpu_cfg.lgb_gpu_params() == {}
