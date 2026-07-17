@@ -140,15 +140,23 @@ def tune_nn(
     scale_pos_weight: float = 1.0,
     epochs: int = 15,
     max_train_rows: int | None = 120000,
-) -> dict:
+    warm_start_params: list[dict] | None = None,
+    return_study: bool = False,
+):
     """NnWinModel の最良構造・学習パラメータを Optuna で探索して返す（AUC 最大化）。
 
     x_tr/x_val は NN ストリーム形式（derive_nn_input 済みの float 配列）。
     各 trial は短め epochs・部分標本で素早く評価し、検証 AUC を最大化する。
 
+    warm_start_params : 過去の上位構造（Optuna の生 suggest パラメータ dict のリスト）。
+        探索前に enqueue_trial で投入し、初期値として先に評価させる（TPE のウォームスタート）。
+    return_study : True なら (best_nn_params, study) を返す（呼び出し側が study.best_trial.params
+        = 生パラメータや best_value を回収するため）。False（既定）は best_nn_params のみ。
+
     Returns
     -------
-    dict : best な nn_params（arch, lr, dropout, hidden_dims/conv_channels 等）
+    dict : best な nn_params（arch, lr, dropout, hidden_dims/conv_channels 等）。
+    return_study=True の場合は (dict, optuna.Study)。
     """
     import optuna
     import optuna.logging  # 明示 submodule import（環境により optuna.logging が自動公開されない）
@@ -184,12 +192,20 @@ def tune_nn(
     sampler = optuna.samplers.TPESampler(seed=seed)
     # --resume-tuning 時は永続 study を再開（trial 追記＝best 単調改善）。
     study = optuna.create_study(direction="maximize", sampler=sampler, **study_kwargs("nn"))
+    # 過去 leaderboard の上位構造を初期値として投入（TPE のウォームスタート）。
+    for wp in (warm_start_params or []):
+        if not wp:
+            continue
+        try:
+            study.enqueue_trial(wp, skip_if_exists=True)
+        except Exception as e:  # noqa: BLE001 — 投入失敗（キー不一致等）は探索を止めない
+            logger.warning("[tune_nn] warm-start 投入をスキップ: %s", e)
     study.optimize(objective, n_trials=n_trials, timeout=timeout)
     best = study.best_trial.user_attrs.get("nn_params", {})
     logger.info(
         "[tune_nn] best_auc=%.4f params=%s", study.best_value, best,
     )
-    return best
+    return (best, study) if return_study else best
 
 
 def tune_model(

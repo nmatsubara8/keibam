@@ -213,17 +213,51 @@ def _retrain(args: argparse.Namespace) -> None:
         # --with-tuning かつ nn_search_space があれば、まず構造を Optuna 探索して best を反映する
         # （スタックルートと同じ作法。X_train を 80/20 分割して探索し X_test は未使用＝リーク回避）。
         # --resume-tuning 時は tune_nn 内 study_kwargs("nn") が永続 study を再開する。
-        if getattr(args, "with_tuning", False) and nn_search_space:
+        did_search = bool(getattr(args, "with_tuning", False) and nn_search_space)
+        best_optuna = None
+        if did_search:
+            from src.pipeline._nn_standalone import load_nn_leaderboard
+            from src.pipeline._nn_standalone import nn_leaderboard_path
             from src.pipeline._nn_standalone import search_nn_standalone
 
-            best_nn = search_nn_standalone(ai.datasets, nn_search_space, **tune_cfg)
-            logger.info("[retrain] NN 構造探索 完了 best=%s", best_nn)
-            nn_params = {**(nn_params or {}), **best_nn}
+            # 過去の上位モデル（構造+パラメータ）を探索の初期値として投入する。
+            lb_path = nn_leaderboard_path(cfg.models_dir)
+            warm = [e["optuna_params"] for e in load_nn_leaderboard(lb_path) if e.get("optuna_params")]
+            if warm:
+                logger.info("[retrain] NN 探索の初期値として leaderboard 上位 %d 件を投入", len(warm))
+            result = search_nn_standalone(
+                ai.datasets, nn_search_space, warm_start_params=warm, **tune_cfg
+            )
+            best_optuna = result["optuna_params"]
+            logger.info("[retrain] NN 構造探索 完了 val_auc=%.4f best=%s", result["val_auc"], result["nn_params"])
+            nn_params = {**(nn_params or {}), **result["nn_params"]}
 
         model, metrics = train_nn_standalone(ai.datasets, nn_params)
         vname = args.version_name or version_name()
         path = save_nn_standalone(model, ai.datasets.nn_scaler, vname, models_dir=cfg.models_dir)
         logger.info("[retrain] NN 単体学習 完了: %s auc_test=%.4f → %s", vname, metrics["auc_test"], path)
+
+        # 探索した場合、構造+パラメータを台帳へ保存（再現可能）。単純上書きせず上位 top_k を維持し、
+        # 次回探索の初期値（ウォームスタート）として参照できるようにする。
+        if did_search:
+            import datetime as _dt
+
+            from src.pipeline._nn_standalone import nn_leaderboard_path
+            from src.pipeline._nn_standalone import update_nn_leaderboard
+
+            entry = {
+                "version": vname,
+                "auc_test": float(metrics["auc_test"]),
+                "nn_params": nn_params,          # 派生形（再現可能な学習仕様）
+                "optuna_params": best_optuna,    # 生 suggest（ウォームスタート用）
+                "trained_at": _dt.datetime.now().isoformat(),
+            }
+            lb_path = nn_leaderboard_path(cfg.models_dir)
+            board = update_nn_leaderboard(lb_path, entry, top_k=5)
+            logger.info(
+                "[retrain] NN leaderboard 更新: %d 件保持（best auc_test=%.4f）→ %s",
+                len(board), board[0]["auc_test"], lb_path,
+            )
         return
 
     # --params-rank: 保存済みチューニング履歴（成績順）から指定 rank のパラメータで学習。
