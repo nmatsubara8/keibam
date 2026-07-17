@@ -106,9 +106,12 @@ class KeibaAI:
         params = dict(self.__model_wrapper.params)
         params.setdefault("scale_pos_weight", TrainingWeights.SCALE_POS_WEIGHT)
 
-        # XGB/CatBoost の per-model Optuna チューニング
+        # XGB/CatBoost の per-model Optuna チューニング。
+        # with_tuning を要求する＝「--with-tuning 有無＝探索するか否か」を全モデルで統一。
+        # --with-tuning なしで tuned config を渡す固定運用では、ここは走らず stored params
+        # （build_base_models が cfg.*_params を採用）で学習する。
         extra_tuned = {}
-        if bm_cfg.tune_per_model:
+        if with_tuning and bm_cfg.tune_per_model:
             n = len(x_base)
             split = int(n * 0.8)
             x_bt, y_bt = x_base[:split], y_base[:split]
@@ -128,8 +131,8 @@ class KeibaAI:
                     )
                     extra_tuned[mname] = best
 
-        # NN の per-model Optuna 探索（構造・学習率・正規化を最適化）
-        if bm_cfg.tune_per_model and "nn" in bm_cfg.models and self.__datasets.has_nn_stream:
+        # NN の per-model Optuna 探索（構造・学習率・正規化を最適化）。with_tuning を要求。
+        if with_tuning and bm_cfg.tune_per_model and "nn" in bm_cfg.models and self.__datasets.has_nn_stream:
             try:
                 scaler = self.__datasets.nn_scaler
                 cards = self.__datasets.nn_categorical_cardinalities or {}
@@ -172,10 +175,11 @@ class KeibaAI:
                 bm_cfg = dataclasses.replace(bm_cfg, **kw)
 
         # 探索済みの完成 config（lightgbm/xgboost/catboost/nn の best を全て反映）を公開する。
-        # tune_per_model 時のみ意味を持ち、retrain が JSON 保存＝固定運用へ書き戻せる。
+        # 実際に探索した時（with_tuning かつ tune_per_model）のみ意味を持つ。固定運用（探索なし）の
+        # 再実行では公開しない＝tuned_base_models.json を上書き・比較しない。
         # LightGBM の best（params: 主チューナ結果）は bm_cfg に無いため lightgbm_params に載せ、
         # 4 モデル全部の best が 1 ファイルに揃うようにする（--base-models-config で固定運用可）。
-        if getattr(bm_cfg, "tune_per_model", False):
+        if with_tuning and getattr(bm_cfg, "tune_per_model", False):
             self._tuned_base_models_config = dataclasses.replace(
                 bm_cfg, lightgbm_params=dict(params)
             )
