@@ -54,3 +54,27 @@ def test_retrain_holdout_years_parsed():
     p = build_parser()
     assert p.parse_args(["retrain", "--holdout-years", "2024", "2025"]).holdout_years == [2024, 2025]
     assert p.parse_args(["retrain"]).holdout_years is None
+
+
+def test_retrain_float32_features_parsed():
+    """retrain --float32-features が store_true で解析される（既定 False）。"""
+    p = build_parser()
+    assert p.parse_args(["retrain", "--float32-features"]).float32_features is True
+    assert p.parse_args(["retrain"]).float32_features is False
+
+
+def test_float32_downcast_preserves_int_and_category():
+    """float64 のみ float32 化し、int64/category は保持する（downcast ロジックの不変条件）。"""
+    import numpy as np
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "a": np.random.rand(200).astype("float64"),
+        "i": np.arange(200, dtype="int64"),
+        "c": pd.Categorical(["x", "y"] * 100),
+    })
+    f64 = df.select_dtypes(include=["float64"]).columns
+    df[f64] = df[f64].astype("float32")
+    assert str(df["a"].dtype) == "float32"
+    assert str(df["i"].dtype) == "int64"
+    assert str(df["c"].dtype) == "category"

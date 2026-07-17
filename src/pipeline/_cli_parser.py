@@ -98,6 +98,12 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
              "全40年がメモリに載らない環境で Elo 有無等の A/B を回すための行数上限。",
     )
     retrain_p.add_argument(
+        "--float32-features", action="store_true",
+        help="数値特徴（float64）を float32 に落として学習時のピーク RAM を約半減する。"
+             "全データ学習が OOM で落ちる環境向け（--since-year で行を削らずデータ量を保てる）。"
+             "値は 1e-7 相対で微変化するが GBDT の分割には実質無影響。",
+    )
+    retrain_p.add_argument(
         "--params-rank",
         type=int,
         default=None,

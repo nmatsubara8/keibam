@@ -165,6 +165,22 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = featured_data.drop(columns=present, errors="ignore")
         logger.info("[retrain] --no-rating-features: Elo 由来 %d 列を除外: %s", len(present), present)
 
+    # --float32-features: 数値列（float64）を float32 に落として学習時のピーク RAM を約半減する。
+    # 全データ（177万行×約200列）の最終スタック学習が OOM で落ちる環境で、--since-year で行を
+    # 削らずにデータ量を保ったまま収めるための策。GBDT の分割探索は float32 精度で実質無影響。
+    if getattr(args, "float32_features", False):
+        f64 = featured_data.select_dtypes(include=["float64"]).columns
+        if len(f64):
+            before_mb = featured_data.memory_usage(deep=True).sum() / 1024**2
+            featured_data[f64] = featured_data[f64].astype("float32")
+            after_mb = featured_data.memory_usage(deep=True).sum() / 1024**2
+            logger.info(
+                "[retrain] --float32-features: float64 %d 列を float32 化 %.0f→%.0f MB（%.0f MB 削減）",
+                len(f64), before_mb, after_mb, before_mb - after_mb,
+            )
+        else:
+            logger.info("[retrain] --float32-features: 対象の float64 列なし（変更なし）")
+
     # --nn-standalone: NN を GBDT スタックと分離して単体学習し保存する（分離NN + 遅延スタッキング）。
     # GBDT スタックは別途 configs/base_models_gbdt.json で全データ学習し、build-combined で meta 融合する。
     if getattr(args, "nn_standalone", False):
