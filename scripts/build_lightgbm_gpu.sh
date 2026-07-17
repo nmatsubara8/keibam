@@ -59,10 +59,28 @@ git clone --recursive --depth 1 --branch "v${LGB_VERSION}" \
     https://github.com/microsoft/LightGBM "$TMPD/LightGBM"
 
 if [[ "${PATCH_BOOST_SYSTEM}" == "1" ]]; then
-    # find_package(Boost ... COMPONENTS filesystem system ...) から system を除去
-    # （Boost 1.90 でヘッダオンリー化・リンク不要）。念のため CMakeLists 全体に適用。
+    # (1) find_package(Boost ... COMPONENTS filesystem system ...) から system を除去
+    #     （Boost 1.90 でヘッダオンリー化・リンク不要）。
     sed -i 's/filesystem system/filesystem/g' "$TMPD/LightGBM/CMakeLists.txt"
     echo "[build_lightgbm_gpu] CMakeLists の Boost 'system' 要求を除去しました"
+
+    # (2) 同梱 boost::compute（メンテ停止）の sha1 ラッパーを Boost 1.90 の新 API に合わせる。
+    #     boost::uuids::sha1::get_digest が unsigned int[5] → unsigned char[20] に変わったため、
+    #     digest の型と 16 進整形を更新する（旧: 5語×8桁 → 新: 20バイト×2桁）。
+    SHA1="$TMPD/LightGBM/external_libs/compute/include/boost/compute/detail/sha1.hpp"
+    if [[ -f "$SHA1" ]]; then
+        python3 - "$SHA1" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace("unsigned int digest[5];", "unsigned char digest[20];")
+s = s.replace("for(int i = 0; i < 5; i++)", "for(int i = 0; i < 20; i++)")
+s = s.replace("std::setw(8) << digest[i]",
+              "std::setw(2) << static_cast<unsigned int>(digest[i])")
+open(p, "w").write(s)
+PY
+        echo "[build_lightgbm_gpu] boost::compute sha1.hpp を Boost 1.90 新 API に合わせてパッチしました"
+    fi
 fi
 
 echo "[build_lightgbm_gpu] build-python.sh install ${BUILD_FLAG} を実行します（数分）..."
