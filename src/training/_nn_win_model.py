@@ -223,8 +223,17 @@ class NnWinModel:
         best_epoch = -1
         epochs_no_improve = 0
         n_tr = len(x_tr)
+        # 構造（各中間層のユニット数）を明示する。mlp は隠れ層列、cnn は conv チャネル列。
+        if self._arch == "cnn":
+            struct = f"cnn conv={list(self._conv_channels)} k={self._kernel_size}"
+        else:
+            struct = f"mlp hidden={list(self._hidden_dims)}"
         _log.info(
-            "[NN] fit 開始: train=%d val=%d epochs=%d batch=%d lr=%g device=%s",
+            "[NN] fit 開始: %s dropout=%g pre_norm=%s wd=%g | train=%d val=%d epochs=%d batch=%d lr=%g device=%s",
+            struct,
+            self._dropout,
+            self._pre_norm,
+            self._weight_decay,
             n_tr,
             len(x_val) if x_val is not None else 0,
             self._epochs,
