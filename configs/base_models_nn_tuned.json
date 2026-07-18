@@ -15,5 +15,5 @@
     "n_layers": [1, 4],
     "layer_width": [64, 128, 256, 512]
   },
-  "nn_params": {"epochs": 80, "batch_size": 512, "max_train_rows": 200000}
+  "nn_params": {"epochs": 100, "batch_size": 512, "max_train_rows": 200000}
 }
