@@ -424,3 +424,8 @@ def _add_build_combined(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("--test-size", type=float, default=0.3, help="holdout 内の test 比率（既定 0.3）")
     p.add_argument("--valid-size", type=float, default=0.3, help="holdout 内の valid 比率（既定 0.3）")
+    p.add_argument(
+        "--target", default="rank", choices=("rank", "rank_win"),
+        help="融合を測る目的変数。rank=複勝(top3, 既定) / rank_win=単勝(1着)。NN が勝ち予測なら"
+             "GBDT 単勝ヘッド(__win)と rank_win で揃えるのが整合的。",
+    )

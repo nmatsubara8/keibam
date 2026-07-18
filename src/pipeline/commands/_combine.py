@@ -40,7 +40,9 @@ def _build_combined(args: argparse.Namespace) -> None:
     if featured.empty:
         raise SystemExit("[build-combined] meta 用の holdout が空です（--meta-years を確認）。")
 
-    ds = DataSplitter(featured, test_size=args.test_size, valid_size=args.valid_size, target_col="rank")
+    target = getattr(args, "target", None) or "rank"
+    ds = DataSplitter(featured, test_size=args.test_size, valid_size=args.valid_size, target_col=target)
+    logger.info("[build-combined] 目的変数 target=%s（rank=複勝top3 / rank_win=単勝1着）", target)
 
     # 3) CombinedModel（meta スタッキング）を holdout の train 側で学習
     base_predictors = [gbdt_ai.effective_model, NnDerivedPredictor(nn_model, nn_scaler)]
