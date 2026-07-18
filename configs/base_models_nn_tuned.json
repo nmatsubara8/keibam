@@ -5,6 +5,7 @@
   "nn_tune_trials": 25,
   "nn_tune_epochs": 40,
   "nn_tune_max_rows": 120000,
+  "nn_entity_exclude": ["horse_id"],
   "nn_search_space": {
     "arch": ["mlp"],
     "lr": [1e-4, 1.5e-3],

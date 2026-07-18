@@ -194,6 +194,7 @@ def _retrain(args: argparse.Namespace) -> None:
 
         nn_params = None
         nn_search_space = None
+        nn_entity_exclude: list = []
         tune_cfg: dict = {}
         nn_config = getattr(args, "nn_config", None)
         if nn_config:
@@ -201,13 +202,19 @@ def _retrain(args: argparse.Namespace) -> None:
                 _c = _json.load(f)
             nn_params = _c.get("nn_params")
             nn_search_space = _c.get("nn_search_space")
+            # NN 埋め込みから外すエンティティ（汎化しない高カーディナリティ ID。既定 horse_id）。
+            nn_entity_exclude = list(_c.get("nn_entity_exclude", []))
             tune_cfg = {
                 "n_trials": _c.get("nn_tune_trials", 25),
                 "epochs": _c.get("nn_tune_epochs", 15),
                 "max_train_rows": _c.get("nn_tune_max_rows", 120000),
                 "timeout": _c.get("timeout"),
             }
-        prepared = prepared_from_gbdt(featured_data)
+        if nn_entity_exclude:
+            logger.info(
+                "[retrain] NN 埋め込みから除外: %s（汎化しない高カーディナリティ ID）", nn_entity_exclude
+            )
+        prepared = prepared_from_gbdt(featured_data, exclude_entities=nn_entity_exclude)
         ai = KeibaAIFactory().create(prepared, test_size=cfg.test_size, valid_size=cfg.valid_size)
 
         # --with-tuning かつ nn_search_space があれば、まず構造を Optuna 探索して best を反映する
