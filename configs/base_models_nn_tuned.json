@@ -3,11 +3,11 @@
   "tune_per_model": true,
   "n_trials": 50,
   "nn_tune_trials": 25,
-  "nn_tune_epochs": 20,
+  "nn_tune_epochs": 40,
   "nn_tune_max_rows": 120000,
   "nn_search_space": {
     "arch": ["mlp"],
-    "lr": [1e-4, 5e-3],
+    "lr": [1e-4, 1.5e-3],
     "dropout": [0.1, 0.5],
     "weight_decay": [1e-7, 1e-3],
     "batch_size": [256, 512, 1024],
