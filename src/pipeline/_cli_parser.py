@@ -84,6 +84,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
              "例 --nn-trials 1 で1トライアルだけの動作確認（修正の効果を素早く見る）。",
     )
     retrain_p.add_argument(
+        "--nn-timeout", default=None, metavar="DURATION",
+        help="--nn-standalone 探索を時間で打ち切る（例 3h / 180m / 10800）。指定時は trial 数上限を"
+             "事実上無制限にし、時間予算で一区切りにする。--nn-trials 併用時は先着で停止。",
+    )
+    retrain_p.add_argument(
         "--gpu", action="store_true",
         help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
              "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は --lgb-gpu で別途。",

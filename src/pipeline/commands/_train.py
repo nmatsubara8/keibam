@@ -11,6 +11,18 @@ from src.pipeline._cli_common import _auto_migrate_db
 logger = logging.getLogger(__name__)
 
 
+def _parse_duration(s) -> float:
+    """時間予算文字列を秒に変換する。'3h'/'180m'/'10800s'/'10800'（純数値=秒）を受理。"""
+    t = str(s).strip().lower()
+    if t.endswith("h"):
+        return float(t[:-1]) * 3600.0
+    if t.endswith("m"):
+        return float(t[:-1]) * 60.0
+    if t.endswith("s"):
+        return float(t[:-1])
+    return float(t)
+
+
 def _build_base_models_config(args):
     """args から BaseModelsConfig を組み立てる（指定なければ None）。"""
     from src.training._base_models_config import from_dict, load_base_models_config
@@ -214,6 +226,16 @@ def _retrain(args: argparse.Namespace) -> None:
         if getattr(args, "nn_trials", None) is not None:
             tune_cfg["n_trials"] = args.nn_trials
             logger.info("[retrain] --nn-trials: Optuna trial 数を %d に上書き", args.nn_trials)
+        # --nn-timeout は探索を時間で打ち切る（例 3h）。指定時は trial 数上限を事実上無制限にして
+        # 「時間が来るまで回す」にする（--nn-trials を明示した場合はそちらの上限も併用＝先着で停止）。
+        if getattr(args, "nn_timeout", None) is not None:
+            secs = _parse_duration(args.nn_timeout)
+            tune_cfg["timeout"] = secs
+            if getattr(args, "nn_trials", None) is None:
+                tune_cfg["n_trials"] = 10_000_000
+            logger.info(
+                "[retrain] --nn-timeout: 探索を %.0f 秒（=%.2f 時間）で打ち切り", secs, secs / 3600.0
+            )
         if nn_entity_exclude:
             logger.info(
                 "[retrain] NN 埋め込みから除外: %s（汎化しない高カーディナリティ ID）", nn_entity_exclude
