@@ -79,6 +79,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
         help="--nn-standalone 時の NN パラメータ JSON（nn_params キー）。未指定は既定。",
     )
     retrain_p.add_argument(
+        "--nn-trials", type=int, default=None,
+        help="--nn-standalone 探索の Optuna trial 数を config(nn_tune_trials)より優先して上書きする。"
+             "例 --nn-trials 1 で1トライアルだけの動作確認（修正の効果を素早く見る）。",
+    )
+    retrain_p.add_argument(
         "--gpu", action="store_true",
         help="GBDT(xgboost=device:cuda / catboost=task_type:GPU)を GPU で学習。CUDA 不可なら CPU に"
              "自動フォールバック。NN は torch 側で cuda を自動検出（本フラグ不要）。lightgbm は --lgb-gpu で別途。",

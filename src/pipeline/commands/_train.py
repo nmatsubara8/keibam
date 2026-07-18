@@ -210,6 +210,10 @@ def _retrain(args: argparse.Namespace) -> None:
                 "max_train_rows": _c.get("nn_tune_max_rows", 120000),
                 "timeout": _c.get("timeout"),
             }
+        # --nn-trials は config の nn_tune_trials を上書きする（1トライアルの動作確認用）。
+        if getattr(args, "nn_trials", None) is not None:
+            tune_cfg["n_trials"] = args.nn_trials
+            logger.info("[retrain] --nn-trials: Optuna trial 数を %d に上書き", args.nn_trials)
         if nn_entity_exclude:
             logger.info(
                 "[retrain] NN 埋め込みから除外: %s（汎化しない高カーディナリティ ID）", nn_entity_exclude
