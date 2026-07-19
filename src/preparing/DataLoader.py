@@ -180,14 +180,13 @@ class DataLoader:
                 pickle.dump(self.target_data, pkl_file)
 
         elif filetype == "bin":
-            if not os.listdir(self.to_temp_location):
-                mode = "wb"
-            else:
-                mode = "ab"
-            # HTMLデータから実際のHTML部分を抽出する正規表現パターン
-            # html_pattern = re.compile(r"b'(.+)'", re.DOTALL)
+            # 各 bin ファイルは processing_id ごとに独立した 1 ファイル（HTML 1 ページ分）。
+            # ここで追記（ab）にすると、既存馬の再スクレイプ時に古い HTML の末尾へ
+            # 新しい HTML が連結され、2 重 HTML を含む壊れた bin になる（データ破損）。
+            # to_temp_location は既存 bin を多数含む保存先そのものなので os.listdir に
+            # 基づく追記判定は常に ab を選んでしまう。常に上書き（wb）で保存する。
             file_path = self.get_local_temp_file_path()  # ファイルパスを取得
-            with open(file_path, mode=mode) as bin_file:  # バイナリモードでファイルを開く
+            with open(file_path, mode="wb") as bin_file:  # バイナリモードでファイルを開く
                 bin_file.write(self.target_data)  # アイテムをファイルに書き込む
 
         elif filetype == "html":
