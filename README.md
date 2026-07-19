@@ -182,6 +182,20 @@ SQLite 冪等 upsert → 未知の馬の馬ページ/血統の差分取得 → �
 
 ### 4-2. 学習（週次）
 
+> **運用標準（A/B 検証で確定）**
+> 予測器は **GBDT スタック（LightGBM×XGBoost×CatBoost）を `--since-year 2015` で学習**する。
+> ```bash
+> python -m src.pipeline.run_pipeline retrain --with-tuning --resume-tuning \
+>     --base-models-config configs/base_models_gbdt.json --since-year 2015
+> ```
+> Win auc_test ≈ **0.835**（内部 test）/ **0.840**（直近年 out-of-sample）。根拠となった A/B の結論:
+> - **NN は不採用**: NN を分離学習し meta 融合しても寄与 **Δ ≈ 0**（勝ち信号は GBDT が既に捕捉）。
+>   `--nn-standalone` / `build-combined` の経路は残すが本番では使わない。
+> - **全データ化は不要**: `--since-year` の A/B で **2010 ≈ 2015**（データ量は頭打ち・古いデータは非代表）。
+>   177万行フルは RAM を圧迫するだけで精度は伸びない。メモリが厳しい場合は `--float32-features` を併用。
+> - 規律: 集約統計を実測に合わせるのみ。logloss/回収率は最適化せず、マーケット・エッジは存在しない
+>   （AUC は予測精度の話で別軸。ライブ賭けはしない）。
+
 ```bash
 # 通常の再学習（スタッキング + 較正、約 3 分）
 python -m src.pipeline.run_pipeline retrain
