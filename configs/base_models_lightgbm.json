@@ -1,0 +1,5 @@
+{
+  "models": ["lightgbm"],
+  "tune_per_model": true,
+  "meta_model": "logistic"
+}
