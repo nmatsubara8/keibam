@@ -1,6 +1,7 @@
 import logging
 
 import lightgbm as lgb
+import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
@@ -160,11 +161,15 @@ class ModelWrapper:
         self.__lgb_model.fit(
             datasets.X_train.values, datasets.y_train.values, sample_weight=sample_weight
         )
-        # AUCを計算して出力
-        auc_train = roc_auc_score(datasets.y_train, self.__lgb_model.predict_proba(datasets.X_train)[:, 1])
+        # AUCを計算して出力（predict_proba は np.ndarray|list を返し得るため asarray で正規化）
+        auc_train = roc_auc_score(
+            datasets.y_train, np.asarray(self.__lgb_model.predict_proba(datasets.X_train))[:, 1]
+        )
         auc_test = roc_auc_score(
             datasets.y_test,
-            self.__lgb_model.predict_proba(datasets.X_test.drop([ResultsCols.TANSHO_ODDS], axis=1))[:, 1],
+            np.asarray(
+                self.__lgb_model.predict_proba(datasets.X_test.drop([ResultsCols.TANSHO_ODDS], axis=1))
+            )[:, 1],
         )
         # 特徴量の重要度を記憶しておく
         self.__feature_importance = pd.DataFrame(
