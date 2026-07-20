@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from sklearn.linear_model import LogisticRegression
 
+from src.constants._master import Master
 from src.constants._results_cols import ResultsCols
 from src.pipeline._retrain import RetrainConfig
 from src.pipeline._retrain import RetrainJob
@@ -15,6 +16,9 @@ from src.pipeline._retrain import evaluate_test
 from src.pipeline._retrain import load_metadata
 from src.pipeline._retrain import save_metadata
 from src.pipeline._retrain import version_name
+
+Master_TURF = Master.RACE_TYPE_TURF
+Master_DIRT = Master.RACE_TYPE_DIRT
 
 
 # ---------------------------------------------------------------------------
@@ -145,11 +149,15 @@ class _StubAI:
             return self._ds.y_test
 
     def __init__(self, df):
+        self.datasets = self._Datasets(df)
+        # evaluate_test は X_test から TANSHO_ODDS を落として predict_proba するため、
+        # モデルはその特徴量数（= X_test 列数 - 1）に合わせて学習する。
+        xt = self.datasets.X_test.drop([ResultsCols.TANSHO_ODDS], axis=1, errors="ignore")
+        n_features = max(1, xt.shape[1])
         rng = np.random.default_rng(0)
-        X = rng.normal(size=(len(df), 2))
+        X = rng.normal(size=(len(df), n_features))
         y = (X[:, 0] > 0).astype(int)
         self.effective_model = LogisticRegression(max_iter=200, random_state=0).fit(X, y)
-        self.datasets = self._Datasets(df)
 
     def train_with_stacking(self, **kwargs): pass
     def train_without_tuning(self): pass
@@ -159,12 +167,15 @@ class _StubAI:
 class _StubFactory:
     def __init__(self):
         self.saved = []
+        self.saved_calls = []
 
     def create(self, featured_data, test_size, valid_size):
         return _StubAI(featured_data)
 
-    def save(self, ai, version_name):
+    def save(self, ai, version_name, category=None, models_dir="models"):
         self.saved.append(version_name)
+        self.saved_calls.append((version_name, category))
+        return f"{models_dir}/{version_name}.pickle"
 
 
 def test_retrain_job_returns_meta(tmp_path):
@@ -206,6 +217,85 @@ def test_retrain_job_records_n_races(tmp_path):
     job = RetrainJob(_StubFactory(), cfg)
     meta = job.run(df, vname="v1")
     assert meta["n_races"] == len(df.index.unique())
+
+
+def _make_categorized_featured():
+    """race_type ワンホット + 全国/地方 race_id を持つ featured 風 DataFrame。
+
+    central_turf 5 レース / central_dirt 4 レース / local_dirt 3 レースを含む。
+    """
+    n_horses = 6
+    specs = [
+        ("central", "05", Master_TURF, 5, 0),
+        ("central", "05", Master_DIRT, 4, 100),
+        ("local", "44", Master_DIRT, 3, 200),
+    ]
+    rows = []
+    index = []
+    base = pd.Timestamp("2024-01-01")
+    day = 0
+    for _org, place, race_type, n_races, id_off in specs:
+        for i in range(n_races):
+            race_id = f"2024{place}{id_off + i:06d}"
+            day += 1
+            for h in range(n_horses):
+                rows.append(
+                    {
+                        "date": base + pd.Timedelta(days=day),
+                        "rank": h % 2,  # 各レースに 0/1 両クラスを含める
+                        ResultsCols.TANSHO_ODDS: 3.0,
+                        "feat_a": float(h),
+                        "race_type__芝": 1 if race_type == Master_TURF else 0,
+                        "race_type__ダート": 1 if race_type == Master_DIRT else 0,
+                        "race_type__障害": 0,
+                    }
+                )
+                index.append(race_id)
+    df = pd.DataFrame(rows)
+    df.index = index
+    return df
+
+
+def test_retrain_job_trains_category_models(tmp_path):
+    """全国/地方 × 芝/ダート の featured で統合 + カテゴリ別モデルが保存される。"""
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, min_category_races=3)
+    factory = _StubFactory()
+    job = RetrainJob(factory, cfg)
+    meta = job.run(df, vname="vcat")
+
+    saved_categories = {cat for _v, cat in factory.saved_calls}
+    # 統合 + データが min 以上のカテゴリ 3 種
+    assert None in saved_categories or "combined" in saved_categories
+    assert "central_turf" in saved_categories
+    assert "central_dirt" in saved_categories
+    assert "local_dirt" in saved_categories
+    # 統合モデルのメタに学習済みカテゴリが記録される
+    assert set(meta["categories"]) == {"central_turf", "central_dirt", "local_dirt"}
+
+
+def test_retrain_job_skips_small_categories(tmp_path):
+    """min_category_races 未満のカテゴリは学習されない。"""
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, min_category_races=4)
+    factory = _StubFactory()
+    job = RetrainJob(factory, cfg)
+    meta = job.run(df, vname="vcat2")
+    # local_dirt は 3 レースなのでスキップされる
+    assert "local_dirt" not in meta["categories"]
+    assert "central_turf" in meta["categories"]
+
+
+def test_retrain_job_no_category_split(tmp_path):
+    """train_categories=False なら統合モデルのみ。"""
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, train_categories=False)
+    factory = _StubFactory()
+    job = RetrainJob(factory, cfg)
+    meta = job.run(df, vname="vcat3")
+    assert meta["categories"] == []
+    saved_categories = {cat for _v, cat in factory.saved_calls}
+    assert saved_categories == {"combined"}
 
 
 def test_retrain_job_injects_lgb_params(tmp_path):

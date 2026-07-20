@@ -60,10 +60,75 @@ def find_model_paths(models_dir: str = "models") -> list[str]:
     return paths
 
 
+def parse_model_name(path: str) -> tuple[str, str]:
+    """pickle パスから (version, category) を取り出す。
+
+    `<version>__<category>.pickle` はカテゴリ別モデル、`<version>.pickle`
+    （`__` 無し）は統合モデル（category="combined"）とみなす。
+    """
+    from src.constants._model_category import COMBINED
+
+    stem = os.path.basename(path)
+    if stem.endswith(".pickle"):
+        stem = stem[: -len(".pickle")]
+    if "__" in stem:
+        version, category = stem.split("__", 1)
+        return version, category
+    return stem, COMBINED
+
+
+def find_combined_model_paths(models_dir: str = "models") -> list[str]:
+    """統合（全レース）モデルの .pickle 一覧を新しい順で返す（カテゴリ別を除外）。"""
+    from src.constants._model_category import COMBINED
+
+    return [p for p in find_model_paths(models_dir) if parse_model_name(p)[1] == COMBINED]
+
+
+def find_category_models(models_dir: str = "models") -> dict[str, str]:
+    """カテゴリ slug（統合は "combined"）→ 最新 pickle パスの対応を返す。
+
+    find_model_paths は新しい順なので、各カテゴリで最初に現れたものを採用する。
+    """
+    out: dict[str, str] = {}
+    for path in find_model_paths(models_dir):
+        _, category = parse_model_name(path)
+        out.setdefault(category, path)
+    return out
+
+
+def resolve_model_path_for_race(
+    race_id, race_type_value, models_dir: str = "models"
+) -> tuple[str | None, str]:
+    """レースの主催者区分×馬場種別に対応するモデルパスを解決する。
+
+    該当カテゴリのモデルがあればそれを、無ければ統合モデルへフォールバックする。
+
+    Returns
+    -------
+    (path, used) : path はモデル pickle（無ければ None）、used は実際に選ばれた
+        カテゴリ slug（フォールバック時は "combined"）。
+    """
+    from src.constants._model_category import COMBINED
+    from src.constants._model_category import categorize
+
+    models = find_category_models(models_dir)
+    cat = categorize(race_id, race_type_value)
+    if cat is not None and cat in models:
+        return models[cat], cat
+    if COMBINED in models:
+        return models[COMBINED], COMBINED
+    # 統合モデルすら無ければ最新の何かにフォールバック
+    paths = find_model_paths(models_dir)
+    return (paths[0], parse_model_name(paths[0])[1]) if paths else (None, COMBINED)
+
+
 def load_latest_model(models_dir: str = "models"):
-    """最新モデルを読み込む（モデルがなければ None）。"""
+    """最新の統合モデルを読み込む（無ければ最新の何か、モデルが皆無なら None）。"""
     from src.training._keiba_ai_factory import KeibaAIFactory
 
+    combined = find_combined_model_paths(models_dir)
+    if combined:
+        return KeibaAIFactory.load(combined[0])
     paths = find_model_paths(models_dir)
     if not paths:
         return None

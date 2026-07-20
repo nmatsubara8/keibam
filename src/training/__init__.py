@@ -15,6 +15,12 @@ from src.training._odds_feature_builder import (
     snapshots_to_phase_table,
     train_odds_predictor,
 )
+from src.training._category_split import (
+    category_race_counts,
+    category_series,
+    recover_race_type,
+    split_featured_by_category,
+)
 
 __all__ = [
     "KeibaAI",
@@ -30,4 +36,8 @@ __all__ = [
     "build_training_frame",
     "snapshots_to_phase_table",
     "train_odds_predictor",
+    "category_race_counts",
+    "category_series",
+    "recover_race_type",
+    "split_featured_by_category",
 ]

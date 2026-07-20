@@ -275,7 +275,11 @@ def _retrain(args: argparse.Namespace) -> None:
     # Phase 1: pickle → DB の自動移行（DB が空の場合のみ実行される）
     _auto_migrate_db()
 
-    cfg = RetrainConfig(use_stacking=not args.no_stacking)
+    cfg = RetrainConfig(
+        use_stacking=not args.no_stacking,
+        train_categories=not getattr(args, "no_category_split", False),
+        min_category_races=getattr(args, "min_category_races", 300),
+    )
 
     featured_path = LocalPaths.FEATURED_DATA_PATH
     if not os.path.exists(featured_path):
@@ -433,6 +437,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--use-selected-params",
         action="store_true",
         help="UI（モデルラボ）で選択・保存したパラメータ（models/selected_params.json）で学習する",
+    )
+    retrain_p.add_argument(
+        "--no-category-split",
+        action="store_true",
+        help="6 分割（全国/地方 × 芝/ダート/障害）のカテゴリ別モデルを学習せず統合モデルのみにする",
+    )
+    retrain_p.add_argument(
+        "--min-category-races",
+        type=int,
+        default=300,
+        help="カテゴリ別モデルを学習する最小レース数（未満はスキップし推論時は統合モデルへフォールバック）",
     )
 
     # evaluate-odds-dynamics サブコマンド

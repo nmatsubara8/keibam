@@ -29,17 +29,31 @@ class KeibaAIFactory:
         return ai
 
     @staticmethod
-    def save(keibaAI: KeibaAI, version_name: str) -> None:
+    def save(
+        keibaAI: KeibaAI,
+        version_name: str,
+        category: str | None = None,
+        models_dir: str = "models",
+    ) -> str:
         """
-        日付やバージョン、パラメータ、データなどを保存。
-        保存先はmodels/(yyyymmdd)/(version_name).pickle。
+        日付やバージョン、パラメータ、データなどを保存する。
+
+        保存先は models/(yyyymmdd)/(version_name)[__category].pickle。
+        category を指定すると `__{category}` サフィックス付きで保存し、6 分割
+        （全国/地方 × 芝/ダート/障害）のカテゴリ別モデルを区別する。
+        category が None または "combined" の場合は従来どおりサフィックス無し
+        （統合モデル）で保存する。保存した pickle の絶対/相対パスを返す。
         """
+        from src.constants._model_category import COMBINED
+
         yyyymmdd = datetime.date.today().strftime("%Y%m%d")
-        # ディレクトリ作成
-        os.makedirs(os.path.join("models", yyyymmdd), exist_ok=True)
-        filepath_pickle = os.path.join("models", yyyymmdd, "{}.pickle".format(version_name))
+        outdir = os.path.join(models_dir, yyyymmdd)
+        os.makedirs(outdir, exist_ok=True)
+        suffix = f"__{category}" if category and category != COMBINED else ""
+        filepath_pickle = os.path.join(outdir, "{}{}.pickle".format(version_name, suffix))
         with open(filepath_pickle, mode="wb") as f:
             dill.dump(keibaAI, f)
+        return filepath_pickle
 
     @staticmethod
     def load(filepath: str) -> KeibaAI:

@@ -49,39 +49,33 @@ def _load_config():
 op_config = _load_config()
 
 # ------------------------------------------------------------------
-# 適用モデルの選択（既定=最新。再学習で蓄積した複数バージョンから選べる）
+# モデルの探索（統合モデル + 6 分割カテゴリ別モデル）
 # ------------------------------------------------------------------
-model_paths = find_model_paths()  # 新しい順
+from app._data_loader import parse_model_name
+from app._data_loader import resolve_model_path_for_race
+from src.constants._model_category import CATEGORY_LABELS
+from src.constants._model_category import categorize
+from src.training._category_split import recover_race_type
+
+model_paths = find_model_paths()  # 新しい順（統合 + カテゴリ別）
 if not model_paths:
     st.error("モデルが見つかりません。先に `run_pipeline.py --job retrain` を実行してください。")
     st.stop()
 
-_meta_by_version = {m["version"]: m for m in list_model_versions()}
+# メタは name（version + __category）優先でキー化（カテゴリ別モデルの AUC も引ける）
+_meta_by_name = {m.get("name", m["version"]): m for m in list_model_versions()}
 
 
 def _model_label(path: str) -> str:
-    version = os.path.basename(path).replace(".pickle", "")
-    meta = _meta_by_version.get(version)
+    version, category = parse_model_name(path)
+    stem = os.path.basename(path).replace(".pickle", "")
+    meta = _meta_by_name.get(stem) or _meta_by_name.get(version)
+    cat_label = CATEGORY_LABELS.get(category, category)
+    label = f"{version}〔{cat_label}〕"
     if meta and meta.get("auc_test") is not None:
-        return f"{version}（AUC {meta['auc_test']:.4f}）"
-    return version
+        return f"{label}（AUC {meta['auc_test']:.4f}）"
+    return label
 
-
-st.sidebar.subheader("適用モデル")
-sel_path = st.sidebar.selectbox(
-    "モデルバージョン",
-    model_paths,
-    index=0,  # 既定は最新
-    format_func=_model_label,
-    help="再学習で蓄積された複数バージョンから予測に使うモデルを選択（既定=最新）",
-)
-st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
-
-model = _load_model(sel_path)
-
-if model is None:
-    st.error("モデルの読み込みに失敗しました。")
-    st.stop()
 
 # ------------------------------------------------------------------
 # レース選択
@@ -102,6 +96,49 @@ if not race_id:
     st.stop()
 
 X = featured_df.loc[[race_id]]
+
+# レースの馬場種別からカテゴリを判定
+_rt_series = recover_race_type(X).dropna()
+_race_type = _rt_series.iloc[0] if not _rt_series.empty else None
+_race_category = categorize(race_id, _race_type)
+
+# ------------------------------------------------------------------
+# 適用モデルの選択（既定=レース種別で自動選択。手動上書きも可能）
+# ------------------------------------------------------------------
+st.sidebar.subheader("適用モデル")
+_auto = st.sidebar.checkbox(
+    "レース種別で自動選択（推奨）",
+    value=True,
+    help="全国/地方 × 芝/ダート/障害 の 6 分割から、選択レースに対応するモデルを自動で使う"
+    "（該当が無ければ統合モデルにフォールバック）",
+)
+
+if _auto:
+    sel_path, used_category = resolve_model_path_for_race(race_id, _race_type)
+    if sel_path is None:
+        st.error("モデルの読み込みに失敗しました。")
+        st.stop()
+    _target = CATEGORY_LABELS.get(_race_category, "分類不能") if _race_category else "分類不能"
+    _used = CATEGORY_LABELS.get(used_category, used_category)
+    st.sidebar.caption(f"レース種別: {_target}")
+    st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
+    if _race_category is not None and used_category != _race_category:
+        st.sidebar.info(f"「{_target}」の専用モデルが無いため統合モデルで予測します。")
+else:
+    sel_path = st.sidebar.selectbox(
+        "モデルバージョン",
+        model_paths,
+        index=0,  # 既定は最新
+        format_func=_model_label,
+        help="蓄積された統合/カテゴリ別モデルから予測に使うモデルを手動選択",
+    )
+    st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
+
+model = _load_model(sel_path)
+
+if model is None:
+    st.error("モデルの読み込みに失敗しました。")
+    st.stop()
 
 # ------------------------------------------------------------------
 # 予測実行
