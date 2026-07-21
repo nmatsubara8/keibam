@@ -206,7 +206,7 @@ def _backtest(args: argparse.Namespace) -> None:
     from src.pipeline._ingestion import load_raw
     from src.preparing._odds_snapshot import build_final_odds_lookup
     from src.preparing.odds_scheduler import load_snapshots
-    from src.simulation._backtest import default_thresholds, format_report, run_backtest
+    from src.simulation._backtest import default_thresholds, format_odds_band_report, format_report, run_backtest
 
     place_path = _resolve_backtest_model_path(getattr(args, "version", None))
     place_ai = load_model_from_path(place_path)
@@ -295,6 +295,17 @@ def _backtest(args: argparse.Namespace) -> None:
     if unratable_fallback:
         logger.info("[backtest] 初出走の公衆フォールバック: 有効（初出走のみのレースは除外）")
 
+    # 採用オッズ帯ポリシー（optimize-odds-bands で OOS 検証・保存したもの）を opt-in で適用
+    odds_band_policy = None
+    if getattr(args, "odds_band_policy", False):
+        from src.policies._odds_band_policy import load_odds_band_policy, odds_band_policy_path
+
+        odds_band_policy = load_odds_band_policy(odds_band_policy_path("models"))
+        if odds_band_policy is None:
+            logger.warning("[backtest] odds_band_policy.json が無いため帯フィルタは無効")
+        else:
+            logger.info("[backtest] 採用オッズ帯に絞って評価: %s", odds_band_policy.allowed_bands)
+
     return_processor, _ = _return_processor_db_first()
     result = run_backtest(
         place_ai.effective_model,
@@ -307,6 +318,7 @@ def _backtest(args: argparse.Namespace) -> None:
         win_calibrator=win_calibrator,
         blend_weights=blend_weights,
         unratable_fallback=unratable_fallback,
+        odds_band_policy=odds_band_policy,
     )
 
     # Edge/EV 診断（任意）: 自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss。
@@ -330,6 +342,10 @@ def _backtest(args: argparse.Namespace) -> None:
             else None,
             "per_bet_type": {str(k): v.as_dict() for k, v in result["per_bet_type"].items()},
         }
+        if getattr(args, "by_odds", False):
+            out["by_odds_band"] = {
+                str(k): v.as_dict() for k, v in result.get("by_odds_band", {}).items()
+            }
         if edge_result is not None:
             out["edge_diagnostic"] = edge_result["summary"]
             if edge_result.get("blend"):
@@ -337,8 +353,110 @@ def _backtest(args: argparse.Namespace) -> None:
         print(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         print(format_report(result))
+        if getattr(args, "by_odds", False):
+            print("\n" + format_odds_band_report(result.get("by_odds_band", {})))
         if edge_result is not None:
             print("\n" + format_edge_report(edge_result))
+
+
+def _optimize_odds_bands(args: argparse.Namespace) -> None:
+    """帯別 ROI を train/val の 2 期間で検証し、両期間で回収率 floor 以上の帯を保存する。
+
+    後付け最適化（in-sample で高 ROI の帯を選ぶ）を避けるため、train で候補帯を測り
+    val でも回収率が floor 以上・的中が信頼水準の帯だけを採用する（OOS 規律）。
+    """
+    import datetime as dt
+
+    from app._data_loader import load_model_from_path, load_win_head_for
+    from src.constants._local_paths import LocalPaths
+    from src.pipeline._ingestion import load_raw
+    from src.policies._odds_band_policy import (
+        DEFAULT_ODDS_BANDS,
+        OddsBandPolicy,
+        odds_band_label,
+        odds_band_policy_path,
+        save_odds_band_policy,
+        select_profitable_bands,
+    )
+    from src.preparing._odds_snapshot import build_final_odds_lookup
+    from src.preparing.odds_scheduler import load_snapshots
+    from src.simulation._backtest import default_thresholds, run_backtest
+
+    place_path = _resolve_backtest_model_path(getattr(args, "version", None))
+    place_ai = load_model_from_path(place_path)
+    win_ai = None if getattr(args, "no_win_head", False) else load_win_head_for(place_path)
+
+    featured_path = getattr(args, "featured_path", None) or LocalPaths.FEATURED_DATA_PATH
+    featured = load_raw(featured_path)
+    if featured is None or featured.empty:
+        logger.error("[optimize-odds-bands] featured_data がありません")
+        return
+
+    final_odds_lookup = None
+    if not getattr(args, "no_final_odds", False):
+        snaps = load_snapshots(LocalPaths.RAW_ODDS_SNAPSHOT_PATH)
+        final_odds_lookup = build_final_odds_lookup(snaps) if snaps else None
+
+    thresholds = default_thresholds()
+    if getattr(args, "bet_types", None):
+        want = set(args.bet_types)
+        thresholds = {k: v for k, v in thresholds.items() if k in want}
+
+    return_processor, _ = _return_processor_db_first()
+    rid = featured.index.astype(str)
+
+    def _by_band(years) -> dict:
+        yset = {str(y) for y in years}
+        sub = featured[rid.str[:4].isin(yset)]
+        if sub.empty:
+            return {}
+        res = run_backtest(
+            place_ai.effective_model, sub, return_processor,
+            win_model=win_ai.effective_model if win_ai is not None else None,
+            final_odds_lookup=final_odds_lookup, thresholds=thresholds,
+        )
+        return res.get("by_odds_band", {})
+
+    train_bb = _by_band(args.train_years)
+    val_bb = _by_band(args.val_years)
+    if not train_bb or not val_bb:
+        logger.error("[optimize-odds-bands] train/val のいずれかで対象レースがありません")
+        return
+
+    allowed = select_profitable_bands(train_bb, val_bb, DEFAULT_ODDS_BANDS, roi_floor=args.roi_floor)
+
+    # train/val の帯別 ROI 一覧を表示（判断材料）
+    lines = [f"帯別 ROI（roi_floor={args.roi_floor}・両期間で floor 以上かつ信頼の帯だけ採用）",
+             f"{'オッズ帯':<10}{'train ROI':>12}{'train的中':>10}{'val ROI':>12}{'val的中':>9}  採用"]
+    for lo, _hi in DEFAULT_ODDS_BANDS:
+        label = odds_band_label(lo)
+        st, sv = train_bb.get(label), val_bb.get(label)
+        if st is None and sv is None:
+            continue
+        adopt = "✓" if (lo, _hi) in allowed else ""
+        t_roi = f"{st.roi:.1%}" if st else "—"
+        t_hit = st.n_hits if st else 0
+        v_roi = f"{sv.roi:.1%}" if sv else "—"
+        v_hit = sv.n_hits if sv else 0
+        lines.append(f"{label:<10}{t_roi:>12}{t_hit:>10}{v_roi:>12}{v_hit:>9}  {adopt}")
+    print("\n".join(lines))
+
+    policy = OddsBandPolicy(
+        allowed_bands=tuple(allowed),
+        roi_floor=float(args.roi_floor),
+        train_years=tuple(args.train_years),
+        val_years=tuple(args.val_years),
+        created_at=dt.datetime.now().isoformat(),
+    )
+    save_odds_band_policy(policy, odds_band_policy_path("models"))
+    if allowed:
+        logger.info("[optimize-odds-bands] 採用帯 %s を保存 → %s",
+                    allowed, odds_band_policy_path("models"))
+    else:
+        logger.warning(
+            "[optimize-odds-bands] 両期間で floor を満たす帯なし（＝この設定では買わない）。"
+            "空ポリシーを保存（backtest --odds-band-policy で買い目0を確認できる）"
+        )
 
 
 def _doctor(args: argparse.Namespace) -> None:

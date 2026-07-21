@@ -361,6 +361,15 @@ def _add_backtest(sub: argparse._SubParsersAction) -> None:
     )
     bt_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
     bt_p.add_argument(
+        "--by-odds", action="store_true",
+        help="オッズ帯別（1-3/3-7/7-15/15-50/50+）の回収率を併せて出力（エッジの所在切り分け）",
+    )
+    bt_p.add_argument(
+        "--odds-band-policy", action="store_true",
+        help="models/odds_band_policy.json の採用オッズ帯だけに買い目を絞って評価"
+             "（optimize-odds-bands で OOS 検証・保存したもの）",
+    )
+    bt_p.add_argument(
         "--edge-diagnostic", action="store_true",
         help="自分の勝率 r̂ vs 実現最終市場 p_mkt の較正・エコー・勝ち馬logloss を併せて出力",
     )
@@ -419,9 +428,36 @@ def build_parser() -> argparse.ArgumentParser:
     _add_calibrate_takeout(sub)
     _add_calibrate_ev(sub)
     _add_backtest(sub)
+    _add_optimize_odds_bands(sub)
     _add_build_combined(sub)
     _add_doctor(sub)
     return parser
+
+
+def _add_optimize_odds_bands(sub: argparse._SubParsersAction) -> None:
+    """optimize-odds-bands サブコマンド（帯別 ROI を OOS 検証して採用帯を保存）を登録する。"""
+    p = sub.add_parser(
+        "optimize-odds-bands",
+        help="オッズ帯別回収率を train/val の 2 期間で検証し、両期間で回収率 floor 以上の帯を"
+             "models/odds_band_policy.json に保存（後付け最適化を避ける OOS 規律）",
+    )
+    p.add_argument("--version", default=None, help="評価するモデルのバージョン名（省略時は最新）")
+    p.add_argument("--featured-path", default=None, metavar="PATH", help="評価 featured（既定は本番）")
+    p.add_argument(
+        "--train-years", type=int, nargs="+", required=True, metavar="YYYY",
+        help="帯別 ROI を学習する年（例: 2021 2022）。モデル学習年と重ねないこと",
+    )
+    p.add_argument(
+        "--val-years", type=int, nargs="+", required=True, metavar="YYYY",
+        help="採用帯を検証する別期間の年（例: 2023 2024）。train と重ねないこと",
+    )
+    p.add_argument(
+        "--roi-floor", type=float, default=1.0,
+        help="採用する回収率の下限（既定 1.0＝プラス収支のみ）。両期間でこれ以上の帯だけ採用",
+    )
+    p.add_argument("--no-win-head", action="store_true", help="Win ヘッドを使わず Place 単独で評価")
+    p.add_argument("--no-final-odds", action="store_true", help="確定オッズを使わず Harville 推定で評価")
+    p.add_argument("--bet-types", nargs="+", default=None, help="評価券種（省略時は全券種）")
 
 
 def _add_build_combined(sub: argparse._SubParsersAction) -> None:

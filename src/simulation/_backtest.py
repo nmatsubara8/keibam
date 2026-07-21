@@ -25,6 +25,8 @@ from src.constants._bet_thresholds import MIN_BETS_FOR_RELIABLE_STAT
 from src.policies._thresholds import bet_threshold_map
 from src.constants._results_cols import ResultsCols
 from src.policies._bet_policy import ExpectedValueBetPolicy
+from src.policies._odds_band_policy import DEFAULT_ODDS_BANDS
+from src.policies._odds_band_policy import odds_band_label
 from src.policies._odds_provider import AbstractOddsProvider
 from src.policies._odds_provider import HistoricalOddsProvider
 from src.policies._odds_provider import StoredFinalOddsProvider
@@ -104,6 +106,45 @@ class BetTypeStats:
         }
 
 
+def _settle_detailed(
+    candidates: Sequence, return_processor: ReturnProcessor, unit: int = 1
+) -> list[tuple]:
+    """各候補を 1 点決済し (bet_type, odds, n_bets, stake, returned) の明細行を返す。
+
+    払戻テーブルに該当レースが無い候補（n_bets=0）は除外（評価不能を 0 回収で混ぜない）。
+    集計軸（券種別 / オッズ帯別）を 1 回の決済から導けるよう明細のまま返す。
+    """
+    tickets = BettingTickets(return_processor)
+    rows: list[tuple] = []
+    for cand in candidates:
+        n_bets, bet_amount, returned = tickets.settle_one(
+            cand.bet_type, cand.race_id, cand.combo, unit
+        )
+        if n_bets == 0:
+            continue
+        rows.append(
+            (cand.bet_type, float(getattr(cand, "odds", 0.0) or 0.0), n_bets, bet_amount, returned)
+        )
+    return rows
+
+
+def _aggregate_stats(rows: Sequence[tuple], key_fn) -> dict[str, BetTypeStats]:
+    """明細行を key_fn（券種 or 帯ラベル）で BetTypeStats に集計する。key=None は捨てる。"""
+    stats: dict[str, BetTypeStats] = {}
+    for bet_type, odds, n_bets, stake, returned in rows:
+        key = key_fn(bet_type, odds)
+        if key is None:
+            continue
+        s = stats.setdefault(key, BetTypeStats(key))
+        s.n_bets += n_bets
+        s.stake += stake
+        s.returned += returned
+        s.n_hits += 1 if returned > 0 else 0
+        if returned > s.max_return:
+            s.max_return = returned  # 最大単一払戻（ファットテール検知）
+    return stats
+
+
 def settle_candidates(
     candidates: Sequence,
     return_processor: ReturnProcessor,
@@ -115,22 +156,22 @@ def settle_candidates(
     候補の順序どおり 1 点で評価）。払戻テーブルに該当レースが無い候補（n_bets=0）は
     集計から除外する（評価不能なものを 0 回収として混ぜると回収率が歪むため）。
     """
-    tickets = BettingTickets(return_processor)
-    stats: dict[str, BetTypeStats] = {}
-    for cand in candidates:
-        n_bets, bet_amount, returned = tickets.settle_one(
-            cand.bet_type, cand.race_id, cand.combo, unit
-        )
-        if n_bets == 0:
-            continue
-        s = stats.setdefault(cand.bet_type, BetTypeStats(cand.bet_type))
-        s.n_bets += n_bets
-        s.stake += bet_amount
-        s.returned += returned
-        s.n_hits += 1 if returned > 0 else 0
-        if returned > s.max_return:
-            s.max_return = returned  # 最大単一払戻（ファットテール検知）
-    return stats
+    return _aggregate_stats(_settle_detailed(candidates, return_processor, unit), lambda bt, odds: bt)
+
+
+def roi_by_odds_band(
+    candidates: Sequence,
+    return_processor: ReturnProcessor,
+    bands: Sequence[tuple[float, float]] = DEFAULT_ODDS_BANDS,
+    unit: int = 1,
+) -> dict[str, BetTypeStats]:
+    """買い目をオッズ帯ごとに 1 点決済して回収率を集計する（帯ラベル → BetTypeStats）。
+
+    回収率がどの人気帯（本命/人気薄）に由来するかの切り分け・帯別選定の学習に使う。
+    reliable / roi_ex_top（フロック感度）は BetTypeStats のものをそのまま利用できる。
+    """
+    return _aggregate_stats(_settle_detailed(candidates, return_processor, unit),
+                            lambda bt, odds: odds_band_label(odds, bands))
 
 
 def select_candidates(
@@ -205,8 +246,12 @@ def run_backtest(
     unratable_fallback=False,
     takeout=0.2,
     unit: int = 1,
+    odds_band_policy=None,
 ) -> dict:
     """ホールドアウト X 上で EV 選定→決済し、券種別 + 全体の成績を返す。
+
+    odds_band_policy（OddsBandPolicy）を渡すと、EV 選定後に採用オッズ帯だけへ買い目を
+    絞る（回収率の良い帯だけ買う運用の評価）。None なら従来どおり全候補を評価する。
 
     Returns
     -------
@@ -230,7 +275,12 @@ def run_backtest(
         unratable_fallback=unratable_fallback,
         takeout=takeout,
     )
-    per = settle_candidates(candidates, return_processor, unit=unit)
+    if odds_band_policy is not None:
+        candidates = odds_band_policy.filter(candidates)
+    # 券種別・オッズ帯別を 1 回の決済明細から導出（二重決済を避ける）
+    rows = _settle_detailed(candidates, return_processor, unit=unit)
+    per = _aggregate_stats(rows, lambda bt, odds: bt)
+    by_band = _aggregate_stats(rows, lambda bt, odds: odds_band_label(odds))
     overall = BetTypeStats("ALL")
     reliable = BetTypeStats("ALL(信頼)")  # 的中≥閾値の券種のみ集計（万馬券フロックを除外）
     for s in per.values():
@@ -249,6 +299,7 @@ def run_backtest(
         "per_bet_type": per,
         "overall": overall,
         "reliable_overall": reliable,
+        "by_odds_band": by_band,
         "n_races": len({c.race_id for c in candidates}),
         "n_candidates": len(candidates),
     }
@@ -309,4 +360,36 @@ def format_report(result: dict) -> str:
         f"{MIN_BETS_FOR_RELIABLE_STAT}の券種は参考値、ALL(信頼)と除外後ROIで判断すること。"
     )
     lines.append(note)
+    return "\n".join(lines)
+
+
+def format_odds_band_report(
+    by_band: dict, bands: Sequence[tuple[float, float]] = DEFAULT_ODDS_BANDS
+) -> str:
+    """オッズ帯別 ROI を人が読める表に整形する（実確定オッズ・実払戻ベース）。
+
+    回収率がどの人気帯に由来するかを可視化する。的中が少ない帯は「参考」印。
+    """
+    lines = ["オッズ帯別 回収率（フラット1単位・実確定オッズ/実払戻）"]
+    header = (
+        f"{'オッズ帯':<10}{'点数':>7}{'的中':>6}{'的中率':>8}{'投票':>9}"
+        f"{'払戻':>11}{'回収率':>9}{'除外後':>9}  信頼"
+    )
+    lines.append(header)
+    lines.append("-" * (len(header) + 2))
+    for lo, _hi in bands:
+        label = odds_band_label(lo, bands)
+        s = by_band.get(label)
+        if s is None:
+            continue
+        mark = "✓" if s.reliable else f"参考(的中<{MIN_BETS_FOR_RELIABLE_STAT})"
+        lines.append(
+            f"{label:<10}{s.n_bets:>7d}{s.n_hits:>6d}{s.hit_rate:>7.1%}"
+            f"{s.stake:>9.0f}{s.returned:>11.1f}{s.roi:>8.1%}{s.roi_ex_top:>8.1%}  {mark}"
+        )
+    lines.append(
+        "\n※ 帯別回収率も万馬券1本で激変しうる。的中<"
+        f"{MIN_BETS_FOR_RELIABLE_STAT}の帯は参考値、除外後ROIと信頼印で判断すること。"
+        "帯を選んで買う場合は必ず OOS（学習と別期間）で再現するか検証する。"
+    )
     return "\n".join(lines)

@@ -32,6 +32,7 @@ from src.pipeline.commands._evaluate import (
     _doctor,
     _evaluate_odds_dynamics,
     _fetch_final_odds,
+    _optimize_odds_bands,
 )
 from src.pipeline.commands._combine import _build_combined
 from src.pipeline.commands._ingest import _ingest, _rebuild_featured
@@ -55,6 +56,7 @@ HANDLERS = {
     "calibrate-ev": _calibrate_ev,
     "retrain": _retrain,
     "backtest": _backtest,
+    "optimize-odds-bands": _optimize_odds_bands,
     "build-combined": _build_combined,
     "doctor": _doctor,
 }
