@@ -94,11 +94,13 @@ def _permutation_importance(
         if not present:
             continue
         deltas = []
-        orig = {c: X[c].to_numpy(copy=True) for c in present}
+        orig = {c: X[c].copy() for c in present}  # Series 保持で dtype（category 含む）を維持
         for _ in range(repeats):
             perm = rng.permutation(n)
             for c in present:
-                X[c] = orig[c][perm]  # 全列同一置換で行内相関を保ったまま列⟷行の対応を壊す
+                shuffled = orig[c].iloc[perm]  # .iloc 置換は dtype を保つ（category も壊さない）
+                shuffled.index = X.index
+                X[c] = shuffled  # 全列同一置換で行内相関を保ったまま列⟷行の対応を壊す
             deltas.append(base - _auc(model, X, y))
         for c in present:  # 復元
             X[c] = orig[c]
