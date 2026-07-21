@@ -112,6 +112,11 @@ def main() -> None:
         "--max-odds", type=float, default=float("inf"),
         help="このオッズ以下の馬だけを対象にする（config の検証済み戦略は tansho・≤15）。既定は無制限",
     )
+    ap.add_argument(
+        "--no-odds-features", action="store_true",
+        help="retrain --no-odds-features で学習した『市場非模写』モデルを検証する。"
+             "オッズ由来派生列を featured から除外して列を一致させる（生 単勝 は EV 用に残す）",
+    )
     args = ap.parse_args()
 
     from app._data_loader import find_model_paths
@@ -139,6 +144,12 @@ def main() -> None:
         ai = load_model_from_path(paths[0])
 
     featured_slice = recent_race_slice(featured, args.test_frac)
+    if args.no_odds_features:
+        from src.constants._feature_cols import ODDS_DERIVED_FEATURE_COLS
+
+        present = [c for c in ODDS_DERIVED_FEATURE_COLS if c in featured_slice.columns]
+        featured_slice = featured_slice.drop(columns=present, errors="ignore")
+        logger.info("[validate] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
     logger.info("[validate] 検証 %d レース / 券種=%s", featured_slice.index.nunique(), args.bet_type)
 
     _leak_audit(featured_slice)
