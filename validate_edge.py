@@ -108,6 +108,10 @@ def main() -> None:
     ap.add_argument("--bet-type", default="tansho", help="検証する券種（既定 tansho）")
     ap.add_argument("--test-frac", type=float, default=0.2)
     ap.add_argument("--version", default=None)
+    ap.add_argument(
+        "--max-odds", type=float, default=float("inf"),
+        help="このオッズ以下の馬だけを対象にする（config の検証済み戦略は tansho・≤15）。既定は無制限",
+    )
     args = ap.parse_args()
 
     from app._data_loader import find_model_paths
@@ -116,6 +120,7 @@ def main() -> None:
     from app._model_compare import recent_race_slice
     from app._model_eval import _load_return_processor
     from app._model_eval import load_featured_data
+    from src.policies._score_policy import CURRENT_ODDS
     from src.policies._score_policy import PROB
     from src.policies._score_policy import ExpectedValueScorePolicy
 
@@ -140,6 +145,13 @@ def main() -> None:
 
     # スコア表を1回だけ計算し、本番とプラセボで使い回す
     table = ai.calc_score(featured_slice, ExpectedValueScorePolicy)
+    if args.max_odds != float("inf"):
+        before = len(table)
+        table = table[table[CURRENT_ODDS] <= args.max_odds]
+        logger.info(
+            "[validate] オッズ≤%.1f に絞り込み: %d→%d 頭（%d レース）",
+            args.max_odds, before, len(table), table.index.nunique(),
+        )
     real_ai = _FixedScoreAI(table)
     placebo_ai = _FixedScoreAI(_shuffle_prob_within_race(table, PROB))
 
