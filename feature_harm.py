@@ -135,7 +135,10 @@ def main() -> None:
 
     ai = KeibaAIFactory.create(featured, test_size=0.2, valid_size=0.2)
     X_train, y_train = ai.datasets.X_train, ai.datasets.y_train
-    X_test, y_test = ai.datasets.X_test.copy(), np.asarray(ai.datasets.y_test)
+    # X_test は _DROP_FOR_TEST が _DROP_FOR_TRAIN と 1 列違うことがあるため、学習列に厳密に揃える
+    # （モデルは X_train.columns で fit 済み＝predict も同じ列・同じ順序でなければ Fatal）。
+    X_test = ai.datasets.X_test[list(X_train.columns)].copy()
+    y_test = np.asarray(ai.datasets.y_test)
     logger.info("[harm] 学習 %d 行 / 検証 %d 行 / 特徴量 %d 列", len(X_train), len(X_test), X_test.shape[1])
 
     model = lgb.LGBMClassifier(
