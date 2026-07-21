@@ -69,6 +69,9 @@ def _retrain(args: argparse.Namespace) -> None:
     cfg = RetrainConfig(
         use_stacking=not args.no_stacking,
         train_win_head=not getattr(args, "no_win_head", False),
+        train_categories=not getattr(args, "no_category_split", False),
+        min_category_races=getattr(args, "min_category_races", 300),
+        tune_categories=getattr(args, "tune_categories", False),
     )
 
     # --resume-tuning: Optuna study を models_dir 配下の SQLite に永続化し、再実行で探索を

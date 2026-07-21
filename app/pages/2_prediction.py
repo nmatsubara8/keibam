@@ -88,11 +88,13 @@ sel_path = st.sidebar.selectbox(
 )
 st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
 
-model = _load_model(sel_path)
-
-if model is None:
-    st.error("モデルの読み込みに失敗しました。")
-    st.stop()
+# 6 分割（全国/地方 × 芝/ダート/障害）のカテゴリ別 Place ヘッドを、選択レースに応じて自動選択する。
+_auto_cat = st.sidebar.checkbox(
+    "レース種別で自動選択（推奨）",
+    value=True,
+    help="全国/地方 × 芝/ダート/障害 の 6 分割から、選択レースに対応する Place ヘッドを自動で使う"
+    "（該当が無ければ統合モデルにフォールバック）",
+)
 
 # ------------------------------------------------------------------
 # レース選択
@@ -113,6 +115,34 @@ if not race_id:
     st.stop()
 
 X = featured_df.loc[[race_id]]
+
+# ------------------------------------------------------------------
+# 選択レースのカテゴリに応じて Place ヘッドを解決（統合フォールバック付き）
+# ------------------------------------------------------------------
+from app._data_loader import resolve_place_model_path_for_race
+from src.constants._model_category import CATEGORY_LABELS
+from src.constants._model_category import categorize
+from src.training._category_split import recover_race_type
+
+_rt_series = recover_race_type(X).dropna()
+_race_type = _rt_series.iloc[0] if not _rt_series.empty else None
+_race_category = categorize(race_id, _race_type)
+
+if _auto_cat:
+    eff_path, used_category = resolve_place_model_path_for_race(sel_path, race_id, _race_type)
+else:
+    eff_path, used_category = sel_path, (_race_category or "combined")
+
+_target_label = CATEGORY_LABELS.get(_race_category, "分類不能") if _race_category else "分類不能"
+st.sidebar.caption(f"レース種別: {_target_label} / 使用ヘッド: {CATEGORY_LABELS.get(used_category, used_category)}")
+if _auto_cat and _race_category is not None and used_category != _race_category:
+    st.sidebar.info(f"「{_target_label}」専用 Place ヘッドが無いため統合モデルで予測します。")
+
+model = _load_model(eff_path)
+
+if model is None:
+    st.error("モデルの読み込みに失敗しました。")
+    st.stop()
 
 # ------------------------------------------------------------------
 # 予測実行

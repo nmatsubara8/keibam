@@ -47,6 +47,15 @@ class RetrainConfig:
     # Place ヘッド（既定 target=rank=top3）は常に学習・保存する。連系の Harville に
     # 真の勝率を供給するために使う（Stage B）。
     train_win_head: bool = True
+    # Place ヘッドを 6 分割（全国/地方 × 芝/ダート/障害）でカテゴリ別にも学習し
+    # <version>__<category>.pickle に保存するか。統合 Place ヘッド（<version>.pickle）は常に学習し、
+    # 該当カテゴリのモデルが無い/データ不足のレースは推論時に統合へフォールバックする。
+    train_categories: bool = True
+    # カテゴリ別 Place ヘッドを学習する最小レース数（未満はスキップ→統合へフォールバック）。
+    min_category_races: int = 300
+    # カテゴリ別 Place ヘッドを LightGBMTuner（Optuna 段階探索）で個別にハイパラ探索して学習するか。
+    # 探索結果は tuning_history.json に (version, category) 単位で保存される。
+    tune_categories: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +286,21 @@ class RetrainJob:
             if win_metrics is not None:
                 meta["win_head"] = win_metrics
 
+        # 6 分割（全国/地方 × 芝/ダート/障害）のカテゴリ別 Place ヘッド（②(a) Place のみ）。
+        # 統合 Place ヘッドの後に学習し、失敗しても本体 retrain は壊さない。
+        # --tune-categories 指定時は各カテゴリを LightGBMTuner で個別探索して学習する。
+        if self._cfg.train_categories:
+            category_heads = self._train_category_place_heads(
+                featured_data,
+                vname,
+                with_tuning=self._cfg.tune_categories,
+                tuning_config=tuning_config,
+                base_models_config=base_models_config,
+            )
+            if category_heads:
+                meta["categories"] = list(category_heads)
+                meta["category_heads"] = category_heads
+
         save_metadata(meta, metadata_path(self._cfg.models_dir))
 
         # 末尾サマリ: 大量の学習ログの後でも探索の前後が一目で分かるよう最後にまとめて出す。
@@ -357,3 +381,111 @@ class RetrainJob:
         except Exception as e:  # noqa: BLE001 — Win ヘッド失敗で Place 本体を失わない
             logger.warning("[retrain] Win ヘッド学習に失敗（スキップ）: %s", e)
             return None
+
+    @staticmethod
+    def _strip_nn(base_models_config):
+        """カテゴリ別学習用に base_models_config から NN を外す。
+
+        カテゴリ分割は gbdt DataFrame 上で行うため NN ストリーム（PreparedFeatures）が
+        無く、NN base はそのままでは学習できない。NN を外し（全部外れたら lightgbm 単独に）
+        GBDT 系だけでカテゴリ別 Place ヘッドを学習する。
+        """
+        if base_models_config is None:
+            return None
+        models = getattr(base_models_config, "models", None)
+        if not models or "nn" not in models:
+            return base_models_config
+        import dataclasses
+
+        kept = tuple(m for m in models if m != "nn") or ("lightgbm",)
+        return dataclasses.replace(base_models_config, models=kept)
+
+    def _train_category_place_heads(
+        self, featured_data, vname, *, with_tuning, tuning_config, base_models_config
+    ) -> dict[str, dict]:
+        """6 分割の Place ヘッドをカテゴリ別に学習・保存する（データ十分なカテゴリのみ）。
+
+        統合 Place ヘッドと同じ featured_data を、全国/地方 × 芝/ダート/障害 で分割して
+        カテゴリごとに学習し <version>__<category>.pickle に保存する。min_category_races 未満の
+        カテゴリはスキップ（推論時は統合へフォールバック）。個々の失敗は non-fatal。
+        """
+        from src.constants._model_category import ALL_CATEGORIES
+        from src.training._category_split import split_featured_by_category
+
+        fd = featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data
+        try:
+            groups = split_featured_by_category(fd)
+        except Exception as e:  # noqa: BLE001 — 分割失敗で本体を壊さない
+            logger.warning("[retrain] カテゴリ分割に失敗（カテゴリ別学習をスキップ）: %s", e)
+            return {}
+
+        cat_cfg = self._strip_nn(base_models_config)
+        metas: dict[str, dict] = {}
+        for cat in ALL_CATEGORIES:
+            sub = groups.get(cat)
+            n_races = int(sub.index.nunique()) if sub is not None else 0
+            if n_races < self._cfg.min_category_races:
+                logger.info(
+                    "[retrain] category=%s スキップ（races=%d < min=%d）",
+                    cat, n_races, self._cfg.min_category_races,
+                )
+                continue
+            try:
+                metas[cat] = self._train_and_save_category_head(
+                    sub, vname, cat,
+                    with_tuning=with_tuning,
+                    tuning_config=tuning_config,
+                    base_models_config=cat_cfg,
+                )
+            except Exception as e:  # noqa: BLE001 — 1 カテゴリの失敗で全体を止めない
+                logger.warning(
+                    "[retrain] category=%s 学習失敗（統合モデルへフォールバック）: %s", cat, e
+                )
+        return metas
+
+    def _train_and_save_category_head(
+        self, sub_featured, vname, category, *, with_tuning, tuning_config, base_models_config
+    ) -> dict:
+        """1 カテゴリの Place ヘッドを学習し <version>__<category>.pickle に保存する。
+
+        with_tuning=True（--tune-categories）のときは LightGBMTuner でこのカテゴリ専用に
+        ハイパラ探索し、その全 trial を tuning_history.json に category タグ付きで保存する。
+        """
+        ai = self._factory.create(
+            sub_featured,
+            test_size=self._cfg.test_size,
+            valid_size=self._cfg.valid_size,
+            target_col="rank",
+        )
+        if self._cfg.use_stacking:
+            ai.train_with_stacking(
+                meta_ratio=self._cfg.meta_ratio,
+                with_tuning=with_tuning,
+                tuning_config=tuning_config,
+                base_models_config=base_models_config,
+            )
+        else:
+            if with_tuning:
+                ai.train_with_tuning(tuning_config=tuning_config)
+            else:
+                ai.train_without_tuning()
+
+        study = getattr(ai, "tuning_study_", None)
+        if with_tuning and study is not None:
+            try:
+                from src.training._tuning_history import save_tuning_history
+                from src.training._tuning_history import trials_to_records
+                from src.training._tuning_history import tuning_history_path
+
+                records = trials_to_records(study, vname, category=category)
+                save_tuning_history(records, tuning_history_path(self._cfg.models_dir))
+            except Exception as e:  # noqa: BLE001 — 履歴保存失敗で学習結果を失わない
+                logger.warning("[retrain] tuning_history 保存失敗 (non-fatal, %s): %s", category, e)
+
+        metrics = evaluate_test(ai.effective_model, ai.datasets.X_test, ai.datasets.y_test)
+        self._factory.save(ai, vname, suffix=f"__{category}")
+        logger.info(
+            "[retrain] category=%s Place ヘッド保存: %s__%s auc_test=%s（races=%d）",
+            category, vname, category, metrics["auc_test"], int(len(sub_featured.index.unique())),
+        )
+        return {"category": category, "n_races": int(len(sub_featured.index.unique())), **metrics}

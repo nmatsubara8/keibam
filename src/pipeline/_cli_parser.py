@@ -58,6 +58,19 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
         "--no-win-head", action="store_true",
         help="Win ヘッド(1着予測, <version>__win.pickle)の併行学習を行わない（Place ヘッドのみ）",
     )
+    retrain_p.add_argument(
+        "--no-category-split", action="store_true",
+        help="6 分割(全国/地方 × 芝/ダート/障害)のカテゴリ別 Place ヘッドを学習しない（統合のみ）",
+    )
+    retrain_p.add_argument(
+        "--min-category-races", type=int, default=300,
+        help="カテゴリ別 Place ヘッドを学習する最小レース数（未満はスキップ→推論時は統合へフォールバック）",
+    )
+    retrain_p.add_argument(
+        "--tune-categories", action="store_true",
+        help="カテゴリ別 Place ヘッド(中央 芝/ダート/障害 等)を LightGBMTuner で個別にハイパラ探索して学習する"
+             "（探索結果は tuning_history.json に category 単位で保存）",
+    )
     retrain_p.add_argument("--with-tuning", action="store_true", help="Optuna ハイパラ探索を実行する")
     retrain_p.add_argument(
         "--resume-tuning", action="store_true",

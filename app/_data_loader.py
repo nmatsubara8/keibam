@@ -120,6 +120,44 @@ def load_win_head_for(place_path: str):
     return KeibaAIFactory.load(win_path)
 
 
+def category_model_path_for(place_path: str, category: str) -> str:
+    """統合 Place モデルパスから、カテゴリ別 Place ヘッドのパスを導く。
+
+    ``<version>.pickle`` → ``<version>__<category>.pickle``（例 ``__central_turf``）。
+    """
+    stem = place_path[: -len(".pickle")] if place_path.endswith(".pickle") else place_path
+    return f"{stem}__{category}.pickle"
+
+
+def resolve_place_model_path_for_race(place_path: str, race_id, race_type_value) -> tuple[str, str]:
+    """レースの主催者区分×馬場種別に対応する Place ヘッドのパスを解決する。
+
+    該当カテゴリ別モデル（<version>__<category>.pickle）があればそれを、無ければ
+    統合 Place モデル（place_path）へフォールバックする。
+
+    Returns
+    -------
+    (path, used) : path は使用するモデル pickle、used は選ばれたカテゴリ slug
+        （フォールバック時は "combined"）。
+    """
+    from src.constants._model_category import COMBINED
+    from src.constants._model_category import categorize
+
+    cat = categorize(race_id, race_type_value)
+    if cat is not None:
+        cat_path = category_model_path_for(place_path, cat)
+        if os.path.exists(cat_path):
+            return cat_path, cat
+    return place_path, COMBINED
+
+
+def available_categories_for(place_path: str) -> list[str]:
+    """指定バージョンで実在するカテゴリ別 Place ヘッドの slug 一覧を返す。"""
+    from src.constants._model_category import ALL_CATEGORIES
+
+    return [c for c in ALL_CATEGORIES if os.path.exists(category_model_path_for(place_path, c))]
+
+
 # ---------------------------------------------------------------------------
 # オッズ スナップショット
 # ---------------------------------------------------------------------------

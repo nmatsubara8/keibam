@@ -502,3 +502,141 @@ def test_retrain_win_head_skipped_if_factory_unsupported(tmp_path):
     except ModuleNotFoundError:
         pytest.skip("lightgbm 未導入環境（Place ヘッド学習に必要）")
     assert "win_head" not in meta
+
+
+# ---------------------------------------------------------------------------
+# 6 分割（全国/地方 × 芝/ダート/障害）カテゴリ別 Place ヘッド
+# ---------------------------------------------------------------------------
+
+from src.constants._master import Master  # noqa: E402
+
+
+def _make_categorized_featured(n_horses=6):
+    """race_type ワンホット + 全国/地方 race_id を持つ featured 風 DataFrame。
+
+    central_turf 5 / central_dirt 4 / local_dirt 3 レース。分割ロジックの検証用
+    （学習は _RecAI が stub 化するため date/rank/単勝 列は不要）。
+    """
+    specs = [
+        ("05", Master.RACE_TYPE_TURF, 5, 0),
+        ("05", Master.RACE_TYPE_DIRT, 4, 100),
+        ("44", Master.RACE_TYPE_DIRT, 3, 200),
+    ]
+    rows, index = [], []
+    for place, rt, n_races, off in specs:
+        for i in range(n_races):
+            rid = f"2024{place}{off + i:06d}"
+            for _ in range(n_horses):
+                rows.append({
+                    "feat_a": 1.0,
+                    "race_type__芝": 1 if rt == Master.RACE_TYPE_TURF else 0,
+                    "race_type__ダート": 1 if rt == Master.RACE_TYPE_DIRT else 0,
+                    "race_type__障害": 1 if rt == Master.RACE_TYPE_HURDLE else 0,
+                })
+                index.append(rid)
+    df = pd.DataFrame(rows)
+    df.index = index
+    return df
+
+
+class _RecAI(_LightAI):
+    """train_with_stacking の with_tuning を記録するスタブ AI。"""
+
+    def __init__(self, target_col):
+        super().__init__(target_col)
+        self.stacking_with_tuning = None
+        self.tuning_study_ = None
+
+    def train_with_stacking(self, **kwargs):
+        self.stacking_with_tuning = kwargs.get("with_tuning")
+
+
+class _RecFactory:
+    """target_col / suffix を尊重し、生成した AI と保存呼び出しを記録するスタブ。"""
+
+    def __init__(self):
+        self.saved = []   # (version, suffix)
+        self.created = []  # target_col
+        self.ais = []      # 生成順の _RecAI
+
+    def create(self, featured_data, test_size, valid_size, target_col="rank"):
+        self.created.append(target_col)
+        ai = _RecAI(target_col)
+        self.ais.append(ai)
+        return ai
+
+    def save(self, ai, version_name, suffix=""):
+        self.saved.append((version_name, suffix))
+
+
+def test_retrain_trains_category_place_heads(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=3,
+    )
+    factory = _RecFactory()
+    meta = RetrainJob(factory, cfg).run(df, vname="vcat", with_tuning=False)
+
+    suffixes = {s for _v, s in factory.saved}
+    assert "" in suffixes  # 統合 Place ヘッド
+    assert "__central_turf" in suffixes
+    assert "__central_dirt" in suffixes
+    assert "__local_dirt" in suffixes
+    assert set(meta["categories"]) == {"central_turf", "central_dirt", "local_dirt"}
+    assert "category_heads" in meta
+
+
+def test_retrain_skips_small_categories(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=4,
+    )
+    factory = _RecFactory()
+    meta = RetrainJob(factory, cfg).run(df, vname="vcat2", with_tuning=False)
+    # local_dirt は 3 レースなのでスキップ、central_turf(5)/central_dirt(4) は学習
+    assert "local_dirt" not in meta.get("categories", [])
+    assert "central_turf" in meta["categories"]
+
+
+def test_no_category_split(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, train_categories=False,
+    )
+    factory = _RecFactory()
+    meta = RetrainJob(factory, cfg).run(df, vname="vcat3", with_tuning=False)
+    assert "categories" not in meta
+    assert {s for _v, s in factory.saved} == {""}  # 統合のみ
+
+
+def test_tune_categories_passes_with_tuning(tmp_path):
+    """tune_categories=True で各カテゴリの train_with_stacking に with_tuning=True が渡る。"""
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=3, tune_categories=True,
+    )
+    factory = _RecFactory()
+    RetrainJob(factory, cfg).run(df, vname="vt", with_tuning=False)
+
+    combined_ai = factory.ais[0]      # 最初に create されるのは統合 Place ヘッド
+    category_ais = factory.ais[1:]
+    assert combined_ai.stacking_with_tuning is False  # 統合は run(with_tuning=False)
+    assert len(category_ais) == 3
+    assert all(a.stacking_with_tuning is True for a in category_ais)
+
+
+def test_tune_categories_default_off(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=3,
+    )
+    factory = _RecFactory()
+    RetrainJob(factory, cfg).run(df, vname="vd", with_tuning=False)
+    category_ais = factory.ais[1:]
+    assert len(category_ais) == 3
+    assert all(a.stacking_with_tuning is False for a in category_ais)
