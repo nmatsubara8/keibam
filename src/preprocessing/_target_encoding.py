@@ -121,6 +121,24 @@ DEFAULT_CONTEXT_SPECS: list[dict] = [
     {"name": "place_win_te", "keys": ["開催"], "target": "_win"},
     {"name": "race_class_place_te", "keys": ["race_class"], "target": "_place"},
     {"name": "race_class_win_te", "keys": ["race_class"], "target": "_win"},
+    # 天候 × 馬場状態 の交互作用（雨→重馬場 等、単独 One-Hot では表せない組合せ効果）。
+    {"name": "weather_gs_place_te", "keys": ["weather", "ground_state1"], "target": "_place"},
+    {"name": "weather_gs_win_te", "keys": ["weather", "ground_state1"], "target": "_win"},
+]
+
+
+# エンティティ × エンティティ の交互作用 target-encoding スペック。
+# 単独エンティティ（騎手/調教師/馬主は person_te、馬は _horse_features）は別途カバー済みなので、
+# ここは「組合せ効果」だけを狙う。高カーディナリティで大半が初出＝prior へ縮小されるため、
+# スムージング（alpha）で希少組合せのブレを抑える前提。
+# 退化的な組（馬×調教師・馬×馬主＝ほぼ 1:1 で定数化）は除外する。
+DEFAULT_ENTITY_INTERACTION_SPECS: list[dict] = [
+    # (name, keys, target)
+    {"name": "jockey_trainer_win_te", "keys": ["jockey_id", "trainer_id"], "target": "_win"},
+    {"name": "jockey_trainer_place_te", "keys": ["jockey_id", "trainer_id"], "target": "_place"},
+    {"name": "horse_jockey_win_te", "keys": ["horse_id", "jockey_id"], "target": "_win"},
+    {"name": "horse_jockey_place_te", "keys": ["horse_id", "jockey_id"], "target": "_place"},
+    {"name": "jockey_owner_win_te", "keys": ["jockey_id", "owner_id"], "target": "_win"},
 ]
 
 

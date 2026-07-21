@@ -104,6 +104,7 @@ class DataMerger:
         _step("person_yearly", self._merge_person_yearly)
         _step("person_te", self._merge_person_target_encoding)
         _step("context_te", self._merge_context_target_encoding)
+        _step("entity_te", self._merge_entity_target_encoding)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -337,6 +338,7 @@ class DataMerger:
     _SERVE_HISTORY_COLS: ClassVar[tuple] = (
         "horse_id", "jockey_id", "trainer_id", "owner_id", "馬番", "着順", "n_horses",
         "date", "course_len", "race_type", "ground_state1", "ground_state2", "開催", "斤量",
+        "weather",  # weather×ground_state 交互作用 TE を serve でも同一計算するため
     )
 
     def _write_serve_history(self) -> None:
@@ -429,6 +431,36 @@ class DataMerger:
         for c in feats.columns:
             self._results[c] = feats[c].to_numpy()
         logger.info("[context_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
+
+    def _merge_entity_target_encoding(self):
+        """エンティティ交互作用（騎手×調教師・馬×騎手・騎手×馬主）の expanding TE を付与する。
+
+        単独エンティティ（騎手/調教師/馬主=person_te、馬=_horse_features）ではなく「組合せ効果」を
+        狙う。高カーディナリティで大半が初出＝prior へ縮小されるため、スムージングで希少組合せの
+        ブレを抑える。context_te と同じ `expanding_target_encode`（リーク無し・単体テスト済み）。
+
+        env: ``KEIBA_DISABLE_ENTITY_TE=1`` で無効化 / ``KEIBA_TE_ALPHA`` でスムージング強度（既定20）。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_ENTITY_TE") == "1":
+            return
+        if "date" not in self._results.columns or ResultsCols.RANK not in self._results.columns:
+            return
+        from src.preprocessing._target_encoding import DEFAULT_ENTITY_INTERACTION_SPECS
+        from src.preprocessing._target_encoding import build_person_form_features
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = build_person_form_features(
+            self._results, specs=DEFAULT_ENTITY_INTERACTION_SPECS, date_col="date",
+            rank_col=ResultsCols.RANK, alpha=alpha,
+        )
+        if feats.shape[1] == 0:
+            logger.info("[entity_te] 付与できる列がありません（entity 列不足）")
+            return
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[entity_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。

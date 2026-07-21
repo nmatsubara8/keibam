@@ -143,3 +143,79 @@ def test_context_te_is_leak_free_for_place():
     te = expanding_target_encode(df, keys=["開催"], target="_win", alpha=0.0)
     # 最終行: 過去2行の _win 平均 = 0.0（自分の 1.0 は含めない）
     assert te.iloc[-1] == 0.0
+
+
+def test_weather_ground_state_interaction_te():
+    """weather × ground_state1 の交互作用 TE 列が生成される。"""
+    import pandas as pd
+
+    from src.preprocessing._target_encoding import (
+        DEFAULT_CONTEXT_SPECS,
+        build_person_form_features,
+    )
+
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2024-01-01", "2024-01-08", "2024-01-15", "2024-01-22"]
+            ),
+            "開催": ["05", "05", "05", "05"],
+            "race_class": ["G1", "G1", "G1", "G1"],
+            "weather": ["雨", "雨", "晴", "雨"],
+            "ground_state1": ["重", "重", "良", "重"],
+            "着順": [1, 3, 5, 1],
+        }
+    )
+    out = build_person_form_features(df, specs=DEFAULT_CONTEXT_SPECS, rank_col="着順", alpha=10.0)
+    assert {"weather_gs_place_te", "weather_gs_win_te"}.issubset(set(out.columns))
+    assert out[["weather_gs_place_te", "weather_gs_win_te"]].notna().all().all()
+
+
+def test_entity_interaction_specs_produce_columns():
+    """騎手×調教師・馬×騎手・騎手×馬主 の交互作用 TE 列が生成される。"""
+    import pandas as pd
+
+    from src.preprocessing._target_encoding import (
+        DEFAULT_ENTITY_INTERACTION_SPECS,
+        build_person_form_features,
+    )
+
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2024-01-01", "2024-01-08", "2024-01-15", "2024-01-22", "2024-01-29"]
+            ),
+            "horse_id": ["h1", "h1", "h2", "h1", "h2"],
+            "jockey_id": ["j1", "j1", "j2", "j1", "j2"],
+            "trainer_id": ["t1", "t1", "t2", "t1", "t2"],
+            "owner_id": ["o1", "o1", "o2", "o1", "o2"],
+            "着順": [1, 3, 2, 1, 4],
+        }
+    )
+    out = build_person_form_features(
+        df, specs=DEFAULT_ENTITY_INTERACTION_SPECS, rank_col="着順", alpha=10.0
+    )
+    expected = {
+        "jockey_trainer_win_te", "jockey_trainer_place_te",
+        "horse_jockey_win_te", "horse_jockey_place_te", "jockey_owner_win_te",
+    }
+    assert expected.issubset(set(out.columns))
+    assert out.notna().all().all()
+
+
+def test_interaction_te_is_leak_free():
+    """交互作用 TE も「厳密に過去」のみ参照する（同一組合せの自分の結果を含めない）。"""
+    import pandas as pd
+
+    from src.preprocessing._target_encoding import expanding_target_encode
+
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-01", "2024-01-08", "2024-01-15"]),
+            "jockey_id": ["j1", "j1", "j1"],
+            "trainer_id": ["t1", "t1", "t1"],
+            "_win": [0.0, 0.0, 1.0],
+        }
+    )
+    te = expanding_target_encode(df, keys=["jockey_id", "trainer_id"], target="_win", alpha=0.0)
+    assert te.iloc[-1] == 0.0  # 過去2走の平均=0、自分の勝ちは含めない
