@@ -118,6 +118,10 @@ def main() -> None:
     ap.add_argument("--repeats", type=int, default=3, help="permutation 反復回数（安定性）")
     ap.add_argument("--since-year", type=int, default=None, help="この年以降の行だけで学習・評価（高速化）")
     ap.add_argument("--by-group", action="store_true", help="グループ単位の joint permutation も表示")
+    ap.add_argument(
+        "--ablate-groups", action="store_true",
+        help="各グループを落として再学習し ΔAUC を測る（permutation の相関過小評価を排した確定判定）",
+    )
     args = ap.parse_args()
 
     import lightgbm as lgb
@@ -205,9 +209,31 @@ def main() -> None:
             mark = " ⚠害" if val < 0 else ""
             print(f"  {val:>+12.5f}  {g}{mark}")
 
+    if args.ablate_groups:
+        from collections import defaultdict
+
+        groups = defaultdict(list)
+        for c in cols:
+            groups[_group_of(c)].append(c)
+        print("\n■ グループ drop 再学習（該当列を除いて再fit・ΔAUC>0＝落とすと改善＝害の確定判定）")
+        print(f"  {'ΔAUC':>10}{'残り列':>7}  領域")
+        rows = []
+        for g, gcols in groups.items():
+            drop = set(gcols)
+            keep = [c for c in cols if c not in drop]
+            m = lgb.LGBMClassifier(
+                scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                objective="binary", n_estimators=300, num_leaves=63, verbose=-1,
+            )
+            m.fit(X_train[keep], y_train)
+            rows.append((_auc(m, X_test[keep], y_test) - base, len(keep), g))
+        for d, nkeep, g in sorted(rows, reverse=True):
+            mark = " ⚠害（落とすと改善）" if d > 0 else ""
+            print(f"  {d:>+10.5f}{nkeep:>7}  {g}{mark}")
+
     print("\n" + "=" * 72)
     print("読み方: importance<0 の列＝壊すと AUC が上がる＝混入がスコアを悪化。ただし相関冗長で")
-    print("過小評価されうるため、候補は retrain で該当列を落として AUC 変化を確認して確定すること。")
+    print("過小評価されうるため、候補は --ablate-groups（drop 再学習の ΔAUC）で確定すること。")
     print("=" * 72)
 
 
