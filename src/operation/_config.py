@@ -35,9 +35,12 @@ class OperationConfig:
     use_predicted_odds: bool = False
     # EV 較正アーティファクト（calibrate-ev の出力）をライブ選定に適用する。
     # models/{place_exponents,win_calibrator,blend_weights}.json を読み補正Harville/r̂較正/
-    # 市場合成を有効化（ファイルが無い項目は自動で従来挙動へフォールバック）。既定 False=無効。
+    # 市場合成を有効化（ファイルが無い項目は自動で従来挙動へフォールバック）。
+    # 既定 True=有効: OOS 検証（fit=2024/eval=2025）で無較正の病理的な大穴垂れ流しが解消し、
+    # 全体回収率 27%→76% に改善したため既定 ON にした。アーティファクトが無ければ自動で従来挙動
+    # （None フォールバック）なので無害。無効化は use_ev_calibration=False。
     # 注意: これらは OOS で fit したものを使うこと（in-sample は退化。Benter §5）。
-    use_ev_calibration: bool = False
+    use_ev_calibration: bool = True
     # 初出走（データ無し）馬に公衆 implied 勝率を割り当てる（ベンター §3）。featured の
     # career_starts==0/NaN を初出走と判定し、初出走のみのレースは選定から除外する。既定 False。
     use_unratable_fallback: bool = False

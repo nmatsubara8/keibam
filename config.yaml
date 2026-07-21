@@ -19,6 +19,12 @@ max_daily_ratio: 1.0        # 1日総投資上限（bankroll比）
 max_odds: 15.0              # これ超のオッズ（人気薄）は買わない
 tansho_ev_threshold: 1.1   # 単勝EV下限（既定 BetThresholds の1.78を上書き）
 
+# EV 較正（calibrate-ev の 補正Harville/r̂較正/市場合成）をライブ選定に適用する。
+#   OOS 検証（fit=2024/eval=2025）で無較正の大穴垂れ流しが解消し全体回収率 27%→76% に改善。
+#   models/{place_exponents,win_calibrator,blend_weights}.json を使用（無ければ自動で従来挙動）。
+#   必ず OOS で fit したものを使うこと（学習年で fit すると退化。Benter §5）。false で無効化。
+use_ev_calibration: true
+
 # 安全装置（損失ストップ / kill switch）
 kill_switch_enabled: true   # 当日実現損失が上限超で推奨/記録を停止する
 max_daily_loss_ratio: 0.3   # 当日実現損失が bankroll*0.3 を超えたら停止

@@ -179,8 +179,8 @@ class TestEvCalibrationWiring:
 
         assert _load_ev_artifacts(str(tmp_path)) == (None, None, None)
 
-    def test_disabled_by_default_does_not_load(self, monkeypatch):
-        """use_ev_calibration 既定 False では _load_ev_artifacts を呼ばない。"""
+    def test_enabled_by_default_loads(self, monkeypatch):
+        """use_ev_calibration 既定 True では _load_ev_artifacts を呼ぶ（既定 ON）。"""
         import app._prediction_service as ps
 
         called = {"n": 0}
@@ -193,10 +193,29 @@ class TestEvCalibrationWiring:
         X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
         model = _StubModel([0.65, 0.25, 0.10])
         ps.run_prediction(model, X, _default_op_config(), thresholds={BetType.TANSHO: 1.0})
+        assert called["n"] == 1
+
+    def test_disabled_when_off_does_not_load(self, monkeypatch):
+        """use_ev_calibration=False では _load_ev_artifacts を呼ばない（明示 OFF）。"""
+        import app._prediction_service as ps
+
+        called = {"n": 0}
+
+        def _spy(*a, **k):
+            called["n"] += 1
+            return (None, None, None)
+
+        monkeypatch.setattr(ps, "_load_ev_artifacts", _spy)
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        ps.run_prediction(
+            model, X, _default_op_config(use_ev_calibration=False),
+            thresholds={BetType.TANSHO: 1.0},
+        )
         assert called["n"] == 0
 
     def test_enabled_loads_and_applies_calibrator(self, monkeypatch):
-        """use_ev_calibration=True で較正器を適用すると勝率（候補確率）が変わる。"""
+        """較正器を適用すると勝率（候補確率）が変わる（既定 ON vs 明示 OFF）。"""
         import app._prediction_service as ps
         from src.policies._calibration import IsotonicCalibrator
 
@@ -207,7 +226,9 @@ class TestEvCalibrationWiring:
         X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
         model = _StubModel([0.65, 0.25, 0.10])
         th = {BetType.TANSHO: 0.0}
-        base = ps.run_prediction(model, X, _default_op_config(), thresholds=th)
+        base = ps.run_prediction(
+            model, X, _default_op_config(use_ev_calibration=False), thresholds=th
+        )
         wired = ps.run_prediction(
             model, X, _default_op_config(use_ev_calibration=True), thresholds=th
         )

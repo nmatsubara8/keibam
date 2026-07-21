@@ -51,7 +51,8 @@ def _load_ev_artifacts(models_dir: str = "models"):
 
     calibrate-ev が保存した3つの JSON を読み、(place_exponents, win_calibrator,
     blend_weights) を返す。各ファイルが無ければ該当は None（= その補正を行わない）。
-    op_config.use_ev_calibration=True のときだけ呼ぶ（既定はライブ挙動を変えない）。
+    op_config.use_ev_calibration（既定 True）が真のとき呼ぶ。ファイルが無ければ全 None で
+    従来挙動へフォールバックするため、既定 ON でも未 fit 環境は無害。
     """
     from src.policies._blend import load_blend_weights
     from src.policies._calibration import load_calibrator
@@ -145,9 +146,9 @@ def run_prediction(
             pass
 
     # 3. EV 選定（券種別最適化パラメータがあれば温度・較正・閾値を反映）
-    #    use_ev_calibration=True なら calibrate-ev の OOS 較正物を opt-in 適用（無い項目は None）。
+    #    use_ev_calibration（既定 True）なら calibrate-ev の OOS 較正物を適用（無い項目は None）。
     place_exponents = win_calibrator = blend_weights = None
-    if getattr(op_config, "use_ev_calibration", False):
+    if getattr(op_config, "use_ev_calibration", True):
         place_exponents, win_calibrator, blend_weights = _load_ev_artifacts()
     # 初出走馬の公衆フォールバック（ベンター §3・opt-in）。featured から初出走集合を作る。
     unratable_fallback = getattr(op_config, "use_unratable_fallback", False)
