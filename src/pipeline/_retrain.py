@@ -50,6 +50,10 @@ class RetrainConfig:
     # カテゴリ別モデルを学習する最小レース数。これ未満のカテゴリは学習をスキップし
     # 推論時は統合モデルへフォールバックする（障害など少数カテゴリの過学習・分割失敗を防ぐ）。
     min_category_races: int = 300
+    # カテゴリ別モデルを LightGBMTuner（Optuna 段階探索）で個別にハイパラ探索して学習するか。
+    # True にすると学習される各カテゴリ（中央 芝/ダート/障害 等）ごとに独立の探索を行い、
+    # 探索結果は tuning_history.json に (version, category) 単位で保存される。
+    tune_categories: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +212,9 @@ class RetrainJob:
                     )
                     continue
                 try:
-                    category_metas[cat] = self._train_one(sub, vname, category=cat)
+                    category_metas[cat] = self._train_one(
+                        sub, vname, category=cat, with_tuning=self._cfg.tune_categories
+                    )
                 except Exception as e:  # noqa: BLE001 — 1 カテゴリの失敗で全体を止めない
                     logger.warning(
                         "[retrain] category=%s 学習失敗（統合モデルへフォールバック）: %s", cat, e
@@ -269,7 +275,7 @@ class RetrainJob:
                 from src.training._tuning_history import trials_to_records
                 from src.training._tuning_history import tuning_history_path
 
-                records = trials_to_records(study, vname)
+                records = trials_to_records(study, vname, category=category)
                 save_tuning_history(records, tuning_history_path(self._cfg.models_dir))
             except Exception as e:  # noqa: BLE001 — 履歴保存失敗で学習結果を失わない
                 logger.warning("[retrain] tuning_history 保存失敗 (non-fatal): %s", e)

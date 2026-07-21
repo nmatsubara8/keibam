@@ -279,6 +279,7 @@ def _retrain(args: argparse.Namespace) -> None:
         use_stacking=not args.no_stacking,
         train_categories=not getattr(args, "no_category_split", False),
         min_category_races=getattr(args, "min_category_races", 300),
+        tune_categories=getattr(args, "tune_categories", False),
     )
 
     featured_path = LocalPaths.FEATURED_DATA_PATH
@@ -448,6 +449,12 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=300,
         help="カテゴリ別モデルを学習する最小レース数（未満はスキップし推論時は統合モデルへフォールバック）",
+    )
+    retrain_p.add_argument(
+        "--tune-categories",
+        action="store_true",
+        help="カテゴリ別モデル（中央 芝/ダート/障害 等）を LightGBMTuner で個別にハイパラ探索して学習する"
+        "（探索結果は tuning_history.json に category 単位で保存）",
     )
 
     # evaluate-odds-dynamics サブコマンド

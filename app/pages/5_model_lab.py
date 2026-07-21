@@ -118,9 +118,24 @@ with tabs[0]:
             "Optuna の全探索結果が成績順でここに表示されます。"
         )
     else:
-        versions = sorted({r["version"] for r in history}, reverse=True)
+        from src.constants._model_category import CATEGORY_LABELS
+        from src.constants._model_category import COMBINED
+
+        def _rec_category(r):
+            return r.get("category") or COMBINED
+
+        # カテゴリ選択（統合 + LightGBMTuner で個別探索した中央 芝/ダート/障害 等）
+        categories = sorted({_rec_category(r) for r in history}, key=lambda c: (c != COMBINED, c))
+        sel_category = st.selectbox(
+            "対象モデル",
+            categories,
+            format_func=lambda c: CATEGORY_LABELS.get(c, c),
+            help="LightGBMTuner の探索結果を対象モデル（統合 / カテゴリ別）ごとに表示する",
+        )
+        cat_history = [r for r in history if _rec_category(r) == sel_category]
+        versions = sorted({r["version"] for r in cat_history}, reverse=True)
         sel_version = st.selectbox("探索バージョン", versions)
-        records = [r for r in history if r["version"] == sel_version]
+        records = [r for r in cat_history if r["version"] == sel_version]
         records.sort(key=lambda r: r["rank"])
 
         # 成績順テーブル（主要パラメータを展開して表示）
@@ -147,24 +162,32 @@ with tabs[0]:
         with st.expander("選択中パラメータの全項目", expanded=False):
             st.json(sel_record["params"])
 
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            if st.button("✅ このパラメータを選択として保存", type="primary"):
-                payload = {
-                    "version": sel_version,
-                    "rank": sel_rank,
-                    "value": sel_record["value"],
-                    "params": sel_record["params"],
-                    "selected_at": dt.datetime.now().isoformat(),
-                }
-                os.makedirs(os.path.dirname(SELECTED_PARAMS_PATH), exist_ok=True)
-                with open(SELECTED_PARAMS_PATH, "w") as f:
-                    json.dump(payload, f, ensure_ascii=False, indent=2)
-                st.success(f"rank={sel_rank} を {SELECTED_PARAMS_PATH} に保存しました")
-        with col2:
-            st.code(
-                f"python -m src.pipeline.run_pipeline retrain --params-rank {sel_rank}",
-                language="bash",
+        if sel_category == COMBINED:
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                if st.button("✅ このパラメータを選択として保存", type="primary"):
+                    payload = {
+                        "version": sel_version,
+                        "category": sel_category,
+                        "rank": sel_rank,
+                        "value": sel_record["value"],
+                        "params": sel_record["params"],
+                        "selected_at": dt.datetime.now().isoformat(),
+                    }
+                    os.makedirs(os.path.dirname(SELECTED_PARAMS_PATH), exist_ok=True)
+                    with open(SELECTED_PARAMS_PATH, "w") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=2)
+                    st.success(f"rank={sel_rank} を {SELECTED_PARAMS_PATH} に保存しました")
+            with col2:
+                st.code(
+                    f"python -m src.pipeline.run_pipeline retrain --params-rank {sel_rank}",
+                    language="bash",
+                )
+        else:
+            st.info(
+                f"「{CATEGORY_LABELS.get(sel_category, sel_category)}」の探索結果です"
+                "（`retrain --tune-categories` で生成）。カテゴリ別モデルはこの探索結果で"
+                "自動学習されます。個別 rank の再指定によるカテゴリ別再学習は今後対応予定です。"
             )
 
         if os.path.exists(SELECTED_PARAMS_PATH):

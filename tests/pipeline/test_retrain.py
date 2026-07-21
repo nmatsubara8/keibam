@@ -298,6 +298,60 @@ def test_retrain_job_no_category_split(tmp_path):
     assert saved_categories == {"combined"}
 
 
+def test_tune_categories_tunes_each_category(tmp_path):
+    """tune_categories=True で、学習される各カテゴリが train_with_tuning を呼ぶ。"""
+    calls = {"tuning": 0, "no_tuning": 0}
+
+    class _RecAI(_StubAI):
+        def train_with_tuning(self):
+            calls["tuning"] += 1
+
+        def train_without_tuning(self):
+            calls["no_tuning"] += 1
+
+    class _RecFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _RecAI(featured_data)
+
+    df = _make_categorized_featured()  # central_turf 5 / central_dirt 4 / local_dirt 3
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path),
+        use_stacking=False,
+        min_category_races=3,
+        tune_categories=True,
+    )
+    job = RetrainJob(_RecFactory(), cfg)
+    meta = job.run(df, vname="vtune", with_tuning=False)
+
+    # 統合は with_tuning=False（no_tuning）、カテゴリ 3 種は tuning
+    assert calls["tuning"] == 3
+    assert calls["no_tuning"] == 1
+    assert set(meta["categories"]) == {"central_turf", "central_dirt", "local_dirt"}
+
+
+def test_tune_categories_default_off(tmp_path):
+    """既定（tune_categories=False）ではカテゴリは探索なしで学習される。"""
+    calls = {"tuning": 0, "no_tuning": 0}
+
+    class _RecAI(_StubAI):
+        def train_with_tuning(self):
+            calls["tuning"] += 1
+
+        def train_without_tuning(self):
+            calls["no_tuning"] += 1
+
+    class _RecFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _RecAI(featured_data)
+
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, min_category_races=3)
+    job = RetrainJob(_RecFactory(), cfg)
+    job.run(df, vname="vnotune", with_tuning=False)
+    assert calls["tuning"] == 0
+    assert calls["no_tuning"] == 4  # 統合 + カテゴリ 3
+
+
 def test_retrain_job_injects_lgb_params(tmp_path):
     """lgb_params 指定時は set_lgb_params で注入され、メタに記録される。"""
 

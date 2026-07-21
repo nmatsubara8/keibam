@@ -125,3 +125,52 @@ class TestGetParamsByRank:
     def test_latest_version_helper(self):
         assert latest_version(self._history()) == "v2"
         assert latest_version([]) is None
+
+
+class TestCategoryAware:
+    def test_records_tagged_with_category(self):
+        study = _study([_trial(0, 0.5, {"a": 1})])
+        records = trials_to_records(study, "v1", category="central_turf")
+        assert all(r["category"] == "central_turf" for r in records)
+
+    def test_default_category_is_combined(self):
+        records = trials_to_records(_study([_trial(0, 0.5, {"a": 1})]), "v1")
+        assert records[0]["category"] == "combined"
+
+    def test_same_version_different_category_accumulate(self, tmp_path):
+        """同一 version でもカテゴリが異なれば別々に保存される（上書きしない）。"""
+        path = tuning_history_path(str(tmp_path))
+        save_tuning_history(
+            trials_to_records(_study([_trial(0, 0.5, {"a": 1})]), "v1", category="combined"), path
+        )
+        save_tuning_history(
+            trials_to_records(_study([_trial(0, 0.4, {"a": 2})]), "v1", category="central_turf"),
+            path,
+        )
+        save_tuning_history(
+            trials_to_records(_study([_trial(0, 0.3, {"a": 3})]), "v1", category="central_dirt"),
+            path,
+        )
+        history = load_tuning_history(path)
+        assert len(history) == 3
+        cats = {r["category"] for r in history}
+        assert cats == {"combined", "central_turf", "central_dirt"}
+
+    def test_get_params_by_rank_filters_by_category(self):
+        history = [
+            {"version": "v1", "category": "combined", "rank": 1, "params": {"a": 1}, "tuned_at": "2026-01-01"},
+            {"version": "v1", "category": "central_turf", "rank": 1, "params": {"a": 2}, "tuned_at": "2026-01-01"},
+            {"version": "v1", "category": "central_dirt", "rank": 1, "params": {"a": 3}, "tuned_at": "2026-01-01"},
+        ]
+        assert get_params_by_rank(history, 1, category="central_turf") == {"a": 2}
+        assert get_params_by_rank(history, 1, category="central_dirt") == {"a": 3}
+        assert get_params_by_rank(history, 1, category="combined") == {"a": 1}
+
+    def test_latest_version_per_category(self):
+        history = [
+            {"version": "v1", "category": "central_turf", "rank": 1, "params": {}, "tuned_at": "2026-01-01"},
+            {"version": "v2", "category": "combined", "rank": 1, "params": {}, "tuned_at": "2026-02-01"},
+        ]
+        # combined の最新は v2 だが、central_turf に限れば v1
+        assert latest_version(history, category="central_turf") == "v1"
+        assert latest_version(history, category="combined") == "v2"
