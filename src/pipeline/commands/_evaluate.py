@@ -402,6 +402,30 @@ def _optimize_odds_bands(args: argparse.Namespace) -> None:
         want = set(args.bet_types)
         thresholds = {k: v for k, v in thresholds.items() if k in want}
 
+    # EV 較正（calibrate-ev で OOS fit したもの）を既定で適用する。帯選定は本番と同じ
+    # 較正後予測で測るべき（無較正だと EV 方策が大穴を垂れ流し、帯 ROI が病理的に歪む）。
+    # --no-calibration で無効化できる。
+    place_exponents = win_calibrator = blend_weights = None
+    if not getattr(args, "no_calibration", False):
+        from src.policies._blend import load_blend_weights
+        from src.policies._calibration import load_calibrator
+        from src.policies._harville import load_place_exponents
+        from src.simulation._calibrate import (
+            blend_weights_path,
+            place_exponents_path,
+            win_calibrator_path,
+        )
+
+        place_exponents = load_place_exponents(place_exponents_path("models"))
+        win_calibrator = load_calibrator(win_calibrator_path("models"))
+        blend_weights = load_blend_weights(blend_weights_path("models"))
+        logger.info(
+            "[optimize-odds-bands] EV 較正: 補正Harville=%s r̂較正=%s 市場合成=%s",
+            "あり" if place_exponents else "なし",
+            "あり" if win_calibrator else "なし",
+            "あり" if blend_weights else "なし",
+        )
+
     return_processor, _ = _return_processor_db_first()
     rid = featured.index.astype(str)
 
@@ -414,6 +438,8 @@ def _optimize_odds_bands(args: argparse.Namespace) -> None:
             place_ai.effective_model, sub, return_processor,
             win_model=win_ai.effective_model if win_ai is not None else None,
             final_odds_lookup=final_odds_lookup, thresholds=thresholds,
+            place_exponents=place_exponents, win_calibrator=win_calibrator,
+            blend_weights=blend_weights,
         )
         return res.get("by_odds_band", {})
 

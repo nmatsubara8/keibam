@@ -457,6 +457,11 @@ def _add_optimize_odds_bands(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("--no-win-head", action="store_true", help="Win ヘッドを使わず Place 単独で評価")
     p.add_argument("--no-final-odds", action="store_true", help="確定オッズを使わず Harville 推定で評価")
+    p.add_argument(
+        "--no-calibration", action="store_true",
+        help="EV 較正（calibrate-ev の 補正Harville/r̂較正/市場合成）を適用しない。"
+             "既定は適用（本番と同じ較正後予測で帯を測る）",
+    )
     p.add_argument("--bet-types", nargs="+", default=None, help="評価券種（省略時は全券種）")
 
 
