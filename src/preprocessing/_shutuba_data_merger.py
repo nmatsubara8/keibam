@@ -154,6 +154,7 @@ class ShutubaDataMerger(DataMerger):
         # **_merge_horse_results より前**に実行しないと merged_data に載らず 0 埋めされる
         # （学習時は person_te/horse_ratings が horse_results ステップより前なので載る）。
         self._merge_person_target_encoding_shutuba()
+        self._merge_context_target_encoding_shutuba()  # 開催/クラスの as-of TE（学習時と同一計算）
         self._merge_person_yearly()   # jockey_py_* 等（前年集計）。horse_results より前で merged_data に載せる
         self._merge_yoso_shutuba()    # 予想印の consensus 特徴（当該レースの印から）
         self._merge_live_ratings()
@@ -212,6 +213,40 @@ class ShutubaDataMerger(DataMerger):
         for c in feats.columns:
             self._results[c] = feats[c].to_numpy()
         logger.info("[person_te-serve] %d 列を付与（α=%.0f）: %s",
+                    feats.shape[1], alpha, list(feats.columns))
+
+    def _merge_context_target_encoding_shutuba(self) -> None:
+        """ライブ推論で context_te（開催/クラス）を履歴スナップショットから as-of 再計算する。
+
+        学習時 `_merge_context_target_encoding` と同じ `person_te_for_upcoming`（＝
+        `expanding_target_encode`）を履歴＋出馬表に適用し、出馬表行の encoding を取り出す
+        （train/serve skew ゼロ）。env `KEIBA_DISABLE_CONTEXT_TE=1` で無効化。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_CONTEXT_TE") == "1":
+            return
+        hist = self._history_results
+        if hist is None or hist.empty or ResultsCols.RANK not in hist.columns:
+            return
+        if "date" not in self._results.columns:
+            return
+        race_date = pd.to_datetime(self._results["date"], errors="coerce").dropna().max()
+        if pd.isna(race_date):
+            return
+        from src.preprocessing._target_encoding import DEFAULT_CONTEXT_SPECS
+        from src.preprocessing._target_encoding import person_te_for_upcoming
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = person_te_for_upcoming(
+            hist, self._results, race_date, specs=DEFAULT_CONTEXT_SPECS,
+            date_col="date", rank_col=ResultsCols.RANK, alpha=alpha,
+        )
+        if feats.shape[1] == 0:
+            return
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[context_te-serve] %d 列を付与（α=%.0f）: %s",
                     feats.shape[1], alpha, list(feats.columns))
 
     def _merge_live_ratings(self) -> None:

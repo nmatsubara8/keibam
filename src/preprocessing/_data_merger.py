@@ -103,6 +103,7 @@ class DataMerger:
         _step("horse_ratings", self._merge_horse_ratings)
         _step("person_yearly", self._merge_person_yearly)
         _step("person_te", self._merge_person_target_encoding)
+        _step("context_te", self._merge_context_target_encoding)
         _step("horse_results", self._merge_horse_results)
         _step("horse_info", self._merge_horse_info)
         _step("peds", self._merge_peds)
@@ -397,6 +398,37 @@ class DataMerger:
         for c in feats.columns:
             self._results[c] = feats[c].to_numpy()
         logger.info("[person_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
+
+    def _merge_context_target_encoding(self):
+        """開催/クラス(context)の全履歴 expanding target-encoding を付与する。
+
+        高カーディナリティの One-Hot（開催 57 種）や順序カテゴリ（race_class）を、当該レースより
+        **厳密に過去（date<自分・同日除外）** の勝率/複勝率としてスムージング付きで 1 列に符号化する
+        （person_te と同じ `expanding_target_encode`＝リーク無し・単体テスト済み）。One-Hot は残すため
+        A/B 比較可能。列が無い spec は自動スキップ。
+
+        env: ``KEIBA_DISABLE_CONTEXT_TE=1`` で無効化 / ``KEIBA_TE_ALPHA`` でスムージング強度（既定20）。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_CONTEXT_TE") == "1":
+            return
+        if "date" not in self._results.columns or ResultsCols.RANK not in self._results.columns:
+            return
+        from src.preprocessing._target_encoding import DEFAULT_CONTEXT_SPECS
+        from src.preprocessing._target_encoding import build_person_form_features
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = build_person_form_features(
+            self._results, specs=DEFAULT_CONTEXT_SPECS, date_col="date",
+            rank_col=ResultsCols.RANK, alpha=alpha,
+        )
+        if feats.shape[1] == 0:
+            logger.info("[context_te] 付与できる列がありません（開催/race_class 列不足）")
+            return
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[context_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
 
     def _merge_horse_results(self):
         """日付ごとに horse_results / results をスライスしてマージする。

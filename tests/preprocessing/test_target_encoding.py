@@ -95,3 +95,51 @@ def test_build_person_form_features_skips_missing_columns():
     assert "trainer_win_te" not in out.columns
     assert "jockey_win_te_by_type" not in out.columns
     assert len(out) == len(results)
+
+
+def test_context_specs_produce_place_and_class_te():
+    """DEFAULT_CONTEXT_SPECS で 開催/race_class の複勝率・勝率 TE 列が生成される。"""
+    import pandas as pd
+
+    from src.preprocessing._target_encoding import (
+        DEFAULT_CONTEXT_SPECS,
+        build_person_form_features,
+    )
+
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(
+                ["2024-01-01", "2024-01-08", "2024-01-15", "2024-01-22", "2024-01-29"]
+            ),
+            "開催": ["05", "05", "05", "05", "09"],
+            "race_class": ["G1", "G1", "G1", "未勝利", "未勝利"],
+            "着順": [1, 3, 1, 5, 2],
+        }
+    )
+    out = build_person_form_features(
+        df, specs=DEFAULT_CONTEXT_SPECS, rank_col="着順", alpha=10.0
+    )
+    expected = {"place_place_te", "place_win_te", "race_class_place_te", "race_class_win_te"}
+    assert expected.issubset(set(out.columns))
+    assert out.notna().all().all()
+    assert ((out >= 0.0) & (out <= 1.0)).all().all()
+
+
+def test_context_te_is_leak_free_for_place():
+    """開催 TE は「厳密に過去」のみ参照する（自分の結果を含めない）。"""
+    import pandas as pd
+
+    from src.preprocessing._target_encoding import expanding_target_encode
+
+    # 同一開催 '05' の 3 レース。最終行の TE は過去 2 行（勝1/複2 のうち）だけで決まり、
+    # 自分（着順1=勝ち）を含めない。alpha=0 で純粋な過去平均。
+    df = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2024-01-01", "2024-01-08", "2024-01-15"]),
+            "開催": ["05", "05", "05"],
+            "_win": [0.0, 0.0, 1.0],
+        }
+    )
+    te = expanding_target_encode(df, keys=["開催"], target="_win", alpha=0.0)
+    # 最終行: 過去2行の _win 平均 = 0.0（自分の 1.0 は含めない）
+    assert te.iloc[-1] == 0.0

@@ -111,6 +111,19 @@ DEFAULT_PERSON_SPECS: list[dict] = [
 ]
 
 
+# context（開催/クラス等）× 目的変数の expanding target-encoding スペック。
+# 高カーディナリティの One-Hot（開催 57 種）や順序カテゴリ（race_class 11 種）を、過去実績に
+# 基づくスムージング済みの「その競馬場/クラスでの勝率・複勝率」1 列で表現する（One-Hot と併用可能）。
+# person 由来（jockey/trainer/owner）とは別軸なので独立の spec とし、別の env で切替できるようにする。
+DEFAULT_CONTEXT_SPECS: list[dict] = [
+    # (name, keys, target)
+    {"name": "place_place_te", "keys": ["開催"], "target": "_place"},
+    {"name": "place_win_te", "keys": ["開催"], "target": "_win"},
+    {"name": "race_class_place_te", "keys": ["race_class"], "target": "_place"},
+    {"name": "race_class_win_te", "keys": ["race_class"], "target": "_win"},
+]
+
+
 def build_person_form_features(
     results: pd.DataFrame,
     specs: list[dict] | None = None,
