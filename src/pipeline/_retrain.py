@@ -408,28 +408,35 @@ class RetrainJob:
         統合 Place ヘッドと同じ featured_data を、全国/地方 × 芝/ダート/障害 で分割して
         カテゴリごとに学習し <version>__<category>.pickle に保存する。min_category_races 未満の
         カテゴリはスキップ（推論時は統合へフォールバック）。個々の失敗は non-fatal。
+
+        メモリ対策: 6 分割の部分 DataFrame を一度に全部作らず、行ごとのカテゴリラベルだけを
+        先に計算し、1 カテゴリずつ切り出して学習→即解放する（全データ 177万行でも部分 DataFrame は
+        同時に 1 つしか生存しない）。
         """
+        import gc
+
         from src.constants._model_category import ALL_CATEGORIES
-        from src.training._category_split import split_featured_by_category
+        from src.training._category_split import category_series
 
         fd = featured_data.gbdt if hasattr(featured_data, "gbdt") else featured_data
         try:
-            groups = split_featured_by_category(fd)
-        except Exception as e:  # noqa: BLE001 — 分割失敗で本体を壊さない
-            logger.warning("[retrain] カテゴリ分割に失敗（カテゴリ別学習をスキップ）: %s", e)
+            cat_labels = category_series(fd).to_numpy()  # 行ごとのカテゴリ slug（None 含む）
+        except Exception as e:  # noqa: BLE001 — 分類失敗で本体を壊さない
+            logger.warning("[retrain] カテゴリ分類に失敗（カテゴリ別学習をスキップ）: %s", e)
             return {}
 
         cat_cfg = self._strip_nn(base_models_config)
         metas: dict[str, dict] = {}
         for cat in ALL_CATEGORIES:
-            sub = groups.get(cat)
-            n_races = int(sub.index.nunique()) if sub is not None else 0
+            mask = cat_labels == cat
+            n_races = int(fd.index[mask].nunique()) if mask.any() else 0
             if n_races < self._cfg.min_category_races:
                 logger.info(
                     "[retrain] category=%s スキップ（races=%d < min=%d）",
                     cat, n_races, self._cfg.min_category_races,
                 )
                 continue
+            sub = fd[mask]  # このカテゴリの部分 DataFrame（1 つずつのみ生存）
             try:
                 metas[cat] = self._train_and_save_category_head(
                     sub, vname, cat,
@@ -441,6 +448,9 @@ class RetrainJob:
                 logger.warning(
                     "[retrain] category=%s 学習失敗（統合モデルへフォールバック）: %s", cat, e
                 )
+            finally:
+                del sub
+                gc.collect()  # 次カテゴリの前に部分 DataFrame と DataSplitter を解放
         return metas
 
     def _train_and_save_category_head(
