@@ -267,6 +267,19 @@ class RetrainJob:
 
         self._factory.save(ai, vname)
 
+        # メモリ対策: Place ヘッドの分割データ（DataSplitter＝featured の train/valid/test
+        # コピーで数 GB）を Win ヘッド学習の前に解放する。save 済み・metrics 算出済みで、
+        # 以降 ai の datasets は参照しないため安全。これにより Win ヘッドのピークが
+        # 「featured + Place分割 + Win分割」から「featured + Win分割」に下がり、全データでも
+        # Place+Win を順に学習できる（同時にメモリへ載せない）。study は別変数で保持済み。
+        import gc
+
+        try:
+            ai._KeibaAI__datasets = None  # KeibaAI の name-mangled datasets を解放
+        except Exception:  # noqa: BLE001 — 解放失敗は致命的でない
+            pass
+        gc.collect()
+
         # Win ヘッド（target=rank_win=1着）を併せて学習・保存（Stage B）。
         # Place ヘッド（top3）の保存後に行い、失敗しても本体 retrain は壊さない。
         # Win ヘッドは Optuna を再実行しない設計なので、--with-tuning 時は Place 側で探索した
