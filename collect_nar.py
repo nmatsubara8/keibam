@@ -6,8 +6,11 @@
 馬ページ・血統・featured 再生成には触らない（＝147k 馬バックフィルや重い featured 再構築を
 毎回走らせない）。バルクで raw を貯めたあとに、別途 1 回だけ馬 backfill＋featured 再生成する運用。
 
-ポライトネス（既定 4〜6 秒間隔＋1時間上限 1000）は全取得に自動適用。NAR に無い場合が多い
+ポライトネス（既定 4〜6 秒間隔＋1時間上限 1000＋ブロック時 指数バックオフ）は
+**発見（日付ごとのレース一覧）とレース取得の両方**に適用する。NAR に無い場合が多い
 当日ノート/予想印は既定でスキップ（--with-notes で有効化）。
+注意: 発見も間隔を空けるため、--discover-only でも 1 日あたり ~5 秒かかる（1 年 ~30 分）。
+急ぎの件数確認は範囲を短くするか、実収集は resume 可能なのでそのまま流してよい。
 
 実行:
   # まず件数だけ確認（発見のみ・取得しない）
@@ -98,9 +101,15 @@ def main() -> None:
                 len(dates), sorted(tracks) if tracks else "全NAR",
                 "含む" if args.include_banei else "除外")
 
-    # 1. 日付ごとに NAR race_id を発見
+    # 1. 日付ごとに NAR race_id を発見。
+    #    発見も 1 リクエスト＝1 fetch なので、レース取得と同じポライトネス間隔（既定4〜6秒）を
+    #    日付ごとに挟む（fetch_sync 単体は1時間上限のみで間隔待機を持たないため、ここで補う）。
+    import time
+
+    from src.preparing._rate_limiter import polite_interval
+
     discovered: list[str] = []
-    for d in dates:
+    for i, d in enumerate(dates):
         ids, _ = scrape_race_id_race_time_list(d, "local")
         ids = [str(r) for r in ids]
         if not args.include_banei:  # ばんえい(帯広65)を除外
@@ -109,6 +118,10 @@ def main() -> None:
             ids = [r for r in ids if r[4:6] in tracks]
         discovered.extend(ids)
         logger.info("[collect-nar] %s: %d レース発見（累計 %d）", d, len(ids), len(discovered))
+        if i < len(dates) - 1:  # 最終日付の後は待たない
+            interval = polite_interval()
+            if interval > 0:
+                time.sleep(interval)
 
     discovered = list(dict.fromkeys(discovered))  # 順序保持で重複除去
     # 2. 既存 results.pkl（race_id 列）と照合して新規のみに絞る
