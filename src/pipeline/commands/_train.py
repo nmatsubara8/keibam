@@ -170,6 +170,16 @@ def _retrain(args: argparse.Namespace) -> None:
         featured_data = featured_data.drop(columns=present, errors="ignore")
         logger.info("[retrain] --no-odds-features: オッズ由来 %d 列を除外: %s", len(present), present)
 
+    # --no-id-features: 高カーディナリティの生 ID カテゴリ（jockey_id/trainer_id/owner_id/
+    # breeder_id）を学習から除外する。feature_harm で「生 ID は丸暗記で汎化を下げる（drop で
+    # AUC +0.011）／汎化信号は TE・py 成績で捕捉済み」と判明したための過学習 A/B。
+    if getattr(args, "no_id_features", False):
+        from src.constants._feature_cols import HIGH_CARD_ID_FEATURE_COLS
+
+        present = [c for c in HIGH_CARD_ID_FEATURE_COLS if c in featured_data.columns]
+        featured_data = featured_data.drop(columns=present, errors="ignore")
+        logger.info("[retrain] --no-id-features: 生 ID %d 列を除外: %s", len(present), present)
+
     # --no-rating-features: Elo レーティング由来の特徴（elo_* と その _z）を学習から除外する。
     # レーティング効果の A/B（--no-rating-features 有無で別モデルを学習し backtest 比較）用。
     if getattr(args, "no_rating_features", False):

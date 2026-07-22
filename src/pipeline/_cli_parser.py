@@ -55,6 +55,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
         help="Elo レーティング由来の特徴(elo_* と その _z)を除外して学習（レーティング効果の A/B 検証用）",
     )
     retrain_p.add_argument(
+        "--no-id-features", action="store_true",
+        help="高カーディナリティの生 ID(jockey_id/trainer_id/owner_id/breeder_id)を除外して学習"
+             "（過学習の A/B。feature_harm で drop→AUC +0.011 を確認）",
+    )
+    retrain_p.add_argument(
         "--no-win-head", action="store_true",
         help="Win ヘッド(1着予測, <version>__win.pickle)の併行学習を行わない（Place ヘッドのみ）",
     )
@@ -382,6 +387,11 @@ def _add_backtest(sub: argparse._SubParsersAction) -> None:
         "--no-rating-features", action="store_true",
         help="retrain --no-rating-features で学習したモデルを評価する際に指定（featured から同じ"
              "Elo 由来列を落として列を一致させる）",
+    )
+    bt_p.add_argument(
+        "--no-id-features", action="store_true",
+        help="retrain --no-id-features で学習したモデルを評価する際に指定（featured から同じ"
+             "生 ID 列を落として列を一致させる）",
     )
     bt_p.add_argument(
         "--corrected-harville", action="store_true",

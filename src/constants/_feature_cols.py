@@ -152,6 +152,13 @@ ODDS_DERIVED_FEATURE_COLS: list = (
     + [f"{c}_z" for c in MARKET_SIGNAL_FEATURE_COLS]
 )
 
+# 高カーディナリティの生 ID カテゴリ（retrain --no-id-features で学習から除外＝過学習 A/B 用）。
+# jockey/trainer/owner/breeder の「汎化する」信号は TE・py 年度成績・各種集計で既に捕捉済み。
+# 生 ID は GBDT が訓練データを丸暗記して汎化を下げる（feature_harm の drop 再学習で
+# これらを落とすと単一 LGBM の test AUC が +0.011 改善するのを確認）。EV/集計には使わないので
+# 学習入力から落として問題ない（featured には残す）。
+HIGH_CARD_ID_FEATURE_COLS: list = ["jockey_id", "trainer_id", "owner_id", "breeder_id"]
+
 # ──────────────────────────────────────────
 # §2k: 成長/フォーム・トレンド特徴量
 # ──────────────────────────────────────────

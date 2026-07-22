@@ -253,6 +253,14 @@ def _backtest(args: argparse.Namespace) -> None:
         featured = featured.drop(columns=present, errors="ignore")
         logger.info("[backtest] --no-rating-features: Elo 由来 %d 列を除外: %s", len(present), present)
 
+    # --no-id-features: retrain --no-id-features モデルと列を一致させる（生 ID を除外）。
+    if getattr(args, "no_id_features", False):
+        from src.constants._feature_cols import HIGH_CARD_ID_FEATURE_COLS
+
+        present = [c for c in HIGH_CARD_ID_FEATURE_COLS if c in featured.columns]
+        featured = featured.drop(columns=present, errors="ignore")
+        logger.info("[backtest] --no-id-features: 生 ID %d 列を除外: %s", len(present), present)
+
     # 確定オッズ lookup（--no-final-odds なら単勝 Harville 推定にフォールバック）
     final_odds_lookup = None
     if not getattr(args, "no_final_odds", False):
