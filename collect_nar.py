@@ -31,6 +31,7 @@ import argparse
 import datetime
 import logging
 import os
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -154,3 +155,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # Playwright(Chromium) のサブプロセスが exit 時に残りハングすることがあるため、
+    # 全データ保存後に強制終了してクリーンにプロンプトへ戻す（保存は main 完了時に済んでいる）。
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)
