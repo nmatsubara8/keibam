@@ -15,11 +15,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _resolve_race_ids(post_date: str) -> list[int]:
-    """--post-date YYYYMMDD から当日の race_id リストを取得する（Playwright 必須）。"""
+def _resolve_race_ids(post_date: str, organizer: str = "central") -> list[int]:
+    """--post-date YYYYMMDD から当日の race_id リストを取得する（Playwright 必須）。
+
+    organizer は "central"(中央/JRA) / "local"(地方/NAR)。地方はライブ URL が nar.netkeiba.com。
+    """
     from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
 
-    race_ids_str, _ = scrape_race_id_race_time_list(post_date)
+    race_ids_str, _ = scrape_race_id_race_time_list(post_date, organizer)
     if not race_ids_str:
         raise RuntimeError(f"--post-date {post_date}: race_id を取得できませんでした（ネットワーク・HTML 構造を確認）")
     logger.info("[ingest] --post-date %s: %d レースを取得: %s", post_date, len(race_ids_str), race_ids_str[:3])
@@ -335,10 +338,17 @@ def _ingest(args: argparse.Namespace) -> None:
     source = create_data_source(_resolve_data_source(args))
     logger.info("[ingest] データソース: %s", source.name)
 
-    # --post-date が指定された場合は race_id をソースから取得する
+    # --post-date が指定された場合は race_id をソースから取得する。
+    # --organizer で中央(JRA)/地方(NAR)/both を切り替える（both は両者を連結）。
     if getattr(args, "post_date", None):
-        args.race_ids = source.resolve_race_ids(args.post_date)
-        logger.info("[ingest] --post-date %s: %d レース", args.post_date, len(args.race_ids))
+        organizer = getattr(args, "organizer", "central") or "central"
+        orgs = ["central", "local"] if organizer == "both" else [organizer]
+        resolved: list[str] = []
+        for org in orgs:
+            ids = source.resolve_race_ids(args.post_date, org)
+            logger.info("[ingest] --post-date %s (%s): %d レース", args.post_date, org, len(ids))
+            resolved.extend(ids)
+        args.race_ids = resolved
 
     # 新規レースのデータ取得 → raw テーブル増分更新。
     # 取得失敗時は既存 pickle のみで継続する（冪等・リジューム前提）。

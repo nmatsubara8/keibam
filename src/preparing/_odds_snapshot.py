@@ -63,7 +63,9 @@ _ODDS_ID_RE = {
 # オッズ値（"12.3" / レンジ "1.5 - 2.0"）の数値部分
 _ODDS_VALUE_RE = re.compile(r"\d+(?:\.\d+)?")
 
-_ODDS_BASE_URL = "https://race.netkeiba.com/odds/index.html"
+# オッズページも主催者でドメインが分かれる（中央=race.netkeiba.com / 地方=nar.netkeiba.com）。
+# race_id から解決する。パスは共通。
+_ODDS_PATH = "/odds/index.html"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -84,11 +86,18 @@ class OddsSnapshot:
 
 
 def build_odds_url(race_id: str, bet_type: str) -> str:
-    """馬券種に応じた netkeiba オッズページ URL を構築する（純粋関数）。"""
+    """馬券種に応じた netkeiba オッズページ URL を構築する（純粋関数）。
+
+    race_id の主催者区分でドメインを切り替える（中央=race.netkeiba.com /
+    地方=nar.netkeiba.com）。中央の race_id では従来と同一 URL を返す。
+    """
+    from src.constants._model_category import live_netkeiba_base_for_race_id
+
     page_type = ODDS_PAGE_TYPE.get(bet_type)
     if page_type is None:
         raise ValueError(f"未対応の馬券種です: {bet_type}")
-    return f"{_ODDS_BASE_URL}?type={page_type}&race_id={race_id}"
+    base = live_netkeiba_base_for_race_id(race_id) + _ODDS_PATH
+    return f"{base}?type={page_type}&race_id={race_id}"
 
 
 def compute_minutes_to_post(post_time: dt.datetime, captured_at: dt.datetime) -> int:

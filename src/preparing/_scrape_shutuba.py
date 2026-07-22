@@ -24,6 +24,9 @@ import pandas as pd
 
 from src.constants._master import Master
 from src.constants._master import classify_race_class
+from src.constants._model_category import ORG_CENTRAL
+from src.constants._model_category import live_netkeiba_base
+from src.constants._model_category import live_netkeiba_base_for_race_id
 
 if TYPE_CHECKING:
     from bs4 import BeautifulSoup
@@ -32,9 +35,21 @@ logger = logging.getLogger(__name__)
 
 NaN = float("nan")
 
+# ライブ URL は主催者（中央=race.netkeiba.com / 地方=nar.netkeiba.com）でドメインが分かれる。
+# パスだけを定数化し、ベース URL は organizer / race_id から解決する（DB 系は db.netkeiba.com 共通）。
 # race_list_sub.html はレンダリング済みのレース一覧（result/shutuba アンカー＋発走時刻）を返す
-_RACE_LIST_SUB_URL = "https://race.netkeiba.com/top/race_list_sub.html?kaisai_date={kaisai_date}"
-_SHUTUBA_URL = "https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
+_RACE_LIST_SUB_PATH = "/top/race_list_sub.html?kaisai_date={kaisai_date}"
+_SHUTUBA_PATH = "/race/shutuba.html?race_id={race_id}"
+
+
+def _race_list_sub_url(kaisai_date: str, organizer: str = ORG_CENTRAL) -> str:
+    """開催日のレース一覧 URL（主催者別ドメイン）を返す。"""
+    return live_netkeiba_base(organizer) + _RACE_LIST_SUB_PATH.format(kaisai_date=kaisai_date)
+
+
+def _shutuba_url(race_id: str) -> str:
+    """出馬表 URL（race_id の主催者に応じたドメイン）を返す。"""
+    return live_netkeiba_base_for_race_id(race_id) + _SHUTUBA_PATH.format(race_id=race_id)
 
 # href から race_id を抜く（result.html / shutuba.html いずれの形式も許容）
 _RACE_ID_RE = re.compile(r"race_id=(\d{12})")
@@ -95,13 +110,16 @@ def _parse_race_id_time_from_html(html: str, expected_year: str | None = None):
     return race_id_list, race_time_list
 
 
-def scrape_race_id_race_time_list(kaisai_date: str):
+def scrape_race_id_race_time_list(kaisai_date: str, organizer: str = ORG_CENTRAL):
     """開催日のレース一覧から race_id と発走時刻のリストを取得する。
 
     Parameters
     ----------
     kaisai_date : str
         開催日 'YYYYMMDD'（例 '20221001'）。
+    organizer : str
+        主催者区分（"central"=中央/JRA・"local"=地方/NAR）。既定は中央（既存挙動）。
+        地方はライブ URL のドメインが nar.netkeiba.com に切り替わる。
 
     Returns
     -------
@@ -110,7 +128,7 @@ def scrape_race_id_race_time_list(kaisai_date: str):
         並列リスト（並びは対応）。race_id は重複除去済み。
     """
     from src.preparing._scraper import PlaywrightScraper  # noqa: PLC0415
-    url = _RACE_LIST_SUB_URL.format(kaisai_date=kaisai_date)
+    url = _race_list_sub_url(kaisai_date, organizer)
     expected_year = str(kaisai_date)[:4]
     driver = PlaywrightScraper()
     try:
@@ -173,7 +191,7 @@ def create_active_race_id_list():
         for race_id, race_time in zip(all_race_ids, all_times, strict=True):
             try:
                 html = driver.fetch_sync(
-                    _SHUTUBA_URL.format(race_id=race_id),
+                    _shutuba_url(race_id),
                     wait_selector=".Shutuba_Table",
                 )
                 if _is_weight_published(html):
@@ -299,7 +317,7 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
     """
     from bs4 import BeautifulSoup  # noqa: PLC0415
     from src.preparing._scraper import PlaywrightScraper  # noqa: PLC0415
-    url = _SHUTUBA_URL.format(race_id=race_id)
+    url = _shutuba_url(race_id)
     driver = PlaywrightScraper()
     html = driver.fetch_sync(url, wait_selector=".Shutuba_Table")
     soup = BeautifulSoup(html, "lxml")

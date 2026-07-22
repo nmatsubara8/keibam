@@ -56,8 +56,12 @@ class AbstractRaceDataSource(ABC):
     name: str = "abstract"
 
     @abstractmethod
-    def resolve_race_ids(self, date_str: str) -> list[str]:
-        """開催日（YYYYMMDD）の race_id リストを返す。"""
+    def resolve_race_ids(self, date_str: str, organizer: str = "central") -> list[str]:
+        """開催日（YYYYMMDD）の race_id リストを返す。
+
+        organizer は主催者区分（"central"=中央/JRA・"local"=地方/NAR）。ライブ系ソースは
+        これでドメインを切り替える（既定は中央＝既存挙動）。ファイル系ソースは無視してよい。
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -103,10 +107,10 @@ class NetkeibaDataSource(AbstractRaceDataSource):
 
     name = "netkeiba"
 
-    def resolve_race_ids(self, date_str: str) -> list[str]:
+    def resolve_race_ids(self, date_str: str, organizer: str = "central") -> list[str]:
         from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
 
-        race_ids, _ = scrape_race_id_race_time_list(date_str)
+        race_ids, _ = scrape_race_id_race_time_list(date_str, organizer)
         return [str(r) for r in (race_ids or [])]
 
     def acquire_races(self, race_ids: Sequence[str]) -> None:
@@ -419,8 +423,8 @@ class JraVanFileDropSource(AbstractRaceDataSource):
             update_rawdata(path, df)
             logger.info("[jravan] %s: %d 行を取り込み", kind, len(df))
 
-    def resolve_race_ids(self, date_str: str) -> list[str]:
-        """results ディレクトリのファイル名（race_id）から当日分を返す。"""
+    def resolve_race_ids(self, date_str: str, organizer: str = "central") -> list[str]:
+        """results ディレクトリのファイル名（race_id）から当日分を返す（organizer は無視）。"""
         sub = os.path.join(self._dir, "results")
         if not os.path.isdir(sub):
             return []

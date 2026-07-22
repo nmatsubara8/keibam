@@ -19,6 +19,22 @@ def test_build_odds_url_maps_bet_type_to_page_type():
     assert "race_id=202401010101" in url
 
 
+def test_build_odds_url_central_uses_race_domain():
+    # 中央（場コード 01）は従来どおり race.netkeiba.com
+    url = build_odds_url("202401010101", BetType.TANSHO)
+    assert url.startswith("https://race.netkeiba.com/odds/index.html")
+
+
+def test_build_odds_url_nar_uses_nar_domain():
+    # 地方（門別30・大井44）は nar.netkeiba.com にドメイン切替
+    assert build_odds_url("202630072201", BetType.TANSHO).startswith(
+        "https://nar.netkeiba.com/odds/index.html"
+    )
+    assert build_odds_url("202444010101", BetType.UMAREN).startswith(
+        "https://nar.netkeiba.com/odds/index.html"
+    )
+
+
 def test_build_odds_url_unknown_bet_type_raises():
     with pytest.raises(ValueError):
         build_odds_url("r1", "unknown")

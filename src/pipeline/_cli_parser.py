@@ -33,6 +33,13 @@ def _add_ingest(sub: argparse._SubParsersAction) -> None:
         default=None,
         help="データ取得元（netkeiba / jravan）。省略時は UI 選択 or 既定 netkeiba",
     )
+    ingest_p.add_argument(
+        "--organizer",
+        choices=("central", "local", "both"),
+        default="central",
+        help="--post-date の主催者区分。central=中央/JRA（既定）・local=地方/NAR"
+             "（nar.netkeiba.com）・both=両方。--race-id 指定時は race_id から自動判定のため不要",
+    )
 
 
 def _add_retrain(sub: argparse._SubParsersAction) -> None:

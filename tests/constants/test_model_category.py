@@ -7,6 +7,8 @@ from src.constants._model_category import COMBINED
 from src.constants._model_category import ORG_CENTRAL
 from src.constants._model_category import ORG_LOCAL
 from src.constants._model_category import categorize
+from src.constants._model_category import live_netkeiba_base
+from src.constants._model_category import live_netkeiba_base_for_race_id
 from src.constants._model_category import organizer_of_race_id
 from src.constants._model_category import race_type_to_slug
 
@@ -14,6 +16,20 @@ from src.constants._model_category import race_type_to_slug
 def test_all_categories_has_six_entries():
     assert len(ALL_CATEGORIES) == 6
     assert len(set(ALL_CATEGORIES)) == 6
+
+
+def test_live_netkeiba_base_by_organizer():
+    assert live_netkeiba_base(ORG_CENTRAL) == "https://race.netkeiba.com"
+    assert live_netkeiba_base(ORG_LOCAL) == "https://nar.netkeiba.com"
+    # 未知値は中央にフォールバック（既存挙動を壊さない）
+    assert live_netkeiba_base("bogus") == "https://race.netkeiba.com"
+
+
+def test_live_netkeiba_base_for_race_id():
+    # 中央（場コード 01〜10）は race.netkeiba.com、地方（30番台〜）は nar.netkeiba.com
+    assert live_netkeiba_base_for_race_id("202405010101") == "https://race.netkeiba.com"
+    assert live_netkeiba_base_for_race_id("202630072201") == "https://nar.netkeiba.com"  # 門別30
+    assert live_netkeiba_base_for_race_id("202444010101") == "https://nar.netkeiba.com"  # 大井44
 
 
 def test_labels_are_japanese():

@@ -7,7 +7,27 @@ GⅢ/GIII(全角・半角ローマ数字)・(L)・全角数字の条件戦を取
 from bs4 import BeautifulSoup
 
 from src.constants._master import Master
-from src.preparing._scrape_shutuba import _parse_race_header
+from src.preparing._scrape_shutuba import (
+    _parse_race_header,
+    _race_list_sub_url,
+    _shutuba_url,
+)
+
+
+def test_shutuba_url_routes_by_organizer():
+    # 中央（場コード 01）は race.netkeiba.com、地方（門別30）は nar.netkeiba.com
+    assert _shutuba_url("202405010101").startswith("https://race.netkeiba.com/race/shutuba.html")
+    assert _shutuba_url("202630072201").startswith("https://nar.netkeiba.com/race/shutuba.html")
+    assert "race_id=202630072201" in _shutuba_url("202630072201")
+
+
+def test_race_list_sub_url_routes_by_organizer():
+    # 既定（中央）は race.netkeiba.com、organizer=local で nar.netkeiba.com
+    assert _race_list_sub_url("20240501").startswith("https://race.netkeiba.com/top/race_list_sub.html")
+    assert _race_list_sub_url("20260722", "local").startswith(
+        "https://nar.netkeiba.com/top/race_list_sub.html"
+    )
+    assert "kaisai_date=20260722" in _race_list_sub_url("20260722", "local")
 
 
 def _soup(race_name: str, data02: str = "") -> BeautifulSoup:
