@@ -20,18 +20,18 @@ def test_build_odds_url_maps_bet_type_to_page_type():
 
 
 def test_build_odds_url_central_uses_race_domain():
-    # 中央（場コード 01）は従来どおり race.netkeiba.com
+    # 中央（場コード 01）は従来どおり race.netkeiba.com/odds/index.html
     url = build_odds_url("202401010101", BetType.TANSHO)
-    assert url.startswith("https://race.netkeiba.com/odds/index.html")
+    assert url.startswith("https://race.netkeiba.com/odds/index.html?")
 
 
-def test_build_odds_url_nar_uses_nar_domain():
-    # 地方（門別30・大井44）は nar.netkeiba.com にドメイン切替
+def test_build_odds_url_nar_uses_nar_domain_and_path():
+    # 地方（門別30・大井44）は nar.netkeiba.com、パスは /odds/（index.html なし・実 URL 準拠）
     assert build_odds_url("202630072201", BetType.TANSHO).startswith(
-        "https://nar.netkeiba.com/odds/index.html"
+        "https://nar.netkeiba.com/odds/?"
     )
     assert build_odds_url("202444010101", BetType.UMAREN).startswith(
-        "https://nar.netkeiba.com/odds/index.html"
+        "https://nar.netkeiba.com/odds/?"
     )
 
 

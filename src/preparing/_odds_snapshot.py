@@ -64,8 +64,10 @@ _ODDS_ID_RE = {
 _ODDS_VALUE_RE = re.compile(r"\d+(?:\.\d+)?")
 
 # オッズページも主催者でドメインが分かれる（中央=race.netkeiba.com / 地方=nar.netkeiba.com）。
-# race_id から解決する。パスは共通。
-_ODDS_PATH = "/odds/index.html"
+# パスも異なる: 中央は /odds/index.html、地方は /odds/（実 URL で確認）。type コード
+# （b1単複/b3枠連/b4馬連/b5ワイド/b6馬単/b7三連複/b8三連単）は中央・地方で共通。
+_ODDS_PATH_CENTRAL = "/odds/index.html"
+_ODDS_PATH_LOCAL = "/odds/"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -91,12 +93,15 @@ def build_odds_url(race_id: str, bet_type: str) -> str:
     race_id の主催者区分でドメインを切り替える（中央=race.netkeiba.com /
     地方=nar.netkeiba.com）。中央の race_id では従来と同一 URL を返す。
     """
+    from src.constants._model_category import ORG_LOCAL
     from src.constants._model_category import live_netkeiba_base_for_race_id
+    from src.constants._model_category import organizer_of_race_id
 
     page_type = ODDS_PAGE_TYPE.get(bet_type)
     if page_type is None:
         raise ValueError(f"未対応の馬券種です: {bet_type}")
-    base = live_netkeiba_base_for_race_id(race_id) + _ODDS_PATH
+    path = _ODDS_PATH_LOCAL if organizer_of_race_id(race_id) == ORG_LOCAL else _ODDS_PATH_CENTRAL
+    base = live_netkeiba_base_for_race_id(race_id) + path
     return f"{base}?type={page_type}&race_id={race_id}"
 
 
