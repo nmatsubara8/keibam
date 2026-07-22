@@ -454,7 +454,15 @@ def create_raw_race_info(target_bin_file_path):
             # 条件戦(1勝クラス/未勝利/500万下…) は race_condition に現れる。両方を
             # classify_race_class（NFKC + 正規表現で全角・ローマ数字・(L)・旧称を吸収）に
             # かけ、グレード/L を優先して取りこぼしを防ぐ。
-            race_class_info = classify_race_class(race_name) or classify_race_class(race_condition)
+            # 地方(NAR)は格が p[0] 末尾の「過去の◯○」に入る（中央のように text2[2] に無い）。
+            # そこから格テキストを補完し、中央/地方どちらの体系でも取りこぼさないようにする。
+            m_kako = re.search(r"過去の(.+)", text1)
+            race_class_text = m_kako.group(1).strip() if m_kako else ""
+            race_class_info = (
+                classify_race_class(race_name)
+                or classify_race_class(race_condition)
+                or classify_race_class(race_class_text)
+            )
             if race_class_info is None:
                 # 後方互換フォールバック: 旧 RACE_CLASS_LIST 部分一致 + 旧称エイリアス
                 for race_class in Master.RACE_CLASS_LIST:

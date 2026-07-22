@@ -154,6 +154,9 @@ class Master:
         RACE_CLASS_G2,
         RACE_CLASS_G1,
     )
+    # 地方競馬(NAR)の格（A/B/C 級）。中央には無い体系で、race_info の「過去の◯○」から抽出する。
+    # 低→高: C3 < C2 < C1 < B3 < B2 < B1 < A2 < A1（各級の下に組（十一 等）があるが級のみ採る）。
+    RACE_CLASS_NAR_LIST: tuple = ("C3", "C2", "C1", "B3", "B2", "B1", "A2", "A1")
 
     # 2019年クラス改編前の旧称（〜2019年）— RACE_CLASS_LIST とは別管理
     RACE_CLASS_500: ClassVar[str] = "500万下"
@@ -348,6 +351,9 @@ RACE_CLASS_LEVEL: dict = {
     Master.RACE_CLASS_G3: 7,
     Master.RACE_CLASS_G2: 8,
     Master.RACE_CLASS_G1: 9,
+    # 地方(NAR)の A/B/C 級。中央スケールと直接は比較不能だが、順序性のため 1〜6 に写像する
+    # （NAR と中央は同一レースに混在しないため水準の重複は問題ない）。
+    "C3": 1, "C2": 2, "C1": 3, "B3": 3, "B2": 4, "B1": 4, "A2": 5, "A1": 6,
 }
 
 # グレード検出（NFKC 後 = 全角→半角・ローマ数字 Ⅲ→"III" 化済みの文字列に対して）。
@@ -381,6 +387,11 @@ _RACE_CONDITION_RULES: list = [
     ("未勝利", Master.RACE_CLASS_MISHORI),
     ("新馬", Master.RACE_CLASS_SHINBA),
     ("メイクデビュー", Master.RACE_CLASS_SHINBA),  # JRA の新馬戦ブランド名（=新馬）
+    # 地方(NAR)の A/B/C 級（race_info「過去の◯○」由来の格テキストに現れる。例 "C3十 11"→C3）。
+    # 中央テキストにこれらの 2 文字トークンは通常出ないので誤検出リスクは低い。上位級から順に判定。
+    ("A1", "A1"), ("A2", "A2"),
+    ("B1", "B1"), ("B2", "B2"), ("B3", "B3"),
+    ("C1", "C1"), ("C2", "C2"), ("C3", "C3"),
 ]
 
 
