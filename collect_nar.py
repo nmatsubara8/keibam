@@ -76,9 +76,20 @@ def main() -> None:
         os.environ.setdefault("KEIBA_SKIP_YOSO_MARKS", "1")
 
     from src.constants._local_paths import LocalPaths
-    from src.pipeline._ingestion import existing_race_ids, find_new_race_ids, load_raw
+    from src.pipeline._ingestion import load_raw
     from src.preparing._data_source import create_data_source
     from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
+
+    def _existing_race_ids() -> set:
+        """results.pkl の既存 race_id 集合を返す。
+
+        results.pkl は RangeIndex＋race_id 列（index は race_id ではない）なので、
+        index を見る existing_race_ids は使えない。race_id 列から集合を作る。
+        """
+        df = load_raw(LocalPaths.RAW_RESULTS_PATH)
+        if df is None or df.empty or "race_id" not in df.columns:
+            return set()
+        return set(df["race_id"].astype(str))
 
     dates = args.date if args.date else _date_range(args.frm, args.to)
     tracks = set(args.tracks) if args.tracks else None
@@ -100,10 +111,10 @@ def main() -> None:
         logger.info("[collect-nar] %s: %d レース発見（累計 %d）", d, len(ids), len(discovered))
 
     discovered = list(dict.fromkeys(discovered))  # 順序保持で重複除去
-    # 2. 既存 results.pkl と照合して新規のみに絞る
-    existing = existing_race_ids(load_raw(LocalPaths.RAW_RESULTS_PATH))
-    new_ids = find_new_race_ids(existing, discovered)
-    n_dup = len(existing & set(discovered))
+    # 2. 既存 results.pkl（race_id 列）と照合して新規のみに絞る
+    existing = _existing_race_ids()
+    new_ids = [r for r in discovered if r not in existing]  # 順序保持で新規のみ
+    n_dup = len(discovered) - len(new_ids)
     logger.info("[collect-nar] 発見 %d / 既存 %d / 新規 %d", len(discovered), n_dup, len(new_ids))
 
     if args.limit is not None and len(new_ids) > args.limit:
@@ -123,8 +134,8 @@ def main() -> None:
     logger.info("[collect-nar] %d レースの結果/情報/払戻を取得します（馬・featured は非対象）", len(new_ids))
     source.acquire_races(new_ids)
 
-    after = existing_race_ids(load_raw(LocalPaths.RAW_RESULTS_PATH))
-    print(f"\n収集完了: results.pkl {len(existing)} → {len(after)} レース（+{len(after) - len(existing)}）")
+    after = _existing_race_ids()
+    print(f"\n収集完了: results.pkl の総レース数 {len(existing)} → {len(after)}（+{len(after) - len(existing)}）")
     print("次段（raw が十分貯まったら 1 回だけ）: 馬 backfill → 血統 backfill → rebuild-featured。")
 
 
