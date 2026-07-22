@@ -48,20 +48,29 @@ def _group_of(col: str) -> str:
         return "オッズ/人気（市場模写）"
     if any(k in c for k in ("overlay", "implied")):
         return "市場シグナル(overlay)"
+    # TE は接頭辞に人物名を含む列（jockey_trainer_win_te 等）があるため、人物判定より前に確定する
+    if cl.endswith("_te") or "te" in cl.split("_"):
+        return "ターゲットエンコーディング"
     if "speed_fig" in cl or "spd" in cl:
         return "スピード指数"
-    if "elo" in cl or "rating" in cl or "_z" == c[-2:] and "elo" in cl:
+    if "elo" in cl or "rating" in cl:
         return "レーティング(Elo)"
     if "yoso" in cl or "予想" in c or "印" in c:
         return "予想印(yoso)"
     if c.startswith("sire_") or c.startswith("damsire_") or "血統" in c or "ped" in cl:
         return "血統(sire/ped)"
-    if c.startswith("jockey_") or c.startswith("trainer_") or c.startswith("owner_"):
-        return "騎手/調教師/馬主"
+    # 人物（騎手/調教師/馬主/生産者）を部分集合に細分化して harm を切り分ける
+    _person = ("jockey_", "trainer_", "owner_", "breeder_")
+    if c in ("jockey_id", "trainer_id", "owner_id", "breeder_id"):
+        return "人物ID（生カテゴリ）"
+    if "_py_" in c:
+        return "人物年度成績（py）"
+    if c.startswith(_person) and ("avg_rank" in c or "rel_rank" in c):
+        return "人物着順集計（avg/rel_rank）"
+    if c.startswith(_person):
+        return "騎手/調教師/馬主（その他）"
     if "rank" in cl or "着" in c:
         return "着順集計（過去走）"
-    if "te" in cl.split("_") or cl.endswith("_te"):
-        return "ターゲットエンコーディング"
     if any(k in cl for k in ("dist", "kinryo", "age", "interval", "around", "ground", "type")):
         return "コース/条件/適性"
     if any(k in cl for k in ("month", "season", "day", "cycle", "date")):
