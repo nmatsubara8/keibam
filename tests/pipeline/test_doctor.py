@@ -92,6 +92,52 @@ class TestCheckModels:
         assert r.level == doc.WARN
 
 
+class TestCheckCalibration:
+    def _cal_path(self, md, name):
+        from src.simulation._calibrate import (
+            blend_weights_path,
+            place_exponents_path,
+            win_calibrator_path,
+        )
+
+        return {
+            "place": place_exponents_path(md),
+            "win": win_calibrator_path(md),
+            "blend": blend_weights_path(md),
+        }[name]
+
+    def test_missing_artifacts_warn(self, tmp_path):
+        md = str(tmp_path / "models")
+        _touch(os.path.join(md, "20240201", "20240201_keibam.pickle"), hours_ago=1)
+        r = doc.check_calibration(md, now=_NOW)
+        assert r.level == doc.WARN
+        assert "未fit" in r.detail
+
+    def test_stale_calibration_warn(self, tmp_path):
+        md = str(tmp_path / "models")
+        _touch(os.path.join(md, "20240201", "20240201_keibam.pickle"), hours_ago=1)
+        _touch(self._cal_path(md, "place"), hours_ago=100)  # モデルより古い
+        r = doc.check_calibration(md, now=_NOW)
+        assert r.level == doc.WARN
+        assert "古い" in r.detail
+
+    def test_fresh_calibration_ok(self, tmp_path):
+        md = str(tmp_path / "models")
+        _touch(os.path.join(md, "20240201", "20240201_keibam.pickle"), hours_ago=100)
+        for n in ("place", "win", "blend"):
+            _touch(self._cal_path(md, n), hours_ago=1)  # モデルより新しい
+        r = doc.check_calibration(md, now=_NOW)
+        assert r.level == doc.OK
+
+    def test_experiment_model_not_counted_as_production(self, tmp_path):
+        # 使い捨て実験モデル（日付接頭辞なし）は本番モデル扱いしない → 較正物ありなら OK
+        md = str(tmp_path / "models")
+        _touch(os.path.join(md, "20240301", "noodds_keibam.pickle"), hours_ago=1)
+        _touch(self._cal_path(md, "place"), hours_ago=50)
+        r = doc.check_calibration(md, now=_NOW)
+        assert r.level == doc.OK  # 本番モデル未検出扱い（古い判定しない）
+
+
 # ---------------------------------------------------------------------------
 # check_db_connection / check_featured_meta / check_disk_space
 # ---------------------------------------------------------------------------

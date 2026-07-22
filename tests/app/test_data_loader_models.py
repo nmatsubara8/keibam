@@ -56,6 +56,17 @@ class TestFindModelPaths:
         assert "20240201" in paths[0]
         assert "20240101" in paths[1]
 
+    def test_excludes_non_date_prefixed_experiment_models(self, tmp_path):
+        """--version-name の使い捨て実験（日付接頭辞なし）は本番既定を乗っ取らないよう除外。"""
+        md = str(tmp_path / "models")
+        _write_model(md, "20240101", "20240101_keibam", {"v": "prod"})
+        # 実験モデルを新しい日付ディレクトリに置いても拾わない
+        _write_model(md, "20240301", "noodds_keibam", {"v": "exp"})
+        _write_model(md, "20240301", "base2016", {"v": "exp2"})
+        paths = find_model_paths(md)
+        assert len(paths) == 1
+        assert "20240101_keibam" in paths[0]  # 本番のみ・実験は先頭に来ない
+
 
 # ---------------------------------------------------------------------------
 # load_model_from_path / load_latest_model

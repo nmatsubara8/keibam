@@ -11,11 +11,17 @@ import datetime as dt
 import json
 import os
 import pickle
+import re
 
 import pandas as pd
 
 from src.constants._local_paths import LocalPaths
 from src.operation._config import OperationConfig
+
+# 本番モデルの命名規則: version_name() = "YYYYMMDD_<prefix>"（既定 prefix=keibam）。
+# 実験モデル（--version-name noodds_keibam / base2016 等）は日付接頭辞を持たないので、
+# この正規表現で除外して「使い捨て実験が最新扱いで本番既定を乗っ取る」事故を防ぐ。
+_PROD_MODEL_DATE_PREFIX = re.compile(r"^\d{8}_")
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +60,11 @@ def find_model_paths(models_dir: str = "models") -> list[str]:
     旧 DataFrame）が混在しており、これらは KeibaAI ではないため予測ページで
     `'DataFrame' object has no attribute 'effective_model'` を引き起こす。
     そのため正規モデルの命名規則（`_keibam.pickle` 接尾辞）に一致するもののみ返す。
+
+    さらに **日付接頭辞（YYYYMMDD_）を必須**にして、`--version-name` で付けた使い捨ての
+    実験モデル（noodds_keibam / base2016 等）を除外する。これがないと実験モデルが最新扱いで
+    本番既定を乗っ取る（find_model_paths[0] が実験モデルになる）事故が起きる。実験は日付接頭辞を
+    持たない名前を使えば自動で除外される。
     """
     paths = []
     if not os.path.isdir(models_dir):
@@ -63,7 +74,7 @@ def find_model_paths(models_dir: str = "models") -> list[str]:
         if not os.path.isdir(full):
             continue
         for fname in sorted(os.listdir(full), reverse=True):
-            if fname.endswith("_keibam.pickle"):
+            if fname.endswith("_keibam.pickle") and _PROD_MODEL_DATE_PREFIX.match(fname):
                 paths.append(os.path.join(full, fname))
     return paths
 
