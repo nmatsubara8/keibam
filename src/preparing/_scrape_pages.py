@@ -11,6 +11,7 @@ import time
 
 import pandas as pd
 
+from src.preparing._rate_limiter import MIN_INTERVAL_SEC
 from src.preparing._rate_limiter import polite_interval
 
 logger = logging.getLogger(__name__)
@@ -176,11 +177,19 @@ def process_pkl_file(self, process_function):
     # tqdmインスタンスの作成（Jupyter ではグラフィカルバー、端末ではテキストバーを自動選択）
     from tqdm.auto import tqdm
     # 🌐 ネットワーク取得フェーズ（netkeiba へ HTTP アクセス。ポライトネス制御が効く）
+    # 実際に適用される間隔レンジ（base〜base+jitter）を rate limiter の設定から算出して表示する
+    # （ハードコードせず実値を出す）。
+    _base_env = float(os.environ.get("KEIBA_SCRAPE_DELAY", str(MIN_INTERVAL_SEC)))
+    _jitter = float(os.environ.get("KEIBA_SCRAPE_JITTER_MAX", "2.0"))
+    if _base_env <= 0:
+        _interval_desc = "無効（待機なし・テスト用）"
+    else:
+        _base = max(_base_env, MIN_INTERVAL_SEC)
+        _interval_desc = f"~{_base:.1f}〜{_base + max(_jitter, 0.0):.1f}s"
     logger.info(
         "🌐 ネット取得フェーズ: %s を %d 件 netkeiba からダウンロードします"
-        "（ポライトネス制御: 間隔 ~%.1fs + 1時間上限 %s 件）",
-        self.alias, total_files,
-        max(float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0")), 1.0),
+        "（ポライトネス制御: 間隔 %s + 1時間上限 %s 件）",
+        self.alias, total_files, _interval_desc,
         os.environ.get("KEIBA_MAX_REQUESTS_PER_HOUR", "1000"),
     )
     pbar = tqdm(total=total_files, desc=f"🌐 {self.alias} ネット取得", unit="件", leave=True)
@@ -197,15 +206,15 @@ def process_pkl_file(self, process_function):
     waiting_time = 30
 
     # レート制限対策（環境変数で調整可能）:
-    #   KEIBA_SCRAPE_DELAY     リクエスト間の基準待機秒（デフォルト 1.0、最低 1.0 に切上げ。
+    #   KEIBA_SCRAPE_DELAY     リクエスト間の基準待機秒（デフォルト 4.0、最低 4.0 に切上げ。
     #                          0 以下で明示無効化。実際の待機は _rate_limiter.polite_interval が
-    #                          ランダム揺らぎを加えて 1〜3 秒程度にする）
+    #                          ランダム揺らぎを加えて 4〜6 秒程度にする）
     #   KEIBA_SCRAPE_JITTER_MAX 揺らぎ上限秒（デフォルト 2.0）
     #   KEIBA_MAX_REQUESTS_PER_HOUR 1 時間あたりの自主上限（デフォルト 1000、fetch 側で制御）
     #   KEIBA_SCRAPE_MAX_RETRY ブロック時のリトライ回数（デフォルト 4）
     #   KEIBA_SCRAPE_BACKOFF   バックオフ基準秒（デフォルト 10、指数増）
     #   KEIBA_SCRAPE_ABORT_AFTER 連続ブロックがこの回数に達したら中断（デフォルト 5）
-    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+    delay = float(os.environ.get("KEIBA_SCRAPE_DELAY", str(MIN_INTERVAL_SEC)))
     max_retry = int(os.environ.get("KEIBA_SCRAPE_MAX_RETRY", "4"))
     backoff = float(os.environ.get("KEIBA_SCRAPE_BACKOFF", "10"))
     abort_after = int(os.environ.get("KEIBA_SCRAPE_ABORT_AFTER", "5"))
