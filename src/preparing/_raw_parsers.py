@@ -440,24 +440,24 @@ def create_raw_race_info(target_bin_file_path):
         # レース条件から年齢、性別、レースクラスを削除
         # 馬齢を取得
         race_condition = text2.split(" ")[2]
+        # 地方(NAR)は格・年齢・性別が p[0] 末尾の「過去の◯○」に入る（中央のように text2[2] に無い。
+        # text2[2] は体重条件 "(馬齢)/(別定)" のみ）。この格テキストを sex/age/class の補完に使う。
+        m_kako = re.search(r"過去の(.+)", text1)
+        race_class_text = m_kako.group(1).strip() if m_kako else ""
 
         # レース条件に基づいてフラグを設定
         race_flags = {}
         if race_condition is not None:
-            # 性別を取得
+            # 性別を取得（NAR は race_class_text 側に現れるので両方を走査）
             sex_info = None
             for sex in Master.SEX_LIST:
-                if sex in race_condition:
+                if sex in race_condition or sex in race_class_text:
                     sex_info = sex
 
             # レースクラスを取得。グレード(G1/GⅠ/Ｇ３)・リステッド(L) は race_name に、
             # 条件戦(1勝クラス/未勝利/500万下…) は race_condition に現れる。両方を
             # classify_race_class（NFKC + 正規表現で全角・ローマ数字・(L)・旧称を吸収）に
-            # かけ、グレード/L を優先して取りこぼしを防ぐ。
-            # 地方(NAR)は格が p[0] 末尾の「過去の◯○」に入る（中央のように text2[2] に無い）。
-            # そこから格テキストを補完し、中央/地方どちらの体系でも取りこぼさないようにする。
-            m_kako = re.search(r"過去の(.+)", text1)
-            race_class_text = m_kako.group(1).strip() if m_kako else ""
+            # かけ、グレード/L を優先して取りこぼしを防ぐ。地方(NAR)は race_class_text も見る。
             race_class_info = (
                 classify_race_class(race_name)
                 or classify_race_class(race_condition)
@@ -488,11 +488,16 @@ def create_raw_race_info(target_bin_file_path):
                 else:
                     race_flags[value] = 0
 
-        if "歳以上" in race_condition:
-            age = _re_first_int(race_condition.split("歳以上")[0]) + "+"
-
+        # 年齢の抽出。NAR は年齢が race_class_text 側（"2歳未勝利" 等）に入るため、race_condition に
+        # 「歳」が無く race_class_text にあればそちらを年齢ソースにする。ただし "C3" 等 歳を含まない
+        # 格から数字を誤抽出しないよう、「歳」を含む文字列のときだけ切り替える。
+        age_src = race_condition
+        if "歳" not in age_src and "歳" in race_class_text:
+            age_src = race_class_text
+        if "歳以上" in age_src:
+            age = _re_first_int(age_src.split("歳以上")[0]) + "+"
         else:
-            age = _re_first_int(race_condition.split("歳")[0])
+            age = _re_first_int(age_src.split("歳")[0])
         if race_condition is not None:
             # ageの処理を修正
             if age is not None and age != "":

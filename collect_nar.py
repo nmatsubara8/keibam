@@ -60,6 +60,11 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="取得レース数の安全上限")
     ap.add_argument("--discover-only", action="store_true", help="発見のみ（取得しない・件数確認用）")
     ap.add_argument("--with-notes", action="store_true", help="当日ノート/予想印も取得（既定はスキップ）")
+    ap.add_argument(
+        "--include-banei", action="store_true",
+        help="帯広ばんえい(場コード65)も収集する。既定は除外（輓馬＝そり引きで馬場水分%%・"
+             "タイム等が平地と別体系のため、平地モデルには不適）",
+    )
     args = ap.parse_args()
 
     if args.frm and not args.to:
@@ -77,15 +82,21 @@ def main() -> None:
 
     dates = args.date if args.date else _date_range(args.frm, args.to)
     tracks = set(args.tracks) if args.tracks else None
-    logger.info("[collect-nar] 対象 %d 日 / 場フィルタ=%s", len(dates), sorted(tracks) if tracks else "全NAR")
+    banei = "65"  # 帯広ばんえい（別体系）。既定で除外
+    logger.info("[collect-nar] 対象 %d 日 / 場フィルタ=%s / ばんえい=%s",
+                len(dates), sorted(tracks) if tracks else "全NAR",
+                "含む" if args.include_banei else "除外")
 
     # 1. 日付ごとに NAR race_id を発見
     discovered: list[str] = []
     for d in dates:
         ids, _ = scrape_race_id_race_time_list(d, "local")
+        ids = [str(r) for r in ids]
+        if not args.include_banei:  # ばんえい(帯広65)を除外
+            ids = [r for r in ids if r[4:6] != banei]
         if tracks:
-            ids = [r for r in ids if str(r)[4:6] in tracks]
-        discovered.extend(str(r) for r in ids)
+            ids = [r for r in ids if r[4:6] in tracks]
+        discovered.extend(ids)
         logger.info("[collect-nar] %s: %d レース発見（累計 %d）", d, len(ids), len(discovered))
 
     discovered = list(dict.fromkeys(discovered))  # 順序保持で重複除去
