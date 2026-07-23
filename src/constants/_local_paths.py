@@ -61,3 +61,9 @@ class LocalPaths:
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")
+
+    ### 卍式（①.5 補正）成果物のパス
+    # ①（featured）は不変のまま、卍補正の共有成果物をここに置く（全シナリオ共有）。
+    MANJI_DIR: str = os.path.join(DATA_DIR, "manji")
+    # ①.5a ファクター事前計算表: key=(race_id, 馬番) の因子バケット＋近走/通算派生（1回だけ生成）
+    MANJI_FACTOR_TABLE_PATH: str = os.path.join(MANJI_DIR, "factor_table.pkl")

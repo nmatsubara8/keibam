@@ -452,6 +452,58 @@ def f_sire_line(df: pd.DataFrame) -> pd.Series:
     return vals.where(vals != "不明", NA).to_numpy()
 
 
+# --- 馬×時刻の履歴依拠ファクター（近走 / 通算） -----------------------------
+# これらは「馬の過去走」を要する＝1行だけでは計算できないため、事前に
+# _manji_factor_store が forward-only（当該走を含めない）で数値列 mf_* を付ける。
+# 各関数はその数値列が有れば帯に切り、無ければ na（中立）を返す（既存 f_career と同作法）。
+
+def _bucket_num(df: pd.DataFrame, col: str, bins: list, labels: list) -> pd.Series:
+    """数値列 col を bins/labels で帯化。列不在・欠損は na。"""
+    if col not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df[col])
+    if v.isna().all():
+        return pd.Series(NA, index=df.index)
+    out = pd.cut(v, bins, labels=labels)
+    return out.astype(object).where(v.notna(), NA)
+
+
+def f_recent3_form(df: pd.DataFrame) -> pd.Series:
+    """直近3走の平均着順帯（good/mid/poor）。前走までの実績＝過小/過大評価の妙味源。"""
+    return _bucket_num(df, "mf_recent3_avg_rank", [0, 3.0, 6.0, np.inf],
+                       ["good", "mid", "poor"]).to_numpy()
+
+
+def f_recent5_form(df: pd.DataFrame) -> pd.Series:
+    """直近5走の平均着順帯（good/mid/poor）。3走より緩やかな近況。"""
+    return _bucket_num(df, "mf_recent5_avg_rank", [0, 3.0, 6.0, np.inf],
+                       ["good", "mid", "poor"]).to_numpy()
+
+
+def f_recent3_recovery(df: pd.DataFrame) -> pd.Series:
+    """直近3走の単勝回収帯（under/fair/over）。市場評価に対する近走の割安/割高。"""
+    return _bucket_num(df, "mf_recent3_recovery", [-1e-9, 0.7, 1.3, np.inf],
+                       ["under", "fair", "over"]).to_numpy()
+
+
+def f_recent5_recovery(df: pd.DataFrame) -> pd.Series:
+    """直近5走の単勝回収帯（under/fair/over）。"""
+    return _bucket_num(df, "mf_recent5_recovery", [-1e-9, 0.7, 1.3, np.inf],
+                       ["under", "fair", "over"]).to_numpy()
+
+
+def f_career_form(df: pd.DataFrame) -> pd.Series:
+    """通算（キャリア全体・前走まで）の勝率帯（cold/mid/hot）。全過去依拠ファクター。"""
+    return _bucket_num(df, "mf_career_winrate", [-1e-9, 0.08, 0.18, np.inf],
+                       ["cold", "mid", "hot"]).to_numpy()
+
+
+def f_career_recovery(df: pd.DataFrame) -> pd.Series:
+    """通算（前走まで）の単勝回収帯（under/fair/over）。全過去依拠ファクター。"""
+    return _bucket_num(df, "mf_career_recovery", [-1e-9, 0.7, 1.3, np.inf],
+                       ["under", "fair", "over"]).to_numpy()
+
+
 # 因子レジストリ（名前 → 抽出関数）。Model 2 はこの名前で点数を較正する。
 FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "umaban_parity": f_umaban_parity,
@@ -482,6 +534,13 @@ FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "kijun_gap": f_kijun_gap,
     "prev_trouble": f_prev_trouble,
     "prev_deokure": f_prev_deokure,
+    # 馬×時刻の履歴依拠（_manji_factor_store が付ける mf_* 列を帯化。列不在なら na）
+    "recent3_form": f_recent3_form,
+    "recent5_form": f_recent5_form,
+    "recent3_recovery": f_recent3_recovery,
+    "recent5_recovery": f_recent5_recovery,
+    "career_form": f_career_form,
+    "career_recovery": f_career_recovery,
 }
 
 
