@@ -112,3 +112,26 @@ def test_build_posterior_store_as_of_is_forward_safe(tmp_path):
 def test_global_sigma2_positive():
     feat = _featured(_rows(1, 0.5, 3.0, 50), _rows(2, 0.2, 4.0, 50))
     assert global_sigma2(feat) > 0
+
+
+def test_implied_recovery_robust_to_longshot_flukes():
+    """均等払戻（recovery_mode=implied）は 1 本の大穴的中で回収率が跳ねにくい。
+
+    奇数バケット: implied 相当（オッズ2.0で50%勝ち＝中立）＋大穴(オッズ101)を1本的中。
+    flat（均等買い）は大穴で大きく加点、implied（1/oddsの賭け金）は跳ねを抑える。
+    """
+    base = _rows(1, win_frac=0.5, odds=2.0, n=50)              # 2.0×0.5 = 1.0（中立）
+    fluke = pd.DataFrame({                                      # 大穴を1本的中
+        "race_id": ["fluke"], ResultsCols.UMABAN: 1,
+        ResultsCols.RANK: 1, ResultsCols.TANSHO_ODDS: 101.0,
+        "date": [pd.Timestamp("2020-06-01")],
+    })
+    feat = _featured(base, fluke)
+    s2 = 1.0
+    flat = factor_posterior(
+        feat, "umaban_parity", PosteriorConfig(min_n=30, recovery_mode="flat"), sigma2=s2
+    ).loc["odd", "point"]
+    implied = factor_posterior(
+        feat, "umaban_parity", PosteriorConfig(min_n=30, recovery_mode="implied"), sigma2=s2
+    ).loc["odd", "point"]
+    assert flat > implied  # 大穴の跳ねを implied が抑える

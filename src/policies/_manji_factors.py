@@ -452,6 +452,80 @@ def f_sire_line(df: pd.DataFrame) -> pd.Series:
     return vals.where(vals != "不明", NA).to_numpy()
 
 
+# --- 人・種牡馬の妙味ファクター（卍流「妙味度」＝均等払戻補正回収率の源） ---------
+# 卍流評価手法の核: 騎手・厩舎・種牡馬は「過小評価/過剰人気」がはっきり出る（妙味度名鑑）。
+# 個別名を生バケットにし、点数（±）は事後較正（均等払戻回収率）が決める。高カーディナリティは
+# posterior の min_n gate と普遍性フィルタで疎バケットが自動的に落ちる。条件別クロス
+# （jockey*race_type / sire*dist_change 等）は既存の "A*B" 機構で自動利用できる。
+
+def _name_bucket(df: pd.DataFrame, *names) -> pd.Series:
+    """候補列の最初に在るものを生名バケットで返す（空文字・nan は na）。"""
+    c = _col(df, *names)
+    if c is None:
+        return pd.Series(NA, index=df.index)
+    v = df[c].astype(str).str.strip()
+    bad = v.eq("") | v.str.lower().eq("nan") | v.eq("0")
+    return v.where(~bad, NA)
+
+
+def f_jockey(df: pd.DataFrame) -> pd.Series:
+    """騎手 個別妙味（過小評価騎手を加点）。名鑑の騎手ランキング＝妙味度に対応。"""
+    return _name_bucket(df, ResultsCols.JOCKEY, "騎手", "jockey", "jockey_id").to_numpy()
+
+
+def f_trainer(df: pd.DataFrame) -> pd.Series:
+    """厩舎（調教師）個別妙味。名鑑「厩舎はリーディング上位ほど妙味度が高い」。"""
+    return _name_bucket(df, ResultsCols.TRAINER, "調教師", "厩舎", "trainer", "trainer_id").to_numpy()
+
+
+def f_sire(df: pd.DataFrame) -> pd.Series:
+    """種牡馬 個別妙味（大系統 sire_line と別に生名で。キズナ/ドレフォン等の過小評価を捕捉）。"""
+    col = next((c for c in _SIRE_COLS if c in df.columns), None)
+    if col is None:
+        return pd.Series(NA, index=df.index)
+    v = df[col].astype(str).str.strip()
+    bad = v.eq("") | v.str.lower().eq("nan")
+    return v.where(~bad, NA).to_numpy()
+
+
+def f_race_type(df: pd.DataFrame) -> pd.Series:
+    """芝/ダート/障害（単独因子。人×芝ダ・種牡馬×芝ダのクロス土台）。"""
+    rt = _race_type_series(df)
+    if rt is None:
+        return pd.Series(NA, index=df.index)
+    v = rt.astype(str)
+    return v.where(v.isin(["芝", "ダート", "障害"]), NA).to_numpy()
+
+
+def _distance_m(df: pd.DataFrame):
+    """距離[m] を返す。course_len が 100m 単位バケット（例16=1600m）の場合はスケール。"""
+    c = _col(df, "course_len", "距離", "course_len_m", "distance")
+    if c is None:
+        return None
+    d = _num(df[c])
+    med = d.median()
+    if pd.notna(med) and med < 100:  # バケット表現（//100 済み）を m へ戻す
+        d = d * 100.0
+    return d
+
+
+def f_dist_band(df: pd.DataFrame) -> pd.Series:
+    """距離帯（名鑑の条件別: 短距離≤1600 / 中距離1700-2200 / 長距離≥2300）。"""
+    d = _distance_m(df)
+    if d is None or d.isna().all():
+        return pd.Series(NA, index=df.index)
+    out = pd.cut(d, [0, 1600, 2250, np.inf], labels=["sprint_mile", "mid", "long"])
+    return out.astype(object).where(d.notna(), NA).to_numpy()
+
+
+def f_place(df: pd.DataFrame) -> pd.Series:
+    """競馬場（race_id 先頭 5-6 桁の場コード）。人×場・種牡馬×場の条件別妙味の土台。"""
+    idx = pd.Series(df.index.astype(str), index=df.index)
+    code = idx.str[4:6]
+    valid = code.str.fullmatch(r"\d{2}").fillna(False)
+    return code.where(valid, NA).to_numpy()
+
+
 # --- 馬×時刻の履歴依拠ファクター（近走 / 通算） -----------------------------
 # これらは「馬の過去走」を要する＝1行だけでは計算できないため、事前に
 # _manji_factor_store が forward-only（当該走を含めない）で数値列 mf_* を付ける。
@@ -534,6 +608,13 @@ FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "kijun_gap": f_kijun_gap,
     "prev_trouble": f_prev_trouble,
     "prev_deokure": f_prev_deokure,
+    # 人・種牡馬の妙味（生名バケット。条件別クロス jockey*race_type 等の土台）
+    "jockey": f_jockey,
+    "trainer": f_trainer,
+    "sire": f_sire,
+    "race_type": f_race_type,
+    "dist_band": f_dist_band,
+    "place": f_place,
     # 馬×時刻の履歴依拠（_manji_factor_store が付ける mf_* 列を帯化。列不在なら na）
     "recent3_form": f_recent3_form,
     "recent5_form": f_recent5_form,

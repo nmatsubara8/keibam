@@ -51,6 +51,10 @@ class PosteriorConfig:
     half_life_days: float | None = None  # 既定=割引なし（全過去等重み）。近走系は短めを渡す
     universality_slices: int = 3
     min_agree: float = 0.7
+    # 回収率の測り方。"flat"=均等買い（単勝フラット、人気薄の大穴に大きく左右される）。
+    # "implied"=卍流「均等払戻」＝賭け金をオッズに反比例（stake=1/odds）にした補正回収率。
+    # 実質「実勝利数 / 市場implied勝利数」で高配当の分散に頑健。人×種牡馬の高カード因子向き。
+    recovery_mode: str = "flat"
 
 
 def _x_and_valid(featured: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
@@ -106,6 +110,13 @@ def factor_posterior(
         w = np.power(0.5, np.clip(age_days, 0.0, None) / hl)
     else:
         w = np.ones(len(xv))
+
+    # 均等払戻（卍流補正回収率）: 賭け金をオッズに反比例（stake=1/odds）にして重み付け。
+    # 加重平均 Σ(w·x)/Σw = Σ[着1] / Σ(1/odds) = 実勝利数 / 市場implied勝利数（大穴に頑健）。
+    if cfg.recovery_mode == "implied":
+        odds_m = pd.to_numeric(featured[ResultsCols.TANSHO_ODDS], errors="coerce").to_numpy()[mask]
+        stake = np.where(np.isfinite(odds_m) & (odds_m > 0), 1.0 / odds_m, 0.0)
+        w = w * stake
 
     work = pd.DataFrame({"b": bv, "x": xv, "w": w})
     inv_pv = 1.0 / cfg.prior_var
