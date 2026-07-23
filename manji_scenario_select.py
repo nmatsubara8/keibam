@@ -29,6 +29,8 @@ def main() -> None:
 
     ap = argparse.ArgumentParser(description="卍補正シナリオの OOS 回収率選抜")
     ap.add_argument("--scenarios", nargs="+", default=None, help="評価するシナリオ名（既定=全部）")
+    ap.add_argument("--limit", type=int, default=None, metavar="N",
+                    help="直近Nレースに絞る（大規模データのメモリ/時間対策。まず小さく試すのを推奨）")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--n-blocks", type=int, default=8, help="as-of 事後の時系列ブロック数")
     ap.add_argument("--ev-threshold", type=float, default=1.0, help="買う EV 閾値（prob×オッズ）")
@@ -46,11 +48,21 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
+    import pandas as pd
+
     from app._model_eval import load_featured_data
     featured = load_featured_data()
     if featured is None or featured.empty:
         print("featured_data がありません（先に rebuild-featured を実行）")
         return
+    total_races = featured.index.astype(str).nunique()
+    if args.limit and total_races > args.limit:
+        race_date = pd.to_datetime(featured["date"], errors="coerce").groupby(level=0).first().sort_values()
+        keep = set(str(r) for r in race_date.index[-args.limit:])
+        featured = featured[featured.index.astype(str).isin(keep)]
+        print(f"[--limit] 直近 {args.limit:,} レースに限定（全 {total_races:,} 中 / {len(featured):,} 行）")
+    else:
+        print(f"[data] {total_races:,} レース / {len(featured):,} 行")
 
     payoffs = None
     if args.bet_type == "fukusho":

@@ -314,17 +314,27 @@ def evaluate_scenario(
                             payoffs=payoffs, seed=seed)
     lift = full["roi"] - base["roi"]
 
-    # placebo: manji_score を shuffle（因子構造は同じ、寄与の有無だけ壊す）
+    # placebo: manji 列（manji_score / manji_myoumido_* / manji_bkt_*）を**行シャッフル**して
+    # 補正の寄与だけ壊す（他の①特徴量・着順/オッズは不変）。フレーム全体を毎回コピーすると
+    # 大規模データで OOM するため、対象列だけを入れ替え、最後に復元する（メモリ節約）。
+    manji_cols = [c for c in scenario_df.columns
+                  if c == _MANJI_SCORE or str(c).startswith("manji_")]
     placebo_lifts = []
-    if n_placebo and _MANJI_SCORE in scenario_df.columns:
+    if n_placebo and manji_cols:
+        orig = {c: scenario_df[c].to_numpy().copy() for c in manji_cols}
         rng = np.random.default_rng(seed)
-        for _ in range(n_placebo):
-            perm = scenario_df.copy()
-            perm[_MANJI_SCORE] = rng.permutation(perm[_MANJI_SCORE].to_numpy())
-            pf = walk_forward_roi(perm, feature_cols=feat_full, folds=folds,
-                                  ev_threshold=ev_threshold, predict_fn=predict_fn,
-                                  payoffs=payoffs, seed=seed)
-            placebo_lifts.append(pf["roi"] - base["roi"])
+        try:
+            for _ in range(n_placebo):
+                perm = rng.permutation(len(scenario_df))
+                for c in manji_cols:
+                    scenario_df[c] = orig[c][perm]
+                pf = walk_forward_roi(scenario_df, feature_cols=feat_full, folds=folds,
+                                      ev_threshold=ev_threshold, predict_fn=predict_fn,
+                                      payoffs=payoffs, seed=seed)
+                placebo_lifts.append(pf["roi"] - base["roi"])
+        finally:
+            for c in manji_cols:  # 元の列を復元（呼び出し側への副作用を残さない）
+                scenario_df[c] = orig[c]
     placebo_lifts = np.array(placebo_lifts) if placebo_lifts else np.array([])
     placebo_pct = float((placebo_lifts < lift).mean()) if placebo_lifts.size else float("nan")
 
@@ -371,17 +381,24 @@ def evaluate_scenarios(
     rows = []
     for name in scenario_names:
         scn = SCENARIOS[name]
-        sdf = build_scenario_training_data(
-            featured, scn, factor_table=factor_table, block_posteriors=block_posteriors,
-        )
-        res = evaluate_scenario(sdf, folds=folds, ev_threshold=ev_threshold,
-                                predict_fn=predict_fn, payoffs=payoffs,
-                                n_placebo=n_placebo, seed=seed)
+        try:
+            sdf = build_scenario_training_data(
+                featured, scn, factor_table=factor_table, block_posteriors=block_posteriors,
+            )
+            res = evaluate_scenario(sdf, folds=folds, ev_threshold=ev_threshold,
+                                    predict_fn=predict_fn, payoffs=payoffs,
+                                    n_placebo=n_placebo, seed=seed)
+            del sdf  # 大規模データでは次シナリオ前に解放（メモリ節約）
+        except Exception as e:  # 1シナリオの失敗で全体を落とさない
+            logger.exception("[scenario-eval] %s で失敗: %s（スキップ）", name, e)
+            continue
         res["scenario"] = name
         rows.append(res)
         logger.info("[scenario-eval] %-14s roi=%.3f base=%.3f lift=%+.3f placebo%%=%.2f n=%d",
                     name, res["roi"], res["baseline_roi"], res["lift"],
                     res["placebo_pct"], res["n_bets"])
+    if not rows:
+        raise RuntimeError("全シナリオの評価に失敗しました（ログの traceback を確認してください）")
     cols = ["scenario", "roi", "baseline_roi", "lift", "placebo_pct", "placebo_median",
             "n_bets", "hit", "stake", "ret"]
     out = pd.DataFrame(rows)[cols].sort_values("lift", ascending=False).reset_index(drop=True)
