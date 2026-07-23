@@ -30,6 +30,7 @@ import pandas as pd
 from src.constants._results_cols import ResultsCols
 from src.policies._manji_factors import NA, FACTORS
 from src.tuning._manji_posterior import (
+    MYOUMIDO_BASE,
     PosteriorConfig,
     calibrate_points_bayes,
     default_half_lives,
@@ -106,6 +107,19 @@ def list_scenarios() -> list[str]:
     return list(SCENARIOS)
 
 
+def scenario_factor_union(names: list[str] | None = None) -> list[str]:
+    """指定シナリオ（既定=全部）の因子の和（クロス込み・順序保持で重複除去）。
+
+    block_posteriors はこの和で較正しておけば、各シナリオの因子（クロス含む）の
+    妙味度を全て引ける。
+    """
+    names = names or list(SCENARIOS)
+    fs: list[str] = []
+    for nm in names:
+        fs.extend(SCENARIOS[nm].factors)
+    return list(dict.fromkeys(fs))
+
+
 def _validate_registry() -> None:
     for s in SCENARIOS.values():
         bad = [f for f in s.factors if f.split("*")[0] not in FACTORS]
@@ -153,6 +167,13 @@ def build_block_posteriors(
     """
     cfg = cfg or PosteriorConfig()
     factor_names = factor_names or list(FACTORS)
+    # クロス "A*B" の構成基底（A,B）も較正対象に含める（残差化の整合＋基底妙味度の取得）。
+    expanded: list[str] = []
+    for f in factor_names:
+        expanded.append(f)
+        if "*" in f:
+            expanded.extend(f.split("*"))
+    factor_names = list(dict.fromkeys(expanded))
     if factor_half_life is None:
         factor_half_life = default_half_lives()
     dates = pd.to_datetime(featured["date"], errors="coerce")
@@ -178,6 +199,27 @@ def align_buckets(featured: pd.DataFrame, factor_table: pd.DataFrame) -> pd.Data
     return merged
 
 
+def _row_buckets(aligned: pd.DataFrame, f: str):
+    """因子 f（単独 or クロス "A*B"）の行ごとバケットラベル配列を返す（無ければ None）。
+
+    factor_table（aligned）は単独因子のバケット列を持つ。クロスは構成因子の列を結合して
+    再構成する（どれか na なら na）。＝ factor_series と同じ規則を aligned 上で再現。
+    """
+    if "*" not in f:
+        return aligned[f].astype(object).fillna(NA).to_numpy() if f in aligned.columns else None
+    parts = f.split("*")
+    if any(p not in aligned.columns for p in parts):
+        return None
+    cols = [aligned[p].astype(object).fillna(NA) for p in parts]
+    combo = cols[0].astype(str)
+    for c in cols[1:]:
+        combo = combo.str.cat(c.astype(str), sep="|")
+    na_mask = np.zeros(len(aligned), dtype=bool)
+    for c in cols:
+        na_mask |= (c == NA).to_numpy()
+    return combo.where(~na_mask, NA).to_numpy()
+
+
 def compile_correction(
     aligned: pd.DataFrame,
     block_posteriors,
@@ -185,10 +227,12 @@ def compile_correction(
 ) -> np.ndarray:
     """補正列 corr[row] = Σ_f w_f · point_f[bucket_f(row)] を返す（行のブロックの事後を使う）。
 
-    factor_table のバケット × posterior 点の線形結合のみ（特徴量再計算なし）。
+    factor_table のバケット × posterior 点の線形結合のみ（特徴量再計算なし）。クロス因子も
+    構成因子列から再構成して寄与させる。
     """
     n = len(aligned)
     corr = np.zeros(n, dtype=float)
+    bucket_cache = {f: _row_buckets(aligned, f) for f in scenario.factors}
     for mask, pts in block_posteriors:
         if not pts:
             continue
@@ -197,17 +241,48 @@ def compile_correction(
             continue
         for f in scenario.factors:
             pmap = pts.get(f)
-            if not pmap:
+            rb = bucket_cache[f]
+            if not pmap or rb is None:
                 continue
             w = scenario.weight(f)
             if w == 0.0:
                 continue
-            if f not in aligned.columns:
-                continue
-            col = aligned[f].to_numpy()[idx]
+            col = rb[idx]
             vals = np.fromiter((pmap.get(b, 0.0) for b in col), dtype=float, count=idx.size)
             corr[idx] += w * vals
     return corr
+
+
+def compile_factor_myoumido(
+    aligned: pd.DataFrame,
+    block_posteriors,
+    scenario: Scenario,
+) -> dict[str, np.ndarray]:
+    """補正ファクター**毎**の妙味度（基準100）を行ごとに返す。
+
+    妙味度_f(row) = 100 + point_f[bucket_f(row)]（＝ 100×post_mean）。採用外・履歴不足・
+    最初のブロックは 100（中立）。単独因子は書籍の妙味度そのもの、クロスは加法成分を引いた
+    交互作用の増分（point が残差化されているため二重計上しない）。
+    """
+    n = len(aligned)
+    out: dict[str, np.ndarray] = {}
+    for f in scenario.factors:
+        arr = np.full(n, MYOUMIDO_BASE, dtype=float)  # 既定=中立100
+        rb = _row_buckets(aligned, f)
+        if rb is not None:
+            for mask, pts in block_posteriors:
+                pmap = pts.get(f)
+                if not pmap:
+                    continue
+                idx = np.flatnonzero(mask)
+                if idx.size == 0:
+                    continue
+                col = rb[idx]
+                arr[idx] = np.fromiter(
+                    (MYOUMIDO_BASE + pmap.get(b, 0.0) for b in col), dtype=float, count=idx.size,
+                )
+        out[f] = arr
+    return out
 
 
 def build_scenario_training_data(
@@ -227,12 +302,18 @@ def build_scenario_training_data(
     aligned = align_buckets(featured, factor_table)
     if block_posteriors is None:
         block_posteriors = build_block_posteriors(
-            featured, list(FACTORS), n_blocks=n_blocks, cfg=cfg, factor_half_life=factor_half_life,
+            featured, list(scenario.factors), n_blocks=n_blocks, cfg=cfg,
+            factor_half_life=factor_half_life,
         )
     corr = compile_correction(aligned, block_posteriors, scenario)
 
     out = featured.copy()  # ① は不変。augmented copy を返す
-    out["manji_score"] = corr  # 位置代入（長さ一致）
+    out["manji_score"] = corr  # 位置代入（長さ一致）: 補正の集約スカラー
+    # 補正ファクター**毎**の妙味度（基準100）を1列ずつ付与（②入力の主役）。高カード因子・
+    # クロスも one-hot 爆発せず 1 列で表現できる。列名の "*" は "_x_" に正規化。
+    myou = compile_factor_myoumido(aligned, block_posteriors, scenario)
+    for f, arr in myou.items():
+        out[f"manji_myoumido_{f.replace('*', '_x_')}"] = arr
     if scenario.include_bucket_features:
         for f in scenario.factors:
             # クロス（"A*B"）と factor_table に無い因子は one-hot 化しない（manji_score へ集約）。
@@ -252,11 +333,15 @@ def prepare_shared(
     featured: pd.DataFrame,
     *,
     factor_table: pd.DataFrame | None = None,
+    factor_names: list[str] | None = None,
     n_blocks: int = 8,
     cfg: PosteriorConfig | None = None,
     factor_half_life: dict[str, float] | None = None,
 ):
     """全シナリオ共有の重い成果物（factor_table・block_posteriors）を1回作る。
+
+    factor_names 既定=全シナリオ因子の和（クロス込み）。build_block_posteriors 側で
+    クロスの構成基底も自動追加される。
 
     Returns: (factor_table, block_posteriors)
     """
@@ -265,7 +350,9 @@ def prepare_shared(
         factor_table = load_factor_table()
         if factor_table is None:
             factor_table = build_factor_table(featured)
+    if factor_names is None:
+        factor_names = scenario_factor_union()
     block_posteriors = build_block_posteriors(
-        featured, list(FACTORS), n_blocks=n_blocks, cfg=cfg, factor_half_life=factor_half_life,
+        featured, factor_names, n_blocks=n_blocks, cfg=cfg, factor_half_life=factor_half_life,
     )
     return factor_table, block_posteriors

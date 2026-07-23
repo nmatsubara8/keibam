@@ -108,6 +108,45 @@ def test_build_training_data_keeps_featured_immutable_and_adds_numeric_cols():
         assert set(np.unique(out[c].to_numpy())) <= {0.0, 1.0}
 
 
+def test_per_factor_myoumido_columns_added():
+    """①.5 出力に補正ファクター毎の妙味度列（基準100）が付く。"""
+    feat = _featured()
+    ft = build_factor_table(feat, ["umaban_parity"])
+    bp = build_block_posteriors(feat, ["umaban_parity"], n_blocks=6,
+                                cfg=PosteriorConfig(min_n=30, universality_slices=1))
+    out = build_scenario_training_data(feat, _scn(), factor_table=ft, block_posteriors=bp)
+    col = "manji_myoumido_umaban_parity"
+    assert col in out.columns
+    parity = pd.to_numeric(feat[ResultsCols.UMABAN], errors="coerce").to_numpy() % 2
+    # 最初のブロック（過去なし）は中立100
+    first_mask = bp[0][0]
+    assert np.allclose(out[col].to_numpy()[first_mask], 100.0)
+    # 後続ブロックでは奇数(加点)の妙味度>100>偶数(減点)
+    later_mask = bp[-1][0]
+    v = out[col].to_numpy()
+    assert v[later_mask & (parity == 1)].mean() > 100 > v[later_mask & (parity == 0)].mean()
+
+
+def test_cross_factor_myoumido_via_reconstruction():
+    """クロス因子の妙味度列も基底列から再構成して付く。"""
+    n = 200
+    feat = pd.DataFrame({
+        "race_id": [f"r{i}" for i in range(n)],
+        "horse_id": [f"h{i}" for i in range(n)],
+        ResultsCols.UMABAN: 1,
+        ResultsCols.RANK: [1 if i % 2 == 0 else 2 for i in range(n)],
+        ResultsCols.TANSHO_ODDS: 3.0,
+        "race_type": ["芝" if i % 2 == 0 else "ダート" for i in range(n)],
+        "date": pd.date_range("2019-01-01", periods=n, freq="D"),
+    }).set_index("race_id")
+    scn = Scenario("cx", factors=("umaban_parity*race_type",))
+    ft = build_factor_table(feat, ["umaban_parity", "race_type"])
+    bp = build_block_posteriors(feat, ["umaban_parity*race_type"], n_blocks=4,
+                                cfg=PosteriorConfig(min_n=10, universality_slices=1))
+    out = build_scenario_training_data(feat, scn, factor_table=ft, block_posteriors=bp)
+    assert "manji_myoumido_umaban_parity_x_race_type" in out.columns
+
+
 def test_registry_scenarios_reference_known_factors():
     for name, s in SCENARIOS.items():
         for f in s.factors:

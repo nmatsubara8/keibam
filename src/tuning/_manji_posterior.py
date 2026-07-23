@@ -8,7 +8,8 @@
   尤度   x_i ~ N(μ, σ²)                     # σ² は学習窓の x のプール分散（既知として扱う）
   事後   post_mean = (μ0/τ0² + Σw_i·x_i/σ²) / (1/τ0² + Σw_i/σ²)
         post_var  = 1 / (1/τ0² + Σw_i/σ²)
-  加減点 point(b) = clip( λ·(post_mean − 1), −clip, +clip )
+  妙味度   myoumido(b) = 100 × post_mean          # 卍基準100（>100 買い妙味 / <100 過剰人気）
+  加減点   point(b) = clip( λ·100·(post_mean − 1), −clip, +clip )  # 妙味度偏差（基準100→0点）
 
 - 収縮定数は c ≈ σ²/τ0² に相当（n_eff→0 で事前=1へ、n_eff→∞ で標本平均へ）。小標本バケットは
   自動的にエッジ0へ寄る（＝卍「信頼度の低い因子は排除」）。unweighted n < min_n は不採用。
@@ -38,15 +39,20 @@ from src.tuning._manji_calibration import (
 # 近走の性質が強い因子（既定で有限半減期を与えたい候補）。呼び出し側が factor_half_life で上書き可。
 RECENCY_FACTORS = ("recent3_form", "recent5_form", "recent3_recovery", "recent5_recovery")
 
+# 卍氏「妙味度」の基準点。妙味度 = 100 × 補正回収率(post_mean)。100=中立、>100=過小評価(買い妙味)、
+# <100=過剰人気。加減点(point) は基準100からの偏差 = 妙味度 − 100 = 100×(post_mean − 1) で表す
+# （名鑑「妙味度が10違えば回収率も10%違う」と整合）。
+MYOUMIDO_BASE = 100.0
+
 
 @dataclasses.dataclass(frozen=True)
 class PosteriorConfig:
     """Normal-Normal 事後較正のパラメータ。"""
-    mu0: float = 1.0            # 中立事前（回収率1＝エッジ0）
+    mu0: float = 1.0            # 中立事前（回収率1＝妙味度100＝エッジ0）
     prior_var: float = 0.25    # τ0²（事前分散。大きいほど動きやすい＝収縮弱）
-    clip: float = 2.0          # 点の絶対上限
-    lam: float = 1.0           # 点のスケール
-    min_n: int = 30            # このunweighted件数未満のバケットは不採用（0点）
+    clip: float = 50.0         # 加減点(妙味度偏差)の絶対上限。±50=妙味度50〜150相当
+    lam: float = 1.0           # 点のスケール（妙味度偏差＝100×(post_mean−1) に乗ずる）
+    min_n: int = 30            # このunweighted件数未満のバケットは不採用（0点=妙味度100）
     sigma2_floor: float = 1e-6  # σ² の下限
     half_life_days: float | None = None  # 既定=割引なし（全過去等重み）。近走系は短めを渡す
     universality_slices: int = 3
@@ -88,7 +94,8 @@ def factor_posterior(
 
     Returns
     -------
-    index=bucket, columns=[n, n_eff, post_mean, post_var, point]。採用可否は問わず全バケット。
+    index=bucket, columns=[n, n_eff, post_mean, post_var, myoumido, point]。全バケット。
+    myoumido=100×post_mean（卍基準100）、point=妙味度偏差=100×(post_mean−1)。
     （point は min_n 未満だと NaN。呼び出し側 calibrate は min_n/普遍性で採否を決める）
     """
     x, valid = _x_and_valid(featured)
@@ -97,7 +104,7 @@ def factor_posterior(
         else np.array([np.datetime64("NaT")] * len(featured))
     mask = valid & (b != NA)
     if not mask.any():
-        return pd.DataFrame(columns=["n", "n_eff", "post_mean", "post_var", "point"])
+        return pd.DataFrame(columns=["n", "n_eff", "post_mean", "post_var", "myoumido", "point"])
     xv, bv, dv = x[mask], b[mask], dates[mask]
 
     if sigma2 is None:
@@ -130,11 +137,14 @@ def factor_posterior(
         prec = inv_pv + n_eff / sigma2
         post_mean = (cfg.mu0 * inv_pv + n_eff * xbar / sigma2) / prec
         post_var = 1.0 / prec
-        point = float(np.clip(cfg.lam * (post_mean - 1.0), -cfg.clip, cfg.clip)) \
+        myoumido = MYOUMIDO_BASE * post_mean  # 卍妙味度（基準100）
+        # 加減点 = 妙味度偏差 = 100×(post_mean−1)。基準100（neutral=0点、妙味度100）。
+        point = float(np.clip(cfg.lam * MYOUMIDO_BASE * (post_mean - 1.0), -cfg.clip, cfg.clip)) \
             if n >= cfg.min_n else np.nan
-        out[bucket] = (n, n_eff, post_mean, post_var, point)
+        out[bucket] = (n, n_eff, post_mean, post_var, myoumido, point)
     return pd.DataFrame.from_dict(
-        out, orient="index", columns=["n", "n_eff", "post_mean", "post_var", "point"]
+        out, orient="index",
+        columns=["n", "n_eff", "post_mean", "post_var", "myoumido", "point"],
     )
 
 
@@ -232,11 +242,12 @@ def build_posterior_store(
                 "factor": f, "bucket": b,
                 "n": int(row["n"]), "n_eff": float(row["n_eff"]),
                 "post_mean": float(row["post_mean"]), "post_var": float(row["post_var"]),
+                "myoumido": float(row["myoumido"]),  # 卍妙味度（基準100）
                 "point": float(row["point"]) if np.isfinite(row["point"]) else np.nan,
                 "half_life_days": hl if hl is not None else np.nan,
                 "as_of": pd.to_datetime(as_of) if as_of is not None else pd.NaT,
             })
-    cols = ["factor", "bucket", "n", "n_eff", "post_mean", "post_var", "point",
+    cols = ["factor", "bucket", "n", "n_eff", "post_mean", "post_var", "myoumido", "point",
             "half_life_days", "as_of"]
     return pd.DataFrame(rows, columns=cols)
 

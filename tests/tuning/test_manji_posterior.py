@@ -46,6 +46,9 @@ def test_point_sign_follows_edge():
     assert post.loc["even", "point"] < 0
     # 事後平均は 1 と標本平均の間（収縮）: 1 < post_mean(odd) < 1.5
     assert 1.0 < post.loc["odd", "post_mean"] < 1.5
+    # 卍妙味度は基準100。加点側 odd は >100、減点側 even は <100。point=妙味度−100。
+    assert post.loc["odd", "myoumido"] > 100 > post.loc["even", "myoumido"]
+    assert abs(post.loc["odd", "point"] - (post.loc["odd", "myoumido"] - 100)) < 1e-6
 
 
 def test_shrinkage_more_data_moves_point_further_from_zero():
