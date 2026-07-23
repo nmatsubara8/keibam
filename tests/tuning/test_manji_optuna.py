@@ -48,6 +48,27 @@ def test_optimize_returns_valid_config():
         assert 0.0 <= v <= 2.0
 
 
+def test_optimize_with_bayes_points_limited_trials():
+    """新しい100基準ベイズ点較正器を points_fn で注入し、少試行 Optuna が回る。"""
+    from src.tuning._manji_posterior import PosteriorConfig, calibrate_points_bayes
+
+    df = _synth()
+    races = list(pd.to_datetime(df["date"]).groupby(level=0).first().sort_values().index)
+    cut = int(len(races) * 0.7)
+    calib, valid = df.loc[races[:cut]], df.loc[races[cut:]]
+
+    def bayes_fn(d, fn):
+        return calibrate_points_bayes(
+            d, fn, cfg=PosteriorConfig(min_n=20, universality_slices=1))
+
+    res = optimize_manji_config(
+        calib, valid, ["paddock", "age", "umaban_parity"],
+        n_trials=4, min_bets=20, points_fn=bayes_fn, seed=1,
+    )
+    assert set(res) >= {"points", "weights", "zone", "top_k", "value", "n_active"}
+    assert res["top_k"] in (1, 2, 3, 4, 5)
+
+
 def test_optimize_handles_no_active_factors():
     # 因子が featured に無い → active 空 → 既定 config を返す
     df = _synth(n_races=200)

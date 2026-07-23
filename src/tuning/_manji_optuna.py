@@ -38,9 +38,13 @@ def optimize_manji_config(
     active_thresh: float = 0.05,
     valid_cv: int = 3,
     seed: int = 0,
+    points_fn=None,
     **cal_kwargs,
 ) -> dict:
     """calib で点較正 → valid 上で Optuna 探索。best config を dict で返す。
+
+    points_fn(calib_df, factor_names)->points を渡すと点較正器を差し替えできる
+    （既定=旧 calibrate_points。新しい100基準ベイズは calibrate_points_bayes を包んで渡す）。
 
     Returns: {points, weights, zone(odds_lo,odds_hi), top_k, value(valid回収率), n_active}
     """
@@ -49,7 +53,8 @@ def optimize_manji_config(
 
     from src.policies._manji_factors import buckets
 
-    points = calibrate_points(calib, factor_names, **cal_kwargs)
+    points = points_fn(calib, factor_names) if points_fn is not None \
+        else calibrate_points(calib, factor_names, **cal_kwargs)
     active = [f for f in factor_names if points.get(f)]
     if not active or valid.empty:
         return {"points": points, "weights": {}, "zone": (3.0, 50.0),

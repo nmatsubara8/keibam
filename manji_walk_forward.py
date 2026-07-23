@@ -110,6 +110,9 @@ def main():
     ap.add_argument("--optuna", type=int, default=0, metavar="N",
                     help="Layer B: Optuna で 因子重み(0=除外含む)＋ゾーン境界＋top_k を検証foldで"
                          "N試行探索（因子24固定を外す）。--factor-weights/--zone-odds/--top-k を上書き")
+    ap.add_argument("--bayes", action="store_true",
+                    help="点較正を新しい100基準ベイズ(calibrate_points_bayes)に切替。近走系は"
+                         "忘却割引つき。--optuna と併用で『試行数限定の Optuna をベイズ点で』テスト可")
     ap.add_argument("--valid-frac", type=float, default=0.3,
                     help="学習窓のうち検証(valid)に回す割合（重み/Optuna推定用）")
     ap.add_argument("--optuna-cv", type=int, default=3,
@@ -239,7 +242,23 @@ def main():
         d0 = pd.to_datetime(fold["date"]).min().date()
         d1 = pd.to_datetime(fold["date"]).max().date()
 
-        points = calibrate_points(
+        # 点較正器: 既定=旧 calibrate_points、--bayes で新しい100基準ベイズに差替え。
+        bayes_points_fn = None
+        if args.bayes:
+            from src.tuning._manji_posterior import (
+                PosteriorConfig,
+                calibrate_points_bayes,
+                default_half_lives,
+            )
+            _cfg_b = PosteriorConfig(min_n=args.min_n,
+                                     universality_slices=args.universality_slices,
+                                     min_agree=args.min_agree)
+            _fhl = default_half_lives()
+
+            def bayes_points_fn(df, fn, _cfg_b=_cfg_b, _fhl=_fhl):
+                return calibrate_points_bayes(df, fn, cfg=_cfg_b, factor_half_life=_fhl)
+
+        points = bayes_points_fn(train, factor_names) if bayes_points_fn else calibrate_points(
             train, factor_names, lam=args.lam, clip=args.clip, min_n=args.min_n,
             universality_slices=args.universality_slices, min_agree=args.min_agree,
         )
@@ -255,6 +274,7 @@ def main():
                 calib, valid, factor_names, n_trials=args.optuna, seed=args.seed,
                 valid_cv=args.optuna_cv,
                 odds_lo_range=(1.0, float(zone[0]) + 3.0), odds_hi_range=(10.0, float(zone[1]) + 30.0),
+                points_fn=bayes_points_fn,
                 lam=args.lam, clip=args.clip, min_n=args.min_n,
                 universality_slices=args.universality_slices, min_agree=args.min_agree,
             )
