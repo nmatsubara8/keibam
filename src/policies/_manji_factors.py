@@ -526,6 +526,23 @@ def f_place(df: pd.DataFrame) -> pd.Series:
     return code.where(valid, NA).to_numpy()
 
 
+# JRA 場コード→回り（名鑑の条件別「左回り/右回り」。場より汎化が効く高妙味軸）。
+# 左: 04新潟 05東京 07中京 / 右: 01札幌 02函館 03福島 06中山 08京都 09阪神 10小倉。
+_TURN_LEFT = {"04", "05", "07"}
+_TURN_RIGHT = {"01", "02", "03", "06", "08", "09", "10"}
+
+
+def f_turn(df: pd.DataFrame) -> pd.Series:
+    """左回り/右回り（JRA 場コードから）。人×回り・種牡馬×回りは名鑑の最上位妙味パターン。"""
+    idx = pd.Series(df.index.astype(str), index=df.index)
+    code = idx.str[4:6]
+
+    def _m(c):
+        return "left" if c in _TURN_LEFT else ("right" if c in _TURN_RIGHT else NA)
+
+    return code.map(_m).to_numpy()
+
+
 # --- 馬×時刻の履歴依拠ファクター（近走 / 通算） -----------------------------
 # これらは「馬の過去走」を要する＝1行だけでは計算できないため、事前に
 # _manji_factor_store が forward-only（当該走を含めない）で数値列 mf_* を付ける。
@@ -615,6 +632,7 @@ FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "race_type": f_race_type,
     "dist_band": f_dist_band,
     "place": f_place,
+    "turn": f_turn,
     # 馬×時刻の履歴依拠（_manji_factor_store が付ける mf_* 列を帯化。列不在なら na）
     "recent3_form": f_recent3_form,
     "recent5_form": f_recent5_form,

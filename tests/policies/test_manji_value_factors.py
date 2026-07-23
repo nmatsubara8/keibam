@@ -58,6 +58,15 @@ def test_place_from_race_id_index():
     assert pl.iloc[2] == NA  # race_id 形式でない
 
 
+def test_turn_from_place_code():
+    # 05東京=左, 04新潟=左, 09阪神=右, 06中山=右, 07中京=左
+    df = _df({ResultsCols.UMABAN: [1, 2, 3, 4, 5]},
+             index=["202605010101", "202604010101", "202609010101",
+                    "202606010101", "202607010101"])
+    tn = factor_series(df, "turn")
+    assert list(tn) == ["left", "left", "right", "right", "left"]
+
+
 def test_condition_cross_available_via_registry():
     df = _df({ResultsCols.JOCKEY: ["武豊", "武豊"], "race_type": ["芝", "ダート"]})
     cx = factor_series(df, "jockey*race_type")

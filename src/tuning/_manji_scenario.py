@@ -78,14 +78,15 @@ SCENARIOS: dict[str, Scenario] = {
         "value_jinba",
         factors=(
             "jockey", "trainer", "sire", "popularity",
-            # 人×条件（名鑑の条件別妙味: 芝ダ・距離帯・場・道悪・クラス）
-            "jockey*race_type", "jockey*dist_band", "jockey*place",
+            # 人×条件（名鑑の条件別妙味: 芝ダ・距離帯・場・回り・道悪・クラス）
+            "jockey*race_type", "jockey*dist_band", "jockey*place", "jockey*turn",
             "jockey*ground", "jockey*race_class",
+            # 厩舎×条件（芝ダ・距離帯・クラス・場・回り・道悪・ローテ＝休み明け/連闘）
             "trainer*race_type", "trainer*dist_band", "trainer*race_class",
-            "trainer*place", "trainer*ground",
-            # 種牡馬×条件（芝ダ・距離変更・距離帯・場・道悪・クラス・馬齢）
+            "trainer*place", "trainer*turn", "trainer*ground", "trainer*rotation",
+            # 種牡馬×条件（芝ダ・距離変更・距離帯・場・回り・道悪・クラス・馬齢）
             "sire*race_type", "sire*dist_change", "sire*dist_band",
-            "sire*place", "sire*ground", "sire*race_class", "sire*age",
+            "sire*place", "sire*turn", "sire*ground", "sire*race_class", "sire*age",
         ),
         include_bucket_features=False,  # 高カード＆クロスは manji_score のみ（one-hot 爆発回避）
         description="卍流『妙味度』: 騎手/厩舎/種牡馬 × 条件の過小評価を補正回収率で捕捉",
