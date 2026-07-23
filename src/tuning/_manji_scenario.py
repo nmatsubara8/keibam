@@ -82,9 +82,9 @@ SCENARIOS: dict[str, Scenario] = {
             "jockey*race_type", "jockey*dist_band", "jockey*place",
             "jockey*ground", "jockey*race_class",
             "trainer*dist_band", "trainer*race_class",
-            # 種牡馬×条件（芝ダ・距離変更・距離帯・場・道悪）
+            # 種牡馬×条件（芝ダ・距離変更・距離帯・場・道悪・クラス・馬齢）
             "sire*race_type", "sire*dist_change", "sire*dist_band",
-            "sire*place", "sire*ground",
+            "sire*place", "sire*ground", "sire*race_class", "sire*age",
         ),
         include_bucket_features=False,  # 高カード＆クロスは manji_score のみ（one-hot 爆発回避）
         description="卍流『妙味度』: 騎手/厩舎/種牡馬 × 条件の過小評価を補正回収率で捕捉",
