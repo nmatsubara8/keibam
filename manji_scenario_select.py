@@ -35,6 +35,14 @@ def main() -> None:
     ap.add_argument("--placebo", type=int, default=20, help="manji_score shuffle の試行数")
     ap.add_argument("--bet-type", choices=["tansho", "fukusho"], default="tansho")
     ap.add_argument("--payoffs", default=None, help="複勝決済用 payoffs.pkl（--bet-type fukusho）")
+    ap.add_argument("--tune-lgb", type=int, default=0, metavar="N",
+                    help="①.5が十分進んだ後、最良シナリオで②LightGBMのOptuna探索をN試行"
+                         "（既定100推奨）。各trialは早期停止つき、Optuna枝刈り(MedianPruner)あり")
+    ap.add_argument("--early-stopping", type=int, default=50,
+                    help="②学習の early_stopping_rounds（Early termination）")
+    ap.add_argument("--num-boost-round", type=int, default=1000)
+    ap.add_argument("--min-adopted", type=int, default=20,
+                    help="①.5『十分進んだ』判定: 最新ブロックの採用バケット数の下限")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -55,9 +63,14 @@ def main() -> None:
             return
         print(f"[--bet-type fukusho] 複勝払戻 {len(payoffs):,} 件をロード")
 
+    # ①.5 共有成果物（factor_table・block_posteriors＝ベイズ更新）を1回だけ作る
+    from src.tuning._manji_scenario import prepare_shared, scenario_factor_union
+    shared = prepare_shared(
+        featured, factor_names=scenario_factor_union(args.scenarios), n_blocks=args.n_blocks)
+
     from src.tuning._manji_scenario_eval import evaluate_scenarios
     table = evaluate_scenarios(
-        featured, args.scenarios, n_blocks=args.n_blocks, folds=args.folds,
+        featured, args.scenarios, shared=shared, n_blocks=args.n_blocks, folds=args.folds,
         ev_threshold=args.ev_threshold, payoffs=payoffs, n_placebo=args.placebo, seed=args.seed,
     )
 
@@ -74,6 +87,30 @@ def main() -> None:
     print(f"\n最良シナリオ: {best['scenario']}（lift {best['lift']:+.3f} / placebo%% {best['placebo_pct']:.2f}）")
     if best["lift"] <= 0 or best["placebo_pct"] < 0.95:
         print("※ lift>0 かつ placebo%%≥0.95 を満たさず。manji 補正の OOS 寄与は有意でない可能性。")
+
+    # ①.5 のベイズ更新が十分に進んだ後、最良シナリオで ② の Optuna 探索を実施
+    if args.tune_lgb > 0:
+        from src.tuning._manji_scenario import SCENARIOS, build_scenario_training_data
+        from src.tuning._manji_scenario_eval import posterior_ready, tune_lgb_optuna
+        _, block_posteriors = shared
+        if not posterior_ready(block_posteriors, min_adopted=args.min_adopted):
+            print(f"\n※ ①.5 のベイズ更新がまだ十分でない（採用バケット < {args.min_adopted}）。"
+                  "② Optuna はスキップ。データ期間を延ばすか --min-adopted を下げてください。")
+        else:
+            scn = SCENARIOS[best["scenario"]]
+            sdf = build_scenario_training_data(
+                featured, scn, factor_table=shared[0], block_posteriors=block_posteriors)
+            print(f"\n② LightGBM Optuna 探索: {args.tune_lgb} 試行 / early_stopping="
+                  f"{args.early_stopping} / MedianPruner（最良シナリオ {best['scenario']} 上）...")
+            res = tune_lgb_optuna(
+                sdf, n_trials=args.tune_lgb, early_stopping_rounds=args.early_stopping,
+                num_boost_round=args.num_boost_round, folds=args.folds,
+                ev_threshold=args.ev_threshold, payoffs=payoffs, seed=args.seed,
+            )
+            print(f"  完了: OOS回収率 {res['value']:.3f} / 枝刈り {res['n_pruned']}/{res['n_trials']} 試行")
+            print(f"  best_params: {res['best_params']}")
+            print("次段: この best_params で本番 KeibaAI（較正込み）を1回学習 → ③EV → ④選定/サイジング。")
+            return
     print("次段: 最良シナリオで本番 KeibaAI（較正込み）を1回学習 → ③EV → ④選定/サイジング。")
 
 

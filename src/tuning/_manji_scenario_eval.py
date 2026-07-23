@@ -147,6 +147,148 @@ def walk_forward_roi(
     return {"roi": roi, "stake": stake, "ret": ret, "n_bets": n_bets, "hit": hit}
 
 
+def posterior_ready(block_posteriors, *, min_adopted: int = 20) -> bool:
+    """①.5 のベイズ更新が「十分に進んだ」か（最新ブロックの採用バケット数で判定）。
+
+    ② の Optuna は事後が十分に貯まってから回す。最新（最も証拠が多い）ブロックの採用
+    (factor,bucket) 総数が min_adopted 以上なら ready。
+    """
+    if not block_posteriors:
+        return False
+    _, pts = block_posteriors[-1]
+    n_adopted = sum(len(bmap) for bmap in pts.values())
+    return n_adopted >= min_adopted
+
+
+def default_lgb_search_space() -> dict:
+    """② LightGBM の Optuna 探索空間（回収率向けの穏当な範囲）。"""
+    return {
+        "learning_rate": ("loguniform", 0.01, 0.2),
+        "num_leaves": ("int", 15, 127),
+        "max_depth": ("int", 3, 12),
+        "min_child_samples": ("int", 10, 200),
+        "feature_fraction": ("uniform", 0.5, 1.0),
+        "bagging_fraction": ("uniform", 0.5, 1.0),
+        "lambda_l1": ("loguniform", 1e-3, 10.0),
+        "lambda_l2": ("loguniform", 1e-3, 10.0),
+    }
+
+
+def _suggest_lgb(trial, space: dict) -> dict:
+    out = {}
+    for name, spec in space.items():
+        kind = spec[0]
+        if kind == "int":
+            out[name] = trial.suggest_int(name, int(spec[1]), int(spec[2]))
+        elif kind == "loguniform":
+            out[name] = trial.suggest_float(name, float(spec[1]), float(spec[2]), log=True)
+        else:  # uniform
+            out[name] = trial.suggest_float(name, float(spec[1]), float(spec[2]))
+    return out
+
+
+def make_lgb_predict(params: dict, *, early_stopping_rounds: int = 50,
+                     valid_frac: float = 0.2, num_boost_round: int = 1000):
+    """指定ハイパーパラメータで学習する predict_fn を作る（**早期終了つき**）。
+
+    train を発走日順に inner/valid 分割し、valid の binary_logloss が改善しなくなったら
+    early_stopping_rounds で boosting を打ち切る（＝Early termination）。
+    """
+    import lightgbm as lgb
+
+    def predict_fn(train, test, feature_cols, seed):
+        y = (pd.to_numeric(train[ResultsCols.RANK], errors="coerce") == 1).astype(int).to_numpy()
+        if len(np.unique(y)) < 2:
+            return np.full(len(test), float(y.mean()) if len(y) else 0.0)
+        order = np.argsort(pd.to_datetime(train["date"], errors="coerce").to_numpy(), kind="stable")
+        cut = max(1, int(len(order) * (1.0 - valid_frac)))
+        tr_idx, va_idx = order[:cut], order[cut:]
+        Xall = train[feature_cols].apply(pd.to_numeric, errors="coerce")
+        dtrain = lgb.Dataset(Xall.iloc[tr_idx].to_numpy(), label=y[tr_idx])
+        p = {**params, "objective": "binary", "verbose": -1, "seed": int(seed),
+             "feature_pre_filter": False}
+        callbacks, valid_sets = [], None
+        if len(va_idx) > 0 and len(np.unique(y[va_idx])) > 0:
+            dvalid = lgb.Dataset(Xall.iloc[va_idx].to_numpy(), label=y[va_idx])
+            valid_sets = [dvalid]
+            callbacks = [lgb.early_stopping(early_stopping_rounds, verbose=False),
+                         lgb.log_evaluation(0)]
+        booster = lgb.train(p, dtrain, num_boost_round=num_boost_round,
+                            valid_sets=valid_sets, callbacks=callbacks)
+        Xte = test[feature_cols].apply(pd.to_numeric, errors="coerce").to_numpy()
+        return booster.predict(Xte)
+
+    return predict_fn
+
+
+def tune_lgb_optuna(
+    scenario_df: pd.DataFrame,
+    *,
+    feature_cols: list[str] | None = None,
+    n_trials: int = 100,
+    early_stopping_rounds: int = 50,
+    num_boost_round: int = 1000,
+    valid_frac: float = 0.2,
+    folds: int = 5,
+    ev_threshold: float = 1.0,
+    payoffs: dict | None = None,
+    search_space: dict | None = None,
+    seed: int = 0,
+) -> dict:
+    """①.5 妙味度列つきデータで ② の LightGBM ハイパーパラメータを Optuna 探索する。
+
+    - n_trials 回（既定100=『100epoch』）。各 trial は LightGBM 早期停止つきで学習。
+    - **Early termination 2段**: (1) 各 trial 内で LightGBM early_stopping（boosting 打切り）、
+      (2) Optuna MedianPruner で見込みの薄い trial を fold 途中で枝刈り。
+    - 目的 = 発走日順 walk-forward の OOS 回収率（最大化）。前進安全は①.5事後＋fold分割が担う。
+
+    Returns: {best_params, value(OOS回収率), n_trials, n_pruned, predict_fn}
+    """
+    import optuna
+
+    feature_cols = feature_cols or numeric_feature_cols(scenario_df, include_manji=True)
+    space = search_space or default_lgb_search_space()
+    masks = _date_folds(scenario_df, folds)
+
+    def objective(trial):
+        params = _suggest_lgb(trial, space)
+        pf = make_lgb_predict(params, early_stopping_rounds=early_stopping_rounds,
+                              valid_frac=valid_frac, num_boost_round=num_boost_round)
+        stake = ret = 0.0
+        for step, k in enumerate(range(1, folds)):
+            train_mask = np.logical_or.reduce(masks[:k])
+            test_mask = masks[k]
+            if not train_mask.any() or not test_mask.any():
+                continue
+            prob = pf(scenario_df[train_mask], scenario_df[test_mask], feature_cols, seed)
+            s, r, _, _ = _settle(scenario_df[test_mask], np.asarray(prob, dtype=float),
+                                 ev_threshold, payoffs)
+            stake += s
+            ret += r
+            roi = ret / stake if stake else 0.0
+            trial.report(roi, step)             # fold 途中経過を Optuna に報告
+            if trial.should_prune():             # 見込み薄なら早期終了（枝刈り）
+                raise optuna.TrialPruned()
+        return ret / stake if stake else 0.0
+
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=optuna.samplers.TPESampler(seed=seed),
+        pruner=optuna.pruners.MedianPruner(n_warmup_steps=1, n_startup_trials=5),
+    )
+    study.optimize(objective, n_trials=n_trials)
+
+    completed = [t for t in study.trials if t.state.name == "COMPLETE"]
+    n_pruned = sum(1 for t in study.trials if t.state.name == "PRUNED")
+    best_params = dict(study.best_params) if completed else {}
+    value = float(study.best_value) if completed else 0.0
+    predict_fn = make_lgb_predict(best_params, early_stopping_rounds=early_stopping_rounds,
+                                  valid_frac=valid_frac, num_boost_round=num_boost_round) \
+        if best_params else _default_lgb_predict
+    return {"best_params": best_params, "value": value, "n_trials": n_trials,
+            "n_pruned": n_pruned, "predict_fn": predict_fn}
+
+
 def evaluate_scenario(
     scenario_df: pd.DataFrame,
     *,

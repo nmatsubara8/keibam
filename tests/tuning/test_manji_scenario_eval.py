@@ -6,7 +6,10 @@ import pandas as pd
 from src.constants._results_cols import ResultsCols
 from src.tuning._manji_scenario_eval import (
     evaluate_scenario,
+    make_lgb_predict,
     numeric_feature_cols,
+    posterior_ready,
+    tune_lgb_optuna,
     walk_forward_roi,
 )
 
@@ -70,6 +73,39 @@ def test_evaluate_scenario_lift_and_placebo():
     assert res["roi"] > res["baseline_roi"]
     # placebo（manji_score shuffle）では優位が消える → 実 lift はほぼ最上位
     assert res["placebo_pct"] >= 0.9
+
+
+def test_posterior_ready_gate():
+    assert posterior_ready([(None, {"jockey": {"a": 1.0}, "sire": {"b": -1.0}})], min_adopted=2)
+    assert not posterior_ready([(None, {"jockey": {"a": 1.0}})], min_adopted=5)
+    assert not posterior_ready([], min_adopted=1)
+
+
+def test_make_lgb_predict_trains_with_early_stopping():
+    df = _scenario_df(90)
+    n = len(df)
+    cut = int(n * 0.7)
+    train, test = df.iloc[:cut], df.iloc[cut:]
+    pf = make_lgb_predict({"learning_rate": 0.1, "num_leaves": 15},
+                          early_stopping_rounds=10, num_boost_round=50)
+    prob = pf(train, test, ["manji_score"], seed=0)
+    assert len(prob) == len(test)
+    assert np.all((prob >= 0) & (prob <= 1))
+
+
+def test_tune_lgb_optuna_limited_trials_with_pruning():
+    """② LightGBM の Optuna を少試行（早期停止＋枝刈り）で回し best_params を返す。"""
+    df = _scenario_df(120)
+    res = tune_lgb_optuna(
+        df, feature_cols=["manji_score"], n_trials=6, early_stopping_rounds=10,
+        num_boost_round=60, folds=4, ev_threshold=1.0, seed=0,
+    )
+    assert set(res) >= {"best_params", "value", "n_trials", "n_pruned", "predict_fn"}
+    assert res["n_trials"] == 6
+    assert callable(res["predict_fn"])
+    # 学習した predict_fn が確率を返す
+    prob = res["predict_fn"](df.iloc[:80], df.iloc[80:], ["manji_score"], 0)
+    assert np.all((prob >= 0) & (prob <= 1))
 
 
 def test_evaluate_scenarios_end_to_end_ranks_by_lift():
