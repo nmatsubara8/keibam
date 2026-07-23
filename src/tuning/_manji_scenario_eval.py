@@ -379,8 +379,10 @@ def evaluate_scenarios(
     factor_table, block_posteriors = shared
 
     rows = []
-    for name in scenario_names:
+    for si, name in enumerate(scenario_names):
         scn = SCENARIOS[name]
+        print(f"  [scenario {si + 1}/{len(scenario_names)}] {name} 評価中"
+              f"（placebo {n_placebo}回）...", flush=True)
         try:
             sdf = build_scenario_training_data(
                 featured, scn, factor_table=factor_table, block_posteriors=block_posteriors,
@@ -394,9 +396,9 @@ def evaluate_scenarios(
             continue
         res["scenario"] = name
         rows.append(res)
-        logger.info("[scenario-eval] %-14s roi=%.3f base=%.3f lift=%+.3f placebo%%=%.2f n=%d",
-                    name, res["roi"], res["baseline_roi"], res["lift"],
-                    res["placebo_pct"], res["n_bets"])
+        print(f"    → {name}: roi={res['roi']:.3f} base={res['baseline_roi']:.3f} "
+              f"lift={res['lift']:+.3f} placebo%={res['placebo_pct']:.2f} 買い目={res['n_bets']}",
+              flush=True)
     if not rows:
         raise RuntimeError("全シナリオの評価に失敗しました（ログの traceback を確認してください）")
     cols = ["scenario", "roi", "baseline_roi", "lift", "placebo_pct", "placebo_median",

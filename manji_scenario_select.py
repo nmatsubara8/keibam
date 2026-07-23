@@ -76,15 +76,21 @@ def main() -> None:
         print(f"[--bet-type fukusho] 複勝払戻 {len(payoffs):,} 件をロード")
 
     # ①.5 共有成果物（factor_table・block_posteriors＝ベイズ更新）を1回だけ作る
+    import time
     from src.tuning._manji_scenario import prepare_shared, scenario_factor_union
-    shared = prepare_shared(
-        featured, factor_names=scenario_factor_union(args.scenarios), n_blocks=args.n_blocks)
+    fu = scenario_factor_union(args.scenarios)
+    print(f"①.5 共有成果物を生成中（{len(fu)} 因子 / {args.n_blocks} ブロック）...", flush=True)
+    t0 = time.time()
+    shared = prepare_shared(featured, factor_names=fu, n_blocks=args.n_blocks, progress=True)
+    print(f"①.5 完了（{time.time() - t0:.0f}s）。②評価を開始...", flush=True)
 
     from src.tuning._manji_scenario_eval import evaluate_scenarios
+    t1 = time.time()
     table = evaluate_scenarios(
         featured, args.scenarios, shared=shared, n_blocks=args.n_blocks, folds=args.folds,
         ev_threshold=args.ev_threshold, payoffs=payoffs, n_placebo=args.placebo, seed=args.seed,
     )
+    print(f"②評価 完了（{time.time() - t1:.0f}s）", flush=True)
 
     print("\n" + "=" * 78)
     print("卍補正シナリオ OOS 選抜（lift 降順 / 券種=%s）" % args.bet_type)

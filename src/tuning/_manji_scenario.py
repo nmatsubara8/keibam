@@ -159,6 +159,7 @@ def build_block_posteriors(
     n_blocks: int = 8,
     cfg: PosteriorConfig | None = None,
     factor_half_life: dict[str, float] | None = None,
+    progress: bool = False,
 ):
     """各ブロックについて (行マスク, points[factor][bucket]) を返す（全シナリオ共有）。
 
@@ -177,13 +178,24 @@ def build_block_posteriors(
     if factor_half_life is None:
         factor_half_life = default_half_lives()
     dates = pd.to_datetime(featured["date"], errors="coerce")
+    blocks = time_blocks(featured, n_blocks)
+    if progress:
+        import sys
+        print(f"  [posterior] {len(blocks)} ブロック × {len(factor_names)} 因子（クロス基底含む）を較正",
+              flush=True)
     out = []
-    for cutoff, mask in time_blocks(featured, n_blocks):
+    for i, (cutoff, mask) in enumerate(blocks):
         train = featured[dates < cutoff]
         pts = {} if train.empty else calibrate_points_bayes(
             train, factor_names, cfg=cfg, factor_half_life=factor_half_life,
         )
         out.append((mask, pts))
+        if progress:
+            import sys
+            n_adopt = sum(len(v) for v in pts.values())
+            print(f"    block {i + 1}/{len(blocks)} as-of {pd.Timestamp(cutoff).date()} "
+                  f"学習{len(train):,}行 採用{n_adopt}バケット", flush=True)
+            sys.stdout.flush()
     return out
 
 
@@ -337,11 +349,13 @@ def prepare_shared(
     n_blocks: int = 8,
     cfg: PosteriorConfig | None = None,
     factor_half_life: dict[str, float] | None = None,
+    progress: bool = False,
 ):
     """全シナリオ共有の重い成果物（factor_table・block_posteriors）を1回作る。
 
     factor_names 既定=全シナリオ因子の和（クロス込み）。build_block_posteriors 側で
-    クロスの構成基底も自動追加される。
+    クロスの構成基底も自動追加される。factor_table は無ければ生成してキャッシュ保存する
+    （次回以降 load_factor_table で再利用＝再計算しない）。
 
     Returns: (factor_table, block_posteriors)
     """
@@ -349,10 +363,19 @@ def prepare_shared(
         from src.tuning._manji_factor_store import build_factor_table, load_factor_table
         factor_table = load_factor_table()
         if factor_table is None:
+            if progress:
+                print("  [factor_table] 未キャッシュ → featured から生成中"
+                      "（全データでキャッシュするには python -m src.tuning._manji_factor_store）...",
+                      flush=True)
             factor_table = build_factor_table(featured)
+            if progress:
+                print("  [factor_table] 生成完了", flush=True)
+        elif progress:
+            print("  [factor_table] キャッシュを再利用", flush=True)
     if factor_names is None:
         factor_names = scenario_factor_union()
     block_posteriors = build_block_posteriors(
         featured, factor_names, n_blocks=n_blocks, cfg=cfg, factor_half_life=factor_half_life,
+        progress=progress,
     )
     return factor_table, block_posteriors
