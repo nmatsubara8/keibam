@@ -67,3 +67,6 @@ class LocalPaths:
     MANJI_DIR: str = os.path.join(DATA_DIR, "manji")
     # ①.5a ファクター事前計算表: key=(race_id, 馬番) の因子バケット＋近走/通算派生（1回だけ生成）
     MANJI_FACTOR_TABLE_PATH: str = os.path.join(MANJI_DIR, "factor_table.pkl")
+    # ①.5b ベイズ事後分布ストア: (factor,bucket)→事後(n,neff,post_mean,post_var,point)。
+    # 「as-of 日付」までの証拠のみで構成（前進安全）。全シナリオ共有・要素の線形結合で補正列を作る。
+    MANJI_POSTERIOR_STORE_PATH: str = os.path.join(MANJI_DIR, "posterior_store.pkl")

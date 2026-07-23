@@ -1,0 +1,114 @@
+"""①.5b ベイズ事後分布ストアのテスト（収縮・忘却割引・min_n・as_of前進安全）。"""
+
+import numpy as np
+import pandas as pd
+
+from src.constants._results_cols import ResultsCols
+from src.tuning._manji_posterior import (
+    PosteriorConfig,
+    build_posterior_store,
+    calibrate_points_bayes,
+    default_half_lives,
+    factor_posterior,
+    global_sigma2,
+    load_posterior_store,
+    save_posterior_store,
+)
+
+
+def _rows(umaban, win_frac, odds, n, start="2020-01-01"):
+    """馬番 umaban のバケットに n 行。win_frac の割合を着1(オッズodds)・残りを着2。"""
+    n_win = int(round(n * win_frac))
+    ranks = [1] * n_win + [2] * (n - n_win)
+    dates = pd.date_range(start, periods=n, freq="D")
+    return pd.DataFrame({
+        "race_id": [f"{umaban}_{i}" for i in range(n)],
+        ResultsCols.UMABAN: umaban,
+        ResultsCols.RANK: ranks,
+        ResultsCols.TANSHO_ODDS: odds,
+        "date": dates,
+    })
+
+
+def _featured(*frames):
+    df = pd.concat(frames, ignore_index=True)
+    return df.set_index("race_id")
+
+
+def test_point_sign_follows_edge():
+    # 奇数馬番: 回収 1.5（>1 → 加点）／偶数馬番: 回収 0.6（<1 → 減点）
+    odd = _rows(1, win_frac=0.5, odds=3.0, n=300)   # 0.5*3 = 1.5
+    even = _rows(2, win_frac=0.2, odds=3.0, n=300)  # 0.2*3 = 0.6
+    feat = _featured(odd, even)
+    cfg = PosteriorConfig(min_n=30)
+    post = factor_posterior(feat, "umaban_parity", cfg)
+    assert post.loc["odd", "point"] > 0
+    assert post.loc["even", "point"] < 0
+    # 事後平均は 1 と標本平均の間（収縮）: 1 < post_mean(odd) < 1.5
+    assert 1.0 < post.loc["odd", "post_mean"] < 1.5
+
+
+def test_shrinkage_more_data_moves_point_further_from_zero():
+    """同じ回収率でも n が多いほど事前(=0点)から離れる。"""
+    small = _featured(_rows(1, 0.5, 3.0, 40))
+    large = _featured(_rows(1, 0.5, 3.0, 400))
+    cfg = PosteriorConfig(min_n=30)
+    s2 = 1.0  # σ² を固定して n の効果だけを見る
+    p_small = factor_posterior(small, "umaban_parity", cfg, sigma2=s2).loc["odd", "point"]
+    p_large = factor_posterior(large, "umaban_parity", cfg, sigma2=s2).loc["odd", "point"]
+    assert 0 < p_small < p_large
+
+
+def test_min_n_gate_marks_point_nan_and_calibrate_drops_it():
+    tiny = _featured(_rows(1, 0.5, 3.0, 10))  # n=10 < min_n
+    cfg = PosteriorConfig(min_n=30, universality_slices=1)
+    post = factor_posterior(tiny, "umaban_parity", cfg)
+    assert np.isnan(post.loc["odd", "point"])
+    pts = calibrate_points_bayes(tiny, ["umaban_parity"], cfg=cfg)
+    assert "umaban_parity" not in pts  # 採用バケット無し
+
+
+def test_forgetting_discount_weights_recent_evidence():
+    """古い証拠=負け・最近=勝ちのバケットは、忘却割引で加点方向に動く。"""
+    old = _rows(1, win_frac=0.0, odds=2.0, n=150, start="2010-01-01")   # 全敗 → 回収0
+    recent = _rows(1, win_frac=1.0, odds=2.0, n=150, start="2023-01-01")  # 全勝 → 回収2.0
+    feat = _featured(old, recent)
+    cfg = PosteriorConfig(min_n=30)
+    s2 = 1.0
+    no_disc = factor_posterior(feat, "umaban_parity", cfg, sigma2=s2).loc["odd", "point"]
+    with_disc = factor_posterior(
+        feat, "umaban_parity", cfg, sigma2=s2, half_life_days=180.0
+    ).loc["odd", "point"]
+    # 割引なしは新旧半々で ~中立、割引ありは最近(勝ち)が支配 → より大きい
+    assert with_disc > no_disc
+
+
+def test_default_half_lives_targets_recency_factors():
+    hl = default_half_lives(500.0)
+    assert hl["recent3_form"] == 500.0
+    assert "career_form" not in hl  # 全過去依拠は割引しない
+
+
+def test_build_posterior_store_as_of_is_forward_safe(tmp_path):
+    old = _rows(1, 0.5, 3.0, 100, start="2018-01-01")
+    new = _rows(1, 0.9, 3.0, 100, start="2024-01-01")  # as_of で除外される未来
+    feat = _featured(old, new)
+    store = build_posterior_store(
+        feat, ["umaban_parity"], cfg=PosteriorConfig(min_n=30, universality_slices=1),
+        as_of="2020-01-01",
+    )
+    assert set(["factor", "bucket", "n", "n_eff", "post_mean", "post_var", "point"]) <= set(store.columns)
+    # as_of=2020 より前は old(100件)のみ。未来の new は混入しない。
+    row = store[store["bucket"] == "odd"].iloc[0]
+    assert row["n"] == 100
+
+    # 保存・読込ラウンドトリップ
+    p = tmp_path / "posterior_store.pkl"
+    save_posterior_store(store, str(p))
+    back = load_posterior_store(str(p))
+    assert back is not None and len(back) == len(store)
+
+
+def test_global_sigma2_positive():
+    feat = _featured(_rows(1, 0.5, 3.0, 50), _rows(2, 0.2, 4.0, 50))
+    assert global_sigma2(feat) > 0
