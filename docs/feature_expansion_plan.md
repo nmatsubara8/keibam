@@ -303,7 +303,28 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
 - test_live_prediction で「ライブ側の jockey_win_rate / owner_win_rate の非 NaN 率 > 0」
   を assert（既存バグの回帰テストを兼ねる）
 
-### Phase 6: グループB（追加スクレイピング）— 事前調査ゲート付き
+### Phase 6: グループB（追加スクレイピング）— 6-a 完了 / 6-b はゲート保留（2026-07-24）
+
+**6-a 事前調査（実装済み）**:
+- `scripts/probe_netkeiba_free.py`: フェッチ(I/O)と解析(純関数)を分離。
+  `analyze_training_page` / `analyze_shutuba_free_extras` / `training_verdict` は
+  ログイン壁・プレミアムマーカー・調教タイム/ラップ/評価の有無を検出し、
+  PROCEED / SKIP_TRAINING / INCONCLUSIVE を判定。CLI は PlaywrightScraper +
+  `_rate_limiter` 経由で取得し HTML を保存（netkeiba アクセス可能環境で手動実行）
+- unit: `tests/preparing/test_probe_netkeiba_free.py`（無料ページ/会員壁/文脈なし/
+  出馬表無料枠/verdict 分岐）→ 10 passed。ruff clean・全 pytest 933 passed
+
+**6-b 実装（ゲート保留）**:
+- **判定ゲート未通過のため未実装**。ユーザーは netkeiba 非会員で、調教（追い切り）データは
+  会員限定の可能性が高い。実サイトでの `probe_netkeiba_free.py` 実行結果が **PROCEED** の
+  場合のみ `_scrape_training.py` / `raw_training` テーブル / `_training_processor.py` を実装する
+- **SKIP_TRAINING の場合の代替**: item 8（レース展開予測）は Phase 4 で内製済みのため、
+  調教データが取れなくても展開・脚質シグナルは確保されている
+- 実行手順（ユーザー、VPS 等で）:
+  `python scripts/probe_netkeiba_free.py --race-id <12桁> --horse-id <id>` →
+  出力の verdict と保存 HTML を確認 → PROCEED なら 6-b に進む旨を共有
+
+### Phase 6: グループB（追加スクレイピング）— 事前調査ゲート付き（原計画）
 
 - **6-a 事前調査（実装より先）**: `scripts/probe_netkeiba_free.py` で非ログイン状態の
   以下を取得し、ログイン壁/プレミアムマーカーの有無・調教タイムセルの有無を判定:
