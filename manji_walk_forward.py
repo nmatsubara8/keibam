@@ -129,6 +129,8 @@ def main():
     ap.add_argument("--max-year", type=int, default=None,
                     help="この年までのレースに限定（race_id先頭4桁=年）。複勝払戻が1986-2021"
                          "しか無い等、カバレッジに合わせて末尾foldの欠損アーティファクトを防ぐ")
+    ap.add_argument("--organizer", choices=["central", "local", "both"], default="both",
+                    help="中央(central=場コード01-10)/地方(local=NAR)/両方。NAR検証は local")
     ap.add_argument("--bet-type", choices=["tansho", "fukusho"], default="tansho",
                     help="決済する馬券種。fukusho は payoffs.pkl の複勝払戻で決済（因子スコア/"
                          "ゾーンは単勝ベースのまま＝『単勝妙味で選んだ馬を複勝で買う』検証）")
@@ -170,6 +172,14 @@ def main():
 
     race_date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
     ordered = list(race_date.index)
+    if args.organizer != "both":
+        # 場コード(race_id[4:6]) 01-10=中央 / それ以外=地方(NAR)
+        central = {f"{i:02d}" for i in range(1, 11)}
+        before = len(ordered)
+        want_central = args.organizer == "central"
+        ordered = [r for r in ordered if (str(r)[4:6] in central) == want_central]
+        featured = featured.loc[ordered]
+        print(f"[--organizer {args.organizer}] {len(ordered):,} レース（全 {before:,} 中）")
     if args.max_year:
         # 払戻カバレッジ等に合わせ、この年までのレースに限定（race_id 先頭4桁=年）
         before = len(ordered)
