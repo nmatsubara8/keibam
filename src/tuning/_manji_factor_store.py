@@ -280,15 +280,20 @@ def main() -> None:
     from src.constants._logging_config import setup_logging
 
     setup_logging()
-    ap = argparse.ArgumentParser(description="卍①.5a ファクター事前計算表を生成")
+    ap = argparse.ArgumentParser(description="卍①.5a ファクター事前計算表を生成（全データでキャッシュ）")
     ap.add_argument("--force", action="store_true", help="既存 factor_table を無視して再生成")
     ap.add_argument("--coverage", action="store_true", help="因子ごとの非na率を表示")
+    ap.add_argument("--with-h2h", action="store_true",
+                    help="同一レース対戦履歴(head2head)も含める（重い。1回キャッシュ生成向け）")
+    ap.add_argument("--h2h-lookback", type=int, default=10, help="対戦を遡る各馬の直近走数")
     args = ap.parse_args()
 
     path = LocalPaths.MANJI_FACTOR_TABLE_PATH
     if os.path.exists(path) and not args.force:
         print(f"既に存在します: {path}（再生成は --force）")
         return
+
+    import time
 
     from app._model_eval import load_featured_data
     from src.policies._manji_factors import FACTORS
@@ -298,14 +303,21 @@ def main() -> None:
         print("featured_data がありません（先に rebuild-featured を実行してください）")
         return
 
-    logger.info("[factor-store] featured %d 行から因子表を生成します", len(featured))
+    print(f"[factor-store] featured {len(featured):,} 行から因子表を生成します"
+          f"（head2head={'含む' if args.with_h2h else '除外'}）...", flush=True)
+    if args.with_h2h:
+        print("  ※ head2head は全レースの対戦履歴を走査するため時間がかかります", flush=True)
+    t0 = time.time()
     factor_names = list(FACTORS)
-    table = build_factor_table(featured, factor_names)
+    table = build_factor_table(featured, factor_names,
+                               with_h2h=args.with_h2h, h2h_lookback=args.h2h_lookback)
     save_factor_table(table, path)
     if args.coverage:
         _coverage_report(table, factor_names)
-    print(f"\n生成完了: {path}（{len(table):,} 行 / {len(factor_names)} 因子）")
-    print("次段（Step 2）: ベイズ事後分布ストアを時系列・前進で構築。")
+    print(f"\n生成完了: {path}（{len(table):,} 行 / {len(factor_names)} 因子 / "
+          f"{time.time() - t0:.0f}s）", flush=True)
+    print("以後 prepare_shared / manji_scenario_select はこのキャッシュを load_factor_table で再利用します。")
+    print("注意: これは**全データ**の表です。--limit で部分実行してもキー(race_id,馬番)で正しく整列します。")
 
 
 if __name__ == "__main__":
