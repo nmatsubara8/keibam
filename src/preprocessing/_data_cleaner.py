@@ -32,10 +32,12 @@ def dict_selector(dict_name):
             "owner_id": ("int", "str", 6, True),
         }
     elif dict_name == "_horse_results":
+        # 注: 「人気」はかつて float→int(fillna 0) に変換していたが、Phase 1 で
+        # 人気を多窓集計の対象にしたため除外した。fillna(0) は欠損人気を「0番人気」
+        # として平均を汚染するため、float(NaN) のままにして集計から自然除外する。
         column_types_dict = {
             "R": ("float", "int", 2, False),
             "枠番": ("float", "int", 2, False),
-            "人気": ("float", "int", 2, False),
         }
 
     else:

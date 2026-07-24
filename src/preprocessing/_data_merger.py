@@ -116,6 +116,9 @@ class DataMerger:
             for n_races in [*N_RACES_LIST, None]:
                 results = self._merge_aggregates(results, horse_results, n_races)
 
+            # ── Phase 1: 馬自身の通算成績 ──────────────────────────────
+            results = self._add_horse_career_stats(results, horse_results)
+
             # Latest race date (for interval feature in FeatureEngineering)
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
             results = results.merge(latest, left_on="horse_id", right_index=True, how="left")
@@ -364,6 +367,35 @@ class DataMerger:
     @property
     def merged_data(self):
         return self._merged_data
+
+    def _add_horse_career_stats(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Phase 1: 馬自身の通算成績（出走数・勝率・連対率・複勝率）を results に付与する。
+
+        horse_results は呼出時点で「当日より過去（date < 当日）」かつ「当該レース
+        出走馬」に絞り込み済み（_separate_by_date）。着順 NaN 行は
+        HorseResultsProcessor で drop 済みのため、n_career_starts は完走ベースの
+        出走回数となる。過去走のみ参照するためリークしない。
+
+        ライブ推論（ShutubaDataMerger）でも本メソッドは _merge_horse_results 経由で
+        呼ばれるため、学習と同一の列が生成される（特徴量パリティ）。
+        """
+        from src.constants._feature_cols import HORSE_CAREER_FEATURE_COLS
+
+        if HRCols.RANK not in horse_results.columns:
+            return results
+
+        rank = pd.to_numeric(horse_results[HRCols.RANK], errors="coerce")
+        career = pd.DataFrame(
+            {
+                "n_career_starts": rank.groupby(level=0).count(),
+                "career_win_rate": (rank == 1).groupby(level=0).mean(),
+                "career_quinella_rate": (rank <= 2).groupby(level=0).mean(),
+                "career_place_rate": (rank <= 3).groupby(level=0).mean(),
+            }
+        )[HORSE_CAREER_FEATURE_COLS]
+        return results.merge(career, left_on="horse_id", right_index=True, how="left")
 
     def _merge_aggregates(
         self, results: pd.DataFrame, horse_results: pd.DataFrame, n_races: int | None

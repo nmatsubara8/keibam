@@ -116,6 +116,101 @@ class TestSummarize:
         assert result.index.name == "horse_id"
 
 
+def _horse_results_rich():
+    """新集計対象列（Phase 1）を含む過去成績 DataFrame。"""
+    hr = _horse_results_df()
+    hr["time_seconds"] = [80.0, 81.0, 95.0, 100.0, 82.0, 79.0]
+    hr["上り"] = [35.0, 34.5, 38.0, 36.0, 35.5, 34.0]
+    hr["first_to_rank"] = [0, 1, -1, 2, 0, 1]
+    hr["final_to_rank"] = [1, 0, 0, 1, -1, 0]
+    hr["first_to_final"] = [-1, 1, -1, 1, 1, 1]
+    hr["オッズ"] = [2.5, 3.0, 5.0, 10.0, 4.0, 1.5]
+    hr["人気"] = [1.0, 2.0, 3.0, 4.0, 2.0, 1.0]
+    return hr
+
+
+# ──────────────────────────────────────────
+# Phase 1: 集計対象列の拡張（time_seconds/上り/展開/過去オッズ/人気）
+# ──────────────────────────────────────────
+
+class TestExpandedTargetAggregation:
+    def test_new_target_aggregates_generated(self):
+        from src.constants._feature_cols import AGG_TARGET_COLS
+
+        m = _make_merger(_results_df_with_jockey())
+        hr = _horse_results_rich()
+        result = m._summarize(hr, AGG_TARGET_COLS)
+        for col in ["time_seconds", "上り", "オッズ", "人気",
+                    "first_to_rank", "final_to_rank", "first_to_final"]:
+            assert f"{col}_mean" in result.columns, f"Missing {col}_mean"
+
+    def test_odds_mean_correct(self):
+        m = _make_merger(_results_df_with_jockey())
+        hr = _horse_results_rich()
+        result = m._summarize(hr, ["オッズ"])
+        # horse 1 オッズ = [2.5, 3.0, 5.0] → mean = 10.5/3 = 3.5
+        assert result.loc[1, "オッズ_mean"] == pytest.approx(3.5)
+
+    def test_nan_excluded_from_mean(self):
+        """to_numeric 由来の NaN は集計（mean）から除外される。"""
+        m = _make_merger(_results_df_with_jockey())
+        hr = pd.DataFrame(
+            {"オッズ": [2.0, np.nan, 4.0]},
+            index=pd.Index([1, 1, 1], name="horse_id"),
+        )
+        result = m._summarize(hr, ["オッズ"])
+        assert result.loc[1, "オッズ_mean"] == pytest.approx(3.0)  # [2.0, 4.0]
+
+
+# ──────────────────────────────────────────
+# Phase 1: _add_horse_career_stats（馬自身の通算成績）
+# ──────────────────────────────────────────
+
+class TestAddHorseCareerStats:
+    def _results(self):
+        return pd.DataFrame(
+            {"horse_id": [1, 2]},
+            index=pd.Index(["r99", "r99"], name="race_id"),
+        )
+
+    def test_career_cols_added(self):
+        from src.constants._feature_cols import HORSE_CAREER_FEATURE_COLS
+
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_horse_career_stats(self._results(), _horse_results_df())
+        for c in HORSE_CAREER_FEATURE_COLS:
+            assert c in out.columns
+
+    def test_values_correct(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_horse_career_stats(self._results(), _horse_results_df())
+        # horse 1: 着順=[1,2,1] → n=3, win=2/3, quinella=3/3, place=3/3
+        h1 = out[out["horse_id"] == 1].iloc[0]
+        assert h1["n_career_starts"] == 3
+        assert h1["career_win_rate"] == pytest.approx(2 / 3)
+        assert h1["career_quinella_rate"] == pytest.approx(1.0)
+        assert h1["career_place_rate"] == pytest.approx(1.0)
+        # horse 2: 着順=[3,5] → n=2, win=0, quinella=0, place=1/2
+        h2 = out[out["horse_id"] == 2].iloc[0]
+        assert h2["n_career_starts"] == 2
+        assert h2["career_win_rate"] == pytest.approx(0.0)
+        assert h2["career_quinella_rate"] == pytest.approx(0.0)
+        assert h2["career_place_rate"] == pytest.approx(0.5)
+
+    def test_skips_when_rank_absent(self):
+        m = _make_merger(_results_df_with_jockey())
+        hr = _horse_results_df().drop(columns=["着順"])
+        out = m._add_horse_career_stats(self._results(), hr)
+        assert "n_career_starts" not in out.columns
+
+    def test_no_future_leak_via_prefiltered_hr(self):
+        """horse_results は事前に date<当日 で絞られる前提。空なら NaN。"""
+        m = _make_merger(_results_df_with_jockey())
+        empty_hr = _horse_results_df().iloc[0:0]
+        out = m._add_horse_career_stats(self._results(), empty_hr)
+        assert out["n_career_starts"].isna().all()
+
+
 # ──────────────────────────────────────────
 # §2d: _add_pace_stats
 # ──────────────────────────────────────────

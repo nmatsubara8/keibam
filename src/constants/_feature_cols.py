@@ -25,7 +25,20 @@ AGG_STATS: list = ["mean", "std", "max", "min", "median"]
 #   - 列名は `_summarize` が {col}_{stat}_{n}R 形式で自動生成する
 #   - Z-score は add_race_level_zscore が末尾一致で動的検出するため定数変更は不要
 #   - 追加する列はすべて「過去走由来」であること（当該レース結果由来はリーク源）
-AGG_TARGET_COLS: list = ["着順"]
+#
+# Phase 1（feature_expansion_plan.md）で着順のみ → タイム/上がり/展開/過去オッズへ拡張。
+# ここに挙げた列はいずれも horse_results（馬の過去成績）由来なのでリークしない。
+# 当該レースの結果列（results 側の 上り/タイム/人気/単勝）は集計に用いない。
+AGG_TARGET_COLS: list = [
+    "着順",           # 着順（既存）
+    "time_seconds",   # 走破タイム（秒）— 速さの生値（コース標準化は Phase 3 speed_index）
+    "上り",           # 上がり3F（終いの脚）
+    "first_to_rank",  # 序盤コーナー位置 − 着順（前々での位置取り利得）
+    "final_to_rank",  # 最終コーナー位置 − 着順（直線での伸び）
+    "first_to_final", # 序盤 − 最終コーナー（道中の押し上げ/後退）
+    "オッズ",          # 過去走の単勝オッズ（市場評価の履歴。過去走由来＝リークでない）
+    "人気",            # 過去走の人気順
+]
 
 # horse_id と組で集計するグループ列（同上の単一の正）。
 #
@@ -35,6 +48,19 @@ AGG_TARGET_COLS: list = ["着順"]
 # 復活させる必要があるが、列名を "騎手" にすると意図せず有効化して列数が
 # 爆発するため、乗り替わり用途では別列名(jockey_name)を使う（Phase 2）。
 AGG_GROUP_COLS: list = ["騎手"]
+
+# ──────────────────────────────────────────
+# Phase 1: 馬自身の通算成績集計
+# ──────────────────────────────────────────
+
+# 過去走（date < 当日）全体からの通算集計。着順 NaN 行は
+# HorseResultsProcessor で drop 済みのため「完走ベース」の値。
+HORSE_CAREER_FEATURE_COLS: list = [
+    "n_career_starts",       # 通算出走回数（完走ベース）
+    "career_win_rate",       # 勝率（着順==1）
+    "career_quinella_rate",  # 連対率（着順<=2）
+    "career_place_rate",     # 複勝率（着順<=3）
+]
 
 # ──────────────────────────────────────────
 # §2c: 騎手・調教師集計特徴量

@@ -83,7 +83,35 @@
   定数値は不変）のため refactor としては安全。ベースライン記録は実データ環境
   （VPS 等）で `retrain` 実行時に取得し、以後のフェーズの比較基準とする
 
-### Phase 1: target_cols 拡張 + 通算成績（項目 1, 3, 10）— コスト最小・効果大
+### Phase 1: target_cols 拡張 + 通算成績（項目 1, 3, 10）— ✅ 完了（2026-07-24）
+
+**実装サマリ**:
+- `AGG_TARGET_COLS` を 8 列へ拡張（着順 + time_seconds / 上り / first_to_rank /
+  final_to_rank / first_to_final / オッズ / 人気）。多窓集計と Z-score は既存機構が
+  自動生成（列名規約・Z-score リストとも無変更で波及）
+- `HorseResultsProcessor._preprocess` に オッズ / 人気 / 上り の `to_numeric(coerce)` を追加。
+  `_data_cleaner` の `_horse_results` 辞書から 人気 の float→int(fillna 0) を除去し、
+  欠損人気が平均を汚染しないよう NaN のまま集計除外
+- `DataMerger._add_horse_career_stats()` を per-date ループの集計直後に新設
+  （n_career_starts / career_win_rate / career_quinella_rate / career_place_rate）。
+  `HORSE_CAREER_FEATURE_COLS` を Z-score named 群へ合流
+- ライブ側は `_merge_horse_results` 継承により自動でパリティ成立（追加配線なし）
+
+**検証結果**:
+- unit: `tests/preprocessing/test_data_merger_features.py` に拡張集計・通算成績・NaN 除外・
+  リーク境界（事前フィルタ空→NaN）のテストを追加 → 26 passed
+- 合成データ E2E スモーク: merge → Z-score で `オッズ_mean_5R` / `career_win_rate_z` 等
+  181 個の `_z` 列を含む全列が生成されることを確認
+- 既存 pytest 196 passed / 8 skip、mypy clean、ruff（src）clean、import-linter 4 契約 KEPT
+- **リーク**: 構造的に過去走（date < 当日）のみ参照。当該レースの 上り/タイム/オッズ/人気は
+  ResultsProcessor で未選別のまま維持（唯一のリーク境界）。ラベルシャッフル検査
+  `scripts/leakage_check.py` は実データ環境で実施予定
+
+**留意（フォローアップ候補）**:
+- 列数が約 +360（8 集計列 × 5 統計 × 4 窓 × 2 の _z）増加。`add_race_level_zscore` が
+  列逐次 insert のため DataFrame fragmentation の PerformanceWarning が出る（機能影響なし・
+  既存パターンの増幅）。AUC 比較後に importance 下位統計量のサブセット化 or z-score の
+  一括 concat 化を検討
 
 - `AGG_TARGET_COLS` を拡張:
   `["着順", "time_seconds", "上り", "first_to_final", "final_to_rank", "first_to_rank", "オッズ", "人気"]`
