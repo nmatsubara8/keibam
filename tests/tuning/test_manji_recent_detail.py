@@ -107,6 +107,28 @@ def test_head2head_from_past_meeting():
     assert labs[1] == "favorite" and labs[2] == "underdog"
 
 
+def test_prev_finish_and_rotation_resurrected_from_history():
+    """元列が無くても、履歴から算出した mf_prev_rank / mf_interval で prev_finish・rotation が発火。"""
+    rows = [
+        {"race_id": "r1", "horse_id": "A", "date": "2024-01-01", ResultsCols.UMABAN: 1,
+         ResultsCols.RANK: 6, ResultsCols.TANSHO_ODDS: 10.0, "course_len": 1600},
+        {"race_id": "r2", "horse_id": "A", "date": "2024-01-15", ResultsCols.UMABAN: 1,
+         ResultsCols.RANK: 1, ResultsCols.TANSHO_ODDS: 3.0, "course_len": 1400},
+    ]
+    feat = _feat(rows)
+    mf = build_recent_form_features(feat)
+    assert "mf_prev_rank" in mf.columns and "mf_interval" in mf.columns
+    assert "mf_dist_change" in mf.columns  # course_len があるので算出
+    view = feat.copy()
+    for c in mf.columns:
+        view[c] = mf[c].to_numpy()
+    a_r2 = np.flatnonzero((view["horse_id"].to_numpy() == "A") & (view.index.to_numpy() == "r2"))[0]
+    # r2 の前走(r1)は6着 → prev_finish=p6、間隔14日 → naka1_3、距離1400-1600=-200 → short
+    assert factor_series(view, "prev_finish").iloc[a_r2] == "p6"
+    assert factor_series(view, "rotation").iloc[a_r2] == "naka1_3"
+    assert factor_series(view, "dist_change").iloc[a_r2] == "short"
+
+
 def test_recent_detail_factors_na_without_source_columns():
     feat = _feat([
         {"race_id": "r1", "horse_id": "A", "date": "2024-01-01", ResultsCols.UMABAN: 1,

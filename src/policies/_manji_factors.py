@@ -111,7 +111,7 @@ def _weight_diff_series(df: pd.DataFrame) -> pd.Series:
 
 
 def _interval_series(df: pd.DataFrame) -> pd.Series:
-    c = _col(df, "interval", "days", "レース間隔", "休養日数")
+    c = _col(df, "interval", "days", "レース間隔", "休養日数", "mf_interval")
     return _num(df[c]) if c is not None else pd.Series(np.nan, index=df.index)
 
 
@@ -124,7 +124,7 @@ def _race_type_series(df: pd.DataFrame):
 
 
 def _dist_change_series(df: pd.DataFrame) -> pd.Series:
-    c = _col(df, "dist_change", "距離変化", "距離差", "距離増減")
+    c = _col(df, "dist_change", "距離変化", "距離差", "距離増減", "mf_dist_change")
     return _num(df[c]) if c is not None else pd.Series(np.nan, index=df.index)
 
 
@@ -339,7 +339,7 @@ def f_prev_finish(df: pd.DataFrame) -> pd.Series:
     featured に前走着順の列がある場合のみ（無ければ na）。候補列名を寛容に探す。
     """
     col = next((c for c in ("前走着順", "prev_rank", "前走_着順", "着順_1", "rank_prev",
-                            "last_rank") if c in df.columns), None)
+                            "last_rank", "mf_prev_rank") if c in df.columns), None)
     if col is None:
         return pd.Series(NA, index=df.index)
     r = _num(df[col])
@@ -437,7 +437,7 @@ def f_prev_deokure(df: pd.DataFrame) -> pd.Series:
     return np.where(v.isna(), NA, np.where(v >= 0.5, "deokure", "normal"))
 
 
-_SIRE_COLS = ("父", "種牡馬", "sire", "father", "父名", "種牡馬名")
+_SIRE_COLS = ("父", "種牡馬", "sire", "father", "父名", "種牡馬名", "peds_0")
 
 
 def f_sire_line(df: pd.DataFrame) -> pd.Series:
@@ -658,7 +658,7 @@ def f_pedigree_2gen(df: pd.DataFrame) -> pd.Series:
     不明・列不在は na。生の血統名より疎性が低く、系統×条件の回収率を学習しやすい。
     """
     sire_c = next((c for c in _SIRE_COLS if c in df.columns), None)
-    bms_c = _col(df, "母父", "母の父", "母父名", "broodmare_sire", "bms", "damsire")
+    bms_c = _col(df, "母父", "母の父", "母父名", "broodmare_sire", "bms", "damsire", "peds_32")
     if sire_c is None or bms_c is None:
         return pd.Series(NA, index=df.index)
     from src.features._sire_line import daikeito

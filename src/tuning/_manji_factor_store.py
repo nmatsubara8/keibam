@@ -53,7 +53,8 @@ MF_COLS = tuple(
     [f"mf_recent{n}_avg_rank" for n in RECENT_WINDOWS]
     + [f"mf_recent{n}_winrate" for n in RECENT_WINDOWS]
     + [f"mf_recent{n}_recovery" for n in RECENT_WINDOWS]
-    + ["mf_career_n", "mf_career_winrate", "mf_career_recovery"]
+    + ["mf_career_n", "mf_career_winrate", "mf_career_recovery",
+       "mf_prev_rank", "mf_interval"]  # 前走着順・レース間隔（履歴から算出＝元列不要）
 )
 
 
@@ -116,6 +117,11 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
         grd = pd.Series(gr).astype(str).to_numpy()
         work["_heavy_rank"] = np.where(np.isin(grd, ["重", "不良"]), rk, np.nan)
         added.append(("mf_recent_heavy_bestrank", "_heavy_rank", "min"))
+    # 距離（course_len）: 前走との差 mf_dist_change 用。元列があれば。
+    clen = _resolve_num_col(featured, "course_len", "距離", "course_len_m", "distance")
+    has_courselen = clen is not None
+    if has_courselen:
+        work["_courselen"] = clen
 
     # 馬ごとに日付順（同日は race_id で安定化）。当該走を除くため shift(1)。
     w = work.sort_values(["horse_id", "date", "race_id"], kind="stable")
@@ -137,6 +143,15 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
     w["mf_career_winrate"] = grp2["_past_win"].transform(lambda s: s.expanding(min_periods=1).mean())
     w["mf_career_recovery"] = grp2["_past_ret"].transform(lambda s: s.expanding(min_periods=1).mean())
 
+    # 前走着順（prev_finish 用）・レース間隔[日]（rotation/age_rotation 用）を履歴から算出。
+    w["mf_prev_rank"] = w["_past_rank"]  # 直前走の着順
+    past_date = grp2["date"].shift(1)
+    w["mf_interval"] = (w["date"] - past_date) / np.timedelta64(1, "D")
+    extra_cols: list[str] = []
+    if has_courselen:  # 距離変更[m or 100m単位]（dist_change/dist_age 用）
+        w["mf_dist_change"] = w["_courselen"] - grp2["_courselen"].shift(1)
+        extra_cols.append("mf_dist_change")
+
     # 近走詳細: 過去 DETAIL_WINDOW 走の集約（当該走除外の shift 後にローリング）。
     for out_name, src, agg in added:
         w["_pastd"] = grp2[src].shift(1)
@@ -145,7 +160,7 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
 
     # 元の行順（pos）に戻して featured.index に貼り直す（race_id 非ユニークでも位置一致）。
     w = w.sort_values("pos", kind="stable")
-    computed = list(MF_COLS) + [o for o, _, _ in added]
+    computed = list(MF_COLS) + extra_cols + [o for o, _, _ in added]
     out = pd.DataFrame({c: w[c].to_numpy() for c in computed}, index=featured.index)
     return out
 
