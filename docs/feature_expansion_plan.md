@@ -62,16 +62,26 @@
 
 ## 3. フェーズ別実装計画
 
-### Phase 0: 基盤整備（全フェーズの前提）
+### Phase 0: 基盤整備（全フェーズの前提）— ✅ 完了（2026-07-24）
 
 - `src/constants/_feature_cols.py` に `AGG_TARGET_COLS = ["着順"]` /
   `AGG_GROUP_COLS = ["騎手"]` を新設し、`run_pipeline.py`（builder 2 箇所）・
-  `tests/integration/test_live_prediction.py`・main.ipynb に散在するリテラルを定数参照化
-  （学習/ライブのパリティ事故の温床を解消）
-- test_live_prediction に「学習 featured 列とライブ featured 列の差分」を明示 assert する
-  パリティテストを追加
-- **検証ゲート**: 既存 pytest 全通過 + retrain でベースライン AUC（0.772〜0.774）と
-  feature importance を記録（以後の比較基準）
+  `tests/integration/test_live_prediction.py`・`main.ipynb`（cell 29）のリテラルを
+  定数参照化（学習/ライブのパリティ事故の温床を解消）
+  - 発見: `main.ipynb`（ライブ推論経路）は `run_pipeline`（学習）と**異なる**
+    target_cols（着順以外に prize/corner/time_seconds 等の広い集合）を使っており、
+    潜在的パリティ不整合があった。Phase 0 で全経路を単一定数へ収束（現状は production
+    値 `["着順"]`/`["騎手"]`。notebook の旧・広集合は cell 29 のコメントに退避し、
+    Phase 1 で `AGG_TARGET_COLS` に段階的に取り込む）
+- `test_train_live_feature_parity` を追加: 学習 featured_data とライブ featured の
+  **構造的列**（One-Hot ダミー "__" を除く）の集合一致を assert し、`feature_names_`
+  reindex fill 0 が握り潰す前に差分を可視化
+- **検証結果**: pytest 738 passed（core）+ 133 passed（training）/ 全 skip は
+  torch・ローカルデータ非依存分のみ。ruff clean・import-linter 4 契約 KEPT
+- **未実施（データ環境が必要）**: retrain でのベースライン AUC（0.772〜0.774）+
+  feature importance の記録。Phase 0 は現 production と挙動同値（run_pipeline の
+  定数値は不変）のため refactor としては安全。ベースライン記録は実データ環境
+  （VPS 等）で `retrain` 実行時に取得し、以後のフェーズの比較基準とする
 
 ### Phase 1: target_cols 拡張 + 通算成績（項目 1, 3, 10）— コスト最小・効果大
 

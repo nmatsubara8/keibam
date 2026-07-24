@@ -226,14 +226,16 @@ def _ingest(args: argparse.Namespace) -> None:
             from src.preprocessing._race_info_processor import RaceInfoProcessor
             from src.preprocessing._results_processor import ResultsProcessor
 
+            from src.constants._feature_cols import AGG_GROUP_COLS, AGG_TARGET_COLS
+
             merger = DataMerger(
                 ResultsProcessor(config.raw_results_path),
                 RaceInfoProcessor(config.raw_race_info_path),
                 HorseResultsProcessor(config.raw_horse_results_path),
                 HorseInfoProcessor(config.raw_horse_info_path),
                 PedsProcessor(config.raw_peds_path),
-                target_cols=["着順"],
-                group_cols=["騎手"],
+                target_cols=AGG_TARGET_COLS,
+                group_cols=AGG_GROUP_COLS,
             )
             merger.merge()
             fe = (
@@ -293,14 +295,16 @@ def _retrain(args: argparse.Namespace) -> None:
                 from src.preprocessing._race_info_processor import RaceInfoProcessor
                 from src.preprocessing._results_processor import ResultsProcessor
 
+                from src.constants._feature_cols import AGG_GROUP_COLS, AGG_TARGET_COLS
+
                 merger = DataMerger(
                     ResultsProcessor(config.raw_results_path),
                     RaceInfoProcessor(config.raw_race_info_path),
                     HorseResultsProcessor(config.raw_horse_results_path),
                     HorseInfoProcessor(config.raw_horse_info_path),
                     PedsProcessor(config.raw_peds_path),
-                    target_cols=["着順"],
-                    group_cols=["騎手"],
+                    target_cols=AGG_TARGET_COLS,
+                    group_cols=AGG_GROUP_COLS,
                 )
                 merger.merge()
                 return (

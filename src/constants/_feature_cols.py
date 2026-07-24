@@ -13,6 +13,29 @@ N_RACES_LIST: list = [5, 9, 20]
 # horse_id ごとに集計する統計量
 AGG_STATS: list = ["mean", "std", "max", "min", "median"]
 
+# 多窓集計の対象列（DataMerger / ShutubaDataMerger 共通の単一の正）。
+#
+# 学習(run_pipeline)とライブ推論(ShutubaDataMerger)がこの同一定数を参照することで、
+# 特徴量パリティ事故（学習列とライブ列の不一致）を構造的に防ぐ。従来は
+# run_pipeline の builder 2 箇所・integration テスト・main.ipynb に別々のリテラルが
+# 散在しており、run_pipeline は ["着順"] だが notebook は着順以外も含む等の
+# 潜在的な不整合があった。ここに一元化する。
+#
+# 拡張時の注意（feature_expansion_plan.md 参照）:
+#   - 列名は `_summarize` が {col}_{stat}_{n}R 形式で自動生成する
+#   - Z-score は add_race_level_zscore が末尾一致で動的検出するため定数変更は不要
+#   - 追加する列はすべて「過去走由来」であること（当該レース結果由来はリーク源）
+AGG_TARGET_COLS: list = ["着順"]
+
+# horse_id と組で集計するグループ列（同上の単一の正）。
+#
+# 注意: 現状の ResultsProcessor は "騎手" 列を drop しているため、この
+# ["騎手"] グループ集計は _merge_aggregates の `if group_col not in columns: continue`
+# により実質無効（サイレントに skip）。有効化する場合は現騎手列を results に
+# 復活させる必要があるが、列名を "騎手" にすると意図せず有効化して列数が
+# 爆発するため、乗り替わり用途では別列名(jockey_name)を使う（Phase 2）。
+AGG_GROUP_COLS: list = ["騎手"]
+
 # ──────────────────────────────────────────
 # §2c: 騎手・調教師集計特徴量
 # ──────────────────────────────────────────

@@ -96,10 +96,12 @@ def merger(shutuba_pkl):
     pp  = PedsProcessor(_PATHS.RAW_PEDS_PATH)
     rip = RaceInfoProcessor(_PATHS.RAW_RACE_INFO_PATH)
 
+    from src.constants._feature_cols import AGG_GROUP_COLS, AGG_TARGET_COLS
+
     m = ShutubaDataMerger(
         stp, hrp, hip, pp,
-        target_cols=["着順"],
-        group_cols=["騎手"],
+        target_cols=AGG_TARGET_COLS,
+        group_cols=AGG_GROUP_COLS,
         race_info_processor=rip,
     )
     m.merge()
@@ -193,6 +195,55 @@ def test_featured_data_no_missing_after_race_info(featured, keiba_ai):
 
     missing = [c for c in feature_names if c not in X.columns]
     assert len(missing) == 0, f"race_info ありでも {len(missing)} 列が不足: {missing[:5]}"
+
+
+def test_train_live_feature_parity(featured):
+    """学習 featured_data とライブ featured の「構造的」列集合の一致を検証する。
+
+    学習(run_pipeline)とライブ(ShutubaDataMerger)は AGG_TARGET_COLS / AGG_GROUP_COLS
+    を共有するため、集計・数値などの構造的特徴量列は一致するはず。`feature_names_`
+    の reindex fill 0 が差分を握り潰す前に、ここで差分を可視化する。
+
+    One-Hot ダミー列（"__" 区切り。例 race_class__G1, weather__雪）は「その集合に
+    実在するカテゴリ」に依存するため、単一レースのライブ側では一部しか現れないのが
+    正当（reindex fill 0 が担当する領域）。よって構造的列（"__" を含まない列）に
+    絞ってパリティを検証する。target_cols 不一致等は集計列の欠落として顕在化する。
+
+    学習 featured_data.pkl が無い環境ではスキップ（差分の基準が取れないため）。
+    """
+    from src.training._data_splitter import _DROP_FOR_TRAIN
+
+    featured_path = Path(_PATHS.FEATURED_DATA_PATH)
+    if not featured_path.exists():
+        pytest.skip("学習 featured_data.pkl が存在しない（パリティ基準が取れない）")
+
+    def _structural(cols) -> set:
+        # One-Hot ダミー列（値依存）を除外した構造的特徴量列のみ
+        return {c for c in cols if "__" not in str(c)}
+
+    train_cols = _structural(pd.read_pickle(featured_path).columns)
+    live_cols = _structural(featured.columns)
+
+    # ラベル/EV 用など、ライブ側に存在しないのが正当な列は除外する
+    #   - _DROP_FOR_TRAIN(rank/date/単勝/着順): 学習時に落とす目的変数系
+    #   - latest: interval 計算用の中間列
+    benign_train_only = set(_DROP_FOR_TRAIN) | {"latest", "着順", "rank", "date"}
+
+    train_only = (train_cols - live_cols) - benign_train_only
+    live_only = (live_cols - train_cols) - benign_train_only
+
+    # 構造的な学習列がライブに無い = 推論時 0 補完に化ける潜在バグ。ここを 0 に保つ。
+    assert not train_only, (
+        f"学習にあってライブに無い構造的列 {len(train_only)} 件（0補完に化ける）: "
+        f"{sorted(train_only)[:10]}"
+    )
+    # live_only は情報目的（推論時は feature_names_ で無視されるため致命ではない）
+    if live_only:
+        import logging
+        logging.getLogger(__name__).warning(
+            "ライブのみに存在する構造的列 %d 件（モデルは無視）: %s",
+            len(live_only), sorted(live_only)[:10],
+        )
 
 
 def test_score_table_has_all_horses(featured, keiba_ai):
