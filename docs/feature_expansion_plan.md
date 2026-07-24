@@ -229,7 +229,28 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
 - unit test で「cutoff 以降のレースが base_table に寄与しない」ことを担保
   （ラベルシャッフル検査では分布リークを検出できないため構造テストが必須）
 
-### Phase 4: レース展開予測 + 種牡馬距離適性（項目 8, 9）
+### Phase 4: レース展開予測 + 種牡馬距離適性（項目 8, 9）— ✅ 完了（2026-07-24）
+
+**実装サマリ**:
+- 展開予測 `DataMerger._add_race_pace_forecast(results)`: per-date ループの
+  `_add_pace_stats` 直後（同一レース全馬の leg_type_binary/pace_median 確定後）に配置。
+  `race_front_rate`（逃/先馬率, NaN 脚質は分母除外）/ `race_front_count` /
+  `race_pace_mean`（想定ペース）/ `own_vs_race_pace`（自馬の相対位置）を横集計で付与。
+  レース内定数のため **Z-score 対象外**（own_vs_race_pace 含め RACE_PACE_FEATURE_COLS を
+  named 群に入れない）
+- 種牡馬距離適性 `DataMerger._add_sire_distance_stats(results, date)` + `_dist_band()`:
+  距離帯 `DIST_BAND_EDGES`（≤13 短距離/14-17 マイル/18-21 中距離/≥22 長距離、100m 単位）×
+  種牡馬で `sire_win_rate_distband` / `sire_avg_rank_distband` / `sire_n_distband` を集計。
+  `SIRE_DISTANCE_FEATURE_COLS` は Z-score named 群へ合流。件数の少ないセルは NaN のまま
+- 双方 per-date ループ内のため ShutubaDataMerger でも `_merge_horse_results` 継承で自動パリティ
+
+**検証結果**:
+- unit: `test_data_merger_features.py`（front_rate/count・NaN 脚質除外・own_vs・
+  dist_band マッピング・距離帯別勝率・temp キー drop）→ 42 passed
+- 合成 E2E: merge→FE で Phase 4 全列生成、`sire_win_rate_distband_z` は Z-score される一方
+  `race_front_rate_z` は生成されない（レース定数）ことを確認（総 428 列）
+- 全 pytest 911 passed / 18 skip、mypy・ruff(src)・import-linter 4 契約 KEPT
+- **リーク**: 展開予測は当日出走馬の過去成績のみ、距離適性は date < 当日の産駒成績のみ参照
 
 - 展開予測: per-date ループ内 `_add_pace_stats` の**直後**に
   `_add_race_pace_forecast(results)` を追加（この時点で同一レース全馬の

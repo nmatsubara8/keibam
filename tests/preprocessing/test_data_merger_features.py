@@ -479,6 +479,108 @@ class TestAddJockeyTrainerStats:
 
 
 # ──────────────────────────────────────────
+# Phase 4: _add_race_pace_forecast（展開予測）
+# ──────────────────────────────────────────
+
+class TestAddRacePaceForecast:
+    def test_front_rate_and_count(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame(
+            {"horse_id": [1, 2, 3], "leg_type_binary": [0.0, 1.0, 0.0],
+             "pace_median": [1.0, 2.0, 0.0]},
+            index=pd.Index(["r1"] * 3, name="race_id"),
+        )
+        out = m._add_race_pace_forecast(res)
+        assert out["race_front_count"].iloc[0] == 2.0
+        assert out["race_front_rate"].iloc[0] == pytest.approx(2 / 3)
+
+    def test_nan_leg_type_excluded_from_denominator(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame(
+            {"horse_id": [1, 2, 3, 4], "leg_type_binary": [0.0, np.nan, 1.0, 0.0],
+             "pace_median": [1.0, 1.5, 2.0, 0.0]},
+            index=pd.Index(["r2"] * 4, name="race_id"),
+        )
+        out = m._add_race_pace_forecast(res)
+        # 2 front / 3 known (NaN excluded) = 2/3
+        assert out["race_front_rate"].iloc[0] == pytest.approx(2 / 3)
+
+    def test_own_vs_race_pace(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame(
+            {"horse_id": [1, 2, 3], "leg_type_binary": [0.0, 1.0, 0.0],
+             "pace_median": [1.0, 2.0, 0.0]},
+            index=pd.Index(["r1"] * 3, name="race_id"),
+        )
+        out = m._add_race_pace_forecast(res)
+        # mean pace = 1.0 → own_vs = [0, 1, -1]
+        assert out["own_vs_race_pace"].tolist() == [0.0, 1.0, -1.0]
+
+    def test_skips_when_no_pace_cols(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1]}, index=pd.Index(["r"], name="race_id"))
+        out = m._add_race_pace_forecast(res)
+        assert "race_front_rate" not in out.columns
+
+
+# ──────────────────────────────────────────
+# Phase 4: _dist_band / _add_sire_distance_stats
+# ──────────────────────────────────────────
+
+class TestSireDistanceStats:
+    def test_dist_band_mapping(self):
+        from src.preprocessing._data_merger import DataMerger
+
+        bands = DataMerger._dist_band(pd.Series([12, 16, 20, 24, np.nan]))
+        assert bands.iloc[:4].tolist() == ["sprint", "mile", "mid", "long"]
+        assert pd.isna(bands.iloc[4])  # 欠損 course_len は NaN 帯（統計にマッチせず NaN）
+
+    def _setup(self):
+        m = _make_merger(_results_df_with_jockey())
+        hr = pd.DataFrame(
+            {
+                "着順": [1, 2, 1, 3, 2, 1], "頭数": [10] * 6,
+                "course_len": [16, 16, 20, 20, 16, 16],
+                "peds_0": pd.Categorical(["A", "A", "A", "A", "B", "B"]),
+                "date": pd.to_datetime(["2023-01-01"] * 6),
+            },
+            index=pd.Index([1, 1, 2, 2, 3, 3], name="horse_id"),
+        )
+        m._separated_hr_with_sire_dict = {pd.Timestamp("2024-01-01"): hr}
+        m._peds = pd.DataFrame(
+            {"peds_0": pd.Categorical(["A", "B"])},
+            index=pd.Index([10, 11], name="horse_id"),
+        )
+        return m
+
+    def test_distband_cols_added(self):
+        from src.constants._feature_cols import SIRE_DISTANCE_FEATURE_COLS
+
+        m = self._setup()
+        res = pd.DataFrame({"horse_id": [10, 11], "course_len": [16.0, 16.0]},
+                           index=pd.Index(["r3", "r3"], name="race_id"))
+        out = m._add_sire_distance_stats(res, pd.Timestamp("2024-01-01"))
+        for c in SIRE_DISTANCE_FEATURE_COLS:
+            assert c in out.columns
+
+    def test_win_rate_correct_for_band(self):
+        m = self._setup()
+        res = pd.DataFrame({"horse_id": [10], "course_len": [16.0]},
+                           index=pd.Index(["r3"], name="race_id"))
+        out = m._add_sire_distance_stats(res, pd.Timestamp("2024-01-01"))
+        # sireA at mile(16): 着順=[1,2] → win_rate=0.5, n=2
+        assert out["sire_win_rate_distband"].iloc[0] == pytest.approx(0.5)
+        assert out["sire_n_distband"].iloc[0] == 2.0
+
+    def test_temp_keys_dropped(self):
+        m = self._setup()
+        res = pd.DataFrame({"horse_id": [10], "course_len": [16.0]},
+                           index=pd.Index(["r3"], name="race_id"))
+        out = m._add_sire_distance_stats(res, pd.Timestamp("2024-01-01"))
+        assert "_sire_key" not in out.columns and "_dist_band" not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2j: _add_sire_stats
 # ──────────────────────────────────────────
 

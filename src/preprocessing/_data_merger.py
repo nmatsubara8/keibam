@@ -195,11 +195,17 @@ class DataMerger:
             # ── §2d: Pace / leg type stats ─────────────────────────────
             results = self._add_pace_stats(results, horse_results)
 
+            # ── Phase 4: レース展開予測（全馬の脚質確定後の横集計）─────────
+            results = self._add_race_pace_forecast(results)
+
             # ── §2e: Course condition stats ────────────────────────────
             results = self._add_course_condition_stats(results, horse_results)
 
             # ── §2j: Sire stats ────────────────────────────────────────
             results = self._add_sire_stats(results, date)
+
+            # ── Phase 4: 種牡馬 距離帯別適性 ───────────────────────────
+            results = self._add_sire_distance_stats(results, date)
 
             output_results_dict[date] = results
 
@@ -408,6 +414,92 @@ class DataMerger:
         results = results.merge(sire_all, left_on="_sire_key", right_index=True, how="left")
         results = results.drop(columns=["_sire_key"], errors="ignore")
 
+        return results
+
+    # ──────────────────────────────────────────
+    # Phase 4: レース展開予測 / 種牡馬 距離適性
+    # ──────────────────────────────────────────
+
+    def _add_race_pace_forecast(self, results: pd.DataFrame) -> pd.DataFrame:
+        """レース単位の想定展開を横集計で付与する（_add_pace_stats の直後に呼ぶ）。
+
+        results は index=race_id で同一レースの全馬が揃い、各馬の pace_median /
+        leg_type_binary が確定済み。逃/先馬率・想定ペース・自馬の相対位置を生成する。
+        レース内定数（own_vs_race_pace を除く）のため Z-score 対象外。
+        当日出走馬の過去成績のみから算出されるためリークしない。
+        """
+        if "leg_type_binary" in results.columns:
+            leg = results["leg_type_binary"]
+            known = leg.notna()
+            is_front = (leg == 0) & known
+            front_count = is_front.astype(float).groupby(level=0).transform("sum")
+            known_count = known.astype(float).groupby(level=0).transform("sum")
+            results["race_front_count"] = front_count
+            results["race_front_rate"] = front_count / known_count.replace(0, np.nan)
+        if "pace_median" in results.columns:
+            race_pace_mean = results["pace_median"].groupby(level=0).transform("mean")
+            results["race_pace_mean"] = race_pace_mean
+            results["own_vs_race_pace"] = results["pace_median"] - race_pace_mean
+        return results
+
+    @staticmethod
+    def _dist_band(course_len) -> pd.Series:
+        """course_len（100m 単位）を距離帯ラベル（str）に変換する。欠損は 'nan'。"""
+        from src.constants._feature_cols import DIST_BAND_EDGES, DIST_BAND_LABELS
+
+        cl = pd.to_numeric(course_len, errors="coerce")
+        band = pd.cut(cl, bins=DIST_BAND_EDGES, labels=DIST_BAND_LABELS, right=True)
+        return band.astype(str)
+
+    def _add_sire_distance_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
+        """種牡馬産駒の距離帯別成績（勝率/平均着順/件数）を現レースの距離帯で付与する。
+
+        _separated_hr_with_sire_dict[target_date]（date < target_date, peds_0 付き）から
+        (種牡馬, 距離帯) 別に集計。件数の少ないセルは NaN のまま（LightGBM に委ねる）。
+        """
+        if target_date not in self._separated_hr_with_sire_dict:
+            return results
+        phs = self._separated_hr_with_sire_dict[target_date]
+        rank_col = HRCols.RANK
+        n_horses_col = HRCols.N_HORSES
+        if (
+            "peds_0" not in phs.columns
+            or phs.empty
+            or rank_col not in phs.columns
+            or "course_len" not in phs.columns
+            or "course_len" not in results.columns
+            or "peds_0" not in self._peds.columns
+        ):
+            return results
+
+        phs = phs.copy()
+        phs["_sire_key"] = phs["peds_0"].astype(str)
+        phs["_dist_band"] = self._dist_band(phs["course_len"])
+        phs["_is_win"] = (phs[rank_col] == 1).astype(float)
+
+        band = phs.groupby(["_sire_key", "_dist_band"], observed=True)
+        stats = pd.DataFrame(
+            {
+                "sire_win_rate_distband": band["_is_win"].mean(),
+                "sire_n_distband": band["_is_win"].count().astype(float),
+            }
+        )
+        if n_horses_col in phs.columns:
+            phs["_rel_rank"] = phs[rank_col] / phs[n_horses_col]
+            stats["sire_avg_rank_distband"] = phs.groupby(
+                ["_sire_key", "_dist_band"], observed=True
+            )["_rel_rank"].mean()
+
+        # 現レースの種牡馬キー + 距離帯
+        horse_sire = self._peds[["peds_0"]].reset_index()
+        horse_sire["_sire_key"] = horse_sire["peds_0"].astype(str)
+        hs = horse_sire[["horse_id", "_sire_key"]].set_index("horse_id")
+        results = results.merge(hs, left_on="horse_id", right_index=True, how="left")
+        results["_dist_band"] = self._dist_band(results["course_len"])
+        results = results.merge(
+            stats, left_on=["_sire_key", "_dist_band"], right_index=True, how="left"
+        )
+        results = results.drop(columns=["_sire_key", "_dist_band"], errors="ignore")
         return results
 
     # ──────────────────────────────────────────

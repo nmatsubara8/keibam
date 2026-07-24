@@ -133,6 +133,30 @@ SIRE_FEATURE_COLS: list = [
 ]
 
 # ──────────────────────────────────────────
+# Phase 4: レース展開予測 / 種牡馬 距離適性
+# ──────────────────────────────────────────
+
+# 距離帯（course_len は 100m 単位バケット。≤13 短距離 / 14-17 マイル /
+# 18-21 中距離 / ≥22 長距離）。pd.cut(right=True) の境界。
+DIST_BAND_EDGES: list = [float("-inf"), 13, 17, 21, float("inf")]
+DIST_BAND_LABELS: list = ["sprint", "mile", "mid", "long"]
+
+# レース展開予測（レース内の横集計。レース内定数のため Z-score 対象外）
+RACE_PACE_FEATURE_COLS: list = [
+    "race_front_rate",   # レース内 逃/先（leg_type_binary==0）の割合
+    "race_front_count",  # レース内 逃/先の頭数
+    "race_pace_mean",    # レース内 pace_median の平均（小さいほどハイペース想定）
+    "own_vs_race_pace",  # 自馬 pace_median − race_pace_mean（先行/差し優位の相対位置）
+]
+
+# 種牡馬 距離帯別適性（Z-score named 群へ合流）
+SIRE_DISTANCE_FEATURE_COLS: list = [
+    "sire_win_rate_distband",  # 同距離帯での種牡馬産駒勝率
+    "sire_avg_rank_distband",  # 同距離帯での種牡馬産駒平均着順(相対)
+    "sire_n_distband",         # 同距離帯でのサンプル数
+]
+
+# ──────────────────────────────────────────
 # §2g: レース内 Z-score 対象列
 # ──────────────────────────────────────────
 
