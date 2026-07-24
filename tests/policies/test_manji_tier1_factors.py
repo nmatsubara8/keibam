@@ -13,10 +13,11 @@ def _race(rows):
 def test_popularity_from_ninki_column():
     df = _race([
         {"人気": 1, "単勝": 2.0}, {"人気": 3, "単勝": 6.0},
-        {"人気": 5, "単勝": 12.0}, {"人気": 10, "単勝": 80.0},
+        {"人気": 5, "単勝": 12.0}, {"人気": 10, "単勝": 80.0}, {"人気": 14, "単勝": 200.0},
     ])
     b = buckets(df, ["popularity"])["popularity"].tolist()
-    assert b == ["fav1", "fav2_3", "mid4_8", "long9plus"]
+    # 9〜12番人気は long9_12、13番人気以下は long13plus に分離
+    assert b == ["fav1", "fav2_3", "mid4_8", "long9_12", "long13plus"]
 
 
 def test_popularity_falls_back_to_odds_rank():

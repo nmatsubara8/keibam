@@ -254,7 +254,9 @@ def f_popularity(df: pd.DataFrame) -> pd.Series:
         pop = _num(df[ResultsCols.TANSHO_ODDS]).groupby(df.index).rank(method="min")
     else:
         return pd.Series(NA, index=df.index)
-    out = pd.cut(pop, [0, 1, 3, 8, np.inf], labels=["fav1", "fav2_3", "mid4_8", "long9plus"])
+    # 13番人気以下（大穴）は単勝で人気バイアスにより過剰に買われ回収率が低い（名鑑）→ 分離。
+    out = pd.cut(pop, [0, 1, 3, 8, 12, np.inf],
+                 labels=["fav1", "fav2_3", "mid4_8", "long9_12", "long13plus"])
     return out.astype(object).fillna(NA).to_numpy()
 
 
