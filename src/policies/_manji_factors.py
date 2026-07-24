@@ -545,6 +545,130 @@ def f_turn(df: pd.DataFrame) -> pd.Series:
     return code.map(_m).to_numpy()
 
 
+# --- 生月・遠征・馬種・2世代血統 ---------------------------------------------
+
+def _birth_month(df: pd.DataFrame) -> pd.Series:
+    c = _col(df, "生月", "誕生月", "birth_month")
+    if c is not None:
+        return _num(df[c])
+    c2 = _col(df, "生年月日", "誕生日", "birth_date", "birthday")
+    if c2 is not None:
+        return pd.to_datetime(df[c2], errors="coerce").dt.month
+    return pd.Series(np.nan, index=df.index)
+
+
+def f_birth_month_2yo(df: pd.DataFrame) -> pd.Series:
+    """2歳馬の生まれ月（早生まれ=成長が早く有利）。1-3=early / 4-5=mid / 6月以降=late。
+
+    2歳以外・生月不明は na（成長差が効くのは2歳戦が中心のため2歳限定）。
+    """
+    a = _age_series(df)
+    m = _birth_month(df)
+    if m.isna().all():
+        return pd.Series(NA, index=df.index)
+    lab = pd.Series(NA, index=df.index, dtype=object)
+    is2 = (a == 2)
+    lab[is2 & m.between(1, 3)] = "early"
+    lab[is2 & m.between(4, 5)] = "mid"
+    lab[is2 & (m >= 6)] = "late"
+    return lab.to_numpy()
+
+
+def f_foreign_bred(df: pd.DataFrame) -> pd.Series:
+    """馬種類: 外国産(マル外)か内国産か。馬区分/フラグ/産地から判定。"""
+    c = _col(df, "外国産", "foreign", "マル外")
+    if c is not None:
+        v = _num(df[c])
+        if v.notna().any():
+            return np.where(v.isna(), NA, np.where(v >= 0.5, "foreign", "domestic"))
+    c3 = _col(df, "馬区分", "馬種類")
+    if c3 is not None:
+        s = df[c3].astype(str)
+        known = (s != "") & (s.str.lower() != "nan")
+        fore = s.str.contains("外", na=False)  # (外)/(父外)/マル外 等
+        return np.where(~known, NA, np.where(fore, "foreign", "domestic"))
+    c2 = _col(df, "産地", "origin", "country")
+    if c2 is not None:
+        s = df[c2].astype(str)
+        known = (s != "") & (s.str.lower() != "nan")
+        fore = s.str.contains(
+            "アメリカ|アイルランド|イギリス|英|米|フランス|仏|ドイツ|独|豪|オーストラリア|"
+            "カナダ|ニュージーランド|USA|IRE|GB|FR|AUS", na=False)
+        return np.where(~known, NA, np.where(fore, "foreign", "domestic"))
+    return pd.Series(NA, index=df.index)
+
+
+_KANTO_CODES = {"03", "04", "05", "06"}   # 福島 新潟 東京 中山
+_KANSAI_CODES = {"07", "08", "09", "10"}  # 中京 京都 阪神 小倉
+
+
+def _prev_region(df: pd.DataFrame):
+    """前走の地区（kanto/kansai/overseas/na）。前走場所列が無ければ None。"""
+    c = _col(df, "前走場コード", "前走場所", "前走_開催", "前走場", "prev_place")
+    if c is None:
+        return None
+    s = df[c].astype(str).str.strip()
+    code = s.str.extract(r"(\d{2})")[0]
+    # 既知の前走場所は既定 "other"（＝その地区への遠征ではない=no）。空/nan のみ na。
+    reg = pd.Series("other", index=df.index, dtype=object)
+    reg[s.eq("") | s.str.lower().eq("nan")] = NA
+    reg[code.isin(_KANTO_CODES)] = "kanto"
+    reg[code.isin(_KANSAI_CODES)] = "kansai"
+    reg[s.str.contains("東京|中山|福島|新潟", na=False)] = "kanto"
+    reg[s.str.contains("中京|京都|阪神|小倉", na=False)] = "kansai"
+    reg[s.str.contains("海外|香港|ドバイ|フランス|イギリス|米|豪|UAE|サウジ", na=False)] = "overseas"
+    return reg
+
+
+def _prev_flag(df: pd.DataFrame, region: str, *flag_cols):
+    """前走が指定地区への遠征か（yes/no/na）。明示フラグ列を優先、無ければ前走地区から。"""
+    c = _col(df, *flag_cols)
+    if c is not None:
+        v = _num(df[c])
+        if v.notna().any():
+            return np.where(v.isna(), NA, np.where(v >= 0.5, "yes", "no"))
+    reg = _prev_region(df)
+    if reg is None:
+        return None
+    return np.where(reg.to_numpy() == NA, NA, np.where(reg.to_numpy() == region, "yes", "no"))
+
+
+def f_prev_kanto(df: pd.DataFrame) -> pd.Series:
+    """前回 関東遠征の有無（yes/no）。前走関東遠征フラグ or 前走地区から。無ければ na。"""
+    r = _prev_flag(df, "kanto", "前走関東遠征", "prev_kanto", "前走_関東遠征")
+    return r if r is not None else pd.Series(NA, index=df.index).to_numpy()
+
+
+def f_prev_kansai(df: pd.DataFrame) -> pd.Series:
+    """前回 関西遠征の有無（yes/no）。無ければ na。"""
+    r = _prev_flag(df, "kansai", "前走関西遠征", "prev_kansai", "前走_関西遠征")
+    return r if r is not None else pd.Series(NA, index=df.index).to_numpy()
+
+
+def f_prev_overseas(df: pd.DataFrame) -> pd.Series:
+    """前回 海外遠征の有無（yes/no）。無ければ na。"""
+    r = _prev_flag(df, "overseas", "前走海外遠征", "prev_overseas", "前走海外", "前走_海外遠征")
+    return r if r is not None else pd.Series(NA, index=df.index).to_numpy()
+
+
+def f_pedigree_2gen(df: pd.DataFrame) -> pd.Series:
+    """2世代血統: 父系×母父系（脚質/距離適性の代理）。父・母父の大系統を結合。
+
+    父(peds_0)と母父(peds_32='母父')の JRDB 大系統を "父系|母父系" で結合。どちらか
+    不明・列不在は na。生の血統名より疎性が低く、系統×条件の回収率を学習しやすい。
+    """
+    sire_c = next((c for c in _SIRE_COLS if c in df.columns), None)
+    bms_c = _col(df, "母父", "母の父", "母父名", "broodmare_sire", "bms", "damsire")
+    if sire_c is None or bms_c is None:
+        return pd.Series(NA, index=df.index)
+    from src.features._sire_line import daikeito
+    ps = df[sire_c].map(daikeito).astype(str)
+    ms = df[bms_c].map(daikeito).astype(str)
+    combo = ps + "|" + ms
+    bad = (ps == "不明") | (ms == "不明")
+    return combo.where(~bad, NA).to_numpy()
+
+
 # --- 馬×時刻の履歴依拠ファクター（近走 / 通算） -----------------------------
 # これらは「馬の過去走」を要する＝1行だけでは計算できないため、事前に
 # _manji_factor_store が forward-only（当該走を含めない）で数値列 mf_* を付ける。
@@ -635,6 +759,13 @@ FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "dist_band": f_dist_band,
     "place": f_place,
     "turn": f_turn,
+    # 生月(2歳)・遠征・馬種・2世代血統
+    "birth_month_2yo": f_birth_month_2yo,
+    "foreign_bred": f_foreign_bred,
+    "prev_kanto": f_prev_kanto,
+    "prev_kansai": f_prev_kansai,
+    "prev_overseas": f_prev_overseas,
+    "pedigree_2gen": f_pedigree_2gen,
     # 馬×時刻の履歴依拠（_manji_factor_store が付ける mf_* 列を帯化。列不在なら na）
     "recent3_form": f_recent3_form,
     "recent5_form": f_recent5_form,

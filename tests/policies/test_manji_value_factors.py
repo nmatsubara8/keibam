@@ -74,8 +74,47 @@ def test_condition_cross_available_via_registry():
 
 
 def test_new_factors_registered():
-    for f in ("jockey", "trainer", "sire", "race_type", "dist_band", "place"):
+    for f in ("jockey", "trainer", "sire", "race_type", "dist_band", "place",
+              "birth_month_2yo", "foreign_bred", "prev_kanto", "prev_kansai",
+              "prev_overseas", "pedigree_2gen"):
         assert f in FACTORS
+
+
+def test_birth_month_2yo_only_for_2yo():
+    df = _df({"年齢": [2, 2, 2, 3], "生年月日": ["2024-02-10", "2024-05-01", "2024-08-20", "2023-02-01"]})
+    b = factor_series(df, "birth_month_2yo")
+    assert list(b[:3]) == ["early", "mid", "late"]  # 2月/5月/8月
+    assert b.iloc[3] == NA  # 3歳は対象外
+
+
+def test_foreign_bred_from_umakubun():
+    df = _df({"馬区分": ["(外)", "抽選", "マル外", ""]})
+    b = factor_series(df, "foreign_bred")
+    assert list(b) == ["foreign", "domestic", "foreign", NA]
+
+
+def test_prev_kanto_kansai_overseas_from_prev_place():
+    df = _df({"前走場所": ["東京", "京都", "香港", "門別"]})
+    assert list(factor_series(df, "prev_kanto")) == ["yes", "no", "no", "no"]
+    assert list(factor_series(df, "prev_kansai")) == ["no", "yes", "no", "no"]
+    assert list(factor_series(df, "prev_overseas")) == ["no", "no", "yes", "no"]
+
+
+def test_prev_travel_na_without_prev_place():
+    df = _df({ResultsCols.UMABAN: [1, 2]})
+    for f in ("prev_kanto", "prev_kansai", "prev_overseas"):
+        assert (factor_series(df, f) == NA).all()
+
+
+def test_pedigree_2gen_combines_sire_and_damsire():
+    # daikeito が認識する名前で（父系|母父系 に結合される）
+    df = _df({"父": ["ディープインパクト", "キングカメハメハ"],
+              "母父": ["サンデーサイレンス", "キングカメハメハ"]})
+    b = factor_series(df, "pedigree_2gen")
+    assert all("|" in str(v) for v in b)  # 父系|母父系 に結合されている
+    # 母父列が無ければ na
+    df2 = _df({"父": ["ディープインパクト"]})
+    assert (factor_series(df2, "pedigree_2gen") == NA).all()
 
 
 def test_missing_columns_return_na():

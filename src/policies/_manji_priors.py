@@ -56,6 +56,9 @@ FACTOR_PRIORS: dict[str, dict[str, float]] = {
     # 基準オッズ乖離(JRDB/Benter核): under=市場が過小評価=買い妙味
     "kijun_gap": {"under": +10.0, "slight_under": +4.0, "fair": 0.0,
                   "slight_over": -4.0, "over": -8.0},
+    # 2歳の生月: 早生まれ(1-3月)は成長が早く有利、遅生まれ(6月以降)は不利
+    "birth_month_2yo": {"early": +6.0, "mid": 0.0, "late": -6.0},
+    # 外国産(マル外)/遠征/2世代血統は方向が普遍でない → 事前なし（データ由来で学習）
 }
 
 
