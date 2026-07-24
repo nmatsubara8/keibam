@@ -69,10 +69,18 @@ class DataMerger:
             speed_index_test_size if speed_index_test_size is not None else SPEED_INDEX_TEST_SIZE
         )
         self._speed_index_base_path: str = speed_index_base_path or LocalPaths.BASE_TIME_TABLE_PATH
+        # Phase 5: エンティティ(騎手/調教師/馬主/生産者)統計。学習側は最新スナップショットを
+        # 保存、ライブ側(Shutuba)は load してマージ（過去履歴が空でも全 NaN にしない）。
+        self._entity_stats_build: bool = True
+        self._entity_stats_dir: str = LocalPaths.MASTER_DIR
 
     def merge(self):
         self._merge_race_info()
         logger.debug("merge_infos\n%s", self._results.sort_values(by="race_id").head().T)
+
+        # Phase 5: 生産者集計用に breeder_id を results へ事前 join（1 回だけ）。
+        # owner_id は results に既存。breeder_id は _merge_horse_info の重複除去で二重化を防ぐ。
+        self._attach_breeder_id()
 
         self._merge_horse_results()
         logger.debug("merge_horse\n%s", self._merged_data.sort_values(by="horse_id").head().T)
@@ -81,9 +89,23 @@ class DataMerger:
         logger.debug("merge_horse_info\n%s", self._merged_data.sort_values(by="horse_id").head().T)
 
         self._merge_peds()
+
+        # Phase 5: ライブ推論用に最新スナップショット統計を保存（学習側のみ）。
+        self._save_entity_stats_snapshot()
+
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
         self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+
+    def _attach_breeder_id(self):
+        """self._horse_info の breeder_id を horse_id で self._results に付与する（学習側）。"""
+        if "breeder_id" in self._results.columns or "breeder_id" not in self._horse_info.columns:
+            return
+        hi = self._horse_info[["breeder_id"]].copy()
+        hi.index = hi.index.astype(str)
+        self._results = self._results.copy()
+        self._results["horse_id"] = self._results["horse_id"].astype(str)
+        self._results = self._results.merge(hi, left_on="horse_id", right_index=True, how="left")
 
     def _merge_race_info(self):
         # race_id インデックスの dtype 不一致（int64/float64 vs str）によるジョイン失敗を防ぐ
@@ -192,6 +214,9 @@ class DataMerger:
             # ── §2c: Jockey / trainer stats ────────────────────────────
             results = self._add_jockey_trainer_stats(results, date)
 
+            # ── Phase 5: 馬主・生産者 stats ────────────────────────────
+            results = self._add_owner_breeder_stats(results, date)
+
             # ── §2d: Pace / leg type stats ─────────────────────────────
             results = self._add_pace_stats(results, horse_results)
 
@@ -216,7 +241,19 @@ class DataMerger:
     # ──────────────────────────────────────────
 
     def _add_jockey_trainer_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """直近 JOCKEY_RECENT_N レースの騎手・調教師集計特徴量を追加する。"""
+        """直近 JOCKEY_RECENT_N レースの騎手・調教師集計特徴量を追加する。
+
+        ライブ推論（_entity_stats_build=False）では過去履歴が空のため、学習時に保存した
+        最新スナップショットをロードして id でマージする（全 NaN 化を回避）。
+        """
+        if not getattr(self, "_entity_stats_build", True):
+            return self._merge_loaded_entity_stats(
+                results,
+                [
+                    ("jockey_id", "jockey_win_rate", "jockey_avg_rank"),
+                    ("trainer_id", "trainer_win_rate", "trainer_avg_rank"),
+                ],
+            )
         if "jockey_id" not in self._results.columns:
             return results
 
@@ -262,6 +299,104 @@ class DataMerger:
         results = results.merge(trainer_stats, left_on="trainer_id", right_index=True, how="left")
 
         return results
+
+    # ──────────────────────────────────────────
+    # Phase 5: 馬主・生産者集計特徴量 + ライブ用エンティティ統計
+    # ──────────────────────────────────────────
+
+    def _add_owner_breeder_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
+        """馬主・生産者の直近 OWNER_RECENT_N レース勝率/平均着順を追加する。
+
+        学習側: self._results（breeder_id 事前 join 済み）の date < target_date から算出。
+        ライブ側: 学習時スナップショットをロードして id でマージ（owner_id/breeder_id は
+        horse_info から補完）。過去走のみ参照するためリークしない。
+        """
+        from src.constants._feature_cols import OWNER_RECENT_N
+        from src.preprocessing._entity_stats import compute_entity_stats
+
+        configs = [
+            ("owner_id", "owner_win_rate", "owner_avg_rank"),
+            ("breeder_id", "breeder_win_rate", "breeder_avg_rank"),
+        ]
+        if not getattr(self, "_entity_stats_build", True):
+            return self._merge_loaded_entity_stats(results, configs)
+
+        results = self._attach_owner_breeder_ids(results)
+        past = self._results[self._results["date"] < target_date]
+        for id_col, win_col, rank_col in configs:
+            if id_col not in results.columns:
+                results[win_col] = np.nan
+                results[rank_col] = np.nan
+                continue
+            stats = compute_entity_stats(past, id_col, win_col, rank_col, OWNER_RECENT_N)
+            if stats.empty:
+                results[win_col] = np.nan
+                results[rank_col] = np.nan
+            else:
+                results = results.merge(stats, left_on=id_col, right_index=True, how="left")
+        return results
+
+    def _attach_owner_breeder_ids(self, results: pd.DataFrame) -> pd.DataFrame:
+        """results に owner_id / breeder_id を horse_info から補完する（欠けている場合のみ）。"""
+        info = self._horse_info
+        for col in ("owner_id", "breeder_id"):
+            if col in results.columns or col not in info.columns:
+                continue
+            id_map = info[[col]].copy()
+            id_map.index = id_map.index.astype(str)
+            results = results.copy()
+            results["horse_id"] = results["horse_id"].astype(str)
+            results = results.merge(id_map, left_on="horse_id", right_index=True, how="left")
+        return results
+
+    def _merge_loaded_entity_stats(self, results: pd.DataFrame, configs: list) -> pd.DataFrame:
+        """ライブ推論: 保存済みエンティティ統計をロードして id でマージする。
+
+        artifact が無い/該当 id が無い場合も列を NaN で必ず生成し、学習側との
+        列パリティを保つ（feature_names_ reindex より前に構造を揃える）。
+        """
+        from src.preprocessing._entity_stats import entity_stats_path, load_entity_stats
+
+        results = self._attach_owner_breeder_ids(results)
+        for id_col, win_col, rank_col in configs:
+            stats = load_entity_stats(entity_stats_path(self._entity_stats_dir, id_col))
+            if id_col in results.columns and not stats.empty and win_col in stats.columns:
+                key = results[id_col].astype(str)
+                results = results.assign(_key=key.values).merge(
+                    stats[[win_col, rank_col]], left_on="_key", right_index=True, how="left"
+                )
+                results = results.drop(columns=["_key"], errors="ignore")
+            else:
+                results[win_col] = np.nan
+                results[rank_col] = np.nan
+        return results
+
+    def _save_entity_stats_snapshot(self):
+        """学習側: 全 self._results から最新スナップショット統計を保存する（ライブ推論用）。"""
+        if not getattr(self, "_entity_stats_build", True):
+            return
+        from src.constants._feature_cols import JOCKEY_RECENT_N, OWNER_RECENT_N
+        from src.preprocessing._entity_stats import (
+            compute_entity_stats,
+            entity_stats_path,
+            save_entity_stats,
+        )
+
+        results = self._attach_owner_breeder_ids(self._results.copy())
+        specs = [
+            ("jockey_id", "jockey_win_rate", "jockey_avg_rank", JOCKEY_RECENT_N),
+            ("trainer_id", "trainer_win_rate", "trainer_avg_rank", JOCKEY_RECENT_N),
+            ("owner_id", "owner_win_rate", "owner_avg_rank", OWNER_RECENT_N),
+            ("breeder_id", "breeder_win_rate", "breeder_avg_rank", OWNER_RECENT_N),
+        ]
+        for id_col, win_col, rank_col, recent_n in specs:
+            if id_col not in results.columns:
+                continue
+            stats = compute_entity_stats(results, id_col, win_col, rank_col, recent_n)
+            if stats.empty:
+                continue
+            stats.index = stats.index.astype(str)
+            save_entity_stats(stats, entity_stats_path(self._entity_stats_dir, id_col))
 
     # ──────────────────────────────────────────
     # §2d: Pace / leg-type features
@@ -510,6 +645,11 @@ class DataMerger:
         self._merged_data["horse_id"] = self._merged_data["horse_id"].astype(str)
         info = self._horse_info.copy()
         info.index = info.index.astype(str)
+        # 既に merged_data に存在する列（breeder_id を事前 join した場合など）は
+        # 二重化（_x/_y）を避けるため info 側から除外する。
+        dup = [c for c in info.columns if c in self._merged_data.columns]
+        if dup:
+            info = info.drop(columns=dup)
         self._merged_data = self._merged_data.merge(
             info, left_on="horse_id", right_index=True, how="left"
         )

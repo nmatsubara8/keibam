@@ -69,6 +69,9 @@ class ShutubaDataMerger(DataMerger):
         self._speed_index_build = False
         self._speed_index_test_size = SPEED_INDEX_TEST_SIZE
         self._speed_index_base_path = LocalPaths.BASE_TIME_TABLE_PATH
+        # Phase 5: ライブ側は学習時保存のエンティティ統計をロードする（build しない）
+        self._entity_stats_build = False
+        self._entity_stats_dir = LocalPaths.MASTER_DIR
 
     def _merge_race_info_shutuba(self) -> None:
         """shutuba パイプライン専用の race_info 結合。

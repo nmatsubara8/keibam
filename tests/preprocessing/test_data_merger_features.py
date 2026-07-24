@@ -581,6 +581,96 @@ class TestSireDistanceStats:
 
 
 # ──────────────────────────────────────────
+# Phase 5: 馬主・生産者統計 + ライブパリティ
+# ──────────────────────────────────────────
+
+class TestOwnerBreederStats:
+    def _hist(self):
+        # owner O1 の過去成績（勝ち2/4）
+        return pd.DataFrame(
+            {
+                "horse_id": ["10", "11", "12", "13"],
+                "owner_id": ["O1", "O1", "O1", "O1"],
+                "jockey_id": ["J1"] * 4, "trainer_id": ["T1"] * 4,
+                "着順": [1, 5, 1, 3], "n_horses": [10] * 4,
+                "date": pd.to_datetime(["2023-01-01", "2023-02-01", "2023-03-01", "2023-04-01"]),
+            },
+            index=pd.Index(["a", "b", "c", "d"], name="race_id"),
+        )
+
+    def test_training_owner_win_rate(self):
+        m = _make_merger(self._hist())
+        m._entity_stats_build = True
+        m._horse_info = pd.DataFrame(
+            {"breeder_id": ["B1"] * 4},
+            index=pd.Index(["10", "11", "12", "13"], name="horse_id"),
+        )
+        # target_date 後方 → 過去 O1 全4走で win=2/4=0.5
+        results = self._hist().iloc[3:4].copy()
+        out = m._add_owner_breeder_stats(results, pd.Timestamp("2023-05-01"))
+        assert "owner_win_rate" in out.columns
+        # O1 past (date<2023-05-01) = 4走, 着順[1,5,1,3] → win 2/4 = 0.5
+        assert out["owner_win_rate"].iloc[0] == pytest.approx(0.5)
+
+    def test_live_loads_from_artifact(self, tmp_path):
+        """ライブ(build=False): artifact をロードして非 NaN 統計をマージ（バグ是正）。"""
+        from src.preprocessing._entity_stats import (
+            compute_entity_stats,
+            entity_stats_path,
+            save_entity_stats,
+        )
+
+        # 学習側スナップショットを保存
+        snap = compute_entity_stats(self._hist(), "owner_id", "owner_win_rate", "owner_avg_rank", 100)
+        save_entity_stats(snap, entity_stats_path(str(tmp_path), "owner_id"))
+
+        m = _make_merger(pd.DataFrame())
+        m._entity_stats_build = False
+        m._entity_stats_dir = str(tmp_path)
+        m._horse_info = pd.DataFrame(
+            {"owner_id": ["O1"], "breeder_id": ["B1"]},
+            index=pd.Index(["50"], name="horse_id"),
+        )
+        # ライブ results: owner_id 無し（horse_info から補完される）
+        live = pd.DataFrame({"horse_id": ["50"]}, index=pd.Index(["L"], name="race_id"))
+        out = m._add_owner_breeder_stats(live, pd.Timestamp("2024-01-01"))
+        assert out["owner_win_rate"].iloc[0] == pytest.approx(0.5)  # 全 NaN でない = 是正
+
+    def test_live_missing_artifact_yields_nan_cols(self, tmp_path):
+        m = _make_merger(pd.DataFrame())
+        m._entity_stats_build = False
+        m._entity_stats_dir = str(tmp_path)  # 空ディレクトリ
+        m._horse_info = pd.DataFrame(
+            {"owner_id": ["O1"], "breeder_id": ["B1"]},
+            index=pd.Index(["50"], name="horse_id"),
+        )
+        live = pd.DataFrame({"horse_id": ["50"]}, index=pd.Index(["L"], name="race_id"))
+        out = m._add_owner_breeder_stats(live, pd.Timestamp("2024-01-01"))
+        # artifact 無し → 列は存在して NaN（パリティ維持）
+        assert "owner_win_rate" in out.columns
+        assert out["owner_win_rate"].isna().all()
+
+    def test_jockey_trainer_live_branch(self, tmp_path):
+        from src.preprocessing._entity_stats import (
+            compute_entity_stats,
+            entity_stats_path,
+            save_entity_stats,
+        )
+
+        snap = compute_entity_stats(self._hist(), "jockey_id", "jockey_win_rate", "jockey_avg_rank", 30)
+        save_entity_stats(snap, entity_stats_path(str(tmp_path), "jockey_id"))
+        m = _make_merger(pd.DataFrame())
+        m._entity_stats_build = False
+        m._entity_stats_dir = str(tmp_path)
+        m._horse_info = pd.DataFrame(columns=["owner_id", "breeder_id"])
+        live = pd.DataFrame({"horse_id": ["50"], "jockey_id": ["J1"]},
+                            index=pd.Index(["L"], name="race_id"))
+        out = m._add_jockey_trainer_stats(live, pd.Timestamp("2024-01-01"))
+        # J1 全4走 着順[1,5,1,3] → win 2/4 = 0.5
+        assert out["jockey_win_rate"].iloc[0] == pytest.approx(0.5)
+
+
+# ──────────────────────────────────────────
 # §2j: _add_sire_stats
 # ──────────────────────────────────────────
 

@@ -263,7 +263,34 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
   〜2100 中距離 / ≥2200 長距離）× sire の勝率・平均着順・件数。
   count 小のセルは NaN のまま（LightGBM に委ねる）
 
-### Phase 5: 馬主・生産者成績 + ライブ側 entity-stats artifact（項目 4）
+### Phase 5: 馬主・生産者成績 + ライブ側 entity-stats artifact（項目 4）— ✅ 完了（2026-07-24）
+
+**実装サマリ**:
+- 新モジュール `src/preprocessing/_entity_stats.py`（純関数）: `compute_entity_stats`
+  （id 別の直近 N レース勝率/相対平均着順、空でも列付き空表）+ `save/load_entity_stats` +
+  `entity_stats_path`（`data/master/entity_stats_<id>.csv`）
+- `DataMerger._add_owner_breeder_stats`（`OWNER_RECENT_N=100`）: 学習側は self._results の
+  過去行から owner/breeder 勝率を集計。breeder_id は `merge()` 冒頭の `_attach_breeder_id()`
+  で results へ事前 join（`_merge_horse_info` の重複列除去で二重化を防止）
+- `OWNER_BREEDER_FEATURE_COLS` を Z-score named 群へ合流
+- **既存バグの是正（重要）**: `jockey_win_rate` 等は学習では過去行から算出されるが、ライブ推論
+  （ShutubaDataMerger の self._results は出馬表のみ＝履歴空）では全 NaN に化け reindex fill 0
+  頼みだった。学習側 `merge()` 末尾で `_save_entity_stats_snapshot()` が最新スナップショットを
+  4 エンティティ分保存し、ライブ側は `_merge_loaded_entity_stats` でこれをロードしてマージ
+  （owner_id/breeder_id は horse_info から補完）。学習時点の統計＝推論時点で利用可能な過去情報
+  なので point-in-time 正当・リークなし。jockey/trainer/owner/breeder 4 種すべてに適用
+- artifact 欠如時も列を NaN で必ず生成し学習/ライブの列パリティを維持
+
+**検証結果**:
+- unit: `test_entity_stats.py`（勝率/相対着順/直近 N/空表/往復）+
+  `test_data_merger_features.py::TestOwnerBreederStats`（学習集計・**ライブ artifact ロードで
+  非 NaN**・artifact 欠如で NaN 列・jockey ライブ分岐）→ 54 passed
+- 合成 E2E: 学習 build → 4 artifact 保存 → ライブ load で `jockey_win_rate` が [0.5,0.5]
+  非 NaN（是正確認）。owner/breeder も同様。owner/breeder は Z-score される
+- 全 pytest 923 passed / 18 skip、data/master への意図しない書込み無し、
+  mypy・ruff(src)・import-linter 4 契約 KEPT
+
+これにより「§1 既知のサイレントバグ 2」のライブ集計特徴量パリティ問題を解消。
 
 - `DataMerger._add_owner_breeder_stats()` を `_add_jockey_trainer_stats` と同型で新設。
   breeder_id は `merge()` 冒頭で horse_info から results へ 1 回だけ事前 join。
