@@ -46,7 +46,12 @@ class DataMerger:
         peds_processor: PedsProcessor,
         target_cols: list,
         group_cols: list,
+        speed_index_test_size: float | None = None,
+        speed_index_base_path: str | None = None,
     ):
+        from src.constants._local_paths import LocalPaths
+        from src.constants._speed_index import SPEED_INDEX_TEST_SIZE
+
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
         self._horse_results = horse_results_processor.preprocessed_data
@@ -58,6 +63,12 @@ class DataMerger:
         self._separated_results_dict: dict = {}
         self._separated_horse_results_dict: dict = {}
         self._separated_hr_with_sire_dict: dict = {}
+        # Phase 3: スピード指数。学習側は基準タイム表を build して保存、ライブ側(Shutuba)は load。
+        self._speed_index_build: bool = True
+        self._speed_index_test_size: float = (
+            speed_index_test_size if speed_index_test_size is not None else SPEED_INDEX_TEST_SIZE
+        )
+        self._speed_index_base_path: str = speed_index_base_path or LocalPaths.BASE_TIME_TABLE_PATH
 
     def merge(self):
         self._merge_race_info()
@@ -103,7 +114,58 @@ class DataMerger:
             # Past horse results with sire info (all horses, for §2j aggregation by sire)
             self._separated_hr_with_sire_dict[date] = hr_with_sire.query("date < @date")
 
+    def _speed_index_cutoff(self):
+        """基準タイムの train/test 境界日を返す（DataSplitter の分割規則に整合）。
+
+        results の各レース（race_id 単位）を date 昇順に並べ、(1 - test_size) 位置の
+        レース日を境界とする。この日より前の horse_results で基準タイムを作ることで、
+        テスト期間の time が基準統計に混入しないようにする。
+        """
+        if "date" not in self._results.columns or len(self._results) == 0:
+            return None
+        race_date = (
+            pd.to_datetime(self._results["date"], errors="coerce")
+            .groupby(self._results.index)
+            .first()
+            .sort_values()
+        )
+        race_date = race_date.dropna()
+        if len(race_date) == 0:
+            return None
+        boundary = int(round(len(race_date) * (1 - self._speed_index_test_size)))
+        boundary = min(max(boundary, 0), len(race_date) - 1)
+        return race_date.iloc[boundary]
+
+    def _ensure_speed_index(self):
+        """Phase 3: self._horse_results に speed_index 列を付与する。
+
+        学習側は train 期間限定で基準タイム表を build して artifact 保存、ライブ側
+        (ShutubaDataMerger, _speed_index_build=False) は保存済み artifact をロードする。
+        speed_index が AGG_TARGET_COLS に無ければ何もしない。
+        """
+        if "speed_index" not in self._target_cols:
+            return
+        from src.preprocessing._speed_index import (
+            attach_speed_index,
+            build_base_time_table,
+            load_base_time_table,
+            save_base_time_table,
+        )
+
+        path = getattr(self, "_speed_index_base_path", None)
+        if getattr(self, "_speed_index_build", True):
+            cutoff = self._speed_index_cutoff()
+            base = build_base_time_table(self._horse_results, cutoff_date=cutoff)
+            if path:
+                save_base_time_table(base, path)
+            logger.info("[speed_index] base table built (cutoff=%s)", cutoff)
+        else:
+            base = load_base_time_table(path) if path else {}
+            logger.info("[speed_index] base table loaded: %s", path)
+        self._horse_results = attach_speed_index(self._horse_results, base)
+
     def _merge_horse_results(self):
+        self._ensure_speed_index()
         self._separate_by_date()
         logger.info("merging horse_results")
         output_results_dict: dict = {}
@@ -498,8 +560,10 @@ class DataMerger:
 
         返り値の列名形式: {col}_{stat}（例: 着順_mean, 着順_std）
         呼び出し元で .add_suffix("_5R") 等を付与する。
+        horse_results に存在しない target_col は安全にスキップする（speed_index 未付与など）。
         """
-        agg = horse_results.groupby(level=0)[target_cols].agg(AGG_STATS)
+        cols = [c for c in target_cols if c in horse_results.columns]
+        agg = horse_results.groupby(level=0)[cols].agg(AGG_STATS)
         agg.columns = [f"{col}_{stat}" for col, stat in agg.columns]
         return agg
 
@@ -507,6 +571,7 @@ class DataMerger:
         self, horse_results: pd.DataFrame, target_cols: list, group_col: str
     ) -> pd.DataFrame:
         """(horse_id, group_col) ごとに target_cols を AGG_STATS で集計する。"""
-        agg = horse_results.groupby(["horse_id", group_col])[target_cols].agg(AGG_STATS)
+        cols = [c for c in target_cols if c in horse_results.columns]
+        agg = horse_results.groupby(["horse_id", group_col])[cols].agg(AGG_STATS)
         agg.columns = [f"{col}_{stat}" for col, stat in agg.columns]
         return agg

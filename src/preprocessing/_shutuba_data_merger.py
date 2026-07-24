@@ -62,6 +62,13 @@ class ShutubaDataMerger(DataMerger):
         self._race_info: pd.DataFrame | None = (
             race_info_processor.preprocessed_data if race_info_processor is not None else None
         )
+        # Phase 3: ライブ側は学習時に保存した基準タイム表をロードする（build しない）
+        from src.constants._local_paths import LocalPaths
+        from src.constants._speed_index import SPEED_INDEX_TEST_SIZE
+
+        self._speed_index_build = False
+        self._speed_index_test_size = SPEED_INDEX_TEST_SIZE
+        self._speed_index_base_path = LocalPaths.BASE_TIME_TABLE_PATH
 
     def _merge_race_info_shutuba(self) -> None:
         """shutuba パイプライン専用の race_info 結合。

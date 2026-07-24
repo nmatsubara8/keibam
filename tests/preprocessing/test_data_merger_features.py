@@ -212,6 +212,35 @@ class TestAddHorseCareerStats:
 
 
 # ──────────────────────────────────────────
+# Phase 3: _speed_index_cutoff（基準タイムの train/test 境界）
+# ──────────────────────────────────────────
+
+class TestSpeedIndexCutoff:
+    def _merger_with_dates(self, dates):
+        m = _make_merger(_results_df_with_jockey())
+        n = len(dates)
+        m._results = pd.DataFrame(
+            {"horse_id": range(n), "date": pd.to_datetime(dates)},
+            index=pd.Index([f"r{i:02d}" for i in range(n)], name="race_id"),
+        )
+        m._speed_index_test_size = 0.2
+        return m
+
+    def test_cutoff_at_1_minus_test_size_boundary(self):
+        # 10 レース、test_size=0.2 → boundary index round(10*0.8)=8 → 9番目(2020-01-09)
+        dates = [f"2020-01-{d:02d}" for d in range(1, 11)]
+        m = self._merger_with_dates(dates)
+        cutoff = m._speed_index_cutoff()
+        assert cutoff == pd.Timestamp("2020-01-09")
+
+    def test_cutoff_none_when_no_date(self):
+        m = _make_merger(_results_df_with_jockey())
+        m._results = pd.DataFrame({"horse_id": [1]}, index=pd.Index(["r"], name="race_id"))
+        m._speed_index_test_size = 0.2
+        assert m._speed_index_cutoff() is None
+
+
+# ──────────────────────────────────────────
 # Phase 2: _add_jockey_change（乗り替わり / テン乗り）
 # ──────────────────────────────────────────
 

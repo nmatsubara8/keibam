@@ -41,3 +41,5 @@ class LocalPaths:
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")
+    # Phase 3: スピード指数の基準タイム表（train 期間限定で算出・ライブ推論はこれをロード）
+    BASE_TIME_TABLE_PATH: str = os.path.join(MASTER_DIR, "base_time_table.csv")

@@ -180,7 +180,39 @@ Phase 2 の FE メソッド追加は見送り。merger 由来の jockey_change/f
   過去騎手集合に不在なら `first_ride`（テン乗り）。
   見習マーク（☆▲△等）を除去してから比較
 
-### Phase 3: スピード指数（項目 2）— 本命ファクター
+### Phase 3: スピード指数（項目 2）— ✅ 完了（2026-07-24）
+
+**実装サマリ**:
+- 新モジュール `src/preprocessing/_speed_index.py`（純関数・DI・I/O は save/load のみ）:
+  - `build_base_time_table(horse_results, cutoff_date)`: `(開催,race_type,course_len,馬場)`
+    の細キー + `(race_type,course_len)` の粗キーで time_seconds の mean/std/count を集計。
+    cutoff_date 指定時は `date < cutoff` のみ使用（リーク遮断）
+  - `attach_speed_index()`: `50 + 10×(base_mean − time)/base_std`（速い＝高い）。細キーの
+    count < 30（`BASE_TIME_MIN_COUNT`）は粗キーへフォールバック、いずれも無ければ NaN
+  - `save/load_base_time_table()`: fine/coarse を単一 CSV（`_scope` 列）で往復
+- 定数 `src/constants/_speed_index.py`、artifact パス `LocalPaths.BASE_TIME_TABLE_PATH`
+  （`data/master/base_time_table.csv`、`data/**/*.csv` で gitignore 済み）
+- `AGG_TARGET_COLS` に `speed_index` を追加 → 多窓集計・Z-score が自動発動
+- **リーク遮断**: `DataMerger._speed_index_cutoff()` が results のレース日を DataSplitter と
+  同じ規則（unique race を date 昇順、`(1-test_size)` 位置）で境界日を算出。
+  `_ensure_speed_index()` が学習側は cutoff 付きで build して artifact 保存、
+  ライブ側（`ShutubaDataMerger`, `_speed_index_build=False`）は artifact をロード。
+  `_merge_horse_results` 冒頭で horse_results に speed_index を付与
+- `_summarize`/`_summarize_with` を「存在する列のみ集計」に堅牢化（speed_index 未付与でも安全）
+
+**検証結果**:
+- unit: `test_speed_index.py`（cutoff で未来レース除外・速い馬ほど高指数・粗キー
+  フォールバック・min_count 未満フォールバック・no-base→NaN・save/load 往復）+
+  `test_data_merger_features.py::TestSpeedIndexCutoff`（境界日の算出）→ 44 passed
+- 合成 E2E: 学習 build → artifact 保存 → ライブ load の両経路で `speed_index_mean_5R` 等が
+  非 NaN 生成されることを確認
+- 全 pytest 903 passed / 18 skip、data/master への意図しない書込み無し、
+  mypy・ruff(src)・import-linter 4 契約 KEPT
+- **cutoff の構造テスト**が要（ラベルシャッフルは分布リークを検出できないため）→ 実装済み
+
+**留意**: retrain の `test_size` は既定 0.2 で `SPEED_INDEX_TEST_SIZE` と一致。test_size を
+変更した場合は基準タイム表の再生成（次回 retrain）で cutoff が追従する。全期間算出との
+AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ現行の train 限定を維持）。
 
 - 新モジュール `src/preprocessing/_speed_index.py`（純関数・DI・Streamlit 非依存）:
   - `build_base_time_table(horse_results, cutoff_date)` — `(開催, race_type,
