@@ -721,6 +721,70 @@ def f_career_recovery(df: pd.DataFrame) -> pd.Series:
                        ["under", "fair", "over"]).to_numpy()
 
 
+# --- 近走詳細（出遅れ/不利/着差/逆トラック・逆馬場）＝factor_store が付ける mf_* を帯化 -----
+
+def f_recent_deokure(df: pd.DataFrame) -> pd.Series:
+    """近走(過去5走)で出遅れたことがある馬（yes=過小評価の妙味／加点）。列不在は na。"""
+    if "mf_recent_deokure" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["mf_recent_deokure"])
+    return np.where(v.isna(), NA, np.where(v >= 0.5, "yes", "no"))
+
+
+def f_recent_trouble(df: pd.DataFrame) -> pd.Series:
+    """近走(過去5走)で道中不利を受けたレースがある馬（yes=妙味／加点）。列不在は na。"""
+    if "mf_recent_trouble" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["mf_recent_trouble"])
+    return np.where(v.isna(), NA, np.where(v >= 0.5, "yes", "no"))
+
+
+def f_recent_close(df: pd.DataFrame) -> pd.Series:
+    """近走の勝ち馬からの最小着差[秒]。≤0.2=within02 / ≤0.5=within05 / それ超=over。列不在は na。"""
+    if "mf_recent_close" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["mf_recent_close"])
+    out = pd.cut(v, [-1.0, 0.2, 0.5, np.inf], labels=["within02", "within05", "over"])
+    return out.astype(object).where(v.notna(), NA).to_numpy()
+
+
+def f_offsurface_form(df: pd.DataFrame) -> pd.Series:
+    """今走と逆トラックの近走成績（今走芝×近走ダ好走=過大評価で減点、凡走=妙味で加点。ダ↔芝も同様）。
+
+    offsurf_good=逆トラックで好走(最高着≤3)／offsurf_poor=凡走(≥6)。判定不能は na。
+    """
+    rt = _race_type_series(df)
+    if rt is None:
+        return pd.Series(NA, index=df.index)
+    today = rt.astype(str).to_numpy()
+    dv = _num(df["mf_recent_dirt_bestrank"]).to_numpy() if "mf_recent_dirt_bestrank" in df.columns \
+        else np.full(len(df), np.nan)
+    tv = _num(df["mf_recent_turf_bestrank"]).to_numpy() if "mf_recent_turf_bestrank" in df.columns \
+        else np.full(len(df), np.nan)
+    if np.isnan(dv).all() and np.isnan(tv).all():
+        return pd.Series(NA, index=df.index)
+    opp = np.where(today == "芝", dv, np.where(today == "ダート", tv, np.nan))
+    return np.where(np.isnan(opp), NA,
+                    np.where(opp <= 3, "offsurf_good", np.where(opp >= 6, "offsurf_poor", NA)))
+
+
+def f_offground_form(df: pd.DataFrame) -> pd.Series:
+    """今走良馬場のとき、近走の道悪(重/不良)成績（好走=過大評価で減点、凡走=妙味で加点）。
+
+    offgrnd_good=道悪で好走(≤3)／offgrnd_poor=凡走(≥6)。今走が良でない/判定不能は na。
+    """
+    oh = _onehot_cat(df, "ground_state1__")
+    if oh is None and "ground_state" in df.columns:
+        oh = df["ground_state"].astype(str)
+    if oh is None or "mf_recent_heavy_bestrank" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    today = pd.Series(oh, index=df.index).astype(str).to_numpy()
+    hv = _num(df["mf_recent_heavy_bestrank"]).to_numpy()
+    good_today = (today == "良")
+    return np.where(~good_today | np.isnan(hv), NA,
+                    np.where(hv <= 3, "offgrnd_good", np.where(hv >= 6, "offgrnd_poor", NA)))
+
+
 # 因子レジストリ（名前 → 抽出関数）。Model 2 はこの名前で点数を較正する。
 FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "umaban_parity": f_umaban_parity,
@@ -773,6 +837,12 @@ FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "recent5_recovery": f_recent5_recovery,
     "career_form": f_career_form,
     "career_recovery": f_career_recovery,
+    # 近走詳細（factor_store の mf_* を帯化。元列が無ければ na）
+    "recent_deokure": f_recent_deokure,
+    "recent_trouble": f_recent_trouble,
+    "recent_close": f_recent_close,
+    "offsurface_form": f_offsurface_form,
+    "offground_form": f_offground_form,
 }
 
 

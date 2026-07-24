@@ -38,6 +38,17 @@ logger = logging.getLogger(__name__)
 
 # _manji_factor_store が付与する履歴依拠の数値列（_manji_factors の f_recent*/f_career* が帯化）。
 RECENT_WINDOWS = (3, 5)
+DETAIL_WINDOW = 5  # 近走詳細（出遅れ/不利/着差/トラック・馬場別）の集約窓＝過去5走
+
+
+def _resolve_num_col(featured: pd.DataFrame, *names):
+    """候補列名の最初に在るものを数値化して返す（無ければ None）。"""
+    for nm in names:
+        if nm in featured.columns:
+            return pd.to_numeric(featured[nm], errors="coerce").to_numpy()
+    return None
+
+
 MF_COLS = tuple(
     [f"mf_recent{n}_avg_rank" for n in RECENT_WINDOWS]
     + [f"mf_recent{n}_winrate" for n in RECENT_WINDOWS]
@@ -71,6 +82,41 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
     work["win"] = (work["rank"] == 1).astype(float)
     work["ret"] = work["odds"] * work["win"]  # 単勝フラット回収（着1なら odds、他0）
 
+    # --- 近走の詳細シグナル（元列がある場合のみ。無ければ列を作らず=下流で na） ---------
+    # (out_name, work列名, 集約) を added に積み、後で shift+rolling(DETAIL_WINDOW) する。
+    added: list[tuple[str, str, str]] = []
+    from src.policies._manji_factors import _onehot_cat, _race_type_series
+    rk = work["rank"].to_numpy()
+
+    deo = _resolve_num_col(featured, "出遅れ", "deokure", "出遅", "prev_deokure_raw")
+    if deo is not None:
+        work["_deokure"] = deo
+        added.append(("mf_recent_deokure", "_deokure", "max"))     # 近走に出遅れ有=1
+    tro = _resolve_num_col(featured, "不利", "trouble", "道中不利", "prev_trouble_raw")
+    if tro is not None:
+        work["_trouble"] = tro
+        added.append(("mf_recent_trouble", "_trouble", "max"))     # 近走に不利有=1
+    tsec = _resolve_num_col(featured, "time_seconds")
+    if tsec is not None:  # 勝ち馬(レース内最小タイム)からの差[秒]
+        rid = featured.index.astype(str).to_numpy()
+        wmin = pd.DataFrame({"r": rid, "t": tsec}).groupby("r")["t"].transform("min").to_numpy()
+        work["_margin"] = tsec - wmin
+        added.append(("mf_recent_close", "_margin", "min"))        # 近走の最小着差[秒]
+    rt = _race_type_series(featured)
+    if rt is not None:  # 過去走のトラック別 最高着順
+        surf = rt.astype(str).to_numpy()
+        work["_dirt_rank"] = np.where(surf == "ダート", rk, np.nan)
+        work["_turf_rank"] = np.where(surf == "芝", rk, np.nan)
+        added.append(("mf_recent_dirt_bestrank", "_dirt_rank", "min"))
+        added.append(("mf_recent_turf_bestrank", "_turf_rank", "min"))
+    gr = _onehot_cat(featured, "ground_state1__")
+    if gr is None and "ground_state" in featured.columns:
+        gr = featured["ground_state"].astype(str)
+    if gr is not None:  # 過去走の道悪(重/不良) 最高着順
+        grd = pd.Series(gr).astype(str).to_numpy()
+        work["_heavy_rank"] = np.where(np.isin(grd, ["重", "不良"]), rk, np.nan)
+        added.append(("mf_recent_heavy_bestrank", "_heavy_rank", "min"))
+
     # 馬ごとに日付順（同日は race_id で安定化）。当該走を除くため shift(1)。
     w = work.sort_values(["horse_id", "date", "race_id"], kind="stable")
     grp = w.groupby("horse_id", sort=False)
@@ -91,9 +137,16 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
     w["mf_career_winrate"] = grp2["_past_win"].transform(lambda s: s.expanding(min_periods=1).mean())
     w["mf_career_recovery"] = grp2["_past_ret"].transform(lambda s: s.expanding(min_periods=1).mean())
 
+    # 近走詳細: 過去 DETAIL_WINDOW 走の集約（当該走除外の shift 後にローリング）。
+    for out_name, src, agg in added:
+        w["_pastd"] = grp2[src].shift(1)
+        w[out_name] = w.groupby("horse_id", sort=False)["_pastd"].transform(
+            lambda s, a=agg: getattr(s.rolling(DETAIL_WINDOW, min_periods=1), a)())
+
     # 元の行順（pos）に戻して featured.index に貼り直す（race_id 非ユニークでも位置一致）。
     w = w.sort_values("pos", kind="stable")
-    out = pd.DataFrame({c: w[c].to_numpy() for c in MF_COLS}, index=featured.index)
+    computed = list(MF_COLS) + [o for o, _, _ in added]
+    out = pd.DataFrame({c: w[c].to_numpy() for c in computed}, index=featured.index)
     return out
 
 
@@ -118,7 +171,7 @@ def build_factor_table(
     # join（ラベル結合＝重複でカルテシアン展開）ではなく **位置代入**（numpy）で足す。
     mf = build_recent_form_features(featured)
     view = featured.copy()
-    for c in MF_COLS:
+    for c in mf.columns:  # 近走詳細の追加列も含めて全 mf_* を付与
         view[c] = mf[c].to_numpy()  # 位置代入（index 整合を回避）
 
     bk = buckets(view, factor_names)  # index=race_id（非ユニーク）, 各因子のバケット列

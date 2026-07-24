@@ -58,6 +58,16 @@ FACTOR_PRIORS: dict[str, dict[str, float]] = {
                   "slight_over": -4.0, "over": -8.0},
     # 2歳の生月: 早生まれ(1-3月)は成長が早く有利、遅生まれ(6月以降)は不利
     "birth_month_2yo": {"early": +6.0, "mid": 0.0, "late": -6.0},
+    # 近走で出遅れ有=着順が実力より悪く出た過小評価→加点
+    "recent_deokure": {"yes": +3.0, "no": 0.0},
+    # 近走で道中不利有=過小評価→加点
+    "recent_trouble": {"yes": +3.0, "no": 0.0},
+    # 近走の勝ち馬からの着差: 0.2秒以内はさらに加点、0.5秒以内も加点（僅差の好内容）
+    "recent_close": {"within02": +6.0, "within05": +3.0, "over": 0.0},
+    # 逆トラック好走は過大評価で減点・凡走は妙味で加点
+    "offsurface_form": {"offsurf_good": -3.0, "offsurf_poor": +3.0},
+    # 逆馬場(道悪)好走は過大評価で減点・凡走は妙味で加点
+    "offground_form": {"offgrnd_good": -3.0, "offgrnd_poor": +3.0},
     # 外国産(マル外)/遠征/2世代血統は方向が普遍でない → 事前なし（データ由来で学習）
 }
 
