@@ -117,6 +117,42 @@ def test_global_sigma2_positive():
     assert global_sigma2(feat) > 0
 
 
+def test_informative_prior_shifts_small_sample_bucket():
+    """卍の方向性事前で、小標本バケットの妙味度が中立100から事前方向へ動く。"""
+    # 奇数馬番だけ・小標本（n=31, 勝ちほぼ無し→観測は妙味度低め）
+    df = _featured(_rows(1, win_frac=0.03, odds=3.0, n=31))
+    cfg = PosteriorConfig(min_n=30)
+    s2 = 1.0
+    # 事前なし
+    neutral = factor_posterior(df, "umaban_parity", cfg, sigma2=s2).loc["odd", "myoumido"]
+    # 事前 odd に +30 妙味度（テスト用の強めオフセット）
+    withpr = factor_posterior(df, "umaban_parity", cfg, sigma2=s2,
+                              prior_offsets={"odd": 30.0}).loc["odd", "myoumido"]
+    assert withpr > neutral  # 事前方向（上）へ動く
+
+
+def test_informative_prior_overridden_by_large_data():
+    """データが十分なら事前は上書きされる（実測が支配）。"""
+    small = _featured(_rows(1, win_frac=0.5, odds=3.0, n=31))     # 回収1.5
+    large = _featured(_rows(1, win_frac=0.5, odds=3.0, n=3000))   # 回収1.5・大標本
+    cfg = PosteriorConfig(min_n=30)
+    s2 = 1.0
+    off = {"odd": -40.0}  # 実測(+)と逆向きの強い事前
+    m_small = factor_posterior(small, "umaban_parity", cfg, sigma2=s2, prior_offsets=off).loc["odd", "myoumido"]
+    m_large = factor_posterior(large, "umaban_parity", cfg, sigma2=s2, prior_offsets=off).loc["odd", "myoumido"]
+    # 大標本の方が実測(妙味度>100)に近く、事前(負)の影響が小さい
+    assert m_large > m_small
+
+
+def test_calibrate_points_bayes_accepts_factor_priors():
+    df = _featured(_rows(1, 0.5, 3.0, 200), _rows(2, 0.2, 3.0, 200))
+    pts = calibrate_points_bayes(
+        df, ["umaban_parity"], cfg=PosteriorConfig(min_n=30, universality_slices=1),
+        factor_priors={"umaban_parity": {"odd": 5.0, "even": -5.0}},
+    )
+    assert "umaban_parity" in pts
+
+
 def test_implied_recovery_robust_to_longshot_flukes():
     """均等払戻（recovery_mode=implied）は 1 本の大穴的中で回収率が跳ねにくい。
 

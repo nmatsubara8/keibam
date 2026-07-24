@@ -89,6 +89,7 @@ def factor_posterior(
     *,
     half_life_days: float | None = None,
     sigma2: float | None = None,
+    prior_offsets: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     """因子 factor のバケット別 事後統計を返す。
 
@@ -135,7 +136,12 @@ def factor_posterior(
             continue
         xbar = float((g["w"] * g["x"]).sum() / n_eff)
         prec = inv_pv + n_eff / sigma2
-        post_mean = (cfg.mu0 * inv_pv + n_eff * xbar / sigma2) / prec
+        # 事前平均 μ0_b: 卍の方向性ルール（妙味度オフセット）を基準100に足す。
+        # offset[妙味度pt] → 回収率オフセット = offset/100。未定義バケットは中立(cfg.mu0)。
+        mu0_b = cfg.mu0
+        if prior_offsets:
+            mu0_b += float(prior_offsets.get(bucket, 0.0)) / MYOUMIDO_BASE
+        post_mean = (mu0_b * inv_pv + n_eff * xbar / sigma2) / prec
         post_var = 1.0 / prec
         myoumido = MYOUMIDO_BASE * post_mean  # 卍妙味度（基準100）
         # 加減点 = 妙味度偏差 = 100×(post_mean−1)。基準100（neutral=0点、妙味度100）。
@@ -154,12 +160,15 @@ def calibrate_points_bayes(
     *,
     cfg: PosteriorConfig | None = None,
     factor_half_life: dict[str, float] | None = None,
+    factor_priors: dict[str, dict[str, float]] | None = None,
     residualize: bool = True,
 ) -> dict[str, dict[str, float]]:
     """学習窓 featured から points[factor][bucket] を Normal-Normal 事後で導出する。
 
     - σ² は窓全体でプール（バケット間で共有＝小標本を安定化）。
     - factor_half_life[factor] があればその因子だけ忘却割引（近走系向け）。
+    - factor_priors[factor][bucket] があれば卍の方向性ルールを情報事前として使う
+      （基準100からの妙味度オフセット。小標本は事前へ収縮、n増で実測が上書き）。
     - 普遍性フィルタ: 時系列 K 分割で符号一致が min_agree 未満のバケットは 0（不採用）。
     - residualize=True でクロス 'A*B' は交互作用残差に置換（加法二重計上の回避、既存実装を再利用）。
 
@@ -175,6 +184,7 @@ def calibrate_points_bayes(
     for f in factor_names:
         post = factor_posterior(
             featured, f, cfg, half_life_days=factor_half_life.get(f), sigma2=sigma2,
+            prior_offsets=(factor_priors.get(f) if factor_priors else None),
         )
         if post.empty:
             continue

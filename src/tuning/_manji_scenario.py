@@ -159,15 +159,21 @@ def build_block_posteriors(
     n_blocks: int = 8,
     cfg: PosteriorConfig | None = None,
     factor_half_life: dict[str, float] | None = None,
+    factor_priors: dict[str, dict[str, float]] | None = None,
+    use_priors: bool = True,
     progress: bool = False,
 ):
     """各ブロックについて (行マスク, points[factor][bucket]) を返す（全シナリオ共有）。
 
     ブロック bi の points は「bi 開始日より前の証拠のみ」で較正（前進安全）。
     factor_names は全シナリオ因子の和（既定=全 FACTORS）。事後は因子独立なので一括較正で足りる。
+    use_priors=True（既定）で卍の方向性ルール（_manji_priors.FACTOR_PRIORS）を情報事前に使う。
     """
     cfg = cfg or PosteriorConfig()
     factor_names = factor_names or list(FACTORS)
+    if factor_priors is None and use_priors:
+        from src.policies._manji_priors import FACTOR_PRIORS
+        factor_priors = FACTOR_PRIORS
     # クロス "A*B" の構成基底（A,B）も較正対象に含める（残差化の整合＋基底妙味度の取得）。
     expanded: list[str] = []
     for f in factor_names:
@@ -188,6 +194,7 @@ def build_block_posteriors(
         train = featured[dates < cutoff]
         pts = {} if train.empty else calibrate_points_bayes(
             train, factor_names, cfg=cfg, factor_half_life=factor_half_life,
+            factor_priors=factor_priors,
         )
         out.append((mask, pts))
         if progress:
