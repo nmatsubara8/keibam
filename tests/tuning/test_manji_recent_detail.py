@@ -5,7 +5,11 @@ import pandas as pd
 
 from src.constants._results_cols import ResultsCols
 from src.policies._manji_factors import NA, factor_series
-from src.tuning._manji_factor_store import build_recent_form_features
+from src.tuning._manji_factor_store import (
+    build_factor_table,
+    build_recent_form_features,
+    compute_head2head,
+)
 
 
 def _feat(rows):
@@ -72,6 +76,35 @@ def test_offsurface_form_contrarian():
     off = factor_series(view, "offsurface_form")
     idxA_t2 = np.flatnonzero((view["horse_id"].to_numpy() == "A") & (view.index.to_numpy() == "t2"))[0]
     assert off.iloc[idxA_t2] == "offsurf_good"  # 今走芝×近走ダで好走
+
+
+def test_head2head_from_past_meeting():
+    # 過去 p1 で A(1着) が B(2着) に勝利 → 今走 R で再戦: A=favorite(割引), B=underdog(妙味)
+    rows = [
+        {"race_id": "p1", "horse_id": "A", "date": "2024-01-01", ResultsCols.UMABAN: 1,
+         ResultsCols.RANK: 1, ResultsCols.TANSHO_ODDS: 2.0},
+        {"race_id": "p1", "horse_id": "B", "date": "2024-01-01", ResultsCols.UMABAN: 2,
+         ResultsCols.RANK: 2, ResultsCols.TANSHO_ODDS: 3.0},
+        {"race_id": "R", "horse_id": "A", "date": "2024-02-01", ResultsCols.UMABAN: 1,
+         ResultsCols.RANK: 2, ResultsCols.TANSHO_ODDS: 2.0},
+        {"race_id": "R", "horse_id": "B", "date": "2024-02-01", ResultsCols.UMABAN: 2,
+         ResultsCols.RANK: 1, ResultsCols.TANSHO_ODDS: 4.0},
+    ]
+    feat = _feat(rows)
+    s = compute_head2head(feat)
+    a_R = np.flatnonzero((feat["horse_id"].to_numpy() == "A") & (feat.index.to_numpy() == "R"))[0]
+    b_R = np.flatnonzero((feat["horse_id"].to_numpy() == "B") & (feat.index.to_numpy() == "R"))[0]
+    assert s.iloc[a_R] == -1  # A は過去に勝ち → net −1（favorite）
+    assert s.iloc[b_R] == +1  # B は過去に負け → net +1（underdog）
+    # 過去対戦の無い p1 側は NaN
+    a_p1 = np.flatnonzero((feat["horse_id"].to_numpy() == "A") & (feat.index.to_numpy() == "p1"))[0]
+    assert np.isnan(s.iloc[a_p1])
+
+    # factor_table(with_h2h=True) 経由で head2head 帯化
+    table = build_factor_table(feat, ["head2head"], with_h2h=True)
+    m = (table["race_id"] == "R")
+    labs = dict(zip(table.loc[m, "馬番"], table.loc[m, "head2head"]))
+    assert labs[1] == "favorite" and labs[2] == "underdog"
 
 
 def test_recent_detail_factors_na_without_source_columns():

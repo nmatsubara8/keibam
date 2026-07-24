@@ -785,6 +785,19 @@ def f_offground_form(df: pd.DataFrame) -> pd.Series:
                     np.where(hv <= 3, "offgrnd_good", np.where(hv >= 6, "offgrnd_poor", NA)))
 
 
+def f_head2head(df: pd.DataFrame) -> pd.Series:
+    """同一レース対戦履歴（factor_store の with_h2h=True で mf_h2h_score が付く）。
+
+    net>0=今走の相手に過去負けていた側（過小評価＝妙味, underdog）／net<0=過去勝っていた側
+    （割引, favorite）／0=互角。過去対戦なし・列不在は na。
+    """
+    if "mf_h2h_score" not in df.columns:
+        return pd.Series(NA, index=df.index)
+    v = _num(df["mf_h2h_score"])
+    return np.where(v.isna(), NA,
+                    np.where(v > 0, "underdog", np.where(v < 0, "favorite", "even")))
+
+
 # 因子レジストリ（名前 → 抽出関数）。Model 2 はこの名前で点数を較正する。
 FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "umaban_parity": f_umaban_parity,
@@ -843,6 +856,7 @@ FACTORS: dict[str, Callable[[pd.DataFrame], Any]] = {
     "recent_close": f_recent_close,
     "offsurface_form": f_offsurface_form,
     "offground_form": f_offground_form,
+    "head2head": f_head2head,  # 同一レース対戦履歴（factor_store with_h2h=True で発火）
 }
 
 

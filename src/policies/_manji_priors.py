@@ -68,6 +68,8 @@ FACTOR_PRIORS: dict[str, dict[str, float]] = {
     "offsurface_form": {"offsurf_good": -3.0, "offsurf_poor": +3.0},
     # 逆馬場(道悪)好走は過大評価で減点・凡走は妙味で加点
     "offground_form": {"offgrnd_good": -3.0, "offgrnd_poor": +3.0},
+    # 同一レース対戦履歴: 過去に相手へ勝っていた側は割引、負けていた側は妙味
+    "head2head": {"favorite": -3.0, "underdog": +3.0, "even": 0.0},
     # 外国産(マル外)/遠征/2世代血統は方向が普遍でない → 事前なし（データ由来で学習）
 }
 

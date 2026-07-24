@@ -150,9 +150,68 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def compute_head2head(featured: pd.DataFrame, *, lookback: int = 10) -> pd.Series:
+    """同一レース対戦履歴の純スコア（forward-only）。
+
+    今走の各馬について、**過去に同じレースで対戦した今走の他出走馬**との着順比較を集計。
+    卍ルール: 過去に相手より着順が良かった側は −1（既に優位を証明＝割引/過大評価）、
+    悪かった側は +1（過小評価＝妙味）。net = Σ(+1: 過去に負け / −1: 過去に勝ち)。
+    過去対戦が1件も無ければ NaN（下流の帯化で na）。lookback=各馬の直近何走まで遡るか。
+
+    計算量は「レース数 × 出走頭数 × lookback × 頭数」で重い。既定 OFF（build_factor_table の
+    with_h2h=True で有効化）＋ factor_table キャッシュ運用を推奨。
+    """
+    from collections import defaultdict
+
+    rid = featured.index.astype(str).to_numpy()
+    horse = (featured["horse_id"].astype(str).to_numpy()
+             if "horse_id" in featured.columns else rid)
+    date = pd.to_datetime(featured["date"], errors="coerce").to_numpy() \
+        if "date" in featured.columns else np.arange(len(featured))
+    rank = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy()
+    n = len(featured)
+
+    race_rows: dict[str, list[int]] = defaultdict(list)
+    for i in range(n):
+        race_rows[rid[i]].append(i)
+    # 馬 → 発走日順の (date, race_id, rank)
+    horse_hist: dict[str, list] = defaultdict(list)
+    for i in np.argsort(date, kind="stable"):
+        horse_hist[horse[i]].append((date[i], rid[i], rank[i]))
+    # race_id → {horse: rank}
+    race_ranks = {r: {horse[i]: rank[i] for i in rows} for r, rows in race_rows.items()}
+
+    score = np.full(n, np.nan)
+    for r, rows in race_rows.items():
+        d = date[rows[0]]
+        S = {horse[i] for i in rows}
+        for i in rows:
+            hi = horse[i]
+            past = [x for x in horse_hist[hi] if x[0] < d][-lookback:]
+            net = 0
+            cmp = 0
+            for _pd, prid, prank in past:
+                if np.isnan(prank):
+                    continue
+                for hj, rj in race_ranks.get(prid, {}).items():
+                    if hj in S and hj != hi and not np.isnan(rj):
+                        if prank < rj:
+                            net -= 1  # 過去に勝ち → 割引
+                            cmp += 1
+                        elif prank > rj:
+                            net += 1  # 過去に負け → 妙味
+                            cmp += 1
+            if cmp > 0:
+                score[i] = net
+    return pd.Series(score, index=featured.index)
+
+
 def build_factor_table(
     featured: pd.DataFrame,
     factor_names: list[str] | None = None,
+    *,
+    with_h2h: bool = False,
+    h2h_lookback: int = 10,
 ) -> pd.DataFrame:
     """featured（①）から因子バケット表を1回だけ生成する（全シナリオ共有）。
 
@@ -173,6 +232,8 @@ def build_factor_table(
     view = featured.copy()
     for c in mf.columns:  # 近走詳細の追加列も含めて全 mf_* を付与
         view[c] = mf[c].to_numpy()  # 位置代入（index 整合を回避）
+    if with_h2h:  # 同一レース対戦履歴（重い。有効時のみ）
+        view["mf_h2h_score"] = compute_head2head(featured, lookback=h2h_lookback).to_numpy()
 
     bk = buckets(view, factor_names)  # index=race_id（非ユニーク）, 各因子のバケット列
     # 出力も位置ベースで組む（RangeIndex）。キーは (race_id, 馬番)。
