@@ -362,9 +362,10 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
             if kinryo is NaN:
                 kinryo = kinryo_fallback
 
-            # 騎手 / jockey_id
+            # 騎手 / jockey_id（乗り替わり判定用に名前も取得）
             jockey_a = tr.find("a", href=re.compile(r"/jockey/"))
             jockey_id = _extract_id(str(jockey_a["href"]), "jockey") if jockey_a is not None else NaN
+            jockey_name = jockey_a.get_text(strip=True) if jockey_a is not None else NaN
 
             # 調教師 / trainer_id
             trainer_a = tr.find("a", href=re.compile(r"/trainer/"))
@@ -395,6 +396,7 @@ def scrape_shutuba_table(race_id: str, date_str: str, filepath: str) -> None:
                     "horse_id": horse_id,
                     "jockey_id": jockey_id,
                     "trainer_id": trainer_id,
+                    "騎手": jockey_name,  # Phase 2: 乗り替わり判定用
                     # レースレベル列（df_tmp.iat の位置参照に合わせた並び）
                     "date": date_str,
                     "course_len": header["course_len"],

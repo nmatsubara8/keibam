@@ -242,6 +242,8 @@ def _ingest(args: argparse.Namespace) -> None:
                 FeatureEngineering(merger)
                 .add_interval()
                 .add_agedays()
+                .add_weight_change_rate()    # Phase 2: 体重変化率
+                .add_rotation_category()     # Phase 2: ローテ区分（interval の後）
                 .add_interaction_features()  # §2b: before dummification
                 .add_race_level_zscore()     # §2g: after all aggregate features
                 .dumminize_kaisai()
@@ -310,6 +312,7 @@ def _retrain(args: argparse.Namespace) -> None:
                 return (
                     FeatureEngineering(merger)
                     .add_interval().add_agedays()
+                    .add_weight_change_rate().add_rotation_category()
                     .add_interaction_features()
                     .add_race_level_zscore()
                     .dumminize_kaisai().dumminize_sex().dumminize_weather()

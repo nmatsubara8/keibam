@@ -212,6 +212,70 @@ class TestAddHorseCareerStats:
 
 
 # ──────────────────────────────────────────
+# Phase 2: _add_jockey_change（乗り替わり / テン乗り）
+# ──────────────────────────────────────────
+
+class TestAddJockeyChange:
+    def _hr(self):
+        # horse 1: 田中→田中（最新 田中）、horse 2: 佐藤（最新 佐藤）
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2023-01-01", "2023-02-01", "2023-01-15"]),
+                "騎手": ["田中", "田中", "佐藤"],
+            },
+            index=pd.Index([1, 1, 2], name="horse_id"),
+        )
+
+    def _res(self, jockeys):
+        return pd.DataFrame(
+            {"horse_id": [1, 2, 3], "jockey_name": jockeys},
+            index=pd.Index(["r", "r", "r"], name="race_id"),
+        )
+
+    def test_change_and_first_ride(self):
+        m = _make_merger(_results_df_with_jockey())
+        # h1 新騎手 佐藤（前走田中→change=1, 佐藤は騎乗歴なし→first_ride=1）
+        # h2 佐藤継続（change=0, first_ride=0）
+        # h3 履歴なし（両方 NaN）
+        out = m._add_jockey_change(self._res(["佐藤", "佐藤", "新人"]), self._hr())
+        assert out["jockey_change"].tolist()[:2] == [1.0, 0.0]
+        assert out["first_ride"].tolist()[:2] == [1.0, 0.0]
+        assert pd.isna(out["jockey_change"].iloc[2])
+        assert pd.isna(out["first_ride"].iloc[2])
+
+    def test_same_jockey_no_change(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_jockey_change(self._res(["田中", "佐藤", "x"]), self._hr())
+        assert out["jockey_change"].iloc[0] == 0.0
+        assert out["first_ride"].iloc[0] == 0.0
+
+    def test_jockey_name_dropped(self):
+        m = _make_merger(_results_df_with_jockey())
+        out = m._add_jockey_change(self._res(["田中", "佐藤", "x"]), self._hr())
+        assert "jockey_name" not in out.columns
+
+    def test_apprentice_marks_normalized(self):
+        m = _make_merger(_results_df_with_jockey())
+        # 前走 田中、今走 ☆田中 → マーク除去後は同一 → change=0
+        out = m._add_jockey_change(self._res(["☆田中", "佐藤", "x"]), self._hr())
+        assert out["jockey_change"].iloc[0] == 0.0
+
+    def test_no_history_all_nan(self):
+        m = _make_merger(_results_df_with_jockey())
+        empty = self._hr().iloc[0:0]
+        out = m._add_jockey_change(self._res(["田中", "佐藤", "x"]), empty)
+        assert out["jockey_change"].isna().all()
+        assert out["first_ride"].isna().all()
+        assert "jockey_name" not in out.columns
+
+    def test_skips_when_jockey_name_absent(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = self._res(["田中", "佐藤", "x"]).drop(columns=["jockey_name"])
+        out = m._add_jockey_change(res, self._hr())
+        assert "jockey_change" not in out.columns
+
+
+# ──────────────────────────────────────────
 # §2d: _add_pace_stats
 # ──────────────────────────────────────────
 

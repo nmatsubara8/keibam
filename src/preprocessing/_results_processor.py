@@ -44,6 +44,14 @@ class ResultsProcessor(AbstractDataProcessor):
         # 6/6出走数追加
         df["n_horses"] = df.index.map(df.index.value_counts())
 
+        # Phase 2: 乗り替わり判定用に現騎手名を保持（DataMerger._add_jockey_change で
+        # 前走騎手と比較後に drop される。ID ではなく名前なのは過去成績側(騎手列)が
+        # 名前のみで ID を持たないため）
+        if Cols.JOCKEY in df.columns:
+            df["jockey_name"] = df[Cols.JOCKEY]
+        else:
+            df["jockey_name"] = pd.NA
+
         # カラム抽出
         df = self._select_columns(df)
 
@@ -91,6 +99,7 @@ class ResultsProcessor(AbstractDataProcessor):
                 "jockey_id",
                 "trainer_id",
                 "owner_id",
+                "jockey_name",  # Phase 2: 乗り替わり判定用（merge 後に drop）
                 "性",
                 "年齢",
                 "体重",

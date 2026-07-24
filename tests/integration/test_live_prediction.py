@@ -64,6 +64,7 @@ def shutuba_pkl(tmp_path_factory) -> str:
         "horse_id":  race["horse_id"].values,
         "jockey_id": race["jockey_id"].values,
         "trainer_id": race["trainer_id"].values,
+        "騎手":       race.get(Cols.JOCKEY, pd.Series([""] * len(race))).values,  # Phase 2: 乗り替わり判定用
         "owner_id":  race.get("owner_id", pd.Series([""] * len(race))).values,
         "date":       date_str,
         "course_len": float(info["course_len"]),
@@ -116,6 +117,7 @@ def featured(merger):
     return (
         FeatureEngineering(merger)
         .add_interval().add_agedays()
+        .add_weight_change_rate().add_rotation_category()
         .add_interaction_features().add_race_level_zscore()
         .dumminize_kaisai().dumminize_sex().dumminize_weather()
         .dumminize_race_type()

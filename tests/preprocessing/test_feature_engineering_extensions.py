@@ -162,3 +162,72 @@ class TestRaceLevelZscore:
         # Actually with only 1 element std=NaN and mean=value → (value-value)/1e-8 = 0
         # This is acceptable behavior
         assert "体重_z" in df.columns
+
+
+# ──────────────────────────────────────────
+# Phase 2: add_weight_change_rate
+# ──────────────────────────────────────────
+
+class TestWeightChangeRate:
+    def test_rate_value_correct(self):
+        fe = _make_fe(_base_df())
+        fe.add_weight_change_rate()
+        df = fe.featured_data
+        # 体重変化=[0,-2,4,0], 体重=[450,480,500,460]
+        assert df["weight_change_rate"].iloc[1] == pytest.approx(-2 / 480)
+        assert df["weight_change_rate"].iloc[2] == pytest.approx(4 / 500)
+
+    def test_zero_weight_yields_nan_not_inf(self):
+        base = _base_df().copy()
+        base["体重"] = [0.0, 480.0, 500.0, 460.0]
+        fe = _make_fe(base)
+        fe.add_weight_change_rate()
+        df = fe.featured_data
+        assert pd.isna(df["weight_change_rate"].iloc[0])
+        assert df["weight_change_rate"].dtype == float
+
+    def test_skips_when_col_absent(self):
+        base = _base_df().drop(columns=["体重変化"])
+        fe = _make_fe(base)
+        fe.add_weight_change_rate()
+        assert "weight_change_rate" not in fe.featured_data.columns
+
+
+# ──────────────────────────────────────────
+# Phase 2: add_rotation_category
+# ──────────────────────────────────────────
+
+class TestRotationCategory:
+    def test_onehot_and_flag_generated(self):
+        from src.constants._feature_cols import ROTATION_LABELS
+
+        fe = _make_fe(_base_df())  # interval=[30,60,20,45]
+        fe.add_rotation_category()
+        df = fe.featured_data
+        for label in ROTATION_LABELS:
+            assert f"rotation_cat__{label}" in df.columns
+        assert "rotation_first_run" in df.columns
+
+    def test_bins_assigned_correctly(self):
+        base = _base_df().copy()
+        base["interval"] = [5.0, 20.0, 60.0, 10.0]  # rento, naka3_4w, kyuyo, naka1_2w
+        fe = _make_fe(base)
+        fe.add_rotation_category()
+        df = fe.featured_data
+        assert df["rotation_cat__rento"].iloc[0]
+        assert df["rotation_cat__naka3_4w"].iloc[1]
+        assert df["rotation_cat__kyuyo"].iloc[2]
+        assert df["rotation_cat__naka1_2w"].iloc[3]
+
+    def test_first_run_flag_for_nan_interval(self):
+        base = _base_df().copy()
+        base["interval"] = [np.nan, 20.0, 60.0, 10.0]
+        fe = _make_fe(base)
+        fe.add_rotation_category()
+        df = fe.featured_data
+        assert df["rotation_first_run"].tolist() == [1, 0, 0, 0]
+
+    def test_rotation_cat_dropped_after_dummify(self):
+        fe = _make_fe(_base_df())
+        fe.add_rotation_category()
+        assert "rotation_cat" not in fe.featured_data.columns

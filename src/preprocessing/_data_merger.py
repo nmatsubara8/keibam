@@ -10,6 +10,7 @@
 import logging
 import sys
 
+import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
@@ -118,6 +119,9 @@ class DataMerger:
 
             # ── Phase 1: 馬自身の通算成績 ──────────────────────────────
             results = self._add_horse_career_stats(results, horse_results)
+
+            # ── Phase 2: 乗り替わり / テン乗り ──────────────────────────
+            results = self._add_jockey_change(results, horse_results)
 
             # Latest race date (for interval feature in FeatureEngineering)
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
@@ -396,6 +400,66 @@ class DataMerger:
             }
         )[HORSE_CAREER_FEATURE_COLS]
         return results.merge(career, left_on="horse_id", right_index=True, how="left")
+
+    @staticmethod
+    def _normalize_jockey(s: pd.Series) -> pd.Series:
+        """騎手名を正規化して比較を安定化する。
+
+        前後空白と見習い斤量マーク（☆▲△★◇◎ 等）を除去する。nullable string を
+        用いて欠損を <NA> のまま保ち、"nan" 文字列化による誤マッチを防ぐ。
+        """
+        out = (
+            s.astype("string")
+            .str.strip()
+            .str.replace(r"^[☆▲△★◇◎☆*]+", "", regex=True)
+            .str.strip()
+        )
+        return out.replace("", pd.NA)
+
+    def _add_jockey_change(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Phase 2: 乗り替わり(jockey_change)・テン乗り(first_ride)フラグを付与する。
+
+        - jockey_change: 今走騎手 != 前走騎手（最新の過去走の騎手）。履歴なしは NaN。
+        - first_ride: この馬への騎乗歴が過去に無い（テン乗り）=1。履歴なしは NaN。
+
+        過去走のみ参照するためリークしない。判定に用いた jockey_name 列は最後に drop
+        するため、featured_data には数値フラグのみが残る（生の騎手名は学習に渡らない）。
+        ライブ推論（ShutubaDataMerger）でも同経路で呼ばれ列パリティが保たれる。
+        """
+        if "jockey_name" not in results.columns:
+            return results
+
+        has_history = HRCols.JOCKEY in horse_results.columns and len(horse_results) > 0
+        if not has_history:
+            results["jockey_change"] = np.nan
+            results["first_ride"] = np.nan
+            return results.drop(columns=["jockey_name"], errors="ignore")
+
+        hr_sorted = horse_results.sort_values("date", ascending=False)
+        prev_jockey = self._normalize_jockey(hr_sorted.groupby(level=0)[HRCols.JOCKEY].first())
+        past_norm = self._normalize_jockey(horse_results[HRCols.JOCKEY])
+        past_sets = past_norm.groupby(level=0).apply(lambda x: set(x.dropna()))
+
+        cur = self._normalize_jockey(results["jockey_name"]).to_numpy()
+        prev = results["horse_id"].map(prev_jockey).to_numpy()
+        past = results["horse_id"].map(past_sets).to_numpy()
+
+        jockey_change: list = []
+        first_ride: list = []
+        for c, p, s in zip(cur, prev, past, strict=True):
+            if pd.isna(c) or pd.isna(p):
+                jockey_change.append(np.nan)
+            else:
+                jockey_change.append(1.0 if c != p else 0.0)
+            if isinstance(s, set):
+                first_ride.append(np.nan if pd.isna(c) else (0.0 if c in s else 1.0))
+            else:
+                first_ride.append(np.nan)
+        results["jockey_change"] = jockey_change
+        results["first_ride"] = first_ride
+        return results.drop(columns=["jockey_name"], errors="ignore")
 
     def _merge_aggregates(
         self, results: pd.DataFrame, horse_results: pd.DataFrame, n_races: int | None

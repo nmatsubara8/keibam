@@ -35,6 +35,7 @@ class ShutubaTableProcessor(ResultsProcessor):
                 "horse_id",
                 "jockey_id",
                 "trainer_id",
+                "jockey_name",  # Phase 2: 乗り替わり判定用（merge 後に drop）
                 "性",
                 "年齢",
                 "体重",

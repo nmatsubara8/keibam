@@ -63,6 +63,21 @@ HORSE_CAREER_FEATURE_COLS: list = [
 ]
 
 # ──────────────────────────────────────────
+# Phase 2: ローテーション区分 / 乗り替わり
+# ──────────────────────────────────────────
+
+# interval（前走からの日数）の区間境界。right=True で (0,7]=連闘 … (56,inf]=休養明け。
+# 初出走（interval NaN）は rotation_first_run フラグで別途表現する。
+ROTATION_BINS: list = [0, 7, 14, 28, 56, float("inf")]
+ROTATION_LABELS: list = ["rento", "naka1_2w", "naka3_4w", "naka5_8w", "kyuyo"]
+
+# 乗り替わり系フラグ（DataMerger._add_jockey_change が生成。二値のため Z-score 対象外）
+JOCKEY_CHANGE_FEATURE_COLS: list = [
+    "jockey_change",  # 前走騎手と異なる=1
+    "first_ride",     # その馬への騎乗歴なし（テン乗り）=1
+]
+
+# ──────────────────────────────────────────
 # §2c: 騎手・調教師集計特徴量
 # ──────────────────────────────────────────
 
@@ -122,13 +137,14 @@ SIRE_FEATURE_COLS: list = [
 
 # グループ1: 現レース特徴量（比較に意味がある数値列）
 RACE_LEVEL_ZSCORE_COLS_G1: list = [
-    "体重",       # 馬体重
-    "体重変化",   # 体重変化
-    "斤量",       # 騎手重量
-    "単勝",       # 単勝オッズ
-    "年齢",       # 年齢
-    "interval",   # 前走からの経過日数
-    "age_days",   # 日齢
+    "体重",               # 馬体重
+    "体重変化",           # 体重変化
+    "weight_change_rate",  # 体重変化率（Phase 2）
+    "斤量",               # 騎手重量
+    "単勝",               # 単勝オッズ
+    "年齢",               # 年齢
+    "interval",           # 前走からの経過日数
+    "age_days",           # 日齢
 ]
 
 # グループ2: 過去成績の集計値（レース内の相対比較を可能にする）

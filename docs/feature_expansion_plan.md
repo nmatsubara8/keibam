@@ -133,7 +133,39 @@
 - 列数増（8 列 × 5 統計 × 4 窓 × 2 で +320 程度）→ AUC 比較後に importance 下位の
   統計量をサブセット化する余地を残す
 
-### Phase 2: FE 系 + 乗り替わり（項目 5, 6, 7）
+### Phase 2: FE 系 + 乗り替わり（項目 5, 6, 7）— ✅ 完了（2026-07-24）
+
+**実装サマリ**:
+- `FeatureEngineering.add_weight_change_rate()`: `体重変化 / 体重`（体重0は NaN、float64 維持）。
+  `RACE_LEVEL_ZSCORE_COLS_G1` に `weight_change_rate` を追加（Z-score 対象）
+- `FeatureEngineering.add_rotation_category()`: `interval` を `ROTATION_BINS`
+  `[0,7,14,28,56,inf]` で 5 区分（連闘/中1-2週/中3-8週/中5-8週/休養明け）に `pd.cut` →
+  既存 `_dummify` で固定カテゴリ One-Hot 化。初出走（interval NaN）は `rotation_first_run` フラグ
+- 乗り替わり: `DataMerger._add_jockey_change()` + `_normalize_jockey()`（見習マーク☆▲△等を
+  除去して比較）。前走騎手比較で `jockey_change`、騎乗歴なしで `first_ride`（テン乗り）。
+  判定用の `jockey_name` は使用後 drop（生の騎手名は学習に渡らない・二値のため Z-score 対象外）
+  - 配線: `ResultsProcessor` / `ShutubaTableProcessor` が `jockey_name` を emit、
+    `_scrape_shutuba` が騎手名テキストを取得（`騎手` 列）。DataMerger の per-date ループで
+    `_add_jockey_change` 実行 → ライブ側も `_merge_horse_results` 継承で自動パリティ
+- FE チェーン配線: run_pipeline の builder 2 箇所 + integration テスト fixture に
+  `.add_weight_change_rate().add_rotation_category()` を追加
+
+**検証結果**:
+- unit: `test_feature_engineering_extensions.py`（体重率・ローテ区分・境界・初出走フラグ）+
+  `test_data_merger_features.py`（乗り替わり・テン乗り・マーク正規化・履歴なし・jockey_name drop）
+  → 48 passed
+- 合成 E2E: merge→FE で `jockey_name` が featured に残らない（object dtype 列 0）ことと、
+  weight_change_rate/rotation/jockey_change/first_ride の生成を確認（総 386 列）
+- 全 pytest 891 passed / 18 skip、mypy・ruff(src)・import-linter 4 契約 KEPT
+- **リーク**: jockey_change/first_ride は過去走（date < 当日）の騎手のみ参照。
+  weight/rotation は当該レースの馬体重・間隔（結果ではなく事前確定情報）
+
+**notebook 注記**: `main.ipynb` の FE チェーン（cell 31/98/102/106）は既に production から
+乖離（`add_interaction_features`/`add_race_level_zscore` を欠く旧探索版）しているため、
+Phase 2 の FE メソッド追加は見送り。merger 由来の jockey_change/first_ride は notebook でも
+自動生成され（後方互換）、破綻はしない。production の正は run_pipeline + integration テスト。
+
+### （旧 Phase 2 記載）
 
 - `FeatureEngineering.add_weight_change_rate()`: `体重変化 / 体重`。
   `RACE_LEVEL_ZSCORE_COLS_G1` に追加。学習・ライブ両チェーンに配線

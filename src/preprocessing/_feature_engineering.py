@@ -51,6 +51,39 @@ class FeatureEngineering:
         self.__data.drop("birthday", axis=1, inplace=True)
         return self
 
+    def add_weight_change_rate(self):
+        """Phase 2: 体重変化率（体重変化 / 体重）を追加する。
+
+        大型馬の ±10kg と小柄馬の ±10kg では意味が異なるため、増減を体重で正規化する。
+        体重 0/欠損は NaN。add_race_level_zscore の対象（G1）にも登録済み。
+        """
+        if "体重" not in self.__data.columns or "体重変化" not in self.__data.columns:
+            return self
+        weight = pd.to_numeric(self.__data["体重"], errors="coerce")
+        change = pd.to_numeric(self.__data["体重変化"], errors="coerce")
+        # 体重 0 は NaN（float）に落として division を回避。NAType を混ぜず float64 を保つ。
+        weight = weight.where(weight != 0)
+        self.__data["weight_change_rate"] = (change / weight).astype(float)
+        return self
+
+    def add_rotation_category(self):
+        """Phase 2: ローテーション区分（連闘/中1-2週/…/休養明け）をダミー化する。
+
+        interval（前走からの経過日数）を区間分割。初出走（interval NaN）は
+        rotation_first_run フラグで表現する。add_interval の後に呼ぶこと。
+        カテゴリは ROTATION_LABELS で固定するため学習/ライブの列集合が安定する。
+        """
+        from src.constants._feature_cols import ROTATION_BINS, ROTATION_LABELS
+
+        if "interval" not in self.__data.columns:
+            return self
+        interval = pd.to_numeric(self.__data["interval"], errors="coerce")
+        self.__data["rotation_first_run"] = interval.isna().astype(int)
+        self.__data["rotation_cat"] = pd.cut(
+            interval, bins=ROTATION_BINS, labels=ROTATION_LABELS, right=True
+        )
+        return self._dummify("rotation_cat", ROTATION_LABELS, prefix="rotation_cat_")
+
     def dumminize_kaisai(self):
         """
         開催カラムをダミー変数化する
