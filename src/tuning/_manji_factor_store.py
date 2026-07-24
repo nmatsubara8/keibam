@@ -236,12 +236,19 @@ def _attach_peds(featured: pd.DataFrame, view: pd.DataFrame) -> None:
     cols = [c for c in ("peds_0", "peds_32") if c in peds.columns]
     if not cols:
         return
+    # horse_id は列 or index のどちらか（peds.pkl の作りに両対応）。
+    key = peds["horse_id"].astype(str) if "horse_id" in peds.columns else peds.index.astype(str)
     p = peds[cols].copy()
-    p.index = p.index.astype(str)
+    p.index = np.asarray(key)
     p = p[~p.index.duplicated(keep="first")]
     mapped = p.reindex(featured["horse_id"].astype(str).to_numpy())
-    for c in cols:  # 位置代入（featured 行順）
-        view[c] = mapped[c].to_numpy()
+    for c in cols:
+        newv = mapped[c].to_numpy()
+        if c in view.columns:  # coalesce: マップ欠損は既存値を残す（破壊しない）
+            cur = view[c].to_numpy()
+            view[c] = np.where(pd.isna(newv), cur, newv)
+        else:
+            view[c] = newv
 
 
 def build_factor_table(

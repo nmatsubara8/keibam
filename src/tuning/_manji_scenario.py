@@ -92,6 +92,22 @@ SCENARIOS: dict[str, Scenario] = {
         include_bucket_features=False,  # 高カード＆クロスは manji_score のみ（one-hot 爆発回避）
         description="卍流『妙味度』: 騎手/厩舎/種牡馬 × 条件の過小評価を補正回収率で捕捉",
     ),
+    "alive_value": Scenario(
+        "alive_value",
+        factors=(
+            # 実データで発火する妙味因子のみ（血統/JRDB/生月/遠征/スパース因子を除外）
+            "jockey", "trainer", "popularity", "prev_finish",
+            "rotation", "dist_change", "age_rotation", "dist_age",
+            "waku", "body_weight", "weight_diff", "kinryo_per_weight", "season_sex",
+            "recent3_recovery", "recent5_recovery", "career_recovery",
+            "head2head", "offsurface_form", "offground_form",
+            # 人×条件（発火する基底のみ）
+            "jockey*race_type", "jockey*dist_band", "jockey*place", "jockey*turn", "jockey*ground",
+            "trainer*race_type", "trainer*place", "trainer*turn",
+        ),
+        include_bucket_features=False,  # 高カード/クロス中心 → manji_score へ集約
+        description="実データで発火する妙味因子のみ（血統/JRDB/スパース因子を除外）",
+    ),
     "all": Scenario(
         "all",
         factors=tuple(FACTORS),
