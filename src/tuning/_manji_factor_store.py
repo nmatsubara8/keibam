@@ -221,12 +221,36 @@ def compute_head2head(featured: pd.DataFrame, *, lookback: int = 10) -> pd.Serie
     return pd.Series(score, index=featured.index)
 
 
+def _attach_peds(featured: pd.DataFrame, view: pd.DataFrame) -> None:
+    """peds.pkl（index=horse_id）から父(peds_0)・母父(peds_32)名を dense に付与する。
+
+    featured が血統名列を保持していない環境で、sire/sire_line/pedigree_2gen を発火させる。
+    peds.pkl 不在・列不在・horse_id 不在なら no-op。
+    """
+    if "horse_id" not in featured.columns:
+        return
+    try:
+        peds = pd.read_pickle(LocalPaths.RAW_PEDS_PATH)
+    except Exception:
+        return
+    cols = [c for c in ("peds_0", "peds_32") if c in peds.columns]
+    if not cols:
+        return
+    p = peds[cols].copy()
+    p.index = p.index.astype(str)
+    p = p[~p.index.duplicated(keep="first")]
+    mapped = p.reindex(featured["horse_id"].astype(str).to_numpy())
+    for c in cols:  # 位置代入（featured 行順）
+        view[c] = mapped[c].to_numpy()
+
+
 def build_factor_table(
     featured: pd.DataFrame,
     factor_names: list[str] | None = None,
     *,
     with_h2h: bool = False,
     h2h_lookback: int = 10,
+    attach_peds: bool = True,
 ) -> pd.DataFrame:
     """featured（①）から因子バケット表を1回だけ生成する（全シナリオ共有）。
 
@@ -249,6 +273,8 @@ def build_factor_table(
         view[c] = mf[c].to_numpy()  # 位置代入（index 整合を回避）
     if with_h2h:  # 同一レース対戦履歴（重い。有効時のみ）
         view["mf_h2h_score"] = compute_head2head(featured, lookback=h2h_lookback).to_numpy()
+    if attach_peds:  # 血統名(父/母父)を peds.pkl から dense 付与（sire/sire_line/pedigree_2gen 用）
+        _attach_peds(featured, view)
 
     bk = buckets(view, factor_names)  # index=race_id（非ユニーク）, 各因子のバケット列
     # 出力も位置ベースで組む（RangeIndex）。キーは (race_id, 馬番)。

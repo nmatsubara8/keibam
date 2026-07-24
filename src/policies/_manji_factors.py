@@ -111,7 +111,8 @@ def _weight_diff_series(df: pd.DataFrame) -> pd.Series:
 
 
 def _interval_series(df: pd.DataFrame) -> pd.Series:
-    c = _col(df, "interval", "days", "レース間隔", "休養日数", "mf_interval")
+    # 履歴から算出した mf_interval を優先（既存 interval 列がスパースな環境で dense に発火）。
+    c = _col(df, "mf_interval", "interval", "days", "レース間隔", "休養日数")
     return _num(df[c]) if c is not None else pd.Series(np.nan, index=df.index)
 
 
@@ -124,7 +125,8 @@ def _race_type_series(df: pd.DataFrame):
 
 
 def _dist_change_series(df: pd.DataFrame) -> pd.Series:
-    c = _col(df, "dist_change", "距離変化", "距離差", "距離増減", "mf_dist_change")
+    # 履歴から算出した mf_dist_change を優先（既存 dist_change 列がスパースでも dense に発火）。
+    c = _col(df, "mf_dist_change", "dist_change", "距離変化", "距離差", "距離増減")
     return _num(df[c]) if c is not None else pd.Series(np.nan, index=df.index)
 
 
@@ -338,8 +340,8 @@ def f_prev_finish(df: pd.DataFrame) -> pd.Series:
 
     featured に前走着順の列がある場合のみ（無ければ na）。候補列名を寛容に探す。
     """
-    col = next((c for c in ("前走着順", "prev_rank", "前走_着順", "着順_1", "rank_prev",
-                            "last_rank", "mf_prev_rank") if c in df.columns), None)
+    col = next((c for c in ("mf_prev_rank", "前走着順", "prev_rank", "前走_着順", "着順_1",
+                            "rank_prev", "last_rank") if c in df.columns), None)
     if col is None:
         return pd.Series(NA, index=df.index)
     r = _num(df[col])
