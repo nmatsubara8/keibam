@@ -33,8 +33,17 @@ from src.training._residual_head import (
 )
 
 
+MIN_OVERROUND = 1.02  # 単勝ブックの最低 Σ(1/odds)。実市場は控除で必ず >1（JRA≈1.25）。
+
+
 def build_frames(featured: pd.DataFrame, since_year: int):
-    """featured → (per-horse フレーム, レース辞書列)。レース辞書は評価・PnL 用。"""
+    """featured → (per-horse フレーム, レース辞書列)。レース辞書は評価・PnL 用。
+
+    控除ガード: Σ(1/odds) < MIN_OVERROUND のレースは除外する。オッズ欠損（一部の馬の
+    単勝が無い）レースは Z<1 になり得て、その場合**全馬 EV=1/Z>1 の疑似裁定（Dutch book）**
+    が生じ、E[logW] 配分が「保証利益」を拾ってしまう（実市場には存在しないデータ穴。
+    実データで logW+44 が placebo残差でも消えず placeboオッズでのみ崩壊する形で検出）。
+    """
     rid0 = featured.index.astype(str)
     ok_year = pd.to_numeric(pd.Series(rid0.str[:4]), errors="coerce") >= since_year
     df = featured[ok_year.to_numpy()]
@@ -45,12 +54,17 @@ def build_frames(featured: pd.DataFrame, since_year: int):
     rank = pd.to_numeric(df[ResultsCols.RANK], errors="coerce")
 
     races: list[dict] = []
+    n_dutch = 0
     key = pd.DataFrame({"rid": rid, "uma": uma.to_numpy(), "odds": odds.to_numpy(),
                         "rank": rank.to_numpy()})
     for r, g in key.groupby("rid"):
         gg = g.dropna(subset=["uma", "odds"])
         gg = gg[gg["odds"] > 1.0]
         if len(gg) < 5:
+            continue
+        overround = float((1.0 / gg["odds"]).sum())
+        if overround < MIN_OVERROUND:  # オッズ欠損起因の疑似裁定ブック → 評価から除外
+            n_dutch += 1
             continue
         omap = {int(u): float(o) for u, o in zip(gg["uma"], gg["odds"], strict=False)}
         ranks = {int(u): int(rk) for u, rk in zip(gg["uma"], gg["rank"], strict=False)
@@ -60,6 +74,9 @@ def build_frames(featured: pd.DataFrame, since_year: int):
             continue
         races.append({"race_id": str(r), "year": int(str(r)[:4]), "odds": omap,
                       "ranks": ranks, "winner": winner})
+    if n_dutch:
+        print(f"控除ガード: Σ(1/odds)<{MIN_OVERROUND} の {n_dutch:,} レースを除外"
+              "（オッズ欠損起因の疑似裁定）")
     return df, races
 
 
@@ -84,7 +101,6 @@ def main() -> None:
 
     year_all = pd.to_numeric(pd.Series(df.index.astype(str).str[:4], index=df.index),
                              errors="coerce")
-    uma_all = pd.to_numeric(df[ResultsCols.UMABAN], errors="coerce")
 
     # ── fold ループ: 各テスト年に「過去のみ fit」の OOS 残差を焼き込む ──
     folds = rolling_origin_folds(races, min_train_years=args.min_train_years)
@@ -96,9 +112,11 @@ def main() -> None:
             sub, fcols, num_boost_round=args.num_boost_round)
         te = df[(year_all == test_year).to_numpy()]
         r_hat = predict_residual(booster, te, fcols, scale)
+        # 馬番は te 自身の列から位置合わせで取る（uma_all.loc[te.index] は重複インデックスで
+        # 行が爆発し zip がずれる＝残差が別の馬番に付くバグがあった。strict=True で再発防止）
+        uma_te = pd.to_numeric(te[ResultsCols.UMABAN], errors="coerce").to_numpy()
         cache: dict[str, dict[int, float]] = {}
-        for rr, u, v in zip(te.index.astype(str), uma_all.loc[te.index], r_hat,
-                            strict=False):
+        for rr, u, v in zip(te.index.astype(str), uma_te, r_hat.to_numpy(), strict=True):
             if pd.notna(u):
                 cache.setdefault(str(rr), {})[int(u)] = float(v)
         for r in test:
