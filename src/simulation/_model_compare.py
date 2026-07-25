@@ -3,6 +3,7 @@
 Mixture-PL のような自由度追加は **ROI 単独で判断しない**。ベースライン（例: β=0 の Step1）
 に対して以下を必ず全部見る:
     ΔNLL（listwise・proper scoring） / ΔBrier / ΔECE（較正）＋ Bootstrap CI ＋ LRT
+    ＋ 予測区間較正（interval_calibration・Step4 の能力分散 N(μ,σ²) の被覆率検査）
 特に較正: Mixture で「NLL だけ改善して較正が悪化」が起こり得るため ΔECE を独立に監視する。
 
 成功条件（事前定義・後知恵の閾値調整禁止）:
@@ -51,6 +52,48 @@ def ece(probs_list: Sequence[float], outcomes: Sequence[int], n_bins: int = 10) 
             continue
         total += (m.sum() / len(p)) * abs(p[m].mean() - y[m].mean())
     return float(total)
+
+
+def interval_calibration(
+    means: Sequence[float],
+    variances: Sequence[float],
+    observed: Sequence[float],
+    levels: Sequence[float] = (0.5, 0.8, 0.95),
+) -> dict:
+    """予測区間較正（Prediction Interval Calibration）— ガウス予測 N(μ,σ²) vs 実観測。
+
+    能力フィルタの predictive() が出す (μ, σ²) が観測 y をどれだけ正しく覆うかを検査する。
+    各名目水準 L について経験被覆率 = mean( |y−μ|/σ < z_L ) を計り、名目との差を出す。
+    併せて PIT（Φ((y−μ)/σ)＝較正が完全なら一様分布）の平均/分散のずれも返す。
+
+    分散を持つ意味はここで検証される: σ を過小申告（過信）すると被覆率が名目を割り、
+    その状態で Kelly に流すと過大賭けになる。coverage_gap_max ≤ 0.05 程度を合格目安とする。
+
+    Returns: {"coverage": {L: 経験被覆率}, "coverage_gap_max": max|経験−名目|,
+              "pit_mean": (理想0.5), "pit_var": (理想1/12≈0.0833), "n": 件数}
+    """
+    from statistics import NormalDist
+
+    nd = NormalDist()
+    mu = np.asarray(means, dtype=float)
+    sd = np.sqrt(np.asarray(variances, dtype=float))
+    y = np.asarray(observed, dtype=float)
+    ok = sd > 0
+    mu, sd, y = mu[ok], sd[ok], y[ok]
+    if len(y) == 0:
+        return {"coverage": {}, "coverage_gap_max": float("nan"),
+                "pit_mean": float("nan"), "pit_var": float("nan"), "n": 0}
+    z = np.abs(y - mu) / sd
+    coverage = {}
+    gap = 0.0
+    for lv in levels:
+        z_l = nd.inv_cdf(0.5 + lv / 2.0)
+        emp = float((z < z_l).mean())
+        coverage[lv] = emp
+        gap = max(gap, abs(emp - lv))
+    pit = np.array([nd.cdf(v) for v in (y - mu) / sd])
+    return {"coverage": coverage, "coverage_gap_max": float(gap),
+            "pit_mean": float(pit.mean()), "pit_var": float(pit.var()), "n": int(len(y))}
 
 
 def compare_models(
