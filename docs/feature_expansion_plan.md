@@ -396,7 +396,40 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
   馬場語彙の実データ確認が前提
 - 直線長・坂・コーナー形状: コース定数テーブルが別途必要（**競馬場別成績で実質吸収**済み）
 
-### Phase 9: コース形状マスタ（直線長・高低差・坂・1角距離）— インフラ完了 / 本取得は probe 後（2026-07-24）
+### Phase 9-rev: コース形状マスタ（JRA 実データ準拠）+ コース紹介プロファイル — ✅ 完了（2026-07-24）
+
+JRA 公式コースページ（`facilities/race/{slug}/course/`, cp932）を実取得して構造を確認し、
+スキーマを実データに合わせて改訂。加えて「コース紹介」プロセを定性プロファイル化した。
+
+**スキーマ改訂（実データ準拠）**:
+- 実表に無い `first_corner_dist`/`has_final_hill` を削除。実在する **`lap_length`（一周距離）/
+  `width_min`/`width_max`（幅員）/`turn_direction`（回り）** を追加。キーは (place, race_type)
+  に変更（幾何は距離非依存。コース区分 A/B/C は A 代表に集約）
+- **コース紹介プロファイル（item 4）**: プロセから `turf_type_code`（洋芝/野芝）/
+  `corner_radius_large`/`has_spiral_curve`/`run_style_bias`（前↔差し有利）/`time_bias`（高速↔タフ）/
+  `drainage_good` を抽出。**物理シミュレーション環境パラメータ**（幾何+馬場）と
+  **出走馬×コース相性評価**（脚質/スピード型/芝種の適合）に利用可能な形
+
+**スクレイパ改訂**（`scripts/scrape_course_master.py`）:
+- JRA 10 場 slug→開催コードで自動巡回（config 不要）。cp932 デコード。
+- `parse_geometry_by_surface`（芝=高低差表+A/B/C 区分表 / ダート=単一結合表の両レイアウトを
+  ヘッダ駆動で吸収、A 区分採用）+ `parse_course_prose`（脚質バイアス等）+ `parse_turn_direction`
+- `--probe --slug <場>` で抽出確認 → 引数なしで 10 場一括 → CSV 生成（手入力ゼロ）
+- **実 HTML（札幌・函館）でパーサ動作をセッション内検証済み**（幾何・プロファイルとも正確に抽出）
+
+**交互作用の追随**（item 3）:
+- `frame_x_first_corner` → **`frame_x_width`**（枠×幅員: 広いコースは外枠不利が緩む）
+- **`style_course_fit`**（脚質×コース脚質バイアス = 出走馬×コース相性）を追加。
+  `legtype_x_straight` は維持
+
+**検証結果**:
+- unit: `test_course_master.py`（place×type 結合/距離非依存/未知 NaN/空マスタ）+
+  `test_scrape_course_master.py`（芝 A 区分表/ダート結合表/プロセ 6 項目/回り/build_rows/10 場マップ）+
+  `test_interaction_features.py`（frame_x_width/style_course_fit）→ 30 passed
+- 全 pytest 968 passed / 18 skip、mypy・ruff(src)・import-linter 4 契約 KEPT
+- 実運用: JRA アクセス可能環境で `python scripts/scrape_course_master.py` → 20 行（10 場×2 種別）生成
+
+### Phase 9: コース形状マスタ（直線長・高低差）— 初版（Phase 9-rev で置換）
 
 コース物理特性を公式サイトから**スクレイプして** `data/master/course_master.csv` に自動生成し
 （手入力しない）、(開催×種別×距離) で results に結合する。監査で ❌ だった「直線長・坂・

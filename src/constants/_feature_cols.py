@@ -225,7 +225,8 @@ INTERACTION_FEATURE_COLS: list = [
     "frame_x_field",      # 枠番 × 頭数（少頭数/多頭数で枠の価値が変化）
     # Phase 9: コース形状との交互作用
     "legtype_x_straight",     # 脚質 × 直線長（差し馬×長い直線）
-    "frame_x_first_corner",   # 枠番 × 1コーナーまで距離
+    "frame_x_width",          # 枠番 × 幅員（広いコースは外枠不利が緩む）
+    "style_course_fit",       # 脚質 × コース脚質バイアス（出走馬×コース相性）
 ]
 
 # ──────────────────────────────────────────

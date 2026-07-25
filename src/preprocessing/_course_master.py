@@ -34,20 +34,19 @@ def load_course_master(path: str) -> pd.DataFrame:
         return pd.DataFrame(columns=COURSE_MASTER_KEY_COLS + COURSE_MASTER_VALUE_COLS)
     df["place_code"] = _norm_place(df["place_code"])
     df["race_type"] = df["race_type"].astype(str)
-    df["course_len"] = pd.to_numeric(df["course_len"], errors="coerce").astype("Int64")
     return df
 
 
 def attach_course_features(results: pd.DataFrame, course_master: pd.DataFrame) -> pd.DataFrame:
     """results に course_<attr> 属性列を付与して返す。
 
-    キー: 開催(place_id/コード) × race_type × course_len。course_master が空/キー欠損なら
-    course_* 列を NaN で生成（学習/ライブの列パリティを保つ）。
+    キー: 開催(place_id/コード) × race_type（コース幾何は距離非依存）。course_master が
+    空/キー欠損なら course_* 列を NaN で生成（学習/ライブの列パリティを保つ）。
     """
     out = results.copy()
     feat_cols = [f"course_{c}" for c in COURSE_MASTER_VALUE_COLS]
 
-    needed = {"開催", "race_type", "course_len"}
+    needed = {"開催", "race_type"}
     if course_master.empty or not needed.issubset(out.columns):
         for c in feat_cols:
             out[c] = float("nan")
@@ -56,7 +55,6 @@ def attach_course_features(results: pd.DataFrame, course_master: pd.DataFrame) -
     keyed = pd.DataFrame({
         "place_code": _norm_place(out["開催"]),
         "race_type": out["race_type"].astype(str),
-        "course_len": pd.to_numeric(out["course_len"], errors="coerce").astype("Int64"),
     }, index=out.index)
 
     cm = course_master.rename(columns={c: f"course_{c}" for c in COURSE_MASTER_VALUE_COLS})

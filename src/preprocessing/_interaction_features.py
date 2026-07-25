@@ -72,11 +72,19 @@ def add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
             * pd.to_numeric(df["course_straight_length"], errors="coerce")
         )
 
-    # ── Phase 9: 枠番 × 1コーナーまで距離（外枠×短い距離で不利傾向）───
-    if "枠番" in df.columns and "course_first_corner_dist" in df.columns:
-        df["frame_x_first_corner"] = (
+    # ── Phase 9-rev: 枠番 × 幅員（広いコースは外枠不利が緩む）─────────
+    if "枠番" in df.columns and "course_width_max" in df.columns:
+        df["frame_x_width"] = (
             pd.to_numeric(df["枠番"], errors="coerce")
-            * pd.to_numeric(df["course_first_corner_dist"], errors="coerce")
+            * pd.to_numeric(df["course_width_max"], errors="coerce")
         )
+
+    # ── Phase 9-rev: 脚質 × コース脚質バイアス（出走馬×コース相性）────
+    # 前脚質(leg_type_binary=0) は run_style_bias 正(前有利)で加点、差し(1)は負で加点。
+    # fit = run_style_bias × (1 - 2*leg_type_binary): 前馬→+bias, 差し馬→−bias。
+    if "leg_type_binary" in df.columns and "course_run_style_bias" in df.columns:
+        leg = pd.to_numeric(df["leg_type_binary"], errors="coerce")
+        bias = pd.to_numeric(df["course_run_style_bias"], errors="coerce")
+        df["style_course_fit"] = bias * (1.0 - 2.0 * leg)
 
     return df
