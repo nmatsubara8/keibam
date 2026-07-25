@@ -72,7 +72,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
                 "kokyu_flag", "start_idx", "deokure_rate", "manken_idx",
                 "kishu_tansho", "kishu_3nai", "nyukyu_days"],
         "SED": ["chakujun", "kakutei_tansho", "idm", "deokure", "ichidori",
-                "furi", "mae_furi", "naka_furi", "ato_furi", "bataijuu"],
+                "furi", "mae_furi", "naka_furi", "ato_furi", "bataijuu",
+                "kakutei_fukusho_shita", "odds_10_tansho", "odds_10_fukusho"],
         "SKB": [],
     }[rt]
     for c in numeric:
