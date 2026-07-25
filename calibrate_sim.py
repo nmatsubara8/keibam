@@ -47,6 +47,29 @@ PARAM_BOUNDS = {
 # SimConfig のフィールドでない（monte_carlo 引数の）較正パラメータ。cfg 生成時に分離する。
 _NON_CFG_PARAMS = ("ability_sigma",)
 
+# Phase A: コース幾何→SimConfig 写像ゲインの較正（--course-env）。ce_ 接頭辞で SimConfig knob と
+# 名前空間を分け、CourseEnvParams の同名フィールドへ写す（接頭辞規約・復元は _course_env に集約）。
+# 既定=off（従来較正と完全一致）。範囲は「0=幾何効果なし（base のまま）」を下端に含める＝効かない
+# なら消せる保守側の設計。
+from src.simulation._course_env import (  # noqa: E402
+    COURSE_ENV_GAIN_PREFIX as _COURSE_ENV_PREFIX,
+    course_env_params_from_mapping as build_course_env_params,
+)
+
+COURSE_ENV_BOUNDS = {
+    "ce_width_gain":     (0.0, 1.5),   # 幅員→有効幅の感度（0=幅効果 off）
+    "ce_elevation_gain": (0.0, 0.6),   # 高低差→stamina_cost の感度
+    "ce_straight_gain":  (0.0, 0.4),   # 直線長→終盤到達の感度
+    "ce_corner_gain":    (0.0, 1.0),   # コーナー曲率→turn_k の感度（base.turn_k>0 のときのみ効く）
+}
+
+
+def split_cfg_params(params: dict, default_ability_sigma: float):
+    """(SimConfig 用 cfg_params, ability_sigma) に分離。ability_sigma と ce_* は cfg から除く。"""
+    cfg_params = {k: v for k, v in params.items()
+                  if k not in _NON_CFG_PARAMS and not k.startswith(_COURSE_ENV_PREFIX)}
+    return cfg_params, params.get("ability_sigma", default_ability_sigma)
+
 # 2D エンジン(SimConfig2D)用の較正パラメータ。pos_gain(位置ターゲットの強さ)は 1D+ノイズで
 # 崩せなかった過決定(style_pos)を下げうる 2D 固有 lever。swing_step は外持ち出しの機敏さ。
 #
@@ -155,6 +178,9 @@ def main():
                     help="1d=_agent_race / 2d=_agent_race_2d（位置ターゲット＋横レーン）を較正")
     ap.add_argument("--out", type=str, default=None,
                     help="保存先。既定は models/sim_calibration{_2d}.json（エンジン別）")
+    ap.add_argument("--course-env", action="store_true",
+                    help="Phase A: コース幾何→SimConfig 写像ゲイン(ce_*)も併せて較正する。"
+                         "レース毎に course_* から per-race cfg を作って評価。既定 off＝従来較正。")
     # 目的の重み（既定は WEIGHTS。draw_bias 過剰・天井張り付きの再調整用に個別上書き可能）
     ap.add_argument("--w-style-pos", type=float, default=WEIGHTS["style_pos_match"])
     ap.add_argument("--w-draw-bias", type=float, default=WEIGHTS["draw_bias_match"])
@@ -165,7 +191,9 @@ def main():
     weights = {"style_pos_match": args.w_style_pos, "draw_bias_match": args.w_draw_bias,
                "backness_match": args.w_backness, "pos_direct_max": args.w_pos_direct,
                "pace_shape_max": args.w_pace_shape}
-    bounds = PARAM_BOUNDS_2D if args.engine == "2d" else PARAM_BOUNDS
+    bounds = dict(PARAM_BOUNDS_2D if args.engine == "2d" else PARAM_BOUNDS)
+    if args.course_env:
+        bounds = {**bounds, **COURSE_ENV_BOUNDS}
     out_path = args.out or ("models/sim_calibration_2d.json" if args.engine == "2d"
                             else "models/sim_calibration.json")
     print(f"[engine] {args.engine} / [weights] {weights}")
@@ -184,6 +212,7 @@ def main():
     from src.preprocessing._horse_results_processor import parse_corner
     from src.simulation._agent_race import SimConfig, monte_carlo
     from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
+    from src.simulation._course_env import course_context_from_featured, sim_config_for_course
     from src.simulation._fidelity import pace_backness_signal, pace_shape_corr
     from src.simulation._sim_params import field_from_featured
 
@@ -219,6 +248,20 @@ def main():
     if not train_ids or not val_ids:
         print("train/val のどちらかが空。--train-max-year/--val-min-year を調整。"); return
 
+    # Phase A: course_* 幾何をレース単位で1回だけ解決（trial 間で不変＝再計算しない）。
+    ctx_by_race: dict = {}
+    if args.course_env:
+        if not any(c.startswith("course_") for c in featured.columns):
+            print("--course-env 指定だが featured に course_* 列が無い（course_master 未生成）。"
+                  "scripts/scrape_course_master.py で生成後に。")
+            return
+        for rid in set(train_ids) | set(val_ids):
+            rd = featured.loc[[rid]] if not isinstance(featured.loc[rid], pd.DataFrame) else featured.loc[rid]
+            ctx_by_race[rid] = course_context_from_featured(rd)
+        nfilled = sum(0 if c.is_empty else 1 for c in ctx_by_race.values())
+        print(f"[course-env] 幾何解決: {nfilled}/{len(ctx_by_race)} レースに course_* あり。"
+              f"較正ゲイン: {list(COURSE_ENV_BOUNDS)}")
+
     def _collect_real(ids):
         """実測プール（馬単位）を1回だけ作る。"""
         style, real_pos, rank, draw, backness, rank_norm, pace = [], [], [], [], [], [], []
@@ -251,7 +294,7 @@ def main():
     print(f"[real train] {R_train}")
 
     # sim を回し、実測と同順で対応させた集約統計を返す（pos_direct=sim位置 vs 実第1コーナー）。
-    def evaluate(ids, cfg, ability_sigma, seed):
+    def evaluate(ids, cfg, ability_sigma, seed, course_params=None):
         rng = np.random.default_rng(seed)
         s_style, s_pos, s_rank, s_draw, s_back, s_rn = [], [], [], [], [], []
         r_pos, r_pace = [], []
@@ -265,7 +308,9 @@ def main():
                 continue
             nH = len(rd)
             field = field_from_featured(rd, ability_spread=args.ability_spread)
-            sim = run_engine(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
+            cfg_r = sim_config_for_course(cfg, ctx_by_race[rid], course_params) \
+                if course_params is not None and rid in ctx_by_race else cfg
+            sim = run_engine(field, n_sim=args.n_sim, cfg=cfg_r, seed=int(rng.integers(1 << 30)),
                               ability_sigma=ability_sigma, track_dynamics=True)
             epr = sim["early_pos_rank"]; smr = sim["mean_rank"]
             fc = pd.to_numeric(rd["通過"].map(lambda x: parse_corner(x, 1)), errors="coerce").to_numpy()
@@ -291,13 +336,16 @@ def main():
         return st
 
     def split_params(params):
-        """(SimConfig 用 cfg_params, ability_sigma) に分離する。"""
-        cfg_params = {k: v for k, v in params.items() if k not in _NON_CFG_PARAMS}
-        return cfg_params, params.get("ability_sigma", args.ability_sigma)
+        """(SimConfig 用 cfg_params, ability_sigma) に分離する（ce_* は course 側で別処理）。"""
+        return split_cfg_params(params, args.ability_sigma)
 
     def make_cfg(params):
         cfg_params, _ = split_params(params)
         return cfg_cls(T=args.T, **cfg_params)
+
+    def course_params_of(params):
+        """--course-env 時のみ ce_* から CourseEnvParams を構築（off なら None）。"""
+        return build_course_env_params(params) if args.course_env else None
 
     def suggest(trial):
         return {k: trial.suggest_float(k, lo, hi) for k, (lo, hi) in bounds.items()}
@@ -305,7 +353,8 @@ def main():
     def obj(trial):
         params = suggest(trial)
         _, absig = split_params(params)
-        st = evaluate(train_ids, make_cfg(params), absig, seed=args.seed)
+        st = evaluate(train_ids, make_cfg(params), absig, seed=args.seed,
+                      course_params=course_params_of(params))
         return objective_distance(st, R_train, has_pace=race_pace is not None, weights=weights)
 
     sampler = optuna.samplers.TPESampler(seed=args.seed)
@@ -321,8 +370,9 @@ def main():
               for k in bounds}
 
     _, best_absig = split_params(best)
-    st_train = evaluate(train_ids, make_cfg(best), best_absig, seed=args.seed + 1)
-    st_val = evaluate(val_ids, make_cfg(best), best_absig, seed=args.seed + 2)
+    best_cp = course_params_of(best)
+    st_train = evaluate(train_ids, make_cfg(best), best_absig, seed=args.seed + 1, course_params=best_cp)
+    st_val = evaluate(val_ids, make_cfg(best), best_absig, seed=args.seed + 2, course_params=best_cp)
 
     print("\n[best params]")
     for k in bounds:

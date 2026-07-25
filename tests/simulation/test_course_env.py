@@ -17,6 +17,7 @@ from src.simulation._course_env import (
     CourseContext,
     CourseEnvParams,
     course_context_from_featured,
+    course_env_params_from_mapping,
     sim_config_for_course,
 )
 
@@ -132,8 +133,39 @@ def test_extreme_width_is_clipped():
     assert tiny.course_width == pytest.approx(base.course_width * p.width_lo)
 
 
+def test_width_gain_zero_disables_width_effect():
+    # width_gain=0 → 幅がどれだけ振れても有効幅は base のまま（校正で幅 knob を切れる）
+    p = CourseEnvParams(width_gain=0.0)
+    base = SimConfig()
+    out = sim_config_for_course(base, CourseContext(width=25.0), p)
+    assert out.course_width == pytest.approx(base.course_width)
+
+
 def test_base_config_not_mutated():
     base = SimConfig()
     w0, sc0 = base.course_width, base.stamina_cost
     sim_config_for_course(base, CourseContext(width=25.0, elevation_diff=5.3))
     assert base.course_width == w0 and base.stamina_cost == sc0
+
+
+# ---- 較正ゲイン復元（ce_* → CourseEnvParams）: calibrate_sim との共通経路 ----
+
+def test_params_from_mapping_maps_ce_prefixed_gains():
+    m = {"ce_straight_gain": 0.30, "ce_elevation_gain": 0.10, "turn_k": 0.02, "ability_sigma": 0.4}
+    p = course_env_params_from_mapping(m)
+    assert p is not None
+    assert p.straight_gain == 0.30 and p.elevation_gain == 0.10
+    assert p.width_gain == CourseEnvParams().width_gain   # 未指定は既定
+
+
+def test_params_from_mapping_none_without_ce_keys():
+    assert course_env_params_from_mapping({"turn_k": 0.02, "stamina_cost": 0.01}) is None
+
+
+def test_calibrated_gains_change_mapping_strength():
+    # ce_straight_gain を強めると同じコースでも closer_late がより伸びる（較正が効くことの担保）
+    base = SimConfig()
+    ctx = CourseContext(straight_length=525.9)
+    weak = sim_config_for_course(base, ctx, course_env_params_from_mapping({"ce_straight_gain": 0.05}))
+    strong = sim_config_for_course(base, ctx, course_env_params_from_mapping({"ce_straight_gain": 0.35}))
+    assert base.closer_late < weak.closer_late < strong.closer_late

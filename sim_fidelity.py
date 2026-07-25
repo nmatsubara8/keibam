@@ -135,9 +135,22 @@ def main():
         run_sim = lambda fld, sd, c=None: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=c or cfg, seed=sd,
             ability_sigma=eff_ability_sigma, track_dynamics=True)
+    course_params = None
     if args.course_env:
-        from src.simulation._course_env import course_context_from_featured, sim_config_for_course
-        print("[course-env] Phase A: レース毎に course_* 幾何で SimConfig を上書き（幾何欠損は base）。")
+        from src.simulation._course_env import (
+            course_context_from_featured,
+            course_env_params_from_mapping,
+            sim_config_for_course,
+        )
+        if args.calibrated:   # 較正済み ce_* ゲインがあれば使う（無ければ CourseEnvParams 既定）
+            fname = "sim_calibration_2d.json" if args.engine == "2d" else "sim_calibration.json"
+            calp = Path(__file__).resolve().parent / "models" / fname
+            if calp.exists():
+                import json
+                raw = dict(json.loads(calp.read_text()).get("best_params", {}))
+                course_params = course_env_params_from_mapping(raw)
+        print(f"[course-env] Phase A: レース毎に course_* 幾何で SimConfig を上書き"
+              f"（{'較正ゲイン' if course_params else '既定ゲイン'}・幾何欠損は base）。")
     print(f"[engine] {args.engine} / dt={args.dt} / 実ステップ数={steps}（総時間 T·dt={args.T}）"
           "  ※1d/2d とも dt 不変（ノイズ√dt）")
     rng = np.random.default_rng(args.seed)
@@ -160,7 +173,8 @@ def main():
             continue
 
         field = field_from_featured(rd, ability_spread=args.ability_spread)
-        cfg_r = sim_config_for_course(cfg, course_context_from_featured(rd)) if args.course_env else None
+        cfg_r = sim_config_for_course(cfg, course_context_from_featured(rd), course_params) \
+            if args.course_env else None
         sim = run_sim(field, int(rng.integers(1 << 30)), cfg_r)
         # sim 前傾度は速度レベルで正規化（(early-late)/(early+late)）＝形だけ測り能力レベル交絡を除く
         _es, _ls = sim["early_speed"], sim["late_speed"]

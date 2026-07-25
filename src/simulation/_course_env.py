@@ -70,7 +70,8 @@ class CourseEnvParams:
     straight_ref: float = 360.0   # ゴール前直線 [m]
     elevation_ref: float = 2.3    # 最大高低差 [m]
 
-    # 幅員 → 有効レース幅（course_width）スケール
+    # 幅員 → 有効レース幅（course_width）スケール（他 knob と同じ「ゲイン×相対偏差」形）
+    width_gain: float = 1.0       # 幅比 (width/ref−1) への感度。1.0=物理幅そのまま比例、0=幅効果 off
     width_lo: float = 0.55        # 有効幅スケールの下限（最狭コース）
     width_hi: float = 1.50        # 上限（最広コース）
 
@@ -90,6 +91,22 @@ class CourseEnvParams:
     spiral_relief: float = 0.15   # スパイラルは急コーナーを緩和＝距離ロスを減らす
     corner_lo: float = 0.60
     corner_hi: float = 1.60
+
+
+# 較正ファイル(sim_calibration.json)内で CourseEnvParams ゲインに使う接頭辞。SimConfig knob と
+# 名前空間を分けるため（calibrate_sim.py が ce_<field> で探索・保存し、consumer がこれで復元する）。
+COURSE_ENV_GAIN_PREFIX = "ce_"
+
+
+def course_env_params_from_mapping(params: dict,
+                                   prefix: str = COURSE_ENV_GAIN_PREFIX) -> "CourseEnvParams | None":
+    """<prefix><field> 形式の較正値マップ → CourseEnvParams（該当キーが無ければ None）。
+
+    calibrate_sim.py が best_params に ce_* として保存したゲインを、sim_fidelity 等の consumer が
+    CourseEnvParams へ復元する共通経路（ce_ 規約の単一の出所）。未指定フィールドは既定を使う。
+    """
+    kw = {k[len(prefix):]: v for k, v in params.items() if k.startswith(prefix)}
+    return CourseEnvParams(**kw) if kw else None
 
 
 def _clip(x: float, lo: float, hi: float) -> float:
@@ -149,7 +166,8 @@ def sim_config_for_course(base_cfg, ctx: CourseContext,
     # (1) 幅員 → 有効レース幅（course_width）。物理幅を参照幅で正規化した比で base をスケール。
     #     狭いほど lane_capacity↓＝前方バンド定員が減り前列争いが激化（外枠・先行集中に不利）。
     if ctx.width is not None and "course_width" in field_names:
-        scale = _clip(ctx.width / params.width_ref, params.width_lo, params.width_hi)
+        rel = ctx.width / params.width_ref - 1.0
+        scale = _clip(1.0 + params.width_gain * rel, params.width_lo, params.width_hi)
         overrides["course_width"] = base_cfg.course_width * scale
 
     # (2) 高低差 → stamina_cost。坂が大きいほど v²消費が増える（終盤失速→差し台頭を強める）。
