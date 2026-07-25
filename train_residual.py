@@ -86,6 +86,9 @@ def main() -> None:
     ap.add_argument("--min-train-years", type=int, default=3)
     ap.add_argument("--drop-prefix", action="append", default=[],
                     help="外す特徴量プレフィックス（アブレーション。複数可）")
+    ap.add_argument("--features", choices=("all", "market-only", "no-market"), default="all",
+                    help="監査用アブレーション: market-only=単勝/人気のみ（FLバイアス再較正の"
+                         "切り分け）/ no-market=単勝/人気を除外（市場外情報の単独寄与）")
     ap.add_argument("--num-boost-round", type=int, default=600)
     args = ap.parse_args()
 
@@ -96,7 +99,14 @@ def main() -> None:
         raise SystemExit("featured がありません")
     df, races = build_frames(featured, args.since_year)
     fcols = residual_feature_cols(df, drop_prefixes=tuple(args.drop_prefix))
+    market_cols = list(dict.fromkeys(
+        c for c in (ResultsCols.TANSHO_ODDS, ResultsCols.POPULARITY) if c in fcols))
+    if args.features == "market-only":
+        fcols = market_cols
+    elif args.features == "no-market":
+        fcols = [c for c in fcols if c not in market_cols]
     print(f"行 {len(df):,} / レース {len(races):,} / 特徴量 {len(fcols)} 列"
+          f"（features={args.features}）"
           + (f"（除外: {args.drop_prefix}）" if args.drop_prefix else ""))
 
     year_all = pd.to_numeric(pd.Series(df.index.astype(str).str[:4], index=df.index),
@@ -105,6 +115,7 @@ def main() -> None:
     # ── fold ループ: 各テスト年に「過去のみ fit」の OOS 残差を焼き込む ──
     folds = rolling_origin_folds(races, min_train_years=args.min_train_years)
     oos_races: list[dict] = []
+    last_booster = None
     for train, test, test_year in folds:
         max_y = max(r["year"] for r in train)
         sub = df[(year_all <= max_y).to_numpy()]
@@ -126,6 +137,7 @@ def main() -> None:
         print(f"  fit〜{max_y}→{test_year}: scale={scale:.2f} it={diag['best_iteration']}"
               f"  validNLL 市場{diag['nll_market']:.4f}→{diag['nll_best']:.4f}"
               f"  test {len(test):,}レース")
+        last_booster = booster
 
     prob_base = lambda r: market_probs(r["odds"])                       # noqa: E731
     prob_chal = lambda r: true_probs(r["odds"], r.get("residual", {}))  # noqa: E731
@@ -159,6 +171,15 @@ def main() -> None:
     for lab in cb:
         if cb[lab].get("n"):
             print(f"  {lab:<8} 市場 {cb[lab]['bias']:+.4f} → 残差込み {cc[lab]['bias']:+.4f}")
+
+    # 監査: f_θ を駆動している特徴量（gain 上位）。人気/オッズ系が支配なら
+    # 「FLバイアス再較正」story、見慣れない列が上位なら まずリークを疑う。
+    if last_booster is not None:
+        imp = last_booster.feature_importance(importance_type="gain")
+        pairs = sorted(zip(fcols, imp, strict=False), key=lambda t: -float(t[1]))[:20]
+        print("\n特徴量重要度（最終fold・gain 上位20）:")
+        for name, v in pairs:
+            print(f"  {name:<40} {float(v):>12,.1f}")
 
 
 if __name__ == "__main__":
