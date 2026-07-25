@@ -5,8 +5,9 @@ Step3 の識別性知見（一様 P(z)+勝者NLL では β 識別不能）によ
 
 構成（3段・全て純粋関数、I/O は CLI 側）:
 1) 教師ラベル z ∈ {slow, normal, fast}
-   horse_results の「ペース」列（"35.1-36.8"＝レースの前半-後半3F）を (horse_id, date) で
-   featured に結合してレース単位の (front, back) を得る。バランス = back − front
+   horse_results の「ペース」列（"35.1-36.8"＝レースの前半-後半3F）をレースキー
+   (日付, 場コード, R)＋(horse_id, date) の2経路で featured に結合し、レース単位の
+   (front, back) を得る（horse_id 体系不一致に耐えるため race_pace_balance 参照）。バランス = back − front
    （正が大きい＝前傾＝前半速い＝**ハイペース**）。コース条件でスケールが違うため
    （race_type×距離帯）グループ内の 33/66 分位で3分割 → クラスは構成上ほぼ均等。
    ラベルは事後情報で良い（教師）。**特徴量は発走前のみ**（ここが前進安全の境界）。
@@ -66,32 +67,74 @@ def race_pace_balance(
 ) -> pd.Series:
     """レース単位のペースバランス（back−front 秒）を返す（index=race_id）。
 
-    featured_keys: 列 race_id, horse_id, date（出走行）。horse_results: 列 horse_id,
-    日付 or date, ペース。 (horse_id, date) で結合し、レース内の最頻 (front, back) を採用
-    （同一レースの馬は同じ値を持つはずだが、取得ゆらぎに備え多数決）。
+    結合は2経路の和集合（実データ検証で horse_id 体系が featured=8桁内部ID /
+    horse_results=netkeiba 10桁と**完全に別物**（重なり0）だったため、ID に依存しない
+    レースキー結合を主経路にする）:
+      A) レースキー: (日付, 場コード, R)。featured 側は race_id の 5-6 桁目=場コード・
+         末尾2桁=R。hr 側は「開催」（例 '3中山4'）から数字を除いた場名を
+         Master.PLACE_DICT でコード化し、R 列と合わせる。
+      B) (horse_id, date): 両側の horse_id を '.0' 除去で正規化して結合（体系が一致する
+         環境でのフォールバック）。
+    レース内の最頻 (back−front) を採用（同一レースの馬は同値のはずだが取得ゆらぎに多数決）。
+
+    featured_keys: 列 race_id, date（horse_id は任意）。horse_results: 列 日付/date,
+    ペース（開催, R, horse_id は任意・ある経路だけ使う）。
     """
+    from src.constants._master import Master
+
     hr = horse_results.copy()
     date_col = "date" if "date" in hr.columns else "日付"
     pace_col = "ペース" if "ペース" in hr.columns else "pace"
-    if pace_col not in hr.columns:
+    if pace_col not in hr.columns or date_col not in hr.columns:
         return pd.Series(dtype=float)
-    hr = hr[["horse_id", date_col, pace_col]].dropna()
+    keep = [c for c in ("horse_id", date_col, pace_col, "開催", "R") if c in hr.columns]
+    hr = hr[keep].dropna(subset=[pace_col, date_col])
+    parsed = hr[pace_col].map(parse_pace_string)
+    hr = hr[parsed.notna()].copy()
+    if hr.empty:
+        return pd.Series(dtype=float)
+    hr["_bal"] = [b - f for f, b in parsed.dropna()]
     hr["_d"] = pd.to_datetime(hr[date_col], errors="coerce").dt.normalize()
-    hr["horse_id"] = hr["horse_id"].astype(str)
 
-    fk = featured_keys[["race_id", "horse_id", "date"]].copy()
+    fk = featured_keys.copy()
+    fk["race_id"] = fk["race_id"].astype(str)
     fk["_d"] = pd.to_datetime(fk["date"], errors="coerce").dt.normalize()
-    fk["horse_id"] = fk["horse_id"].astype(str)
 
-    m = fk.merge(hr[["horse_id", "_d", pace_col]], on=["horse_id", "_d"], how="inner")
-    if m.empty:
+    frames: list[pd.DataFrame] = []
+
+    # A) レースキー (日付, 場コード, R) — ID 体系に依存しない主経路
+    if "開催" in hr.columns and "R" in hr.columns:
+        place_name = hr["開催"].astype(str).str.replace(r"\d", "", regex=True)
+        hr_a = hr.assign(
+            _place=place_name.map(Master.PLACE_DICT),
+            _r=pd.to_numeric(hr["R"], errors="coerce"),
+        ).dropna(subset=["_place", "_r", "_d"])
+        fk_a = fk.assign(
+            _place=fk["race_id"].str[4:6],
+            _r=pd.to_numeric(fk["race_id"].str[-2:], errors="coerce"),
+        ).dropna(subset=["_r", "_d"])
+        a = fk_a.merge(
+            hr_a[["_d", "_place", "_r", "_bal"]],
+            on=["_d", "_place", "_r"], how="inner",
+        )
+        if not a.empty:
+            frames.append(a[["race_id", "_bal"]])
+
+    # B) (horse_id, date) — 体系が一致する環境でのフォールバック（'.0' 正規化）
+    if "horse_id" in hr.columns and "horse_id" in fk.columns:
+        norm = lambda s: s.astype(str).str.replace(r"\.0$", "", regex=True)  # noqa: E731
+        hr_b = hr.assign(horse_id=norm(hr["horse_id"])).dropna(subset=["_d"])
+        fk_b = fk.assign(horse_id=norm(fk["horse_id"])).dropna(subset=["_d"])
+        b = fk_b.merge(
+            hr_b[["horse_id", "_d", "_bal"]], on=["horse_id", "_d"], how="inner"
+        )
+        if not b.empty:
+            frames.append(b[["race_id", "_bal"]])
+
+    if not frames:
         return pd.Series(dtype=float)
-    parsed = m[pace_col].map(parse_pace_string)
-    m = m[parsed.notna()]
-    if m.empty:
-        return pd.Series(dtype=float)
-    m["_bal"] = [b - f for f, b in parsed.dropna()]
-    # レース内の最頻バランス（多数決）。mode が複数なら中央値側。
+    m = pd.concat(frames, ignore_index=True)
+    # レース内の最頻バランス（多数決）。mode が複数なら先頭（決定的）。
     return m.groupby("race_id")["_bal"].agg(lambda s: float(s.mode().iloc[0]))
 
 
