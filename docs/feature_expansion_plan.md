@@ -396,6 +396,43 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
   馬場語彙の実データ確認が前提
 - 直線長・坂・コーナー形状: コース定数テーブルが別途必要（**競馬場別成績で実質吸収**済み）
 
+### Phase 9: コース形状マスタ（直線長・高低差・坂・1角距離）— インフラ完了 / 本取得は probe 後（2026-07-24）
+
+コース物理特性を公式サイトから**スクレイプして** `data/master/course_master.csv` に自動生成し
+（手入力しない）、(開催×種別×距離) で results に結合する。監査で ❌ だった「直線長・坂・
+コーナー形状」を取り込む。
+
+**インフラ（✅ 完了・決定論的で任意の CSV で動作）**:
+- `src/constants/_course_master.py`: スキーマ（キー=place_code/race_type/course_len、値=
+  straight_length/elevation_diff/has_final_hill/first_corner_dist）+ `LocalPaths.COURSE_MASTER_PATH`
+- `src/preprocessing/_course_master.py`: `load_course_master` / `attach_course_features`
+  （開催 place_id ↔ PLACE コードを zfill 正規化して結合、CSV 未生成でも course_* を NaN 生成）
+- `DataMerger._attach_course_master`（merge 冒頭）+ `ShutubaDataMerger.merge` にも配線＝ライブパリティ
+- 交互作用（`_interaction_features.py`）: `legtype_x_straight`（差し×長い直線）/
+  `frame_x_first_corner`（外枠×1角距離）。ユーザーが重視した相互作用に直結
+- `COURSE_MASTER_FEATURE_COLS` は**レース内定数のため Z-score 対象外**（交互作用のみ特徴量化）
+
+**スクレイパ（✅ パーサ完了 / 実 DOM 検証は probe 後）**:
+- `scripts/scrape_course_master.py`: フェッチ(I/O)と `parse_course_page`(純関数)を分離。
+  直線距離/高低差/1コーナー距離/ゴール前坂をラベル付きテキストから抽出（助詞・約・記号を
+  許容する正規表現）。`build_row` が m→100m バケット変換 + スキーマ整形
+- `--probe --url ...` で 1 ページの抽出結果を確認 → 問題なければ `--config JSON` で一括取得
+- **手入力ゼロ**。ただし公式サイトの URL/DOM は環境依存のため、Phase 6-a と同じく実サイトで
+  probe → 正規表現/URL を調整、という段階運用（この dev サンドボックスからは実取得しない想定）
+
+**検証結果**:
+- unit: `test_course_master.py`（正規化/結合/未知コース NaN/空マスタ）+
+  `test_scrape_course_master.py`（数値抽出/坂判定/空ページ/バケット変換）→ 12 passed
+- 合成 E2E で course_* 付与（CSV 無し→NaN）と `legtype_x_straight`/`frame_x_first_corner` 生成確認
+- 全 pytest 964 passed / 18 skip、data/master 意図しない書込み無し、
+  mypy・ruff(src)・import-linter 4 契約 KEPT。CSV は `data/**/*.csv` で gitignore（scraper 再生成）
+
+**運用手順（公式サイトにアクセス可能な環境で）**:
+1. `python scripts/scrape_course_master.py --probe --url <コースページ> --place 05 --race-type 芝 --course-len 1400`
+   で抽出を確認（NaN だらけなら正規表現/URL を実 DOM に調整）
+2. 対象一覧 JSON を用意 → `--config` で一括取得 → `course_master.csv` 生成
+3. 次回 retrain で course_* とコース交互作用が自動的に学習に入る
+
 ### Phase 6: グループB（追加スクレイピング）— 事前調査ゲート付き（原計画）
 
 - **6-a 事前調査（実装より先）**: `scripts/probe_netkeiba_free.py` で非ログイン状態の

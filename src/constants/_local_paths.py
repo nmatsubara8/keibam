@@ -43,3 +43,5 @@ class LocalPaths:
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")
     # Phase 3: スピード指数の基準タイム表（train 期間限定で算出・ライブ推論はこれをロード）
     BASE_TIME_TABLE_PATH: str = os.path.join(MASTER_DIR, "base_time_table.csv")
+    # Phase 9: コース形状マスタ（公式サイトからスクレイプ・学習/ライブ共通）
+    COURSE_MASTER_PATH: str = os.path.join(MASTER_DIR, "course_master.csv")

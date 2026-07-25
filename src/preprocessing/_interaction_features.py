@@ -65,4 +65,18 @@ def add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
             pd.to_numeric(df["枠番"], errors="coerce") * pd.to_numeric(df["n_horses"], errors="coerce")
         )
 
+    # ── Phase 9: 脚質 × 直線長（差し=1 × 長い直線 で有利）─────────────
+    if "leg_type_binary" in df.columns and "course_straight_length" in df.columns:
+        df["legtype_x_straight"] = (
+            pd.to_numeric(df["leg_type_binary"], errors="coerce")
+            * pd.to_numeric(df["course_straight_length"], errors="coerce")
+        )
+
+    # ── Phase 9: 枠番 × 1コーナーまで距離（外枠×短い距離で不利傾向）───
+    if "枠番" in df.columns and "course_first_corner_dist" in df.columns:
+        df["frame_x_first_corner"] = (
+            pd.to_numeric(df["枠番"], errors="coerce")
+            * pd.to_numeric(df["course_first_corner_dist"], errors="coerce")
+        )
+
     return df

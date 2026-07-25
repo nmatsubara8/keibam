@@ -73,6 +73,8 @@ class DataMerger:
         # 保存、ライブ側(Shutuba)は load してマージ（過去履歴が空でも全 NaN にしない）。
         self._entity_stats_build: bool = True
         self._entity_stats_dir: str = LocalPaths.MASTER_DIR
+        # Phase 9: コース形状マスタ（公式サイトからスクレイプした CSV を学習/ライブ共通で読む）
+        self._course_master_path: str = LocalPaths.COURSE_MASTER_PATH
 
     def merge(self):
         self._merge_race_info()
@@ -81,6 +83,9 @@ class DataMerger:
         # Phase 5: 生産者集計用に breeder_id を results へ事前 join（1 回だけ）。
         # owner_id は results に既存。breeder_id は _merge_horse_info の重複除去で二重化を防ぐ。
         self._attach_breeder_id()
+
+        # Phase 9: コース形状マスタを results に付与（開催×種別×距離）。
+        self._attach_course_master()
 
         self._merge_horse_results()
         logger.debug("merge_horse\n%s", self._merged_data.sort_values(by="horse_id").head().T)
@@ -96,6 +101,17 @@ class DataMerger:
         import os as _os
         _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
         self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+
+    def _attach_course_master(self):
+        """Phase 9: コース形状マスタ（course_* 属性）を self._results に付与する。
+
+        学習・ライブとも同じ CSV を読むため特徴量パリティが保たれる。CSV 未生成でも
+        course_* 列は NaN で生成され、モデルは reindex fill 0 で安全に動作する。
+        """
+        from src.preprocessing._course_master import attach_course_features, load_course_master
+
+        cm = load_course_master(getattr(self, "_course_master_path", None))
+        self._results = attach_course_features(self._results, cm)
 
     def _attach_breeder_id(self):
         """self._horse_info の breeder_id を horse_id で self._results に付与する（学習側）。"""

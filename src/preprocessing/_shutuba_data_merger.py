@@ -72,6 +72,8 @@ class ShutubaDataMerger(DataMerger):
         # Phase 5: ライブ側は学習時保存のエンティティ統計をロードする（build しない）
         self._entity_stats_build = False
         self._entity_stats_dir = LocalPaths.MASTER_DIR
+        # Phase 9: コース形状マスタ（学習と同じ CSV を読む）
+        self._course_master_path = LocalPaths.COURSE_MASTER_PATH
 
     def _merge_race_info_shutuba(self) -> None:
         """shutuba パイプライン専用の race_info 結合。
@@ -115,6 +117,8 @@ class ShutubaDataMerger(DataMerger):
                 "[ShutubaDataMerger] race_info joined: %d cols added",
                 len(self._race_info.columns),
             )
+        # Phase 9: コース形状マスタを付与（学習と同じ CSV）
+        self._attach_course_master()
         self._merge_horse_results()
         self._merge_horse_info()
         self._merge_peds()
