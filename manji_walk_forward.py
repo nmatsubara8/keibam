@@ -156,14 +156,18 @@ def main():
     payoff_lookup = None
     if args.bet_type == "fukusho":
         from src.constants._local_paths import LocalPaths
-        from src.tuning._payoffs import load_payoffs, single_horse_payoff_lookup
+        from src.tuning._payoffs import merged_fukusho_lookup
+        # 複勝決済は payoffs.pkl（中央archive 1986-2021）＋ return_tables.pkl（NAR/最近の実取得）を統合。
+        # → NAR は payoffs に無いが return_tables に入るので --organizer local でも複勝検証できる。
         pp = args.payoffs or str(Path(LocalPaths.RAW_DIR) / "payoffs.pkl")
-        payoffs_df = load_payoffs(pp)
-        payoff_lookup = single_horse_payoff_lookup(payoffs_df, "fukusho")
+        rt = LocalPaths.RAW_RETURN_TABLES_PATH
+        payoff_lookup = merged_fukusho_lookup(pp, rt)
         if not payoff_lookup:
-            print(f"複勝払戻が空です（{pp}）。import_archive_odds.py で payoffs.pkl を作成してください")
+            print(f"複勝払戻が空です（payoffs={pp} / return_tables={rt}）。"
+                  "中央は import_archive_odds.py で payoffs.pkl、NAR は collect_nar で return_tables を作成")
             return
-        print(f"[--bet-type fukusho] 複勝払戻 {len(payoff_lookup):,} 件をロード（{pp}）")
+        print(f"[--bet-type fukusho] 複勝払戻 {len(payoff_lookup):,} 件をロード"
+              f"（payoffs.pkl＋return_tables.pkl 統合）")
     factor_names = list(FACTORS) if args.factors == "all" else \
         [f.strip() for f in args.factors.split(",") if f.strip() in FACTORS]
     if not factor_names:

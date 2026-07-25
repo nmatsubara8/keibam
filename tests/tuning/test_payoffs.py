@@ -51,3 +51,52 @@ def test_settle_tansho_unchanged():
     n, hit, stake, ret = _settle(chosen, winners)     # payoffs=None → 単勝
     assert n == 2 and hit == 1 and stake == 200.0
     assert ret == 100.0 * 4.0            # 勝馬3のみ、100×単勝オッズ
+
+
+def test_place_payoff_lookup_from_returns():
+    """return_tables（列0=券種/1=当選馬番/2=払戻・br区切り）から複勝lookupを作る。"""
+    import pandas as pd
+
+    from src.tuning._payoffs import place_payoff_lookup_from_returns
+    # index=race_id、列 0/1/2。複勝は3頭 br 区切り。旧空白区切りも1行入れて両対応を確認。
+    df = pd.DataFrame(
+        {0: ["単勝", "複勝", "複勝"],
+         1: ["3", "3br5br7", "2 6"],
+         2: ["230", "150br170br110", "150 320"]},
+        index=["202444060101", "202444060101", "202444060102"],
+    )
+    lk = place_payoff_lookup_from_returns(df)
+    assert lk[("202444060101", 3)] == 150.0
+    assert lk[("202444060101", 5)] == 170.0
+    assert lk[("202444060101", 7)] == 110.0
+    assert lk[("202444060102", 2)] == 150.0   # 空白区切りも解釈
+    assert lk[("202444060102", 6)] == 320.0
+    assert ("202444060101", 99) not in lk
+
+
+def test_place_payoff_lookup_empty_and_race_id_column():
+    import pandas as pd
+
+    from src.tuning._payoffs import place_payoff_lookup_from_returns
+    assert place_payoff_lookup_from_returns(pd.DataFrame()) == {}
+    # race_id が列のケース
+    df = pd.DataFrame({0: ["複勝"], 1: ["4"], 2: ["180"], "race_id": ["202450010101"]})
+    lk = place_payoff_lookup_from_returns(df)
+    assert lk == {("202450010101", 4): 180.0}
+
+
+def test_merged_fukusho_lookup_combines(tmp_path):
+    import pandas as pd
+
+    from src.tuning._payoffs import merged_fukusho_lookup
+    # payoffs.pkl（縦持ち）＝中央archive相当、return_tables.pkl＝NAR相当
+    payoffs = pd.DataFrame({"race_id": ["202401010101"], "bet_type": ["fukusho"],
+                            "combo_key": ["2"], "payoff_yen": [140.0], "popularity": [1]})
+    pp = tmp_path / "payoffs.pkl"
+    payoffs.to_pickle(pp)
+    rt = pd.DataFrame({0: ["複勝"], 1: ["3"], 2: ["150"]}, index=["202444060101"])
+    rtp = tmp_path / "return_tables.pkl"
+    rt.to_pickle(rtp)
+    lk = merged_fukusho_lookup(str(pp), str(rtp))
+    assert lk[("202401010101", 2)] == 140.0   # 中央archive
+    assert lk[("202444060101", 3)] == 150.0   # NAR(return_tables)
