@@ -19,27 +19,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.jrdb._augment import attach, build_history, build_kyi  # noqa: E402
 
 
-def _classify(jrdb_dir: str) -> dict[str, list[str]]:
-    out = {"KYI": [], "SED": [], "SKB": []}
-    for p in sorted(Path(jrdb_dir).glob("*")):
-        name = p.name.upper()
-        for pref in out:
-            if name.startswith(pref):
-                out[pref].append(str(p))
-    return out
-
-
 def main() -> int:
     ap = argparse.ArgumentParser(description="featured に JRDB 特徴量を付与")
-    ap.add_argument("--jrdb-dir", required=True, help="KYI/SED/SKB ファイルのフォルダ")
+    ap.add_argument("--jrdb-dir", required=True,
+                    help="KYI/SED/SKB の .txt/.zip/.lzh を置いたフォルダ")
+    ap.add_argument("--extract-to", default="data/jrdb_txt",
+                    help="アーカイブ展開先（.lzh/.zip → .txt）")
     ap.add_argument("--out", default="data/featured_jrdb.pkl", help="出力 pickle")
     ap.add_argument("--sidecar", action="store_true", help="JRDB列だけのサイドカーも保存")
     args = ap.parse_args()
 
-    files = _classify(args.jrdb_dir)
-    print(f"検出: KYI {len(files['KYI'])} / SED {len(files['SED'])} / SKB {len(files['SKB'])} ファイル")
+    from src.jrdb._extract import extract_dir  # noqa: E402
+
+    by_type = extract_dir(args.jrdb_dir, args.extract_to)  # .lzh/.zip 透過展開
+    files = {k: by_type.get(k, []) for k in ("KYI", "SED", "SKB")}
+    print(f"検出: KYI {len(files['KYI'])} / SED {len(files['SED'])} / SKB {len(files['SKB'])} ファイル"
+          f"（展開先 {args.extract_to}）")
     if not any(files.values()):
-        print("JRDBファイルが見つかりません（接頭辞 KYI/SED/SKB）。")
+        print("JRDBファイルが見つかりません（KYI/SED/SKB の .txt/.zip/.lzh）。")
         return 1
 
     from app._model_eval import load_featured_data

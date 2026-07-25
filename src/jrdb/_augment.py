@@ -74,19 +74,50 @@ JRDB_COLS = (
     + ["jrdb_pace_hms", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
 )
 
-# 「前走で不利/口取りロス」を示す特記コード（不利・接触・詰まり・進路無し系）
+# 走行中の不利＝「着順が実力を過小評価している」隠れ妙味シグナル（卍の核・市場と直交）。
+# 公式・特記コード表（2026.04.13）から、外的要因による進路妨害/接触/外々/ブレーキに厳選。
+# 除外: スタート系(059/158→prev_slowstart)・脚質/適性/馬場向き・故障/病気（能力や状態であって
+# 「不利で負けた」ではないため）・展開恵まれ(820=むしろ逆シグナル)。
 TROUBLE_TOKKI = {
-    "387",  # 不利
-    "718",  # 道中外々
-    "876",  # 直線挟る
-    "954",  # 位置取りが悪い
-    "957",  # 直線で前が壁
+    # 接触・妨害
     "174",  # ラチ接触
-    "309",  # 他馬接触
-    "119",  # コーナーワーク×
-    "156",  # ふらつく
+    "179",  # 外から被せられる×
+    "199",  # 外から被せられる×
+    "309",  # 他馬と接触
+    "387",  # 不利
     "413",  # 躓く
-    "221",  # 障害接触
+    "448",  # バランス崩す
+    "787",  # ゴチャつく
+    "806",  # ヨレる
+    "876",  # 直線挟まる
+    "958",  # 寄られる
+    # 進路なし・詰まり・壁
+    "955",  # 蓋される
+    "956",  # 勝負所で蓋
+    "957",  # 直線で前が壁
+    "960",  # 囲まれて出れず
+    "961",  # 囲まれて追えず
+    "964",  # 道中ブレーキ踏む
+    "965",  # 直線ブレーキ踏む
+    # 外々・距離ロス
+    "415",  # 大外回る
+    "718",  # 道中外々
+    "945",  # コーナー逆手前
+    "948",  # 外ラチ沿いを進む
+    "949",  # 序盤外回る
+    "950",  # 外回りすぎ
+    # 位置取り・展開の不利
+    "819",  # 展開厳しい
+    "954",  # 位置取りが悪い
+}
+
+# 前走の出遅れ（スタート悪い/ダッシュ不足）— deokure を SKB からも補完（SED数値が空の場合の保険）。
+SLOWSTART_TOKKI = {
+    "059",  # スタート悪い
+    "158",  # ダッシュ×
+    "434",  # スタート芝×
+    "703",  # 発進不良
+    "716",  # 発進不良
 }
 
 
@@ -122,8 +153,10 @@ def build_history(sed_paths: list[str], skb_paths: list[str]) -> pd.DataFrame:
         d = parse(p, "SKB")
         tk = [c for c in d.columns if c.startswith("tokki")]
         trouble = d[tk].apply(lambda row: int(any(x in TROUBLE_TOKKI for x in row)), axis=1)
+        slowstart = d[tk].apply(lambda row: int(any(x in SLOWSTART_TOKKI for x in row)), axis=1)
         frames.append(pd.DataFrame({"ketto": d["ketto"], "ymd": d["ymd"],
-                                    "prev_deokure": 0, "prev_trouble": trouble.to_numpy()}))
+                                    "prev_deokure": slowstart.to_numpy(),
+                                    "prev_trouble": trouble.to_numpy()}))
     if not frames:
         return pd.DataFrame(columns=["ketto", "hist_date", "prev_deokure", "prev_trouble"])
     h = pd.concat(frames, ignore_index=True)
