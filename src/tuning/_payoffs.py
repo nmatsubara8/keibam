@@ -50,6 +50,34 @@ def _norm_cell(s: str) -> list[str]:
     return [t.strip() for t in s.split("br") if t.strip()]
 
 
+def trifecta_payoff_lookup(return_df: pd.DataFrame) -> dict:
+    """return_tables から三連単の {race_id:str: ((1着,2着,3着):tuple, payoff_yen:float)}。
+
+    確認済み形式: 列 'race_id' / '0'=券種ラベル / '1'=買い目('13 → 15 → 10') /
+    '2'=払戻(100円あたり・カンマ有りうる '1,410') / '3'=人気。当選の1組のみ。
+    payoff_yen は 100円あたりの払戻金（531.9倍なら 53190）。
+    """
+    if return_df is None or return_df.empty:
+        return {}
+    label_col = "0" if "0" in return_df.columns else 0
+    combo_col = "1" if "1" in return_df.columns else 1
+    pay_col = "2" if "2" in return_df.columns else 2
+    sub = return_df[return_df[label_col].astype(str).str.contains("三連単", na=False)]
+    rid_series = (sub["race_id"].astype(str) if "race_id" in sub.columns
+                  else sub.index.to_series().astype(str))
+    out: dict = {}
+    for rid, combo, pay in zip(rid_series, sub[combo_col].astype(str),
+                               sub[pay_col].astype(str), strict=False):
+        parts = [p for p in combo.replace("→", " ").replace("-", " ").split() if p.isdigit()]
+        if len(parts) != 3:
+            continue
+        pay_tok = pay.replace(",", "").split()
+        if not pay_tok or not pay_tok[0].isdigit():
+            continue
+        out[str(rid)] = (tuple(int(x) for x in parts), float(pay_tok[0]))
+    return out
+
+
 def place_payoff_lookup_from_returns(return_df: pd.DataFrame) -> dict:
     """return_tables（netkeiba 生払戻）から複勝の {(race_id:str, 馬番:int): payoff_yen:float}。
 
