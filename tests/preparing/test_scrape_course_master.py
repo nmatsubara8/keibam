@@ -157,6 +157,124 @@ class TestTwoStage:
         assert any(r["race_type"] == "芝" and r["straight_length"] == 266.1 for r in rows)
 
 
+# ──────────────────────────────────────────
+# 地方競馬（NAR）: 1 ページ内アンカー＋「データ名｜詳細」表
+# ──────────────────────────────────────────
+
+# keiba.go.jp/guide/course/ の実構造を模した合成 HTML
+# （門別=ダートのみ / 盛岡=芝＋ダート併設で detail に種別分割・平坦表記あり）
+_NAR_HTML = """
+<html><body>
+<div id="course_monb">門別競馬場</div>
+<p>広いコーナーの半径が大きい緩やかなカーブで、逃げ・先行が有利なコース。</p>
+<table>
+<tr><th>データ名</th><th>詳細</th></tr>
+<tr><td>回り</td><td>右回り</td></tr>
+<tr><td>1周距離</td><td>1,600m</td></tr>
+<tr><td>直線距離</td><td>400m</td></tr>
+<tr><td>高低差</td><td>1.54m</td></tr>
+<tr><td>幅員</td><td>25m</td></tr>
+</table>
+<div id="course_mori">盛岡競馬場</div>
+<p>芝コースを併設する。直線が長く、差し・追い込みも決まりやすい。</p>
+<table>
+<tr><th>データ名</th><th>詳細</th></tr>
+<tr><td>回り</td><td>左回り</td></tr>
+<tr><td>1周距離</td><td>ダート1,600m 芝1,400m</td></tr>
+<tr><td>直線距離</td><td>ダート300m 芝330m</td></tr>
+<tr><td>高低差</td><td>平坦</td></tr>
+<tr><td>幅員</td><td>25m</td></tr>
+</table>
+<div id="course_ooi">大井競馬場</div>
+<p>後方からの直線一気も決まる。</p>
+<table>
+<tr><th>データ名</th><th>詳細</th></tr>
+<tr><td>回り</td><td>右回り</td></tr>
+<tr><td>1周距離</td><td>1,600m</td></tr>
+<tr><td>直線距離</td><td>486m</td></tr>
+<tr><td>高低差</td><td>平坦</td></tr>
+<tr><td>幅員</td><td>25m</td></tr>
+</table>
+</body></html>
+"""
+
+
+class TestNar:
+    def test_anchor_map_excludes_banei(self):
+        from scripts.scrape_course_master import NAR_ANCHOR_TO_PLACE
+
+        assert len(NAR_ANCHOR_TO_PLACE) == 14
+        assert NAR_ANCHOR_TO_PLACE["monb"] == "30"     # 門別
+        assert NAR_ANCHOR_TO_PLACE["ooi"] == "44"      # 大井
+        assert "obi" not in NAR_ANCHOR_TO_PLACE        # 帯広（ばんえい）は対象外
+
+    def test_section_isolates_anchor(self):
+        from scripts.scrape_course_master import _nar_section
+
+        seg = _nar_section(_NAR_HTML, "monb")
+        assert "門別競馬場" in seg
+        assert "盛岡競馬場" not in seg                  # 次アンカーで切れている
+
+    def test_geometry_dirt_only(self):
+        from scripts.scrape_course_master import parse_nar_geometry, _nar_section
+
+        g = parse_nar_geometry(_nar_section(_NAR_HTML, "monb"), "ダート")
+        assert g["straight_length"] == 400.0
+        assert g["lap_length"] == 1600.0
+        assert g["elevation_diff"] == 1.54
+        assert g["width_min"] == 25.0 and g["width_max"] == 25.0
+
+    def test_hiratan_maps_to_zero(self):
+        from scripts.scrape_course_master import parse_nar_geometry, _nar_section
+
+        g = parse_nar_geometry(_nar_section(_NAR_HTML, "ooi"), "ダート")
+        assert g["elevation_diff"] == 0.0              # 平坦 → 0
+
+    def test_surface_split_for_shiba(self):
+        from scripts.scrape_course_master import (
+            parse_nar_geometry, parse_nar_surfaces, _nar_section,
+        )
+
+        seg = _nar_section(_NAR_HTML, "mori")
+        assert parse_nar_surfaces(seg) == ["ダート", "芝"]   # 芝併設を検出
+        dirt = parse_nar_geometry(seg, "ダート")
+        shiba = parse_nar_geometry(seg, "芝")
+        assert dirt["straight_length"] == 300.0
+        assert shiba["straight_length"] == 330.0            # detail の種別分割を解決
+
+    def test_turn_direction(self):
+        from scripts.scrape_course_master import _nar_turn
+
+        assert _nar_turn("右回り") == 0.0
+        assert _nar_turn("左回り") == 1.0
+        assert math.isnan(_nar_turn("左右両回り"))
+
+    def test_build_raw_records_shapes(self):
+        from scripts.scrape_course_master import build_raw_records_nar
+
+        recs = build_raw_records_nar(_NAR_HTML)
+        assert set(recs) == {"30", "35", "44"}
+        assert recs["30"]["turn_direction"] == 0.0
+        assert "ダート" in recs["30"]["geometry"] and "芝" not in recs["30"]["geometry"]
+        assert "芝" in recs["35"]["geometry"]              # 盛岡は芝併設
+        assert "門別競馬場" in recs["30"]["prose_raw"]
+
+    def test_end_to_end_analyze(self):
+        from scripts.scrape_course_master import analyze_record, build_raw_records_nar
+
+        recs = build_raw_records_nar(_NAR_HTML)
+        rows = analyze_record(recs["30"])
+        assert len(rows) == 1                              # ダートのみ
+        row = rows[0]
+        assert row["place_code"] == "30"
+        assert row["race_type"] == "ダート"
+        assert row["straight_length"] == 400.0
+        assert row["run_style_bias"] == 1.0                # 逃げ・先行有利 → 前
+        # 大井「直線一気」は差し側として拾う（後方一気 単独は誤検出しない）
+        ooi = analyze_record(recs["44"])[0]
+        assert ooi["run_style_bias"] == -1.0
+
+
 class TestProseMarkerCoverage:
     def test_wide_corner_variants(self):
         from scripts.scrape_course_master import parse_course_prose

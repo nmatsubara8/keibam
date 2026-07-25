@@ -45,6 +45,16 @@ TRACK_SLUG_TO_PLACE: dict = {
 }
 _URL = "https://www.jra.go.jp/facilities/race/{slug}/course/index.html"
 
+# 地方競馬（NAR）: 1 ページに全場（アンカー id="course_<slug>"）。UTF-8。
+# アンカー slug → 開催コード（Master.PLACE_DICT と整合）。帯広(obi)=ばんえいは
+# 直線 200m の障害競走で通常のコース幾何に載らないため除外する。
+_NAR_URL = "https://www.keiba.go.jp/guide/course/"
+NAR_ANCHOR_TO_PLACE: dict = {
+    "monb": "30", "mori": "35", "mizu": "36", "uraw": "42", "funa": "43",
+    "ooi": "44", "kawa": "45", "kana": "46", "kasa": "47", "nago": "48",
+    "sono": "50", "hime": "51", "kout": "54", "saga": "55",
+}
+
 
 # ── テキスト/数値ユーティリティ ─────────────────────────────────
 def _strip(html: str) -> str:
@@ -134,9 +144,11 @@ def parse_course_prose(text: str) -> dict:
     p["turf_type_code"] = 1.0 if "洋芝" in text else (0.0 if "野芝" in text else float("nan"))
 
     if has("半径が大き", "緩やかで大きなカーブ", "大きなカーブ", "滑らかに回れ", "緩やかなカーブ",
-           "半径がゆったり", "カーブの半径がゆったり", "ゆったりしたカーブ", "半径がゆったりし"):
+           "半径がゆったり", "カーブの半径がゆったり", "ゆったりしたカーブ", "半径がゆったりし",
+           "カーブが緩い", "カーブがゆるやか", "カーブが緩やか"):  # NAR 表現も
         p["corner_radius_large"] = 1.0
-    elif has("急なカーブ", "きついカーブ", "半径が小さ", "タイト", "小回り", "急カーブ"):
+    elif has("急なカーブ", "きついカーブ", "半径が小さ", "タイト", "小回り", "急カーブ",
+             "カーブがきつい"):
         p["corner_radius_large"] = 0.0
     else:
         p["corner_radius_large"] = float("nan")
@@ -154,8 +166,8 @@ def parse_course_prose(text: str) -> dict:
         r"追い?込み[^。]{0,15}(?:苦戦|不利|届か)|後方[^。]{0,12}(?:苦戦|不利)", text))
     closer = len(re.findall(
         r"差し[^。]{0,10}(?:有利|決ま|台頭|水準以上|残|優勢|届く)|"
-        r"追い?込み[^。]{0,8}(?:有利|決ま|得意)|外差し|末脚(?:比べ|勝負|自慢)|"
-        r"上がり[^。]{0,10}(?:速|勝負|比べ)", text))
+        r"追い?込み[^。]{0,10}(?:有利|決ま|得意|届|でも届)|外差し|末脚(?:比べ|勝負|自慢)|"
+        r"上がり[^。]{0,10}(?:速|勝負|比べ)|直線一気", text))
     p["run_style_bias"] = float(front - closer)
 
     if has("時計がかかる", "時計を要", "タフな馬場", "時計のかかる", "遅くなりがち", "パワータイプ",
@@ -190,6 +202,91 @@ def parse_turn_direction(html: str) -> float:
 def _prose_text(html: str) -> str:
     ps = [_strip(p).strip() for p in re.findall(r"<p[^>]*>(.*?)</p>", html, re.S)]
     return " ".join(p for p in ps if len(p) > 60 and "Copyright" not in p)
+
+
+# ── 地方競馬（NAR）: 1 ページ内の各場アンカーを解析 ─────────────
+def _nar_section(html: str, anchor: str) -> str:
+    """id="course_<anchor>" から次アンカーまでの区間 HTML を返す。"""
+    i = html.find(f'id="course_{anchor}"')
+    if i < 0:
+        return ""
+    nxt = html.find('id="course_', i + 10)
+    return html[i: nxt] if nxt > 0 else html[i: i + 2500]
+
+
+def _nar_kv(section: str) -> dict:
+    """NAR の「データ名｜詳細」表を dict 化する。"""
+    d: dict = {}
+    for tr in re.findall(r"<tr.*?</tr>", section, re.S):
+        cells = [_strip(c).strip() for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.S)]
+        cells = [c for c in cells if c]
+        if len(cells) >= 2:
+            d[cells[0]] = cells[1]
+    return d
+
+
+def _nar_num_for(detail: str, surface: str) -> float:
+    """詳細文字列から surface（芝/ダート）に対応する数値を取る。分割が無ければ先頭値。"""
+    if not detail:
+        return float("nan")
+    if "平坦" in detail:
+        return 0.0
+    if surface and surface in detail:
+        m = re.search(surface + r"[^0-9]{0,10}?([\d,]+(?:\.\d+)?)", detail)
+        if m:
+            return float(m.group(1).replace(",", ""))
+    m = re.search(r"([\d,]+(?:\.\d+)?)", detail)
+    return float(m.group(1).replace(",", "")) if m else float("nan")
+
+
+def _nar_turn(detail: str) -> float:
+    """回り（0=右, 1=左, 左右両回り/不明は NaN）。"""
+    r, left = "右" in detail, "左" in detail
+    return float("nan") if (r and left) else (0.0 if r else (1.0 if left else float("nan")))
+
+
+def parse_nar_surfaces(section: str) -> list:
+    """区間に存在するコース種別（ダート必ず、芝コース記載があれば芝も）。"""
+    return ["ダート"] + (["芝"] if ("芝コース" in section or "外芝" in section) else [])
+
+
+def parse_nar_geometry(section: str, surface: str) -> dict:
+    """NAR 区間の幾何（直線/高低差/一周/幅員）を surface 別に返す。"""
+    d = _nar_kv(section)
+    width = _nar_num_for(d.get("幅員", ""), surface)
+    return {
+        "straight_length": _nar_num_for(d.get("直線距離", ""), surface),
+        "elevation_diff": _nar_num_for(d.get("高低差", ""), surface),
+        "lap_length": _nar_num_for(d.get("1周距離", d.get("全長", "")), surface),
+        "width_min": width,
+        "width_max": width,
+    }
+
+
+def _nar_prose(section: str) -> str:
+    """NAR 区間の紹介文（表より前の説明文）を素テキストで返す。"""
+    head = section.split("データ名", 1)[0]
+    txt = _strip(re.sub(r'id="course_[a-z]+">', " ", head))
+    return re.sub(r"\s+", " ", txt).strip()
+
+
+def build_raw_records_nar(html: str) -> dict:
+    """Stage1(NAR): 1 ページ HTML → {place_code: record}（JRA と同じ record 形状）。"""
+    records: dict = {}
+    for anchor, place in NAR_ANCHOR_TO_PLACE.items():
+        seg = _nar_section(html, anchor)
+        if not seg:
+            continue
+        d = _nar_kv(seg)
+        geometry = {s: parse_nar_geometry(seg, s) for s in parse_nar_surfaces(seg)}
+        records[place] = {
+            "place_code": place,
+            "slug": anchor,
+            "turn_direction": _nar_turn(d.get("回り", "")),
+            "geometry": geometry,
+            "prose_raw": _nar_prose(seg),
+        }
+    return records
 
 
 # ── Stage1: 素テキストとして取得 ───────────────────────────────
@@ -261,34 +358,52 @@ def build_rows(html: str, place_code: str, slug: str = "") -> list:
     return analyze_record(build_raw_record(html, slug, place_code))
 
 
-def _fetch(slug: str) -> str:
-    """JRA コースページを取得して cp932 デコードした HTML を返す（実 I/O）。"""
+def _http_get(url: str, encoding: str) -> str:
+    """URL を取得して指定エンコーディングでデコードする（レート制限付き・実 I/O）。"""
     import urllib.request
 
     from src.preparing._rate_limiter import polite_interval  # noqa: PLC0415
 
     polite_interval(1.0)
-    url = _URL.format(slug=slug)
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 keibam-course-scraper"})
     with urllib.request.urlopen(req, timeout=40) as resp:  # noqa: S310
-        return resp.read().decode("cp932", errors="replace")
+        return resp.read().decode(encoding, errors="replace")
 
 
-def _stage_fetch(slugs: list) -> dict:
-    """Stage1: 各場をフェッチして素テキスト record を集める（place_code→record）。"""
+def _fetch(slug: str) -> str:
+    """JRA コースページ（cp932）を取得する。"""
+    return _http_get(_URL.format(slug=slug), "cp932")
+
+
+def _fetch_nar() -> str:
+    """NAR（地方競馬）コースページ（UTF-8・全場 1 ページ）を取得する。"""
+    return _http_get(_NAR_URL, "utf-8")
+
+
+def _stage_fetch(slugs: list, source: str = "both") -> dict:
+    """Stage1: JRA 各場 / NAR 1 ページをフェッチして素テキスト record を集める。"""
     records: dict = {}
-    for slug in slugs:
-        place = TRACK_SLUG_TO_PLACE.get(slug)
-        if place is None:
-            logger.warning("未知の slug: %s", slug)
-            continue
-        logger.info("[stage1] fetching %s (place=%s)", slug, place)
+    if source in ("jra", "both"):
+        for slug in slugs:
+            place = TRACK_SLUG_TO_PLACE.get(slug)
+            if place is None:
+                logger.warning("未知の slug: %s", slug)
+                continue
+            logger.info("[stage1/jra] fetching %s (place=%s)", slug, place)
+            try:
+                html = _fetch(slug)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("取得失敗 %s: %s", slug, e)
+                continue
+            records[place] = build_raw_record(html, slug, place)
+    if source in ("nar", "both"):
+        logger.info("[stage1/nar] fetching NAR 全場")
         try:
-            html = _fetch(slug)
+            nar = build_raw_records_nar(_fetch_nar())
+            records.update(nar)
+            logger.info("[stage1/nar] %d 場を取得", len(nar))
         except Exception as e:  # noqa: BLE001
-            logger.warning("取得失敗 %s: %s", slug, e)
-            continue
-        records[place] = build_raw_record(html, slug, place)
+            logger.warning("NAR 取得失敗: %s", e)
     return records
 
 
@@ -303,12 +418,15 @@ def _stage_analyze(records: dict) -> list:
 def main() -> None:
     import pandas as pd
 
-    parser = argparse.ArgumentParser(description="JRA コースページからコース形状マスタを生成（2段階）")
-    parser.add_argument("--tracks", nargs="*", help="対象 slug（省略時は 10 場すべて）")
+    parser = argparse.ArgumentParser(
+        description="JRA/NAR コースページからコース形状マスタを生成（2段階）")
+    parser.add_argument("--tracks", nargs="*", help="対象 JRA slug（省略時は 10 場すべて）")
+    parser.add_argument("--source", choices=["jra", "nar", "both"], default="both",
+                        help="取得元（jra=中央 / nar=地方 / both=両方）")
     parser.add_argument("--stage", choices=["fetch", "analyze", "all"], default="all",
                         help="fetch=素テキスト取得のみ / analyze=保存済みを再分析のみ / all=両方")
     parser.add_argument("--probe", action="store_true", help="1 場の抽出結果を表示（保存しない）")
-    parser.add_argument("--slug", help="--probe 用の slug")
+    parser.add_argument("--slug", help="--probe 用の JRA slug")
     parser.add_argument("--prose", default=LocalPaths.COURSE_PROSE_PATH, help="素テキスト JSON")
     parser.add_argument("--out", default=LocalPaths.COURSE_MASTER_PATH, help="出力 CSV")
     args = parser.parse_args()
@@ -327,7 +445,7 @@ def main() -> None:
 
     # Stage1: 取得して素テキストを保存
     if args.stage in ("fetch", "all"):
-        records = _stage_fetch(slugs)
+        records = _stage_fetch(slugs, args.source)
         if not records:
             logger.warning("取得できた場がありません")
             return
