@@ -82,6 +82,7 @@ def fit_residual_head(
     num_boost_round: int = 600,
     params: Mapping | None = None,
     scale_grid: Sequence[float] = tuple(np.arange(0.0, 1.51, 0.05)),
+    se_guard: float = 0.25,
 ):
     """残差ヘッドを学習し (booster, scale, 診断dict) を返す。**rolling の fit_fn 内で呼ぶこと**。
 
@@ -115,10 +116,11 @@ def fit_residual_head(
     booster = lgb.train(p, dtr, num_boost_round=num_boost_round, valid_sets=[dva],
                         callbacks=[lgb.early_stopping(50, verbose=False)])
 
-    # 合流スケール s: バリデーション listwise NLL 最小 ＋ **1標準誤差ルール**。
-    # 小さな valid ではノイズが偶然 NLL を下げ s>0 を選びがち（無信号合成世界で s=0.5 を
-    # 観測）。市場（s=0）をレース別ペア差の 1SE 超で上回る場合のみ s>0 を採用する
-    # ＝「市場から離れるには証拠を要求する」のスケール選択版。
+    # 合流スケール s: バリデーション listwise NLL 最小 ＋ **se_guard×標準誤差の軽いガード**。
+    # 純粋最小化だと無信号でもノイズで s>0 を選びがち（合成世界で s=0.5 を観測）。ただし
+    # 1SE は保守的すぎて真の弱信号も殺す（drift 対照で改善0.022<1SE を棄却）。有意性の
+    # 本丸は OOS の compare_models（Bootstrap CI＋LRT）なので、ここは egregious な過学習だけ
+    # 止める軽ガード（既定 0.25SE）に留める。se_guard=0 で純粋最小化、大で保守化。
     f_va = booster.predict(x[is_valid], raw_score=True,
                            num_iteration=booster.best_iteration)
     lq_va = lq[is_valid].to_numpy()
@@ -132,7 +134,7 @@ def fit_residual_head(
     if s_best != 0.0 and 0.0 in per_race:
         diff = per_race[s_best] - per_race[0.0]
         se = float(diff.std(ddof=1) / np.sqrt(len(diff))) if len(diff) > 1 else float("inf")
-        if float(diff.mean()) > -se:  # 改善が 1SE に満たない → 市場へ退化
+        if float(diff.mean()) > -se_guard * se:  # 改善が se_guard×SE に満たない → 市場へ退化
             scale = 0.0
     diag = {"scale": scale, "nll_market": nll0,
             "nll_best": means[s_best], "nll_used": means.get(scale, nll0),
