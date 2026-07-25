@@ -13,6 +13,10 @@ import pandas as pd
 
 from src.jrdb._parser import parse
 
+# JRDB 由来の付与列（VOI 評価の A/B で「JRDB あり/なし」を切り替える対象の正本）。
+# prev_* は接頭辞が異なるため、train_residual の --drop-jrdb はこの集合を落とす。
+JRDB_COLS = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
+
 # 「前走で不利/口取りロス」を示す特記コード（不利・接触・詰まり・進路無し系）
 TROUBLE_TOKKI = {
     "387",  # 不利

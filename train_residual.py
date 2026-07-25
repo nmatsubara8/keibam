@@ -92,12 +92,21 @@ def main() -> None:
                          "raw だけ抜くと派生列 単勝_log 等が市場情報を持ち込むため）")
     ap.add_argument("--organizer", choices=("both", "central", "local"), default="both",
                     help="場フィルタ（race_id 5-6桁目 01-10=中央）。効果の中央/地方局在の監査用")
+    ap.add_argument("--featured-pkl", default=None,
+                    help="load_featured_data の代わりに読む pickle（scripts/jrdb_build_features.py "
+                         "の出力 featured_jrdb.pkl 等）。JRDB 列を含む featured で VOI 評価する用")
+    ap.add_argument("--drop-jrdb", action="store_true",
+                    help="JRDB 由来列（jrdb_*/prev_*）を全除去してベースライン化。--featured-pkl と "
+                         "組で A/B: 付与あり(ΔKL_with) vs --drop-jrdb(ΔKL_base) の差が VOI")
     ap.add_argument("--num-boost-round", type=int, default=600)
     args = ap.parse_args()
 
-    from app._model_eval import load_featured_data
-
-    featured = load_featured_data()
+    if args.featured_pkl:
+        featured = pd.read_pickle(args.featured_pkl)
+        print(f"featured 読込: {args.featured_pkl}（{len(featured):,}行）")
+    else:
+        from app._model_eval import load_featured_data
+        featured = load_featured_data()
     if featured is None or featured.empty:
         raise SystemExit("featured がありません")
     df, races = build_frames(featured, args.since_year)
@@ -109,7 +118,14 @@ def main() -> None:
         rid_pc = df.index.astype(str).str[4:6]
         df = df[[keep(pc) for pc in rid_pc]]
         print(f"organizer={args.organizer}: レース {len(races):,} / 行 {len(df):,}")
-    fcols = residual_feature_cols(df, drop_prefixes=tuple(args.drop_prefix))
+    from src.jrdb._augment import JRDB_COLS
+    extra_drop = tuple(JRDB_COLS) if args.drop_jrdb else ()
+    fcols = residual_feature_cols(df, drop_prefixes=tuple(args.drop_prefix),
+                                  extra_drop=extra_drop)
+    jrdb_present = [c for c in JRDB_COLS if c in df.columns]
+    if jrdb_present:
+        cov = {c: f"{df[c].notna().mean():.1%}" for c in jrdb_present}
+        print(f"JRDB列 {'除外' if args.drop_jrdb else '使用'}: {cov}")
     market_cols = list(dict.fromkeys(
         c for c in (ResultsCols.TANSHO_ODDS, ResultsCols.POPULARITY) if c in fcols))
     if args.features == "market-only":
