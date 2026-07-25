@@ -154,6 +154,13 @@ def main() -> None:
               f"  test {len(test):,}レース")
         last_booster = booster
 
+    if not oos_races:
+        yrs = sorted({r["year"] for r in races})
+        raise SystemExit(
+            f"OOS fold が作れません（年度: {yrs}・min_train_years={args.min_train_years}）。"
+            f"年数が {args.min_train_years + 1} 未満です — --min-train-years 1 で再実行してください"
+        )
+
     prob_base = lambda r: market_probs(r["odds"])                       # noqa: E731
     prob_chal = lambda r: true_probs(r["odds"], r.get("residual", {}))  # noqa: E731
 
