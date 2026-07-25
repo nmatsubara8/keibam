@@ -54,6 +54,88 @@ def ece(probs_list: Sequence[float], outcomes: Sequence[int], n_bins: int = 10) 
     return float(total)
 
 
+ODDS_BANDS: tuple[tuple[int, int | None], ...] = ((1, 1), (2, 3), (4, 6), (7, None))
+
+
+def calibration_by_odds_band(
+    races: Sequence[Mapping],
+    prob_fn: Callable[[Mapping], dict[int, float]],
+    *,
+    bands: Sequence[tuple[int, int | None]] = ODDS_BANDS,
+    n_bins: int = 10,
+) -> dict:
+    """人気帯別較正（Calibration by Odds Decile）— 人気順バンドごとに ECE と平均バイアスを出す。
+
+    競馬は人気帯で誤差の性質が大きく異なる（favorite-longshot bias: 本命は過小・大穴は
+    過大評価されがち）。全体 ECE ではこの局在が平均されて見えないため、レース内の
+    人気順（オッズ昇順の順位）でバンド分けして個別に較正検査する。既定バンド:
+    1番人気 / 2-3番人気 / 4-6番人気 / 7番人気以下（穴馬）。
+
+    Harville/Benter γ補正の効き所の確認にも使う（補正は本命の複勝過大評価の是正なので、
+    効いていれば本命バンドの bias が縮むはず）。
+
+    Returns: {band_label: {"n", "ece", "mean_p"(予測平均), "win_rate"(実勝率),
+              "bias"(mean_p−win_rate・正=過大評価)}}
+    """
+    per_band: dict[str, tuple[list[float], list[int]]] = {}
+    labels = {}
+    for lo, hi in bands:
+        if hi is None:
+            lab = f"人気{lo}+"
+        elif lo == hi:
+            lab = f"人気{lo}"
+        else:
+            lab = f"人気{lo}-{hi}"
+        labels[(lo, hi)] = lab
+        per_band[lab] = ([], [])
+    for r in races:
+        w = r.get("winner")
+        odds = r.get("odds")
+        if w is None or not odds:
+            continue
+        p = prob_fn(r)
+        if not p:
+            continue
+        # 人気順 = オッズ昇順の順位（1=1番人気）
+        pop = {h: i + 1 for i, (h, _) in enumerate(sorted(odds.items(), key=lambda kv: float(kv[1])))}
+        for h, rank in pop.items():
+            if h not in p:
+                continue
+            for lo, hi in bands:
+                if rank >= lo and (hi is None or rank <= hi):
+                    ps, ys = per_band[labels[(lo, hi)]]
+                    ps.append(float(p[h]))
+                    ys.append(1 if h == w else 0)
+                    break
+    out = {}
+    for lab, (ps, ys) in per_band.items():
+        if not ps:
+            out[lab] = {"n": 0}
+            continue
+        mp, wr = float(np.mean(ps)), float(np.mean(ys))
+        out[lab] = {"n": len(ps), "ece": ece(ps, ys, n_bins),
+                    "mean_p": mp, "win_rate": wr, "bias": mp - wr}
+    return out
+
+
+def voi_per_cost(compare: Mapping, feature_cost: float) -> dict:
+    """VOI / Feature Cost — 特徴量群の情報獲得効率（コスト単位あたりの ΔKL）。
+
+    compare は compare_models の結果（挑戦側=特徴量あり・基準側=なし）。feature_cost は
+    その特徴量群の取得コスト（単位は呼び手定義: 円/年・分/週など。同一単位間でのみ比較可）。
+    JRDB のような有償データの費用対効果を「ΔKL(nats/レース)/コスト」で横比較する。
+    ΔKL は情報量であり正しさではない — success（OOS ΔNLL 系）が立っている場合のみ意味を持つ
+    ため、判定 success も一緒に返す。
+    """
+    d_kl = float(compare.get("d_kl_market", float("nan")))
+    return {
+        "d_kl_market": d_kl,
+        "feature_cost": float(feature_cost),
+        "d_kl_per_cost": d_kl / feature_cost if feature_cost > 0 else float("nan"),
+        "success": bool(compare.get("success", False)),
+    }
+
+
 def interval_calibration(
     means: Sequence[float],
     variances: Sequence[float],
