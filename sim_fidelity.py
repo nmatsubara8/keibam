@@ -37,6 +37,9 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--calibrated", action="store_true",
                     help="models/sim_calibration.json の best_params(較正済み物理定数)を適用して測る。")
+    ap.add_argument("--course-env", action="store_true",
+                    help="Phase A: レース毎に course_* 幾何で SimConfig を上書き（幅員→有効幅/高低差→"
+                         "消耗/直線→終盤到達/曲率→turn_k）。幾何欠損レースは base のまま＝後方互換。")
     ap.add_argument("--override", nargs="*", default=[], metavar="KEY=VAL",
                     help="較正/既定パラメータを個別上書き（アブレーション用）。"
                          "例: --override noise_mult=1.0 pos_gain=0.6")
@@ -122,16 +125,19 @@ def main():
         cal_params, eff_ability_sigma = _load_calibration(SimConfig2D, "sim_calibration_2d.json")
         cal_params, eff_ability_sigma = _apply_overrides(cal_params, eff_ability_sigma, SimConfig2D)
         cfg = SimConfig2D(T=steps, dt=args.dt, **cal_params)
-        run_sim = lambda fld, sd: monte_carlo_2d(  # noqa: E731
-            fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
+        run_sim = lambda fld, sd, c=None: monte_carlo_2d(  # noqa: E731
+            fld, n_sim=args.n_sim, cfg=c or cfg, seed=sd,
             ability_sigma=eff_ability_sigma, track_dynamics=True)
     else:
         cal_params, eff_ability_sigma = _load_calibration(SimConfig, "sim_calibration.json")
         cal_params, eff_ability_sigma = _apply_overrides(cal_params, eff_ability_sigma, SimConfig)
         cfg = SimConfig(T=steps, dt=args.dt, **cal_params)
-        run_sim = lambda fld, sd: monte_carlo(  # noqa: E731
-            fld, n_sim=args.n_sim, cfg=cfg, seed=sd,
+        run_sim = lambda fld, sd, c=None: monte_carlo(  # noqa: E731
+            fld, n_sim=args.n_sim, cfg=c or cfg, seed=sd,
             ability_sigma=eff_ability_sigma, track_dynamics=True)
+    if args.course_env:
+        from src.simulation._course_env import course_context_from_featured, sim_config_for_course
+        print("[course-env] Phase A: レース毎に course_* 幾何で SimConfig を上書き（幾何欠損は base）。")
     print(f"[engine] {args.engine} / dt={args.dt} / 実ステップ数={steps}（総時間 T·dt={args.T}）"
           "  ※1d/2d とも dt 不変（ノイズ√dt）")
     rng = np.random.default_rng(args.seed)
@@ -154,7 +160,8 @@ def main():
             continue
 
         field = field_from_featured(rd, ability_spread=args.ability_spread)
-        sim = run_sim(field, int(rng.integers(1 << 30)))
+        cfg_r = sim_config_for_course(cfg, course_context_from_featured(rd)) if args.course_env else None
+        sim = run_sim(field, int(rng.integers(1 << 30)), cfg_r)
         # sim 前傾度は速度レベルで正規化（(early-late)/(early+late)）＝形だけ測り能力レベル交絡を除く
         _es, _ls = sim["early_speed"], sim["late_speed"]
         sp = (_es - _ls) / (_es + _ls + 1e-9)
