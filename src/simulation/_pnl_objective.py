@@ -28,6 +28,8 @@ from typing import Iterable, Mapping
 
 import numpy as np
 
+from src.policies._harville import PlaceExponents
+from src.policies._harville import place_probs_corrected
 from src.policies._market_residual import true_probs
 from src.policies._position_dist import place_prob
 from src.portfolio._kelly import kelly_fraction
@@ -41,6 +43,7 @@ def evaluate_pnl(
     max_race_fraction: float = 0.5,
     flat_fraction: float = 0.02,
     include_place: bool = False,
+    place_exponents: "PlaceExponents | None" = None,
     flat: bool = False,
     placebo: bool = False,
     seed: int = 0,
@@ -49,7 +52,10 @@ def evaluate_pnl(
 
     各レースで P_i = softmax(log q_i + r_i) を作り、EV>閾値 の脚にケリー配分する。
     ケリー: stake_frac = kelly_lambda · f*(P_i, odds)。1レース総率は max_race_fraction で頭打ち。
-    flat=True は選定馬に flat_fraction を賭ける（サイジング無効化＝ゾーン/選定の寄与だけ見る）。
+    place_exponents（γ,δ）を渡すと複勝確率に Benter べき乗補正を適用（素の Harville の
+    人気馬複勝過大評価を是正。models/place_exponents.json は `_calibrate.fit_and_save_place_exponents`
+    が OOS モデル勝率で fit したもの）。flat=True は選定馬に flat_fraction を賭ける
+    （サイジング無効化＝ゾーン/選定の寄与だけ見る）。
     """
     rng = np.random.default_rng(seed)
     wealth = 1.0
@@ -72,6 +78,12 @@ def evaluate_pnl(
             continue
         ranks = r.get("ranks", {})
         place_odds = r.get("place_odds", {}) if include_place else {}
+        # 複勝確率: γ補正あり→Benter補正 marginal を一括計算 / なし→素の Harville
+        place_map = (
+            place_probs_corrected(p_true, place_exponents)
+            if (place_exponents is not None and place_odds)
+            else None
+        )
 
         # 券種別に EV>閾値 の脚を集める（単勝=P(1着)、複勝=P(top3)）
         legs = []  # (won: bool, payoff_multiple: float, frac: float)
@@ -85,7 +97,7 @@ def evaluate_pnl(
                         legs.append((ranks.get(h) == 1, float(o), f))
             po = place_odds.get(h)
             if po and float(po) > 0:
-                pl = place_prob(p_true, h)
+                pl = place_map[h] if place_map is not None else place_prob(p_true, h)
                 if pl * float(po) > ev_threshold:
                     f = flat_fraction if flat else kelly_lambda * kelly_fraction(pl, float(po))
                     if f > 0:

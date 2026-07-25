@@ -221,6 +221,54 @@ def prob_trio_corrected(
     )
 
 
+def place_probs_corrected(
+    win_probs: Probabilities, exp: PlaceExponents, n_places: int = 3
+) -> dict[int, float]:
+    """全馬の **複勝（top-n_places 着内）確率** をべき乗補正（Benter 式9）で一括計算する。
+
+    素の Harville（`_prob_in_top`）は人気馬の2/3着＝複勝を過大評価する（既知バイアス）。
+    着位別配列 π（1着）/σ（2着・γ乗）/τ（3着・δ乗）で marginal を組む:
+        P(h∈top1) = π_h
+        P(h=2着)  = Σ_{i≠h} π_i · σ_h/(1−σ_i)
+        P(h=3着)  = Σ_{i≠h} Σ_{j≠i,h} π_i · σ_j/(1−σ_i) · τ_h/(1−τ_i−τ_j)
+    γ=δ=1 のとき素の Harville marginal と厳密に一致する（機構検査で保証）。
+
+    計算量 O(n³)（18頭で ≈6k 項）。n_places は 2（少頭数レースの複勝）/ 3 のみ対応。
+    """
+    if n_places not in (2, 3):
+        raise ValueError(f"n_places は 2 か 3（指定: {n_places}）")
+    pi = normalize(win_probs)
+    sigma = place_adjusted(win_probs, exp.gamma)
+    tau = place_adjusted(win_probs, exp.delta)
+    horses = list(pi)
+    out: dict[int, float] = {}
+    for h in horses:
+        total = pi[h]  # P(1着)
+        # P(2着): 1着=i(π), 2着=h(σ)
+        for i in horses:
+            if i == h:
+                continue
+            d2 = 1.0 - sigma[i]
+            if d2 > 0:
+                total += pi[i] * sigma[h] / d2
+        # P(3着): 1着=i(π), 2着=j(σ), 3着=h(τ)
+        if n_places >= 3:
+            for i in horses:
+                if i == h:
+                    continue
+                d2 = 1.0 - sigma[i]
+                if d2 <= 0:
+                    continue
+                for j in horses:
+                    if j == i or j == h:
+                        continue
+                    d3 = 1.0 - tau[i] - tau[j]
+                    if d3 > 0:
+                        total += pi[i] * (sigma[j] / d2) * (tau[h] / d3)
+        out[h] = min(1.0, total)
+    return out
+
+
 def fit_place_exponents(
     races: Sequence[tuple[Probabilities, tuple[int, int, int]]],
     *,
