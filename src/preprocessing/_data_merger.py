@@ -19,6 +19,7 @@ from src.constants._feature_cols import (
     JOCKEY_RECENT_N,
     N_RACES_LIST,
 )
+from src.preprocessing import _course_guide as _cg
 from src.preprocessing import _course_shape as _cs
 from src.preprocessing import _horse_features as _hf
 from src.preprocessing import _pedigree_features as _pf
@@ -78,6 +79,8 @@ class DataMerger:
         # コース形状マスタ（JRA 公式スクレイプ・place×race_type で静的結合）。未生成なら空表。
         from src.constants._local_paths import LocalPaths
         self._course_shape = _cs.load_course_master(LocalPaths.COURSE_MASTER_PATH)
+        # 距離別コースガイド（書籍/ガイド由来・place×race_type×距離で静的結合）。未生成なら空表。
+        self._course_guide = _cg.load_course_guide_master(LocalPaths.COURSE_GUIDE_MASTER_PATH)
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -100,6 +103,7 @@ class DataMerger:
         self._normalize_join_keys()
         _step("race_info", self._merge_race_info)
         _step("course_shape", self._merge_course_shape)
+        _step("course_guide", self._merge_course_guide)
         _step("race_day_notes", self._merge_race_day_notes)
         _step("yoso_marks", self._merge_yoso_marks)
         _step("yoso_skill", self._add_yoso_predictor_skill)
@@ -164,6 +168,14 @@ class DataMerger:
         NaN で生成され、ライブ推論とも同じ CSV を読むため列パリティが保たれる。
         """
         self._results = _cs.add_course_shape_features(self._results, self._course_shape)
+
+    def _merge_course_guide(self):
+        """距離別コースガイド（guide_* 属性）を results に静的結合する（開催×race_type×距離）。
+
+        _merge_race_info の後に呼ぶ（開催/race_type/course_len が必要）。CSV 未生成でも
+        guide_* は NaN で生成され、ライブ推論とも同じ CSV を読むため列パリティが保たれる。
+        """
+        self._results = _cg.add_course_guide_features(self._results, self._course_guide)
 
     def _merge_race_day_notes(self):
         """調教評価/パドック/厩舎コメントを (race_id, 馬番) で results に左結合する。

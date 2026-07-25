@@ -277,4 +277,6 @@ INTERACTION_FEATURE_COLS: list = [
     "legtype_x_straight",  # 脚質 × 直線長（差し馬×長い直線）
     "frame_x_width",       # 枠番 × 幅員（広いコースは外枠不利が緩む）
     "style_course_fit",    # 脚質 × コース脚質バイアス（出走馬×コース相性）
+    # 距離別コースガイド由来の交互作用（_course_guide の guide_* を使用）
+    "style_guide_fit",     # 脚質 × 距離別脚質バイアス（出走馬×コース×距離相性）
 ]

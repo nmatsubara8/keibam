@@ -68,4 +68,11 @@ def add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
         bias = pd.to_numeric(df["course_run_style_bias"], errors="coerce")
         df["style_course_fit"] = bias * (1.0 - 2.0 * leg)
 
+    # ── 脚質 × 距離別ガイド脚質バイアス（出走馬×コース×距離の相性）─────
+    # course_master（track 単位）より粒度が細かい距離固有バイアスでの相性評価。
+    if "leg_type_binary" in df.columns and "guide_run_style_bias" in df.columns:
+        leg = pd.to_numeric(df["leg_type_binary"], errors="coerce")
+        gbias = pd.to_numeric(df["guide_run_style_bias"], errors="coerce")
+        df["style_guide_fit"] = gbias * (1.0 - 2.0 * leg)
+
     return df

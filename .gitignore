@@ -177,3 +177,6 @@ logs/*.log
 catboost_info/
 data/**/*.json
 data/*.json
+
+# コースガイド手入力ソース（生成物 course_guide_master.csv は無視のまま追跡対象にする）
+!data/master/course_guide.csv

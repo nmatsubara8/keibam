@@ -163,11 +163,15 @@ def parse_course_prose(text: str) -> dict:
     front = len(re.findall(
         r"前残り|逃げ切り|先行(?:有利|勢|有力)|逃げ・先行|前が(?:止まら|残)|前有利|"
         r"逃げ[^。]{0,8}(?:有利|優勢|残)|"
-        r"追い?込み[^。]{0,15}(?:苦戦|不利|届か)|後方[^。]{0,12}(?:苦戦|不利)", text))
+        r"追い?込み[^。]{0,15}(?:苦戦|不利|届か)|後方[^。]{0,12}(?:苦戦|不利)|"
+        r"差し[^。]{0,15}(?:厳しい|届か|苦戦)|差し馬[^。]{0,15}不利", text))
+    # 「前有利とはいい切れない/限らない」等の否定は前有利マッチを相殺する
+    front -= len(re.findall(
+        r"前有利[^。]{0,6}(?:いい切れな|言い切れな|いえな|とは限|になるとは限|とは違)", text))
     closer = len(re.findall(
         r"差し[^。]{0,10}(?:有利|決ま|台頭|水準以上|残|優勢|届く)|"
         r"追い?込み[^。]{0,10}(?:有利|決ま|得意|届|でも届)|外差し|末脚(?:比べ|勝負|自慢)|"
-        r"上がり[^。]{0,10}(?:速|勝負|比べ)|直線一気", text))
+        r"上がり[^。]{0,10}(?:速|勝負|比べ)|直線一気|イン差し[^。]{0,8}(?:決ま|利|有利)", text))
     p["run_style_bias"] = float(front - closer)
 
     if has("時計がかかる", "時計を要", "タフな馬場", "時計のかかる", "遅くなりがち", "パワータイプ",
@@ -202,6 +206,71 @@ def parse_turn_direction(html: str) -> float:
 def _prose_text(html: str) -> str:
     ps = [_strip(p).strip() for p in re.findall(r"<p[^>]*>(.*?)</p>", html, re.S)]
     return " ".join(p for p in ps if len(p) > 60 and "Copyright" not in p)
+
+
+# ── 距離別コースガイド（書籍/ガイド由来プロセ）: 要点抽出 ──────────
+def _upset_prone(text: str) -> float:
+    """波乱度（1=荒れやすい / 0=堅い / NaN=記載なし）をガイド文から抽出する。
+
+    「紛れも出にくい」等の否定表現を誤検出しないよう、肯定側は 紛れやす/荒れやす 等の
+    明示トークンに限定し、堅さ側（展開要らず/紛れが少な/マグレも出にくい）を先に判定する。
+    """
+    # 堅い（波乱少）を先に判定：肯定側の部分文字列（紛れ・荒れ）との衝突を避ける
+    if any(k in text for k in (
+            "展開要らず", "紛れが少な", "紛れもマグレ", "マグレも出にくい", "波乱は少な",
+            "堅い", "手堅", "順当", "堅く", "荒れにく", "紛れが出にく")):
+        return 0.0
+    # 「難しいコース」は「逃げ切りは難しい」等で誤検出するため肯定側に含めない
+    if any(k in text for k in (
+            "荒れやす", "荒れる", "波乱含", "紛れやす", "トリッキー", "難解")):
+        return 1.0
+    return float("nan")
+
+
+def parse_guide_prose(text: str) -> dict:
+    """ガイド文（距離固有の「コース紹介」）→ 距離別プロファイル dict。
+
+    course_master と同じ脚質/時計/コーナー/水はけ抽出（parse_course_prose）に、
+    ガイド文固有の波乱度（upset_prone）を加える。COURSE_GUIDE_VALUE_COLS のみ返す。
+    """
+    from src.constants._course_guide import COURSE_GUIDE_VALUE_COLS  # noqa: PLC0415
+
+    base = parse_course_prose(text or "")
+    base["upset_prone"] = _upset_prone(text or "")
+    return {c: base.get(c, float("nan")) for c in COURSE_GUIDE_VALUE_COLS}
+
+
+def build_guide_master(guide_in: str) -> list:
+    """手入力ソース CSV（place_code, race_type, course_len_m, prose_guide）を要点抽出し、
+    距離別プロファイル行（COURSE_GUIDE_MASTER_COLS）のリストを返す。
+
+    src は生成物 CSV を読むだけにするため、プロセ解析はこのオフライン生成器に閉じる。
+    """
+    import csv
+
+    from src.constants._course_guide import (  # noqa: PLC0415
+        COURSE_GUIDE_MASTER_COLS,
+        COURSE_GUIDE_SOURCE_COL,
+    )
+
+    if not guide_in or not os.path.exists(guide_in):
+        return []
+    rows = []
+    with open(guide_in, encoding="utf-8") as f:
+        for rec in csv.DictReader(f):
+            prose = (rec.get(COURSE_GUIDE_SOURCE_COL) or "").strip()
+            if not prose:
+                continue
+            place = str(rec.get("place_code", "")).strip().zfill(2)
+            rtype = str(rec.get("race_type", "")).strip()
+            try:
+                clen = int(float(rec.get("course_len_m", "")))
+            except (TypeError, ValueError):
+                continue
+            row = {"place_code": place, "race_type": rtype, "course_len_m": clen}
+            row.update(parse_guide_prose(prose))
+            rows.append({c: row.get(c, float("nan")) for c in COURSE_GUIDE_MASTER_COLS})
+    return rows
 
 
 # ── 地方競馬（NAR）: 1 ページ内の各場アンカーを解析 ─────────────
@@ -415,6 +484,20 @@ def _stage_analyze(records: dict) -> list:
     return rows
 
 
+def _generate_guide(guide_in: str, guide_out: str, pd) -> None:
+    """距離別ガイド手入力 CSV → 要点抽出 → 距離別マスタ CSV を書き出す（入力なければスキップ）。"""
+    from src.constants._course_guide import COURSE_GUIDE_MASTER_COLS  # noqa: PLC0415
+
+    guide_rows = build_guide_master(guide_in)
+    if not guide_rows:
+        logger.info("[stage2/guide] ガイド入力なし（%s）— スキップ", guide_in)
+        return
+    gdf = pd.DataFrame(guide_rows, columns=COURSE_GUIDE_MASTER_COLS)
+    Path(guide_out).parent.mkdir(parents=True, exist_ok=True)
+    gdf.to_csv(guide_out, index=False)
+    logger.info("[stage2/guide] 保存: %s (%d 行)", guide_out, len(gdf))
+
+
 def main() -> None:
     import pandas as pd
 
@@ -429,6 +512,10 @@ def main() -> None:
     parser.add_argument("--slug", help="--probe 用の JRA slug")
     parser.add_argument("--prose", default=LocalPaths.COURSE_PROSE_PATH, help="素テキスト JSON")
     parser.add_argument("--out", default=LocalPaths.COURSE_MASTER_PATH, help="出力 CSV")
+    parser.add_argument("--guide-in", default=LocalPaths.COURSE_GUIDE_PATH,
+                        help="距離別ガイド手入力ソース CSV")
+    parser.add_argument("--guide-out", default=LocalPaths.COURSE_GUIDE_MASTER_PATH,
+                        help="距離別ガイド生成マスタ CSV")
     args = parser.parse_args()
 
     if args.probe:
@@ -458,10 +545,13 @@ def main() -> None:
     if args.stage == "fetch":
         return
 
+    # Stage2b: 距離別ガイド（書籍/ガイド由来・手入力）を要点抽出（フェッチ不要・独立）
+    _generate_guide(args.guide_in, args.guide_out, pd)
+
     # Stage2: 素テキストを分析して最終マスタを出力
     rows = _stage_analyze(records)
     if not rows:
-        logger.warning("分析対象がありません")
+        logger.warning("コース紹介の分析対象がありません（ガイドは生成済み）")
         return
     df = pd.DataFrame(rows, columns=COURSE_MASTER_COLS)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
