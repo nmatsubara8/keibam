@@ -88,7 +88,10 @@ def main() -> None:
                     help="外す特徴量プレフィックス（アブレーション。複数可）")
     ap.add_argument("--features", choices=("all", "market-only", "no-market"), default="all",
                     help="監査用アブレーション: market-only=単勝/人気のみ（FLバイアス再較正の"
-                         "切り分け）/ no-market=単勝/人気を除外（市場外情報の単独寄与）")
+                         "切り分け）/ no-market=市場由来列を名前ベースで全除去（単勝*/人気*/odds* — "
+                         "raw だけ抜くと派生列 単勝_log 等が市場情報を持ち込むため）")
+    ap.add_argument("--organizer", choices=("both", "central", "local"), default="both",
+                    help="場フィルタ（race_id 5-6桁目 01-10=中央）。効果の中央/地方局在の監査用")
     ap.add_argument("--num-boost-round", type=int, default=600)
     args = ap.parse_args()
 
@@ -98,13 +101,25 @@ def main() -> None:
     if featured is None or featured.empty:
         raise SystemExit("featured がありません")
     df, races = build_frames(featured, args.since_year)
+    if args.organizer != "both":
+        central = {f"{i:02d}" for i in range(1, 11)}
+        keep = (lambda pc: pc in central) if args.organizer == "central" else (
+            lambda pc: pc not in central)
+        races = [r for r in races if keep(r["race_id"][4:6])]
+        rid_pc = df.index.astype(str).str[4:6]
+        df = df[[keep(pc) for pc in rid_pc]]
+        print(f"organizer={args.organizer}: レース {len(races):,} / 行 {len(df):,}")
     fcols = residual_feature_cols(df, drop_prefixes=tuple(args.drop_prefix))
     market_cols = list(dict.fromkeys(
         c for c in (ResultsCols.TANSHO_ODDS, ResultsCols.POPULARITY) if c in fcols))
     if args.features == "market-only":
         fcols = market_cols
     elif args.features == "no-market":
-        fcols = [c for c in fcols if c not in market_cols]
+        # 名前ベースで市場由来列を全除去（raw だけ抜くと 単勝_log/単勝_z/人気_z 等の
+        # 派生列が市場情報を持ち込む — 実データ監査で重要度1位が 単勝_log になり判明）
+        _mkt_pat = ("単勝", "人気", "odds", "popularity")
+        fcols = [c for c in fcols if not any(p in str(c).lower() or p in str(c)
+                                             for p in _mkt_pat)]
     print(f"行 {len(df):,} / レース {len(races):,} / 特徴量 {len(fcols)} 列"
           f"（features={args.features}）"
           + (f"（除外: {args.drop_prefix}）" if args.drop_prefix else ""))
