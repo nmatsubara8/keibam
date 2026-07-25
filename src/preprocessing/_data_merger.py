@@ -19,6 +19,7 @@ from src.constants._feature_cols import (
     JOCKEY_RECENT_N,
     N_RACES_LIST,
 )
+from src.preprocessing import _course_shape as _cs
 from src.preprocessing import _horse_features as _hf
 from src.preprocessing import _pedigree_features as _pf
 from src.constants._results_cols import ResultsCols
@@ -74,6 +75,9 @@ class DataMerger:
         self._odds_signals = odds_signals_df if odds_signals_df is not None else pd.DataFrame()
         # Elo レーティング特徴（(race_id, 馬番) × ELO_FEATURE_COLS）。未提供なら空＝マージは no-op。
         self._ratings = rating_df if rating_df is not None else pd.DataFrame()
+        # コース形状マスタ（JRA 公式スクレイプ・place×race_type で静的結合）。未生成なら空表。
+        from src.constants._local_paths import LocalPaths
+        self._course_shape = _cs.load_course_master(LocalPaths.COURSE_MASTER_PATH)
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -95,6 +99,7 @@ class DataMerger:
 
         self._normalize_join_keys()
         _step("race_info", self._merge_race_info)
+        _step("course_shape", self._merge_course_shape)
         _step("race_day_notes", self._merge_race_day_notes)
         _step("yoso_marks", self._merge_yoso_marks)
         _step("yoso_skill", self._add_yoso_predictor_skill)
@@ -151,6 +156,14 @@ class DataMerger:
         self._results = self._results.merge(self._race_info, left_index=True, right_index=True, how="left")
         dict_ = dict_selector("_results")
         self._results = convert_column_types(self._results, dict_)
+
+    def _merge_course_shape(self):
+        """コース形状マスタ（course_* 属性）を results に静的結合する（開催×race_type）。
+
+        _merge_race_info の後に呼ぶ（開催/race_type が必要）。CSV 未生成でも course_* は
+        NaN で生成され、ライブ推論とも同じ CSV を読むため列パリティが保たれる。
+        """
+        self._results = _cs.add_course_shape_features(self._results, self._course_shape)
 
     def _merge_race_day_notes(self):
         """調教評価/パドック/厩舎コメントを (race_id, 馬番) で results に左結合する。

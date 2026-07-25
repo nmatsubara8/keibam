@@ -52,6 +52,7 @@ SRC_COMMENT = "comment"          # race.../race/comment.html（厩舎コメン�
 SRC_PERSON = "person"            # {jockey,trainer,owner,breeder}/result.html
 SRC_YOSO_MARK = "yoso_mark"      # race.../yoso/mark_list.html（印グリッド・JS描画）
 SRC_YOSO_PROF = "yoso_profile"   # yoso.../no1/?pid=profile&yid=（予想家実績）
+SRC_COURSE_MASTER = "course_master"  # jra.go.jp/facilities/race/<場>/course/（静的コース形状）
 
 
 # ---------------------------------------------------------------------------
@@ -299,9 +300,33 @@ YOSO_PREDICTOR_FIELDS: tuple[FieldSpec, ...] = (
 
 
 # alias → フィールド定義
+# ---------------------------------------------------------------------------
+# course_master（JRA 公式コースページ由来の静的コース形状リファレンス）
+# 開催×race_type で 1 行。scripts/scrape_course_master.py が JRA 10 場から取得。
+# 幾何=物理シミュレーション環境パラメータ、プロファイル=馬×コース相性評価に用いる。
+# ---------------------------------------------------------------------------
+COURSE_MASTER_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("place_code", SRC_COURSE_MASTER, note="開催コード2桁"),
+    FieldSpec("race_type", SRC_COURSE_MASTER, note="芝/ダート"),
+    FieldSpec("straight_length", SRC_COURSE_MASTER, note="ゴール前直線長[m]（Aコース）"),
+    FieldSpec("elevation_diff", SRC_COURSE_MASTER, note="最大高低差[m]"),
+    FieldSpec("lap_length", SRC_COURSE_MASTER, note="一周距離[m]（Aコース）"),
+    FieldSpec("width_min", SRC_COURSE_MASTER, note="幅員下限[m]"),
+    FieldSpec("width_max", SRC_COURSE_MASTER, note="幅員上限[m]"),
+    FieldSpec("turn_direction", SRC_COURSE_MASTER, note="回り（0=右,1=左）"),
+    FieldSpec("turf_type_code", SRC_COURSE_MASTER, note="芝種（0=野芝,1=洋芝）※芝のみ"),
+    FieldSpec("corner_radius_large", SRC_COURSE_MASTER, note="コーナー半径が大きい=1"),
+    FieldSpec("has_spiral_curve", SRC_COURSE_MASTER, note="スパイラルカーブ採用=1"),
+    FieldSpec("run_style_bias", SRC_COURSE_MASTER, note="脚質バイアス（正=前有利/負=差し有利）"),
+    FieldSpec("time_bias", SRC_COURSE_MASTER, note="時計傾向（-1=タフ,+1=高速）"),
+    FieldSpec("drainage_good", SRC_COURSE_MASTER, note="水はけ良（重になりにくい）=1"),
+)
+
+
 CATALOG: dict[str, tuple[FieldSpec, ...]] = {
     "raw_results": RESULTS_FIELDS,
     "raw_race_info": RACE_INFO_FIELDS,
+    "course_master": COURSE_MASTER_FIELDS,
     "raw_horse_results": HORSE_RESULTS_FIELDS,
     "raw_horse_info": HORSE_INFO_FIELDS,
     "raw_peds": PEDS_FIELDS,

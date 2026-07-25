@@ -61,6 +61,8 @@ class LocalPaths:
     ### masterディレクトリのパス
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")
+    # コース形状マスタ（JRA 公式コースページからスクレイプ・学習/ライブ共通）
+    COURSE_MASTER_PATH: str = os.path.join(MASTER_DIR, "course_master.csv")
 
     ### 卍式（①.5 補正）成果物のパス
     # ①（featured）は不変のまま、卍補正の共有成果物をここに置く（全シナリオ共有）。

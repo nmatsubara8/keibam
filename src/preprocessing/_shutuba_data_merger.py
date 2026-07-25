@@ -72,6 +72,10 @@ class ShutubaDataMerger(DataMerger):
         self._person_yearly = self._load_person_yearly()
         # 予想印（yoso）: 当該レースの印は predict_upcoming が set_upcoming_yoso_marks で注入する。
         self._upcoming_yoso_marks = None
+        # コース形状マスタ（学習と同じ CSV を読む＝特徴量パリティ）。未生成なら空表＝course_* は NaN。
+        from src.preprocessing import _course_shape as _cs
+        from src.constants._local_paths import LocalPaths
+        self._course_shape = _cs.load_course_master(LocalPaths.COURSE_MASTER_PATH)
 
     def set_upcoming_yoso_marks(self, marks) -> None:
         """当該レースの予想印（fetch_pro_yoso_marks の戻り値・ロング形式）を注入する。"""
@@ -149,6 +153,8 @@ class ShutubaDataMerger(DataMerger):
                 "[ShutubaDataMerger] race_info joined: %d cols added",
                 len(self._race_info.columns),
             )
+        # コース形状マスタを付与（開催×race_type、_merge_horse_results より前で merged_data に載せる）
+        self._merge_course_shape()
         # person_te / Elo は self._results に列を足す。FeatureEngineering は merged_data を読み、
         # merged_data は _merge_horse_results で self._results から確定される。よって両者は
         # **_merge_horse_results より前**に実行しないと merged_data に載らず 0 埋めされる

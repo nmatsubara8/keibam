@@ -1,6 +1,10 @@
 """§2b〜§2j 特徴量エンジニアリングの定数。
 
 マジックナンバーをコードに散らさず、変更をこのファイルに局所化する。
+
+コース形状マスタ由来の特徴量列（course_*）は _course_master.COURSE_MASTER_FEATURE_COLS
+に一元化。レース内定数のため Z-score 対象外で、交互作用のみ INTERACTION_FEATURE_COLS
+で特徴量化する（constants は他 src を import しない規約のため再エクスポートしない）。
 """
 
 # ──────────────────────────────────────────
@@ -269,4 +273,8 @@ INTERACTION_FEATURE_COLS: list = [
     "sex_x_month_sin",    # 性別 × 出走月 (sin)
     "sex_x_month_cos",    # 性別 × 出走月 (cos)
     "distance_x_around",  # 距離 × 回り
+    # コース形状マスタ由来の交互作用（_course_shape の course_* を使用）
+    "legtype_x_straight",  # 脚質 × 直線長（差し馬×長い直線）
+    "frame_x_width",       # 枠番 × 幅員（広いコースは外枠不利が緩む）
+    "style_course_fit",    # 脚質 × コース脚質バイアス（出走馬×コース相性）
 ]
