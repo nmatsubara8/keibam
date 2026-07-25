@@ -247,3 +247,82 @@ def fit_beta(
         return b
     except Exception:  # noqa: BLE001 — scipy 不在/最適化失敗は帰無へフォールバック
         return beta_zero()
+
+
+def fit_beta_fast(
+    races: Sequence[Mapping],
+    *,
+    l2_beta: float = 0.1,
+    styles_order: tuple[str, ...] = STYLES,
+    states_order: tuple[str, ...] = PACE_STATES,
+    maxiter: int = 3000,
+) -> dict[tuple[str, str], float]:
+    """:func:`fit_beta` の numpy ベクトル化版（実データ規模・数万レース用）。入出力は同一。
+
+    全レースを (N, 頭数上限, 状態数) のテンソルにパディングして目的関数を1回の行列演算で
+    評価する（純 Python ループ版は 2万レース×千回評価で数十分 → 数十秒に短縮）。
+    レース別 pace_probs は races[i]["pace_probs"] から取る（無ければ一様）。
+    数値等価性は fit_beta の目的関数とテストで照合済み。scipy 不在/失敗は β≡0（fail-soft）。
+    """
+    import numpy as np
+
+    valid = [r for r in races if r.get("odds") and r.get("winner") is not None]
+    if not valid:
+        return beta_zero()
+    n_s, n_z = len(styles_order), len(states_order)
+    sidx = {s: i for i, s in enumerate(styles_order)}
+    senko = sidx.get("senko", 0)
+    h_max = max(len(r["odds"]) for r in valid)
+    n = len(valid)
+    pad = -1e9  # パディング: softmax で exp→0 になる大負値（-inf は演算警告を出すため避ける）
+    log_q = np.full((n, h_max), pad)
+    style_ix = np.zeros((n, h_max), dtype=np.int64)
+    win_ix = np.zeros(n, dtype=np.int64)
+    pz_mat = np.full((n, n_z), 1.0 / n_z)
+    ok = np.ones(n, dtype=bool)
+    for i, r in enumerate(valid):
+        q = market_probs(r["odds"])
+        horses = [h for h in q if q[h] > 0]
+        if r["winner"] not in horses:
+            ok[i] = False
+            continue
+        resid = r.get("residual") or {}
+        styles = r.get("styles") or {}
+        for j, h in enumerate(horses):
+            log_q[i, j] = math.log(q[h]) + float(resid.get(h, 0.0))
+            style_ix[i, j] = sidx.get(styles.get(h, "senko"), senko)
+        win_ix[i] = horses.index(r["winner"])
+        pz = r.get("pace_probs")
+        if pz:
+            tot = float(sum(pz.values()))
+            if tot > 0:
+                pz_mat[i] = [float(pz.get(z, 0.0)) / tot for z in states_order]
+    log_q, style_ix, win_ix, pz_mat = log_q[ok], style_ix[ok], win_ix[ok], pz_mat[ok]
+    n = len(log_q)
+    if n == 0:
+        return beta_zero()
+
+    def objective(theta) -> float:
+        b = np.asarray(theta, dtype=float).reshape(n_s, n_z)
+        st = log_q[:, :, None] + b[style_ix]          # (N, H, Z)
+        st = st - st.max(axis=1, keepdims=True)
+        e = np.exp(st)
+        p = e / e.sum(axis=1, keepdims=True)
+        pw = p[np.arange(n), win_ix, :]               # (N, Z) 勝ち馬の状態別勝率
+        pmix = (pw * pz_mat).sum(axis=1)
+        return float(-np.log(np.maximum(pmix, 1e-300)).mean() + l2_beta * float((b ** 2).sum()))
+
+    try:
+        from scipy.optimize import minimize
+
+        res = minimize(objective, np.zeros(n_s * n_z), method="Nelder-Mead",
+                       options={"maxiter": maxiter, "xatol": 1e-4, "fatol": 1e-7})
+        b = np.asarray(res.x, dtype=float).reshape(n_s, n_z)
+        b = b - b.mean(axis=0, keepdims=True)         # 状態内中心化（ゲージ固定）
+        return {
+            (styles_order[i], states_order[j]): float(b[i, j])
+            for i in range(n_s)
+            for j in range(n_z)
+        }
+    except Exception:  # noqa: BLE001 — scipy 不在/最適化失敗は帰無へフォールバック
+        return beta_zero()
