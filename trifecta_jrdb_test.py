@@ -43,10 +43,18 @@ _CENTRAL = {f"{i:02d}" for i in range(1, 11)}
 def load_races(jrdb_dir: str, central_only: bool = True,
                with_tyb: bool = False) -> tuple[list[dict], tuple[str, ...]]:
     """SED(着順+確定単勝)×KYI(展開指数)[×TYB(直前)] → (完全順序レース列, 使用signal名)。"""
+    sed_files = sorted(glob.glob(f"{jrdb_dir}/SED*.txt"))
+    kyi_files = sorted(glob.glob(f"{jrdb_dir}/KYI*.txt"))
+    if not sed_files or not kyi_files:
+        raise SystemExit(
+            f"JRDB txt が見つかりません（{jrdb_dir}/SED*.txt={len(sed_files)} "
+            f"KYI*.txt={len(kyi_files)}）。--jrdb-dir を展開済みディレクトリに。"
+            "\nアーカイブは: python -c \"from src.jrdb._extract import extract_dir; "
+            "extract_dir('<lzh/zipのフォルダ>','<展開先>')\" で .txt 化してください。")
     sed = pd.concat([parse(f, "SED")[["race_id", "umaban", "kakutei_tansho", "chakujun"]]
-                     for f in sorted(glob.glob(f"{jrdb_dir}/SED*.txt"))], ignore_index=True)
+                     for f in sed_files], ignore_index=True)
     kyi = pd.concat([parse(f, "KYI")[["race_id", "umaban", *KYI_SIGNALS]]
-                     for f in sorted(glob.glob(f"{jrdb_dir}/KYI*.txt"))], ignore_index=True)
+                     for f in kyi_files], ignore_index=True)
     m = sed.merge(kyi, on=["race_id", "umaban"], how="inner")
     signals = KYI_SIGNALS
     if with_tyb:
