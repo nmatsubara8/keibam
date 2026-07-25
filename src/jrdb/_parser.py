@@ -61,9 +61,16 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
     df["umaban"] = _num(df["umaban"]).astype("Int64")
     df["ketto"] = df["ketto"].str.strip()
 
-    # 数値項目
+    # 数値項目（pace_yosou=H/M/S は文字なので除外・後段でコード化）
     numeric = {
-        "KYI": ["idm", "kijun_odds", "kijun_ninki"],
+        "KYI": ["idm", "kishu_idx", "joho_idx", "sougou_idx", "rotation",
+                "kijun_odds", "kijun_ninki", "kijun_fukuodds", "ninki_idx",
+                "chokyo_idx", "kyusha_idx", "chokyo_yajirushi", "kyusha_hyoka",
+                "kishu_kitai_rentai", "gekiso_idx", "class_code",
+                "ten_idx", "pace_idx", "agari_idx", "ichi_idx",
+                "dochu_juni", "go3f_juni", "goal_juni", "kakutei_bataijuu",
+                "kokyu_flag", "start_idx", "deokure_rate", "manken_idx",
+                "kishu_tansho", "kishu_3nai", "nyukyu_days"],
         "SED": ["chakujun", "kakutei_tansho", "idm", "deokure", "ichidori",
                 "furi", "mae_furi", "naka_furi", "ato_furi", "bataijuu"],
         "SKB": [],

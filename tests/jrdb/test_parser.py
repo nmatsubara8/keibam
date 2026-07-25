@@ -20,6 +20,11 @@ def _kyi_record() -> bytes:
     _put(r, 55, " 45.0")       # IDM
     _put(r, 96, " 12.3")       # 基準オッズ
     _put(r, 101, " 3")         # 基準人気
+    # 第11版で追加した指数群（展開予想・休養明け等）— spec 位置での照合用
+    _put(r, 359, "120.5")      # テン指数
+    _put(r, 364, "118.0")      # ペース指数
+    _put(r, 379, "H")          # ペース予想 H/M/S
+    _put(r, 570, " 21")        # 入厩何日前
     return bytes(r) + b"\r\n"
 
 
@@ -55,6 +60,26 @@ def test_parse_kyi(tmp_path):
     assert df.loc[0, "bamei"] == "テスト馬"
     assert df.loc[0, "idm"] == 45.0
     assert df.loc[0, "kijun_odds"] == 12.3
+    # 展開予想（P(z) の外部教師）と休養明けの新規フィールド
+    assert df.loc[0, "ten_idx"] == 120.5
+    assert df.loc[0, "pace_idx"] == 118.0
+    assert df.loc[0, "pace_yosou"] == "H"
+    assert df.loc[0, "nyukyu_days"] == 21
+
+
+def test_build_kyi_feature_columns(tmp_path):
+    """build_kyi が jrdb_ 指数群と pace_hms 数値化を出すこと。"""
+    from src.jrdb._augment import JRDB_COLS, build_kyi
+
+    p = tmp_path / "KYI150712.txt"
+    p.write_bytes(_kyi_record())
+    k = build_kyi([str(p)])
+    assert k.loc[0, "jrdb_idm"] == 45.0
+    assert k.loc[0, "jrdb_ten_idx"] == 120.5
+    assert k.loc[0, "jrdb_pace_hms"] == 1.0     # H → +1
+    assert k.loc[0, "jrdb_nyukyu_days"] == 21
+    # JRDB_COLS の指数が実際に列として存在する
+    assert "jrdb_pace_idx" in k.columns and "jrdb_pace_idx" in JRDB_COLS
 
 
 def test_parse_sed_trouble_fields(tmp_path):

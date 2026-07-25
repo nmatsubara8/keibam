@@ -13,9 +13,66 @@ import pandas as pd
 
 from src.jrdb._parser import parse
 
+# KYI パース列 → featured 付与名（jrdb_*）。市場から導けない JRDB 独自指数を優先収録。
+# pace_yosou（H/M/S）は jrdb_pace_hms に数値化（S=-1/M=0/H=+1）して別途付与する。
+KYI_FEATURE_MAP = {
+    "idm": "jrdb_idm",
+    "kishu_idx": "jrdb_kishu_idx",
+    "joho_idx": "jrdb_joho_idx",
+    "sougou_idx": "jrdb_sougou_idx",
+    "kyakushitsu": "jrdb_kyakushitsu",
+    "kyori_tekisei": "jrdb_kyori_tekisei",
+    "joushoudo": "jrdb_joushoudo",
+    "rotation": "jrdb_rotation",
+    "kijun_odds": "jrdb_kijun_odds",
+    "kijun_fukuodds": "jrdb_kijun_fukuodds",
+    "ninki_idx": "jrdb_ninki_idx",
+    "chokyo_idx": "jrdb_chokyo_idx",
+    "kyusha_idx": "jrdb_kyusha_idx",
+    "chokyo_yajirushi": "jrdb_chokyo_yajirushi",
+    "kyusha_hyoka": "jrdb_kyusha_hyoka",
+    "kishu_kitai_rentai": "jrdb_kishu_kitai_rentai",
+    "gekiso_idx": "jrdb_gekiso_idx",
+    "class_code": "jrdb_class_code",
+    "ten_idx": "jrdb_ten_idx",
+    "pace_idx": "jrdb_pace_idx",
+    "agari_idx": "jrdb_agari_idx",
+    "ichi_idx": "jrdb_ichi_idx",
+    "dochu_juni": "jrdb_dochu_juni",
+    "go3f_juni": "jrdb_go3f_juni",
+    "goal_juni": "jrdb_goal_juni",
+    "kakutei_bataijuu": "jrdb_kakutei_bataijuu",
+    "kokyu_flag": "jrdb_kokyu_flag",
+    "start_idx": "jrdb_start_idx",
+    "deokure_rate": "jrdb_deokure_rate",
+    "manken_idx": "jrdb_manken_idx",
+    "kishu_tansho": "jrdb_kishu_tansho",
+    "kishu_3nai": "jrdb_kishu_3nai",
+    "nyukyu_days": "jrdb_nyukyu_days",
+}
+_HMS = {"H": 1.0, "M": 0.0, "S": -1.0}
+
+# 脚質コード（JRDBデータコード表）→ 正準4脚質（Mixture-PL の β(style,z) 行キー）。
+# JRDB の 6 分類を 4 に畳む: 5好位差し→sashi(好位からの差し) / 6自在→senko(中庸を先行群へ)。
+# pace_median 由来の style_from_pace_ratio より JRDB の明示分類が優先（今走の予想脚質）。
+JRDB_STYLE_TO_CANONICAL = {
+    1: "nige", 2: "senko", 3: "sashi", 4: "oikomi", 5: "sashi", 6: "senko",
+}
+
+
+def jrdb_style(kyakushitsu_code) -> str | None:
+    """jrdb_kyakushitsu（1-6）→ 正準脚質（nige/senko/sashi/oikomi）。不明は None。"""
+    try:
+        return JRDB_STYLE_TO_CANONICAL.get(int(kyakushitsu_code))
+    except (TypeError, ValueError):
+        return None
+
 # JRDB 由来の付与列（VOI 評価の A/B で「JRDB あり/なし」を切り替える対象の正本）。
 # prev_* は接頭辞が異なるため、train_residual の --drop-jrdb はこの集合を落とす。
-JRDB_COLS = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
+JRDB_COLS = (
+    list(KYI_FEATURE_MAP.values())
+    + ["jrdb_pace_hms", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
+)
 
 # 「前走で不利/口取りロス」を示す特記コード（不利・接触・詰まり・進路無し系）
 TROUBLE_TOKKI = {
@@ -34,13 +91,19 @@ TROUBLE_TOKKI = {
 
 
 def build_kyi(paths: list[str]) -> pd.DataFrame:
-    """複数 KYI を結合し (race_id, umaban) 単位で基準オッズ/IDM/血統登録を返す。"""
+    """複数 KYI を結合し (race_id, umaban) 単位で JRDB 指数群（jrdb_*）を返す。
+
+    KYI_FEATURE_MAP の全指数＋ペース予想 H/M/S を数値化した jrdb_pace_hms を含む。
+    """
     dfs = [parse(p, "KYI") for p in paths]
     df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     if df.empty:
         return df
-    return df[["race_id", "umaban", "ketto", "idm", "kijun_odds", "kijun_ninki"]].rename(
-        columns={"idm": "jrdb_idm", "kijun_odds": "jrdb_kijun_odds"})
+    keep = ["race_id", "umaban", "ketto", *KYI_FEATURE_MAP.keys()]
+    out = df[[c for c in keep if c in df.columns]].rename(columns=KYI_FEATURE_MAP)
+    if "pace_yosou" in df.columns:
+        out["jrdb_pace_hms"] = df["pace_yosou"].str.strip().map(_HMS)
+    return out
 
 
 def build_history(sed_paths: list[str], skb_paths: list[str]) -> pd.DataFrame:
@@ -86,13 +149,13 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
         k = kyi.drop_duplicates(["race_id", "umaban"])
         f = f.merge(k, left_on=["_rid", "_uma"], right_on=["race_id", "umaban"], how="left")
         f = f.sort_values("_pos").reset_index(drop=True)  # 左順を保証
-        if odds_col in f.columns:
+        if odds_col in f.columns and "jrdb_kijun_odds" in f.columns:
             mkt = pd.to_numeric(f[odds_col], errors="coerce")
             f["jrdb_kijun_gap"] = f["jrdb_kijun_odds"] / mkt   # >1: 基準が市場より甘い=過小評価
     else:
-        f["jrdb_idm"] = pd.NA
-        f["jrdb_kijun_odds"] = pd.NA
-        f["jrdb_kijun_gap"] = pd.NA
+        for c in JRDB_COLS:
+            if c not in ("prev_deokure", "prev_trouble"):
+                f[c] = pd.NA
 
     # 前走トラブル: ketto × (年月日<今走) の直近を merge_asof(backward, exact不可)
     if history is not None and not history.empty and "ketto" in f.columns:
