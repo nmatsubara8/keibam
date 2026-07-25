@@ -269,6 +269,36 @@ def place_probs_corrected(
     return out
 
 
+def prob_trifecta_place_strength(
+    win_probs: Probabilities, place_probs: Probabilities,
+    first: int, second: int, third: int,
+) -> float:
+    """三連単（first→second→third）を **1着=win_probs / 2・3着=place_probs** で計算する。
+
+    Benter のべき乗補正（:func:`prob_trifecta_corrected`）は 2/3着の配列を勝率のべき乗
+    （グローバル γ,δ）で作るが、本関数は 2/3着の配列を**任意の place_probs**（例: JRDB の
+    着順予測 goal_juni/位置指数で調整した place 強度の softmax）で与える一般化版。
+
+        P(i→j→k) = π_i · σ_j/(1−σ_i) · τ_k/(1−τ_i−τ_j),   π=win_probs, σ=τ=place_probs
+
+    place_probs=win_probs のとき素の Harville（:func:`prob_trifecta`）に一致する。
+    「単勝は P(1着) を効率的に価格づけするが、連系の順序(2/3着)に非効率が残る」という
+    仮説の下で、JRDB 展開予想を place 強度に載せて連系の順序を補正するのに使う。
+    """
+    pi = normalize(win_probs)
+    plc = normalize(place_probs)
+    p1 = pi[first]
+    if p1 >= 1.0:
+        return 0.0
+    d2 = 1.0 - plc[first]
+    if d2 <= 0:
+        return 0.0
+    d3 = 1.0 - plc[first] - plc[second]
+    if d3 <= 0:
+        return 0.0
+    return p1 * (plc[second] / d2) * (plc[third] / d3)
+
+
 def fit_place_exponents(
     races: Sequence[tuple[Probabilities, tuple[int, int, int]]],
     *,
