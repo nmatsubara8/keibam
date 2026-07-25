@@ -275,6 +275,71 @@ class TestNar:
         assert ooi["run_style_bias"] == -1.0
 
 
+# ──────────────────────────────────────────
+# 距離別コースガイド（書籍/ガイド由来プロセ）Stage2 抽出
+# ──────────────────────────────────────────
+
+class TestGuideProse:
+    def test_upset_prone_positive(self):
+        from scripts.scrape_course_master import parse_guide_prose
+
+        p = parse_guide_prose("なかなか難しいコースだけに、馬券が荒れやすいことでも知られている。")
+        assert p["upset_prone"] == 1.0
+
+    def test_upset_prone_negative(self):
+        from scripts.scrape_course_master import parse_guide_prose
+
+        p = parse_guide_prose("府中の千八、展開要らず。紛れもマグレも出にくいコースということだ。")
+        assert p["upset_prone"] == 0.0
+
+    def test_upset_prone_tricky(self):
+        from scripts.scrape_course_master import parse_guide_prose
+
+        assert parse_guide_prose("かなりトリッキーな形状だ。").get("upset_prone") == 1.0
+
+    def test_front_negation_guard(self):
+        from scripts.scrape_course_master import parse_course_prose
+
+        # 「前有利とはいい切れない」は前有利マッチを相殺する（差し側イン差しが残る）
+        p = parse_course_prose("イン差しを決めやすい。意外と前有利とはいい切れないコースでもある。")
+        assert p["run_style_bias"] <= 0.0
+
+    def test_only_guide_value_cols(self):
+        from scripts.scrape_course_master import parse_guide_prose
+        from src.constants._course_guide import COURSE_GUIDE_VALUE_COLS
+
+        p = parse_guide_prose("前有利になりがちだ。")
+        assert set(p.keys()) == set(COURSE_GUIDE_VALUE_COLS)
+
+
+class TestBuildGuideMaster:
+    def test_from_csv(self, tmp_path):
+        from scripts.scrape_course_master import build_guide_master
+        from src.constants._course_guide import COURSE_GUIDE_MASTER_COLS
+
+        path = tmp_path / "course_guide.csv"
+        path.write_text(
+            "place_code,race_type,course_len_m,course_note,prose_guide\n"
+            '05,芝,1400,,"馬券が荒れやすい。前有利になりがちだ。"\n'
+            '08,芝,1400,内,"逃げ・先行が有利。"\n'
+            '08,芝,1400,外,"差し有利。"\n',
+            encoding="utf-8",
+        )
+        rows = build_guide_master(str(path))
+        assert len(rows) == 3                                  # 内/外の両方を保持
+        for r in rows:
+            assert list(r.keys()) == COURSE_GUIDE_MASTER_COLS
+        tokyo = next(r for r in rows if r["place_code"] == "05")
+        assert tokyo["course_len_m"] == 1400
+        assert tokyo["upset_prone"] == 1.0
+        assert tokyo["run_style_bias"] == 1.0
+
+    def test_missing_input_is_empty(self):
+        from scripts.scrape_course_master import build_guide_master
+
+        assert build_guide_master("/nonexistent.csv") == []
+
+
 class TestProseMarkerCoverage:
     def test_wide_corner_variants(self):
         from scripts.scrape_course_master import parse_course_prose

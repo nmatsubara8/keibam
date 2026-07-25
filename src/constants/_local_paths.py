@@ -66,6 +66,10 @@ class LocalPaths:
     COURSE_PROSE_PATH: str = os.path.join(MASTER_DIR, "course_prose.json")
     # Stage2: 素テキストを分析して要点抽出した最終マスタ（学習/ライブが読む）
     COURSE_MASTER_PATH: str = os.path.join(MASTER_DIR, "course_master.csv")
+    # 距離別コースガイド（書籍/ガイド由来プロセ・手入力ソース＝版管理対象）
+    COURSE_GUIDE_PATH: str = os.path.join(MASTER_DIR, "course_guide.csv")
+    # 上記を要点抽出した距離別プロファイルマスタ（生成物・学習/ライブが読む）
+    COURSE_GUIDE_MASTER_PATH: str = os.path.join(MASTER_DIR, "course_guide_master.csv")
 
     ### 卍式（①.5 補正）成果物のパス
     # ①（featured）は不変のまま、卍補正の共有成果物をここに置く（全シナリオ共有）。

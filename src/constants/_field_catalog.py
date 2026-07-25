@@ -53,6 +53,7 @@ SRC_PERSON = "person"            # {jockey,trainer,owner,breeder}/result.html
 SRC_YOSO_MARK = "yoso_mark"      # race.../yoso/mark_list.html（印グリッド・JS描画）
 SRC_YOSO_PROF = "yoso_profile"   # yoso.../no1/?pid=profile&yid=（予想家実績）
 SRC_COURSE_MASTER = "course_master"  # jra.go.jp/facilities/race/<場>/course/（静的コース形状）
+SRC_COURSE_GUIDE = "course_guide"  # 書籍/コースガイド由来の距離別コース紹介プロセ（手入力ソース）
 
 
 # ---------------------------------------------------------------------------
@@ -323,10 +324,29 @@ COURSE_MASTER_FIELDS: tuple[FieldSpec, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# course_guide（書籍/ガイド由来の距離別コース紹介プロセ）
+# (開催, race_type, course_len_m) で 1 行。data/master/course_guide.csv を手入力し、
+# scripts/scrape_course_master.py が要点抽出して course_guide_master.csv を生成する。
+# course_master（track 単位）を距離粒度で補完し、脚質/ペース/波乱傾向を距離別に持つ。
+# ---------------------------------------------------------------------------
+COURSE_GUIDE_FIELDS: tuple[FieldSpec, ...] = (
+    FieldSpec("place_code", SRC_COURSE_GUIDE, note="開催コード2桁"),
+    FieldSpec("race_type", SRC_COURSE_GUIDE, note="芝/ダート"),
+    FieldSpec("course_len_m", SRC_COURSE_GUIDE, note="距離[m]"),
+    FieldSpec("run_style_bias", SRC_COURSE_GUIDE, note="脚質バイアス（当該距離・正=前有利）"),
+    FieldSpec("time_bias", SRC_COURSE_GUIDE, note="時計傾向（当該距離・-1=タフ,+1=高速）"),
+    FieldSpec("corner_radius_large", SRC_COURSE_GUIDE, note="コーナー半径が大きい=1"),
+    FieldSpec("drainage_good", SRC_COURSE_GUIDE, note="水はけ良=1"),
+    FieldSpec("upset_prone", SRC_COURSE_GUIDE, note="波乱度（1=荒れやすい）"),
+)
+
+
 CATALOG: dict[str, tuple[FieldSpec, ...]] = {
     "raw_results": RESULTS_FIELDS,
     "raw_race_info": RACE_INFO_FIELDS,
     "course_master": COURSE_MASTER_FIELDS,
+    "course_guide": COURSE_GUIDE_FIELDS,
     "raw_horse_results": HORSE_RESULTS_FIELDS,
     "raw_horse_info": HORSE_INFO_FIELDS,
     "raw_peds": PEDS_FIELDS,
