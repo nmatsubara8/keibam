@@ -71,6 +71,10 @@ class LocalPaths:
     # 上記を要点抽出した距離別プロファイルマスタ（生成物・学習/ライブが読む）
     COURSE_GUIDE_MASTER_PATH: str = os.path.join(MASTER_DIR, "course_guide_master.csv")
 
+    ### ペース状態 P(z) 予測器の成果物（train_pace_state.py が生成・Mixture-PL が読む）
+    # レース単位ストア: 列 label(slow/normal/fast・教師) + p_slow/p_normal/p_fast（OOS予測）
+    PACE_STATES_PATH: str = os.path.join(RAW_DIR, "pace_states.pkl")
+
     ### 卍式（①.5 補正）成果物のパス
     # ①（featured）は不変のまま、卍補正の共有成果物をここに置く（全シナリオ共有）。
     MANJI_DIR: str = os.path.join(DATA_DIR, "manji")
