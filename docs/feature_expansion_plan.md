@@ -359,6 +359,33 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
 - **叩き2戦目**: 休養明けからの連続戦数カウント（逐次ロジック）で中コスト、今回見送り
 - **ゲートの速さ・配合ニックス**: データ源/設計が別途必要
 
+### Phase 8: 交互作用の拡充 + 前走単独 — ✅ 完了（2026-07-24）
+
+ファクター再監査（相互作用の重要性の指摘を受けて）で見つかった低コストな穴を取り込む。
+
+**実装サマリ**:
+- **8-1 交互作用 3 種**（`_interaction_features.py`）: `age_x_distance`（年齢×距離＝若駒の
+  距離替わり）/ `age_x_weight`（年齢×馬体重＝若齢戦の馬格）/ `frame_x_field`（枠番×頭数＝
+  少/多頭数で枠の価値が変化）。`INTERACTION_FEATURE_COLS` に追記
+- **8-2 前走単独**（`DataMerger._add_prev_race_stats`）: 窓集計と別に「直前走そのもの」の生値を
+  `prev_rank`/`prev_rank_diff`/`prev_final_corner`（4角位置）/`prev_nobori`/`prev_speed_index`
+  として付与。`PREV_RACE_FEATURE_COLS` を Z-score 群へ（直近フォームのレース内相対比較）
+- 双方 per-date ループ内 or FE チェーン内でライブ自動パリティ・過去走のみ参照でリークなし
+
+**検証結果**:
+- unit: `test_interaction_features.py`（3 交互作用の値・欠損スキップ）+
+  `test_data_merger_features.py::TestAddPrevRaceStats`（最新走判定・全列・空スキップ）→ 67 passed
+- 合成 E2E で prev_rank の Z-score 生成確認
+- 全 pytest 944 passed / 18 skip、mypy・ruff(src)・import-linter 4 契約 KEPT
+
+**Phase 8 で見送った項目（理由）**:
+- **クラス替わり**: 過去走(horse_results)にクラス列が無く、レース名からのクラス抽出 +
+  順序エンコードが必要（中コスト）
+- **遠征・所属（東西 美浦/栗東）**: 調教師の所属マスタが未収集（trainer_id のみ保持）
+- **騎手×コース / 父×馬場**: 条件付き集計の拡張（中コスト）。父×馬場は Phase 7 と同じ
+  馬場語彙の実データ確認が前提
+- 直線長・坂・コーナー形状: コース定数テーブルが別途必要（**競馬場別成績で実質吸収**済み）
+
 ### Phase 6: グループB（追加スクレイピング）— 事前調査ゲート付き（原計画）
 
 - **6-a 事前調査（実装より先）**: `scripts/probe_netkeiba_free.py` で非ログイン状態の

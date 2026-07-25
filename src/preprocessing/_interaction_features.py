@@ -47,4 +47,22 @@ def add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
         around_num[around_num < 0] = float("nan")
         df["distance_x_around"] = df["course_len"].astype(float) * around_num
 
+    # ── Phase 8: age × distance（若駒の距離替わり影響）──────────────────
+    if "年齢" in df.columns and "course_len" in df.columns:
+        df["age_x_distance"] = (
+            pd.to_numeric(df["年齢"], errors="coerce") * df["course_len"].astype(float)
+        )
+
+    # ── Phase 8: age × weight（若齢戦の馬格）──────────────────────────
+    if "年齢" in df.columns and "体重" in df.columns:
+        df["age_x_weight"] = (
+            pd.to_numeric(df["年齢"], errors="coerce") * pd.to_numeric(df["体重"], errors="coerce")
+        )
+
+    # ── Phase 8: frame × field size（頭数込みの枠の価値）───────────────
+    if "枠番" in df.columns and "n_horses" in df.columns:
+        df["frame_x_field"] = (
+            pd.to_numeric(df["枠番"], errors="coerce") * pd.to_numeric(df["n_horses"], errors="coerce")
+        )
+
     return df

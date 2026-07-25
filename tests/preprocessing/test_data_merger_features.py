@@ -241,6 +241,47 @@ class TestSpeedIndexCutoff:
 
 
 # ──────────────────────────────────────────
+# Phase 8: _add_prev_race_stats（前走単独）
+# ──────────────────────────────────────────
+
+class TestAddPrevRaceStats:
+    def _hr(self):
+        return pd.DataFrame(
+            {
+                "着順": [1, 3, 5], "着差": [0.0, 0.5, 1.2],
+                "final_corner": [2, 4, 8], "上り": [34.5, 35.8, 37.0],
+                "speed_index": [62.0, 55.0, 48.0],
+                "date": pd.to_datetime(["2023-03-01", "2023-01-01", "2022-11-01"]),
+            },
+            index=pd.Index([1, 1, 1], name="horse_id"),
+        )
+
+    def test_prev_is_most_recent(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1]}, index=pd.Index(["r"], name="race_id"))
+        out = m._add_prev_race_stats(res, self._hr())
+        # 最新走 = 2023-03-01（着順1, 4角2, 上り34.5, speed62）
+        assert out["prev_rank"].iloc[0] == 1
+        assert out["prev_final_corner"].iloc[0] == 2
+        assert out["prev_speed_index"].iloc[0] == pytest.approx(62.0)
+
+    def test_all_prev_cols(self):
+        from src.constants._feature_cols import PREV_RACE_FEATURE_COLS
+
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1]}, index=pd.Index(["r"], name="race_id"))
+        out = m._add_prev_race_stats(res, self._hr())
+        for c in PREV_RACE_FEATURE_COLS:
+            assert c in out.columns
+
+    def test_skips_when_empty(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1]}, index=pd.Index(["r"], name="race_id"))
+        out = m._add_prev_race_stats(res, self._hr().iloc[0:0])
+        assert "prev_rank" not in out.columns
+
+
+# ──────────────────────────────────────────
 # Phase 2: _add_jockey_change（乗り替わり / テン乗り）
 # ──────────────────────────────────────────
 

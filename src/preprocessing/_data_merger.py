@@ -205,6 +205,9 @@ class DataMerger:
             # ── Phase 1: 馬自身の通算成績 ──────────────────────────────
             results = self._add_horse_career_stats(results, horse_results)
 
+            # ── Phase 8: 前走単独（直前走）の生値 ──────────────────────
+            results = self._add_prev_race_stats(results, horse_results)
+
             # ── Phase 2: 乗り替わり / テン乗り ──────────────────────────
             results = self._add_jockey_change(results, horse_results)
 
@@ -726,6 +729,32 @@ class DataMerger:
             }
         )[HORSE_CAREER_FEATURE_COLS]
         return results.merge(career, left_on="horse_id", right_index=True, how="left")
+
+    def _add_prev_race_stats(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Phase 8: 直前走（最新の過去走）の生値を prev_* として付与する。
+
+        窓集計（_mean_5R 等）と別に「前走そのもの」を明示特徴量化する。
+        horse_results は date < 当日 に絞り込み済みのためリークしない。
+        """
+        src_to_dst = {
+            HRCols.RANK: "prev_rank",
+            HRCols.RANK_DIFF: "prev_rank_diff",
+            "final_corner": "prev_final_corner",
+            HRCols.NOBORI: "prev_nobori",
+            "speed_index": "prev_speed_index",
+        }
+        avail = {s: d for s, d in src_to_dst.items() if s in horse_results.columns}
+        if not avail or horse_results.empty:
+            return results
+        prev = (
+            horse_results.sort_values("date", ascending=False)
+            .groupby(level=0)
+            .head(1)[list(avail.keys())]
+            .rename(columns=avail)
+        )
+        return results.merge(prev, left_on="horse_id", right_index=True, how="left")
 
     @staticmethod
     def _normalize_jockey(s: pd.Series) -> pd.Series:

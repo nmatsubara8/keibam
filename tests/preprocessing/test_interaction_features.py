@@ -90,3 +90,39 @@ class TestOriginalColumnsPreserved:
         # All original columns should still be present
         for col in df.columns:
             assert col in result.columns
+
+
+# ──────────────────────────────────────────
+# Phase 8: 追加交互作用
+# ──────────────────────────────────────────
+
+def _make_df_p8():
+    return pd.DataFrame(
+        {
+            "年齢": pd.array([4, 5], dtype="Int64"),
+            "course_len": [16.0, 20.0],
+            "体重": [480, 500],
+            "枠番": pd.array([3, 7], dtype="Int64"),
+            "n_horses": [10, 16],
+            "date": pd.to_datetime(["2024-01-01", "2024-01-01"]),
+        }
+    )
+
+
+class TestPhase8Interactions:
+    def test_age_x_distance(self):
+        out = add_interaction_features(_make_df_p8())
+        assert out["age_x_distance"].tolist() == [64.0, 100.0]
+
+    def test_age_x_weight(self):
+        out = add_interaction_features(_make_df_p8())
+        assert out["age_x_weight"].tolist() == [1920.0, 2500.0]
+
+    def test_frame_x_field(self):
+        out = add_interaction_features(_make_df_p8())
+        assert out["frame_x_field"].tolist() == [30.0, 112.0]
+
+    def test_skips_when_cols_absent(self):
+        out = add_interaction_features(_make_df_p8().drop(columns=["n_horses"]))
+        assert "frame_x_field" not in out.columns
+        assert "age_x_distance" in out.columns  # 他は生成される

@@ -219,4 +219,22 @@ INTERACTION_FEATURE_COLS: list = [
     "sex_x_month_sin",    # 性別 × 出走月 (sin)
     "sex_x_month_cos",    # 性別 × 出走月 (cos)
     "distance_x_around",  # 距離 × 回り
+    # Phase 8: 追加交互作用
+    "age_x_distance",     # 年齢 × 距離（若駒の距離替わり影響）
+    "age_x_weight",       # 年齢 × 馬体重（若齢戦の馬格）
+    "frame_x_field",      # 枠番 × 頭数（少頭数/多頭数で枠の価値が変化）
+]
+
+# ──────────────────────────────────────────
+# Phase 8: 前走単独（直前走）特徴量
+# ──────────────────────────────────────────
+
+# 直前走（最新の過去走）の生値。窓集計と別に「前走そのもの」を明示特徴量化する。
+# レース内 Z-score 対象（直近フォームのレース内相対比較）。
+PREV_RACE_FEATURE_COLS: list = [
+    "prev_rank",          # 前走着順
+    "prev_rank_diff",     # 前走着差
+    "prev_final_corner",  # 前走4コーナー位置
+    "prev_nobori",        # 前走上がり3F
+    "prev_speed_index",   # 前走スピード指数
 ]
