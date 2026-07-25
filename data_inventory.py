@@ -45,6 +45,11 @@ def race_keyed(name: str, path: str) -> None:
     if df is None:
         print("  ― ファイルなし")
         return
+    if not isinstance(df, pd.DataFrame):
+        # odds_snapshots 等は list/dict で保存されている場合がある → 件数のみ
+        n = len(df) if hasattr(df, "__len__") else "?"
+        print(f"  ― DataFrame でない（{type(df).__name__}・要素 {n}）。年度別集計をスキップ")
+        return
     rid = _rid(df).drop_duplicates()
     year = rid.str[:4]
     org = rid.str[4:6].map(_org)
