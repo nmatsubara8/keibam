@@ -238,3 +238,9 @@ PREV_RACE_FEATURE_COLS: list = [
     "prev_nobori",        # 前走上がり3F
     "prev_speed_index",   # 前走スピード指数
 ]
+
+# Phase 8(a): クラス替わり（前走クラス序列・昇降級）
+CLASS_CHANGE_FEATURE_COLS: list = [
+    "prev_class_level",   # 前走のクラス序列（0=新馬 … 10=G1）
+    "class_change",       # 今走 − 前走 のクラス序列差（正=昇級 / 負=降級）
+]

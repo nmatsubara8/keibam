@@ -95,6 +95,14 @@ class HorseResultsProcessor(AbstractDataProcessor):
                 df[Cols.PRIZE].astype(str).str.replace(",", "", regex=False), errors="coerce"
             ).fillna(0)
 
+        # Phase 8(a): クラス替わり用に過去走レース名からクラス序列を導出する。
+        from src.constants._master import race_class_level  # noqa: PLC0415
+
+        if Cols.RACE_NAME in df.columns:
+            df["past_class_level"] = df[Cols.RACE_NAME].map(race_class_level)
+        else:
+            df["past_class_level"] = float("nan")
+
         # インデックス名を与える
         # df.index.name = "horse_id"
         df.set_index("horse_id", inplace=True)
@@ -147,6 +155,7 @@ class HorseResultsProcessor(AbstractDataProcessor):
                 "race_type",
                 "course_len",
                 "time_seconds",
+                "past_class_level",  # Phase 8(a): クラス替わり用
             ]
         ]
 

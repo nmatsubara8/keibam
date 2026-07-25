@@ -51,3 +51,36 @@ class TestMasterNamedConstants:
 
     def test_race_class_list_length_unchanged(self):
         assert len(Master.RACE_CLASS_LIST) == 11
+
+
+# ──────────────────────────────────────────
+# Phase 8(a): race_class_level
+# ──────────────────────────────────────────
+
+class TestRaceClassLevel:
+    def test_basic_classes(self):
+        from src.constants._master import race_class_level
+
+        assert race_class_level("3歳未勝利") == 1.0
+        assert race_class_level("1勝クラス") == 2.0
+        assert race_class_level("皐月賞(G1)") == 10.0
+
+    def test_open_special_preferred_over_open(self):
+        from src.constants._master import race_class_level
+
+        assert race_class_level("オープン特別") == 7.0  # 'オープン'(6) より優先
+
+    def test_legacy_normalized(self):
+        from src.constants._master import race_class_level
+
+        assert race_class_level("500万下") == 2.0  # 1勝クラス
+        assert race_class_level("1600万下") == 4.0  # 3勝クラス（新馬0..3勝4）
+
+    def test_no_class_returns_nan(self):
+        import math
+
+        from src.constants._master import race_class_level
+
+        assert math.isnan(race_class_level("東京優駿"))
+        assert math.isnan(race_class_level(None))
+        assert math.isnan(race_class_level(""))

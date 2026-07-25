@@ -378,9 +378,19 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
 - 合成 E2E で prev_rank の Z-score 生成確認
 - 全 pytest 944 passed / 18 skip、mypy・ruff(src)・import-linter 4 契約 KEPT
 
+**Phase 8(a) クラス替わり — ✅ 完了（2026-07-24）**:
+- `src/constants/_master.py::race_class_level(text)`: レース名/条件文字列 → クラス序列
+  （0=新馬 … 10=G1）。RACE_CLASS_LIST を走査（'オープン特別'>'オープン'）+ 旧称
+  （500万下 等）を現行へ正規化。無マッチは NaN
+- `HorseResultsProcessor`: 過去走レース名から `past_class_level` を導出
+- `DataMerger._add_class_change`: `prev_class_level`（直前走クラス序列）+
+  `class_change`（今走 − 前走 の序列差、正=昇級/負=降級）。`CLASS_CHANGE_FEATURE_COLS`
+  を Z-score 群へ。per-date ループ内でライブ自動パリティ・過去走のみ参照でリークなし
+- unit: `test_master.py::TestRaceClassLevel`（基本/オープン特別優先/旧称正規化/無マッチ）+
+  `test_data_merger_features.py::TestAddClassChange`（昇級/降級/欠如スキップ/race_class 無し）
+  → 全 pytest 952 passed・mypy/ruff/import-linter clean
+
 **Phase 8 で見送った項目（理由）**:
-- **クラス替わり**: 過去走(horse_results)にクラス列が無く、レース名からのクラス抽出 +
-  順序エンコードが必要（中コスト）
 - **遠征・所属（東西 美浦/栗東）**: 調教師の所属マスタが未収集（trainer_id のみ保持）
 - **騎手×コース / 父×馬場**: 条件付き集計の拡張（中コスト）。父×馬場は Phase 7 と同じ
   馬場語彙の実データ確認が前提

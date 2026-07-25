@@ -175,3 +175,28 @@ class Master:
         "勝クラス": "kachi",
         "九州産馬": "kyushu",
     }
+
+
+def race_class_level(text) -> float:
+    """レース名/条件文字列から現行クラスの序列（0=新馬 … 10=G1）を返す。無ければ NaN。
+
+    Phase 8(a): クラス替わり用。RACE_CLASS_LIST を順に走査し最後にマッチしたものを採用
+    （'オープン' より 'オープン特別' を優先）。旧クラス名（500万下 等）は
+    RACE_CLASS_LEGACY_ALIASES で現行へ正規化してから序列化する。
+    """
+    import math
+
+    if not isinstance(text, str) or not text:
+        return math.nan
+    found = None
+    for cls in Master.RACE_CLASS_LIST:
+        if cls in text:
+            found = cls
+    if found is None:
+        for legacy, modern in Master.RACE_CLASS_LEGACY_ALIASES.items():
+            if legacy in text:
+                found = modern
+                break
+    if found is None:
+        return math.nan
+    return float(Master.RACE_CLASS_LIST.index(found))

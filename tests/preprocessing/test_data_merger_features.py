@@ -282,6 +282,51 @@ class TestAddPrevRaceStats:
 
 
 # ──────────────────────────────────────────
+# Phase 8(a): _add_class_change（クラス替わり）
+# ──────────────────────────────────────────
+
+class TestAddClassChange:
+    def _hr(self):
+        return pd.DataFrame(
+            {"past_class_level": [1.0, 0.0],  # 最新=未勝利(1), 旧=新馬(0)
+             "date": pd.to_datetime(["2023-03-01", "2023-01-01"])},
+            index=pd.Index([1, 1], name="horse_id"),
+        )
+
+    def test_promotion(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1], "race_class": ["1勝クラス"]},
+                           index=pd.Index(["r"], name="race_id"))
+        out = m._add_class_change(res, self._hr())
+        assert out["prev_class_level"].iloc[0] == 1.0
+        assert out["class_change"].iloc[0] == pytest.approx(1.0)  # 未勝利→1勝 昇級
+
+    def test_demotion(self):
+        m = _make_merger(_results_df_with_jockey())
+        hr = pd.DataFrame({"past_class_level": [10.0], "date": pd.to_datetime(["2023-05-01"])},
+                          index=pd.Index([1], name="horse_id"))
+        res = pd.DataFrame({"horse_id": [1], "race_class": ["オープン"]},
+                           index=pd.Index(["r"], name="race_id"))
+        out = m._add_class_change(res, hr)
+        assert out["class_change"].iloc[0] == pytest.approx(-4.0)  # G1(10)→オープン(6)
+
+    def test_skips_when_no_past_class(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1], "race_class": ["1勝クラス"]},
+                           index=pd.Index(["r"], name="race_id"))
+        hr = self._hr().drop(columns=["past_class_level"])
+        out = m._add_class_change(res, hr)
+        assert "class_change" not in out.columns
+
+    def test_class_change_nan_without_race_class(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1]}, index=pd.Index(["r"], name="race_id"))
+        out = m._add_class_change(res, self._hr())
+        assert out["prev_class_level"].iloc[0] == 1.0
+        assert pd.isna(out["class_change"].iloc[0])
+
+
+# ──────────────────────────────────────────
 # Phase 2: _add_jockey_change（乗り替わり / テン乗り）
 # ──────────────────────────────────────────
 

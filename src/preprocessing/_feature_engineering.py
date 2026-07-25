@@ -239,6 +239,7 @@ class FeatureEngineering:
         """
         from src.constants._feature_cols import (
             AGG_STATS,
+            CLASS_CHANGE_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
             DAMSIRE_FEATURE_COLS,
             HORSE_CAREER_FEATURE_COLS,
@@ -276,6 +277,7 @@ class FeatureEngineering:
             + PLACE_CONDITION_FEATURE_COLS
             + DAMSIRE_FEATURE_COLS
             + PREV_RACE_FEATURE_COLS
+            + CLASS_CHANGE_FEATURE_COLS
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:

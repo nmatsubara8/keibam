@@ -208,6 +208,9 @@ class DataMerger:
             # ── Phase 8: 前走単独（直前走）の生値 ──────────────────────
             results = self._add_prev_race_stats(results, horse_results)
 
+            # ── Phase 8(a): クラス替わり ───────────────────────────────
+            results = self._add_class_change(results, horse_results)
+
             # ── Phase 2: 乗り替わり / テン乗り ──────────────────────────
             results = self._add_jockey_change(results, horse_results)
 
@@ -755,6 +758,33 @@ class DataMerger:
             .rename(columns=avail)
         )
         return results.merge(prev, left_on="horse_id", right_index=True, how="left")
+
+    def _add_class_change(
+        self, results: pd.DataFrame, horse_results: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Phase 8(a): クラス替わり（前走クラス・昇降級）を付与する。
+
+        prev_class_level = 直前走のクラス序列（0=新馬 … 10=G1）、
+        class_change = 今走クラス序列 − 前走クラス序列（正=昇級 / 負=降級 / 0=同）。
+        過去走のみ参照するためリークしない。
+        """
+        from src.constants._master import race_class_level
+
+        if "past_class_level" not in horse_results.columns or horse_results.empty:
+            return results
+        prev = (
+            horse_results.sort_values("date", ascending=False)
+            .groupby(level=0)
+            .head(1)["past_class_level"]
+            .rename("prev_class_level")
+        )
+        results = results.merge(prev, left_on="horse_id", right_index=True, how="left")
+        if "race_class" in results.columns:
+            cur_level = results["race_class"].map(race_class_level)
+            results["class_change"] = cur_level - results["prev_class_level"]
+        else:
+            results["class_change"] = np.nan
+        return results
 
     @staticmethod
     def _normalize_jockey(s: pd.Series) -> pd.Series:
