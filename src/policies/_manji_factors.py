@@ -605,11 +605,15 @@ _KANSAI_CODES = {"07", "08", "09", "10"}  # 中京 京都 阪神 小倉
 
 
 def _prev_region(df: pd.DataFrame):
-    """前走の地区（kanto/kansai/overseas/na）。前走場所列が無ければ None。"""
-    c = _col(df, "前走場コード", "前走場所", "前走_開催", "前走場", "prev_place")
+    """前走の地区（kanto/kansai/overseas/na）。前走場所列が無ければ None。
+
+    factor_store が履歴から算出した mf_prev_place（前走の場コード）を優先。
+    """
+    c = _col(df, "mf_prev_place", "前走場コード", "前走場所", "前走_開催", "前走場", "prev_place")
     if c is None:
         return None
-    s = df[c].astype(str).str.strip()
+    # astype(str) は object 内の np.nan を文字列化せず残すため fillna("") で空へ寄せる。
+    s = df[c].fillna("").astype(str).str.strip()
     code = s.str.extract(r"(\d{2})")[0]
     # 既知の前走場所は既定 "other"（＝その地区への遠征ではない=no）。空/nan のみ na。
     reg = pd.Series("other", index=df.index, dtype=object)

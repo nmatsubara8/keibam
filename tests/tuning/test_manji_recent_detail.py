@@ -129,6 +129,31 @@ def test_prev_finish_and_rotation_resurrected_from_history():
     assert factor_series(view, "dist_change").iloc[a_r2] == "short"
 
 
+def test_prev_travel_resurrected_from_history():
+    """前走場所を履歴(mf_prev_place)から算出し、遠征ファクターが発火する。"""
+    rows = [
+        # r1: 東京(場05) → r2: 大井(場44)。r2 の前走は東京＝関東遠征 yes
+        {"race_id": "202405010101", "horse_id": "A", "date": "2024-05-01",
+         ResultsCols.UMABAN: 1, ResultsCols.RANK: 3, ResultsCols.TANSHO_ODDS: 5.0},
+        {"race_id": "202444060101", "horse_id": "A", "date": "2024-06-01",
+         ResultsCols.UMABAN: 1, ResultsCols.RANK: 1, ResultsCols.TANSHO_ODDS: 3.0},
+    ]
+    feat = _feat(rows)
+    mf = build_recent_form_features(feat)
+    assert "mf_prev_place" in mf.columns
+    view = feat.copy()
+    for c in mf.columns:
+        view[c] = mf[c].to_numpy()
+    a_r2 = np.flatnonzero((view["horse_id"].to_numpy() == "A")
+                          & (view.index.to_numpy() == "202444060101"))[0]
+    assert factor_series(view, "prev_kanto").iloc[a_r2] == "yes"    # 前走=東京(関東)
+    assert factor_series(view, "prev_kansai").iloc[a_r2] == "no"
+    # r1(デビュー相当・前走なし)は na
+    a_r1 = np.flatnonzero((view["horse_id"].to_numpy() == "A")
+                          & (view.index.to_numpy() == "202405010101"))[0]
+    assert factor_series(view, "prev_kanto").iloc[a_r1] == NA
+
+
 def test_recent_detail_factors_na_without_source_columns():
     feat = _feat([
         {"race_id": "r1", "horse_id": "A", "date": "2024-01-01", ResultsCols.UMABAN: 1,

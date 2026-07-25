@@ -54,7 +54,7 @@ MF_COLS = tuple(
     + [f"mf_recent{n}_winrate" for n in RECENT_WINDOWS]
     + [f"mf_recent{n}_recovery" for n in RECENT_WINDOWS]
     + ["mf_career_n", "mf_career_winrate", "mf_career_recovery",
-       "mf_prev_rank", "mf_interval"]  # 前走着順・レース間隔（履歴から算出＝元列不要）
+       "mf_prev_rank", "mf_interval", "mf_prev_place"]  # 前走着順・間隔・前走場所（履歴から算出）
 )
 
 
@@ -143,10 +143,11 @@ def build_recent_form_features(featured: pd.DataFrame) -> pd.DataFrame:
     w["mf_career_winrate"] = grp2["_past_win"].transform(lambda s: s.expanding(min_periods=1).mean())
     w["mf_career_recovery"] = grp2["_past_ret"].transform(lambda s: s.expanding(min_periods=1).mean())
 
-    # 前走着順（prev_finish 用）・レース間隔[日]（rotation/age_rotation 用）を履歴から算出。
+    # 前走着順（prev_finish 用）・間隔[日]（rotation 用）・前走場所（遠征 用）を履歴から算出。
     w["mf_prev_rank"] = w["_past_rank"]  # 直前走の着順
     past_date = grp2["date"].shift(1)
     w["mf_interval"] = (w["date"] - past_date) / np.timedelta64(1, "D")
+    w["mf_prev_place"] = grp2["race_id"].shift(1).str[4:6]  # 直前走の場コード（遠征判定用）
     extra_cols: list[str] = []
     if has_courselen:  # 距離変更[m or 100m単位]（dist_change/dist_age 用）
         w["mf_dist_change"] = w["_courselen"] - grp2["_courselen"].shift(1)
