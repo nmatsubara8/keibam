@@ -28,7 +28,7 @@ from typing import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from src.policies._mixture_pl import PACE_STATES
+from src.constants._pace_states import PACE_STATES
 
 # 予測器の特徴量列（レース単位）。存在しない源列は NaN のまま LightGBM に渡す。
 PZ_FEATURE_COLS: tuple[str, ...] = (

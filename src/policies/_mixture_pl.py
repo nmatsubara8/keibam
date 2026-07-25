@@ -40,14 +40,13 @@ from __future__ import annotations
 import math
 from typing import Mapping, Sequence
 
+from src.constants._pace_states import PACE_STATES  # noqa: F401  （正準は constants・再 export）
+from src.constants._pace_states import STYLES  # noqa: F401
 from src.policies._harville import PlaceExponents
 from src.policies._harville import place_probs_corrected
 from src.policies._market_residual import anchored_strengths
 from src.policies._market_residual import market_probs
 from src.preprocessing._place_prob import _prob_in_top
-
-PACE_STATES: tuple[str, ...] = ("slow", "normal", "fast")
-STYLES: tuple[str, ...] = ("nige", "senko", "sashi", "oikomi")
 
 # β表の型: {(style, z): float}。beta_zero() が帰無（Step1 退化）。
 BetaTable = Mapping[tuple[str, str], float]
