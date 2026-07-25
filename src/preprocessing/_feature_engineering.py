@@ -240,11 +240,13 @@ class FeatureEngineering:
         from src.constants._feature_cols import (
             AGG_STATS,
             COURSE_CONDITION_FEATURE_COLS,
+            DAMSIRE_FEATURE_COLS,
             HORSE_CAREER_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
             N_RACES_LIST,
             OWNER_BREEDER_FEATURE_COLS,
             PACE_FEATURE_COLS,
+            PLACE_CONDITION_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
             SIRE_DISTANCE_FEATURE_COLS,
             SIRE_FEATURE_COLS,
@@ -270,6 +272,8 @@ class FeatureEngineering:
             + HORSE_CAREER_FEATURE_COLS
             + SIRE_DISTANCE_FEATURE_COLS
             + OWNER_BREEDER_FEATURE_COLS
+            + PLACE_CONDITION_FEATURE_COLS
+            + DAMSIRE_FEATURE_COLS
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:

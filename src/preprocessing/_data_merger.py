@@ -120,9 +120,10 @@ class DataMerger:
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
-        # Pre-join horse_results with sire id (peds_0) for §2j sire stats.
-        if "peds_0" in self._peds.columns:
-            hr_with_sire = self._horse_results.join(self._peds[["peds_0"]], how="left")
+        # Pre-join horse_results with sire(peds_0) / damsire(peds_2) ids for §2j / Phase 7.
+        ped_cols = [c for c in ("peds_0", "peds_2") if c in self._peds.columns]
+        if ped_cols:
+            hr_with_sire = self._horse_results.join(self._peds[ped_cols], how="left")
         else:
             hr_with_sire = self._horse_results.copy()
 
@@ -231,6 +232,9 @@ class DataMerger:
 
             # ── Phase 4: 種牡馬 距離帯別適性 ───────────────────────────
             results = self._add_sire_distance_stats(results, date)
+
+            # ── Phase 7: 母父(damsire) stats ──────────────────────────
+            results = self._add_damsire_stats(results, date)
 
             output_results_dict[date] = results
 
@@ -462,10 +466,14 @@ class DataMerger:
         if n_horses_col in hr.columns:
             hr["_rel_rank"] = hr[rank_col] / hr[n_horses_col]
 
-        # Build per-horse current race info for distance/type filtering
+        # Build per-horse current race info for distance/type/place filtering
+        place_col = HRCols.PLACE  # '開催'
         info_cols = ["horse_id", "course_len"]
         if "race_type" in results.columns:
             info_cols.append("race_type")
+        has_place = place_col in results.columns and place_col in hr.columns
+        if has_place:
+            info_cols.append(place_col)
         current_info = results[info_cols].drop_duplicates("horse_id")
 
         hr_reset = hr.reset_index()
@@ -490,66 +498,90 @@ class DataMerger:
             avg_rank = at_type.groupby("horse_id")["_rel_rank"].mean().rename("avg_rank_at_course_type")
             results = results.merge(avg_rank, left_on="horse_id", right_index=True, how="left")
 
+        # Phase 7: win_rate_at_place / avg_rank_at_place（同一競馬場での成績）。
+        # results 開催 は place_id(Int64)、horse_results 開催 は PLACE コード(str) のため
+        # 双方 2 桁ゼロ埋め文字列に正規化して比較する。
+        pc_past, pc_cur = f"{place_col}_past", f"{place_col}_cur"
+        if has_place and pc_past in hr_with_cur.columns and pc_cur in hr_with_cur.columns:
+            def _norm_place(s: pd.Series) -> pd.Series:
+                return pd.to_numeric(s, errors="coerce").astype("Int64").astype(str).str.zfill(2)
+
+            at_place = hr_with_cur[_norm_place(hr_with_cur[pc_past]) == _norm_place(hr_with_cur[pc_cur])]
+            wr_place = at_place.groupby("horse_id")["_is_win"].mean().rename("win_rate_at_place")
+            results = results.merge(wr_place, left_on="horse_id", right_index=True, how="left")
+            if "_rel_rank" in hr_with_cur.columns:
+                ar_place = at_place.groupby("horse_id")["_rel_rank"].mean().rename("avg_rank_at_place")
+                results = results.merge(ar_place, left_on="horse_id", right_index=True, how="left")
+
         return results
 
     # ──────────────────────────────────────────
-    # §2j: Sire aggregate features
+    # §2j / Phase 7: Sire / damsire aggregate features
     # ──────────────────────────────────────────
 
-    def _add_sire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """種牡馬産駒の集計特徴量（sire_win_rate / sire_avg_rank / sire_recent_win_rate）を追加。
+    def _add_pedline_stats(
+        self, results: pd.DataFrame, target_date, ped_col: str,
+        win_col: str, rank_col: str, recent_col: str,
+    ) -> pd.DataFrame:
+        """血統ライン（種牡馬 peds_0 / 母父 peds_2）の産駒集計特徴量を追加する汎用処理。
 
-        _separated_hr_with_sire_dict は _separate_by_date() 内で peds_0 列を付与した
-        horse_results のサブセット（date < target_date）を保持する。
+        _separated_hr_with_sire_dict は _separate_by_date() 内で peds_0/peds_2 を付与した
+        horse_results のサブセット（date < target_date）を保持する。過去走のみ参照。
         """
         if target_date not in self._separated_hr_with_sire_dict:
             return results
 
         phs = self._separated_hr_with_sire_dict[target_date]
-        rank_col = HRCols.RANK  # '着順'
-        n_horses_col = HRCols.N_HORSES  # '頭数'
-
-        if "peds_0" not in phs.columns or phs.empty or rank_col not in phs.columns:
+        rk = HRCols.RANK  # '着順'
+        nh = HRCols.N_HORSES  # '頭数'
+        if ped_col not in phs.columns or phs.empty or rk not in phs.columns:
             return results
 
         phs = phs.copy()
-        # Use string representation of peds_0 to avoid category dtype issues in groupby
-        phs["_sire_key"] = phs["peds_0"].astype(str)
-        phs["_is_win"] = (phs[rank_col] == 1).astype(float)
-        if n_horses_col in phs.columns:
-            phs["_rel_rank"] = phs[rank_col] / phs[n_horses_col]
+        # Categorical dtype 由来の groupby 問題を避けるため str 化
+        phs["_ped_key"] = phs[ped_col].astype(str)
+        phs["_is_win"] = (phs[rk] == 1).astype(float)
+        if nh in phs.columns:
+            phs["_rel_rank"] = phs[rk] / phs[nh]
 
         agg_dict: dict = {"_is_win": "mean"}
         if "_rel_rank" in phs.columns:
             agg_dict["_rel_rank"] = "mean"
+        stats = phs.groupby("_ped_key").agg(agg_dict)
+        stats.columns = [win_col if c == "_is_win" else rank_col for c in stats.columns]
 
-        sire_all = phs.groupby("_sire_key").agg(agg_dict)
-        sire_all.columns = [
-            "sire_win_rate" if c == "_is_win" else "sire_avg_rank"
-            for c in sire_all.columns
-        ]
-
-        # Recent N years sire stats
+        # 直近 N 年
         cutoff = pd.Timestamp(target_date) - pd.DateOffset(years=SIRE_RECENT_YEARS)
         recent = phs[phs["date"] >= cutoff]
         if not recent.empty:
-            sire_recent = recent.groupby("_sire_key")["_is_win"].mean().rename("sire_recent_win_rate")
-            sire_all = sire_all.join(sire_recent, how="left")
+            rec = recent.groupby("_ped_key")["_is_win"].mean().rename(recent_col)
+            stats = stats.join(rec, how="left")
         else:
-            sire_all["sire_recent_win_rate"] = float("nan")
+            stats[recent_col] = float("nan")
 
-        # Current horses' sire key from peds
-        if "peds_0" not in self._peds.columns:
+        if ped_col not in self._peds.columns:
             return results
-        horse_sire = self._peds[["peds_0"]].reset_index()
-        horse_sire["_sire_key"] = horse_sire["peds_0"].astype(str)
-
-        horse_sire_indexed = horse_sire[["horse_id", "_sire_key"]].set_index("horse_id")
-        results = results.merge(horse_sire_indexed, left_on="horse_id", right_index=True, how="left")
-        results = results.merge(sire_all, left_on="_sire_key", right_index=True, how="left")
-        results = results.drop(columns=["_sire_key"], errors="ignore")
-
+        horse_ped = self._peds[[ped_col]].reset_index()
+        horse_ped["_ped_key"] = horse_ped[ped_col].astype(str)
+        hp = horse_ped[["horse_id", "_ped_key"]].set_index("horse_id")
+        results = results.merge(hp, left_on="horse_id", right_index=True, how="left")
+        results = results.merge(stats, left_on="_ped_key", right_index=True, how="left")
+        results = results.drop(columns=["_ped_key"], errors="ignore")
         return results
+
+    def _add_sire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
+        """種牡馬産駒の集計特徴量（sire_win_rate / sire_avg_rank / sire_recent_win_rate）。"""
+        return self._add_pedline_stats(
+            results, target_date, "peds_0",
+            "sire_win_rate", "sire_avg_rank", "sire_recent_win_rate",
+        )
+
+    def _add_damsire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
+        """Phase 7: 母父(BMS, peds_2)産駒の集計特徴量を追加する。"""
+        return self._add_pedline_stats(
+            results, target_date, "peds_2",
+            "damsire_win_rate", "damsire_avg_rank", "damsire_recent_win_rate",
+        )
 
     # ──────────────────────────────────────────
     # Phase 4: レース展開予測 / 種牡馬 距離適性

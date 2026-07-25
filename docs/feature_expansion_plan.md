@@ -324,6 +324,41 @@ AUC 差の 1 回比較は実データ環境で実施予定（差が無ければ�
   `python scripts/probe_netkeiba_free.py --race-id <12桁> --horse-id <id>` →
   出力の verdict と保存 HTML を確認 → PROCEED なら 6-b に進む旨を共有
 
+### Phase 7: 残ギャップの取り込み（追加スクレイピング不要）— ✅ 完了（2026-07-24）
+
+主要ファクター監査（Phase 0〜6 後）で見つかった低コストな穴のうち、既存 raw データで
+実装できるものを取り込む。
+
+**実装サマリ**:
+- **7-1 着差・賞金の過去走多窓集計**: `AGG_TARGET_COLS` に `着差`/`賞金` を追加
+  （能力差・レース格の履歴）。`HorseResultsProcessor` で `着差` の to_numeric、
+  `賞金` はカンマ除去 + to_numeric
+- **7-2 母父(BMS/damsire, peds_2)産駒成績**: `_add_sire_stats` を汎用 `_add_pedline_stats`
+  にリファクタし、`_add_damsire_stats`（peds_2 で damsire_win_rate/avg_rank/recent）を追加。
+  `_separate_by_date` の peds 事前 join を peds_0+peds_2 に拡張。`DAMSIRE_FEATURE_COLS` を
+  Z-score 群へ
+- **7-3 競馬場別の馬成績**: `_add_course_condition_stats` を拡張し `win_rate_at_place` /
+  `avg_rank_at_place`（同一競馬場での勝率/相対着順）。results 開催(place_id Int64) と
+  horse_results 開催(PLACE コード str) を 2 桁ゼロ埋め文字列に正規化して照合。
+  `PLACE_CONDITION_FEATURE_COLS` を Z-score 群へ
+- 全て per-date ループ内 or 集計機構経由のため ShutubaDataMerger でライブ自動パリティ
+
+**検証結果**:
+- unit: `test_data_merger_features.py`（競馬場別勝率/母父勝率/着差・賞金集計/place 列なし
+  スキップ/temp キー drop）→ 50 passed。既存 sire/course-condition 回帰なし（refactor 同値）
+- 合成 E2E で damsire/place の Z-score 生成確認
+- 全 pytest 937 passed / 18 skip、mypy・ruff(src)・import-linter 4 契約 KEPT
+- **リーク**: すべて過去走（date < 当日）のみ参照
+
+**Phase 7 で見送った項目（理由）**:
+- **種牡馬×馬場適性**: horse_results の `馬場` 語彙（良/稍/重/不）と results の
+  `ground_state1/2`（芝/ダ別）の突合が実データでの語彙確認を要するため保留
+- **競走馬種別（内外国産）**: 産地(ORIGIN) の raw 収集有無が実データで未確認（HorseInfoProcessor
+  で未選別。取込には収集確認 → 選別 → 内外国産導出が必要）
+- **レース名（タイトル）**: race_class と冗長のため不採用
+- **叩き2戦目**: 休養明けからの連続戦数カウント（逐次ロジック）で中コスト、今回見送り
+- **ゲートの速さ・配合ニックス**: データ源/設計が別途必要
+
 ### Phase 6: グループB（追加スクレイピング）— 事前調査ゲート付き（原計画）
 
 - **6-a 事前調査（実装より先）**: `scripts/probe_netkeiba_free.py` で非ログイン状態の

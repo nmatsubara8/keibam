@@ -39,6 +39,8 @@ AGG_TARGET_COLS: list = [
     "オッズ",          # 過去走の単勝オッズ（市場評価の履歴。過去走由来＝リークでない）
     "人気",            # 過去走の人気順
     "speed_index",    # Phase 3: コース基準タイムで標準化した速度指数（IDM 相当）
+    "着差",            # Phase 7: 着差（勝ち＝0、負けは正。能力差の履歴）
+    "賞金",            # Phase 7: 獲得賞金（過去走のレース格・好走の履歴）
 ]
 
 # horse_id と組で集計するグループ列（同上の単一の正）。
@@ -134,6 +136,12 @@ COURSE_CONDITION_FEATURE_COLS: list = [
     "avg_rank_at_course_type",  # 同コース種別での平均着順(相対値)
 ]
 
+# Phase 7: 競馬場別の馬成績（現レースと同一競馬場での過去成績）
+PLACE_CONDITION_FEATURE_COLS: list = [
+    "win_rate_at_place",   # 同一競馬場での勝率
+    "avg_rank_at_place",   # 同一競馬場での平均着順(相対値)
+]
+
 # ──────────────────────────────────────────
 # §2j: 種牡馬集計特徴量
 # ──────────────────────────────────────────
@@ -144,6 +152,13 @@ SIRE_FEATURE_COLS: list = [
     "sire_win_rate",          # 種牡馬産駒の全期間勝率
     "sire_avg_rank",          # 種牡馬産駒の全期間平均着順
     "sire_recent_win_rate",   # 直近N年の種牡馬産駒勝率
+]
+
+# Phase 7: 母父(BMS/damsire, peds_2)産駒成績。SIRE と同型。
+DAMSIRE_FEATURE_COLS: list = [
+    "damsire_win_rate",         # 母父産駒の全期間勝率
+    "damsire_avg_rank",         # 母父産駒の全期間平均着順
+    "damsire_recent_win_rate",  # 直近N年の母父産駒勝率
 ]
 
 # ──────────────────────────────────────────

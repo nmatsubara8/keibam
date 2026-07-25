@@ -424,6 +424,76 @@ class TestAddCourseConditionStats:
 
 
 # ──────────────────────────────────────────
+# Phase 7: 競馬場別成績 / 母父(damsire) / 着差・賞金集計
+# ──────────────────────────────────────────
+
+class TestPlaceConditionStats:
+    def test_win_rate_at_place(self):
+        m = _make_merger(_results_df_with_jockey())
+        # 過去: 東京(05)着順[1,2], 中山(06)着順[5]。現レース 開催=5(東京・Int64)
+        hr = pd.DataFrame(
+            {"着順": [1, 2, 5], "頭数": [10, 10, 10], "開催": ["05", "05", "06"],
+             "course_len": [16, 16, 16], "race_type": ["芝", "芝", "芝"]},
+            index=pd.Index([1, 1, 1], name="horse_id"),
+        )
+        res = pd.DataFrame(
+            {"horse_id": [1], "course_len": [16], "race_type": ["芝"],
+             "開催": pd.array([5], dtype="Int64")},
+            index=pd.Index(["r"], name="race_id"),
+        )
+        out = m._add_course_condition_stats(res, hr)
+        # 東京(05)のみ: 着順[1,2] → win_rate=0.5, avg_rank=(0.1+0.2)/2=0.15
+        assert out["win_rate_at_place"].iloc[0] == pytest.approx(0.5)
+        assert out["avg_rank_at_place"].iloc[0] == pytest.approx(0.15)
+
+    def test_no_place_col_skips(self):
+        m = _make_merger(_results_df_with_jockey())
+        res = pd.DataFrame({"horse_id": [1], "course_len": [16], "race_type": ["芝"]},
+                           index=pd.Index(["r"], name="race_id"))
+        hr = _horse_results_df()  # 開催 列なし
+        out = m._add_course_condition_stats(res, hr)
+        assert "win_rate_at_place" not in out.columns
+
+
+class TestDamsireStats:
+    def test_damsire_win_rate(self):
+        m = _make_merger(_results_df_with_jockey())
+        m._peds = pd.DataFrame(
+            {"peds_0": pd.Categorical(["S1"]), "peds_2": pd.Categorical(["D1"])},
+            index=pd.Index([10], name="horse_id"),
+        )
+        phs = pd.DataFrame(
+            {"着順": [1, 3, 1], "頭数": [10, 10, 10],
+             "peds_2": pd.Categorical(["D1", "D1", "D2"]),
+             "date": pd.to_datetime(["2023-01-01"] * 3)},
+            index=pd.Index([1, 2, 3], name="horse_id"),
+        )
+        m._separated_hr_with_sire_dict = {pd.Timestamp("2024-01-01"): phs}
+        res = pd.DataFrame({"horse_id": [10]}, index=pd.Index(["r"], name="race_id"))
+        out = m._add_damsire_stats(res, pd.Timestamp("2024-01-01"))
+        for c in ["damsire_win_rate", "damsire_avg_rank", "damsire_recent_win_rate"]:
+            assert c in out.columns
+        # D1 産駒 着順[1,3] → win 0.5
+        assert out["damsire_win_rate"].iloc[0] == pytest.approx(0.5)
+        assert "_ped_key" not in out.columns
+
+
+class TestChakusaPrizeAggregation:
+    def test_in_target_cols_and_aggregated(self):
+        from src.constants._feature_cols import AGG_TARGET_COLS
+
+        assert "着差" in AGG_TARGET_COLS and "賞金" in AGG_TARGET_COLS
+        m = _make_merger(_results_df_with_jockey())
+        hr = pd.DataFrame(
+            {"着差": [0.0, 0.3, 1.2], "賞金": [500.0, 0.0, 100.0]},
+            index=pd.Index([1, 1, 1], name="horse_id"),
+        )
+        s = m._summarize(hr, ["着差", "賞金"])
+        assert s.loc[1, "着差_mean"] == pytest.approx(0.5)
+        assert s.loc[1, "賞金_mean"] == pytest.approx(200.0)
+
+
+# ──────────────────────────────────────────
 # §2c: _add_jockey_trainer_stats
 # ──────────────────────────────────────────
 

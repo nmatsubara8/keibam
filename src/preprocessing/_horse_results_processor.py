@@ -83,12 +83,17 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # フォーマット例外は欠損値になる
         df["time_seconds"] = (datetime_s - basetime).dt.total_seconds()
 
-        # Phase 1: 集計対象に用いる列を数値化する。
+        # Phase 1/7: 集計対象に用いる列を数値化する。
         # raw には "---"（未確定）等の非数値が混じるため to_numeric で NaN 化し、
-        # 多窓集計（mean/std/...）から自然に除外されるようにする。
-        for _col in (Cols.TANSHO_ODDS, Cols.POPULARITY, Cols.NOBORI):
+        # 多窓集計（mean/std/...）から自然に除外されるようにする。賞金はカンマ区切りの
+        # 場合があるため除去してから数値化する。
+        for _col in (Cols.TANSHO_ODDS, Cols.POPULARITY, Cols.NOBORI, Cols.RANK_DIFF):
             if _col in df.columns:
                 df[_col] = pd.to_numeric(df[_col], errors="coerce")
+        if Cols.PRIZE in df.columns:
+            df[Cols.PRIZE] = pd.to_numeric(
+                df[Cols.PRIZE].astype(str).str.replace(",", "", regex=False), errors="coerce"
+            ).fillna(0)
 
         # インデックス名を与える
         # df.index.name = "horse_id"
