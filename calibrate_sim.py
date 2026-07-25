@@ -51,6 +51,10 @@ _NON_CFG_PARAMS = ("ability_sigma",)
 # 名前空間を分け、CourseEnvParams の同名フィールドへ写す（接頭辞規約・復元は _course_env に集約）。
 # 既定=off（従来較正と完全一致）。範囲は「0=幾何効果なし（base のまま）」を下端に含める＝効かない
 # なら消せる保守側の設計。
+from src.simulation._course_affinity import (  # noqa: E402
+    COURSE_AFFINITY_GAIN_PREFIX as _COURSE_AFF_PREFIX,
+    course_affinity_params_from_mapping as build_course_affinity_params,
+)
 from src.simulation._course_env import (  # noqa: E402
     COURSE_ENV_GAIN_PREFIX as _COURSE_ENV_PREFIX,
     course_env_params_from_mapping as build_course_env_params,
@@ -63,11 +67,21 @@ COURSE_ENV_BOUNDS = {
     "ce_corner_gain":    (0.0, 1.0),   # コーナー曲率→turn_k の感度（base.turn_k>0 のときのみ効く）
 }
 
+# Phase B: 出走馬×コース相性→RaceField.ability 補正ゲインの較正（--course-affinity）。ca_ 接頭辞。
+COURSE_AFFINITY_BOUNDS = {
+    "ca_style_gain": (0.0, 0.4),   # 脚質バイアス×脚質 の感度（0=脚質相性 off）
+    "ca_time_gain":  (0.0, 0.3),   # 時計傾向×スピード型 の感度（0=時計相性 off）
+}
+
+# cfg にも ability_sigma にも属さない「幾何/相性ゲイン」接頭辞（cfg_params から除外する）。
+_COURSE_GAIN_PREFIXES = (_COURSE_ENV_PREFIX, _COURSE_AFF_PREFIX)
+
 
 def split_cfg_params(params: dict, default_ability_sigma: float):
-    """(SimConfig 用 cfg_params, ability_sigma) に分離。ability_sigma と ce_* は cfg から除く。"""
+    """(SimConfig 用 cfg_params, ability_sigma) に分離。ability_sigma と ce_*/ca_* は cfg から除く。"""
     cfg_params = {k: v for k, v in params.items()
-                  if k not in _NON_CFG_PARAMS and not k.startswith(_COURSE_ENV_PREFIX)}
+                  if k not in _NON_CFG_PARAMS
+                  and not k.startswith(_COURSE_GAIN_PREFIXES)}
     return cfg_params, params.get("ability_sigma", default_ability_sigma)
 
 # 2D エンジン(SimConfig2D)用の較正パラメータ。pos_gain(位置ターゲットの強さ)は 1D+ノイズで
@@ -181,6 +195,9 @@ def main():
     ap.add_argument("--course-env", action="store_true",
                     help="Phase A: コース幾何→SimConfig 写像ゲイン(ce_*)も併せて較正する。"
                          "レース毎に course_* から per-race cfg を作って評価。既定 off＝従来較正。")
+    ap.add_argument("--course-affinity", action="store_true",
+                    help="Phase B: 出走馬×コース相性→ability 補正ゲイン(ca_*)も併せて較正する。"
+                         "レース毎に course_* × 馬別特徴で field を補正して評価。既定 off。")
     # 目的の重み（既定は WEIGHTS。draw_bias 過剰・天井張り付きの再調整用に個別上書き可能）
     ap.add_argument("--w-style-pos", type=float, default=WEIGHTS["style_pos_match"])
     ap.add_argument("--w-draw-bias", type=float, default=WEIGHTS["draw_bias_match"])
@@ -194,6 +211,8 @@ def main():
     bounds = dict(PARAM_BOUNDS_2D if args.engine == "2d" else PARAM_BOUNDS)
     if args.course_env:
         bounds = {**bounds, **COURSE_ENV_BOUNDS}
+    if args.course_affinity:
+        bounds = {**bounds, **COURSE_AFFINITY_BOUNDS}
     out_path = args.out or ("models/sim_calibration_2d.json" if args.engine == "2d"
                             else "models/sim_calibration.json")
     print(f"[engine] {args.engine} / [weights] {weights}")
@@ -212,6 +231,7 @@ def main():
     from src.preprocessing._horse_results_processor import parse_corner
     from src.simulation._agent_race import SimConfig, monte_carlo
     from src.simulation._agent_race_2d import SimConfig2D, monte_carlo_2d
+    from src.simulation._course_affinity import field_for_course
     from src.simulation._course_env import course_context_from_featured, sim_config_for_course
     from src.simulation._fidelity import pace_backness_signal, pace_shape_corr
     from src.simulation._sim_params import field_from_featured
@@ -248,19 +268,20 @@ def main():
     if not train_ids or not val_ids:
         print("train/val のどちらかが空。--train-max-year/--val-min-year を調整。"); return
 
-    # Phase A: course_* 幾何をレース単位で1回だけ解決（trial 間で不変＝再計算しない）。
+    # Phase A/B: course_* をレース単位で1回だけ解決（trial 間で不変＝再計算しない・両者で共有）。
     ctx_by_race: dict = {}
-    if args.course_env:
+    if args.course_env or args.course_affinity:
         if not any(c.startswith("course_") for c in featured.columns):
-            print("--course-env 指定だが featured に course_* 列が無い（course_master 未生成）。"
-                  "scripts/scrape_course_master.py で生成後に。")
+            print("--course-env/--course-affinity 指定だが featured に course_* 列が無い"
+                  "（course_master 未生成）。scripts/scrape_course_master.py で生成後に。")
             return
         for rid in set(train_ids) | set(val_ids):
             rd = featured.loc[[rid]] if not isinstance(featured.loc[rid], pd.DataFrame) else featured.loc[rid]
             ctx_by_race[rid] = course_context_from_featured(rd)
         nfilled = sum(0 if c.is_empty else 1 for c in ctx_by_race.values())
-        print(f"[course-env] 幾何解決: {nfilled}/{len(ctx_by_race)} レースに course_* あり。"
-              f"較正ゲイン: {list(COURSE_ENV_BOUNDS)}")
+        gains = (list(COURSE_ENV_BOUNDS) if args.course_env else []) \
+            + (list(COURSE_AFFINITY_BOUNDS) if args.course_affinity else [])
+        print(f"[course] 解決: {nfilled}/{len(ctx_by_race)} レースに course_* あり。較正ゲイン: {gains}")
 
     def _collect_real(ids):
         """実測プール（馬単位）を1回だけ作る。"""
@@ -294,7 +315,7 @@ def main():
     print(f"[real train] {R_train}")
 
     # sim を回し、実測と同順で対応させた集約統計を返す（pos_direct=sim位置 vs 実第1コーナー）。
-    def evaluate(ids, cfg, ability_sigma, seed, course_params=None):
+    def evaluate(ids, cfg, ability_sigma, seed, course_params=None, affinity_params=None):
         rng = np.random.default_rng(seed)
         s_style, s_pos, s_rank, s_draw, s_back, s_rn = [], [], [], [], [], []
         r_pos, r_pace = [], []
@@ -308,6 +329,8 @@ def main():
                 continue
             nH = len(rd)
             field = field_from_featured(rd, ability_spread=args.ability_spread)
+            if affinity_params is not None and rid in ctx_by_race:   # Phase B: 相性で ability 補正
+                field = field_for_course(field, rd, ctx_by_race[rid], affinity_params)
             cfg_r = sim_config_for_course(cfg, ctx_by_race[rid], course_params) \
                 if course_params is not None and rid in ctx_by_race else cfg
             sim = run_engine(field, n_sim=args.n_sim, cfg=cfg_r, seed=int(rng.integers(1 << 30)),
@@ -347,6 +370,10 @@ def main():
         """--course-env 時のみ ce_* から CourseEnvParams を構築（off なら None）。"""
         return build_course_env_params(params) if args.course_env else None
 
+    def affinity_params_of(params):
+        """--course-affinity 時のみ ca_* から CourseAffinityParams を構築（off なら None）。"""
+        return build_course_affinity_params(params) if args.course_affinity else None
+
     def suggest(trial):
         return {k: trial.suggest_float(k, lo, hi) for k, (lo, hi) in bounds.items()}
 
@@ -354,7 +381,8 @@ def main():
         params = suggest(trial)
         _, absig = split_params(params)
         st = evaluate(train_ids, make_cfg(params), absig, seed=args.seed,
-                      course_params=course_params_of(params))
+                      course_params=course_params_of(params),
+                      affinity_params=affinity_params_of(params))
         return objective_distance(st, R_train, has_pace=race_pace is not None, weights=weights)
 
     sampler = optuna.samplers.TPESampler(seed=args.seed)
@@ -370,9 +398,11 @@ def main():
               for k in bounds}
 
     _, best_absig = split_params(best)
-    best_cp = course_params_of(best)
-    st_train = evaluate(train_ids, make_cfg(best), best_absig, seed=args.seed + 1, course_params=best_cp)
-    st_val = evaluate(val_ids, make_cfg(best), best_absig, seed=args.seed + 2, course_params=best_cp)
+    best_cp, best_ap = course_params_of(best), affinity_params_of(best)
+    st_train = evaluate(train_ids, make_cfg(best), best_absig, seed=args.seed + 1,
+                        course_params=best_cp, affinity_params=best_ap)
+    st_val = evaluate(val_ids, make_cfg(best), best_absig, seed=args.seed + 2,
+                      course_params=best_cp, affinity_params=best_ap)
 
     print("\n[best params]")
     for k in bounds:

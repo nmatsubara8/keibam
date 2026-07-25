@@ -34,24 +34,31 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class CourseContext:
-    """1 レース分に解決したコース幾何のスナップショット（None=未知→中立）。
+    """1 レース分に解決したコース属性のスナップショット（None=未知→中立）。
 
     値はレース単位の静的属性。course_* 列の最初の有限値を採る（レース内で定数のため）。
-    すべて Optional[float]。None のフィールドは sim_config_for_course で「効果なし(factor=1.0)」
-    に落ちる＝後方互換。
+    すべて Optional[float]。前半=幾何（Phase A: sim_config_for_course が SimConfig 物理定数へ写像）、
+    後半=定性プロファイル（Phase B: field_for_course が出走馬×コース相性として RaceField.ability を
+    馬別補正）。None のフィールドは各写像で「効果なし(factor=1.0)」に落ちる＝後方互換。
     """
 
+    # --- 幾何（Phase A：場の物理）---
     width: float | None = None            # 物理レース幅 [m]（width_min/max の代表値）
     elevation_diff: float | None = None   # 最大高低差 [m]
     straight_length: float | None = None  # ゴール前直線長 [m]
     lap_length: float | None = None       # 一周距離 [m]（Phase A では未写像・Phase C 予約）
-    turn_direction: float | None = None   # 0=右, 1=左（場の物理スカラーではない・Phase B 用に保持）
+    turn_direction: float | None = None   # 0=右, 1=左（Phase B の回り適性評価に保持）
     corner_radius_large: float | None = None  # 緩コーナー=1 / 急=0
     has_spiral: float | None = None       # スパイラルカーブ採用=1
+    # --- 定性プロファイル（Phase B：出走馬×コース相性）---
+    run_style_bias: float | None = None   # 脚質バイアス（正=前有利 / 負=差し追込有利）
+    time_bias: float | None = None        # 時計傾向（-1=タフ / 0 / +1=高速）
+    turf_type_code: float | None = None   # 芝種（0=野芝 / 1=洋芝）※芝のみ
+    drainage_good: float | None = None    # 水はけ良（重になりにくい）=1
 
     @property
     def is_empty(self) -> bool:
-        """幾何が 1 つも解決できなかった（全 knob が base のまま）か。"""
+        """コース属性が 1 つも解決できなかった（幾何も相性も base のまま）か。"""
         return all(
             getattr(self, f.name) is None for f in dataclasses.fields(self)
         )
@@ -145,6 +152,10 @@ def course_context_from_featured(race_df: pd.DataFrame) -> CourseContext:
         turn_direction=_first_finite(race_df, "course_turn_direction"),
         corner_radius_large=_first_finite(race_df, "course_corner_radius_large"),
         has_spiral=_first_finite(race_df, "course_has_spiral_curve"),
+        run_style_bias=_first_finite(race_df, "course_run_style_bias"),
+        time_bias=_first_finite(race_df, "course_time_bias"),
+        turf_type_code=_first_finite(race_df, "course_turf_type_code"),
+        drainage_good=_first_finite(race_df, "course_drainage_good"),
     )
 
 

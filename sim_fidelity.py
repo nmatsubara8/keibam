@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--course-env", action="store_true",
                     help="Phase A: レース毎に course_* 幾何で SimConfig を上書き（幅員→有効幅/高低差→"
                          "消耗/直線→終盤到達/曲率→turn_k）。幾何欠損レースは base のまま＝後方互換。")
+    ap.add_argument("--course-affinity", action="store_true",
+                    help="Phase B: 出走馬×コース相性で RaceField.ability を馬別補正（脚質バイアス×脚質/"
+                         "時計傾向×スピード型）。プロファイル欠損は base のまま＝後方互換。")
     ap.add_argument("--override", nargs="*", default=[], metavar="KEY=VAL",
                     help="較正/既定パラメータを個別上書き（アブレーション用）。"
                          "例: --override noise_mult=1.0 pos_gain=0.6")
@@ -135,22 +138,34 @@ def main():
         run_sim = lambda fld, sd, c=None: monte_carlo(  # noqa: E731
             fld, n_sim=args.n_sim, cfg=c or cfg, seed=sd,
             ability_sigma=eff_ability_sigma, track_dynamics=True)
-    course_params = None
-    if args.course_env:
+    # Phase A/B: どちらかが on なら course_* をレース毎に解決（CourseContext を両者で共有）。
+    course_params = affinity_params = None
+    use_course = args.course_env or args.course_affinity
+    if use_course:
+        from src.simulation._course_affinity import (
+            course_affinity_params_from_mapping,
+            field_for_course,
+        )
         from src.simulation._course_env import (
             course_context_from_featured,
             course_env_params_from_mapping,
             sim_config_for_course,
         )
-        if args.calibrated:   # 較正済み ce_* ゲインがあれば使う（無ければ CourseEnvParams 既定）
+        raw = {}
+        if args.calibrated:   # 較正済み ce_*/ca_* ゲインがあれば使う（無ければ各既定）
             fname = "sim_calibration_2d.json" if args.engine == "2d" else "sim_calibration.json"
             calp = Path(__file__).resolve().parent / "models" / fname
             if calp.exists():
                 import json
                 raw = dict(json.loads(calp.read_text()).get("best_params", {}))
-                course_params = course_env_params_from_mapping(raw)
-        print(f"[course-env] Phase A: レース毎に course_* 幾何で SimConfig を上書き"
-              f"（{'較正ゲイン' if course_params else '既定ゲイン'}・幾何欠損は base）。")
+        if args.course_env:
+            course_params = course_env_params_from_mapping(raw)
+            print(f"[course-env] Phase A: course_* 幾何で SimConfig 上書き"
+                  f"（{'較正ゲイン' if course_params else '既定ゲイン'}・幾何欠損は base）。")
+        if args.course_affinity:
+            affinity_params = course_affinity_params_from_mapping(raw)
+            print(f"[course-affinity] Phase B: 出走馬×コース相性で ability 補正"
+                  f"（{'較正ゲイン' if affinity_params else '既定ゲイン'}・プロファイル欠損は base）。")
     print(f"[engine] {args.engine} / dt={args.dt} / 実ステップ数={steps}（総時間 T·dt={args.T}）"
           "  ※1d/2d とも dt 不変（ノイズ√dt）")
     rng = np.random.default_rng(args.seed)
@@ -173,8 +188,10 @@ def main():
             continue
 
         field = field_from_featured(rd, ability_spread=args.ability_spread)
-        cfg_r = sim_config_for_course(cfg, course_context_from_featured(rd), course_params) \
-            if args.course_env else None
+        ctx = course_context_from_featured(rd) if use_course else None
+        if args.course_affinity:                     # Phase B: 馬別 ability 相性補正
+            field = field_for_course(field, rd, ctx, affinity_params)
+        cfg_r = sim_config_for_course(cfg, ctx, course_params) if args.course_env else None
         sim = run_sim(field, int(rng.integers(1 << 30)), cfg_r)
         # sim 前傾度は速度レベルで正規化（(early-late)/(early+late)）＝形だけ測り能力レベル交絡を除く
         _es, _ls = sim["early_speed"], sim["late_speed"]
