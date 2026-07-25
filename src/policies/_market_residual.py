@@ -107,6 +107,28 @@ def edge_prob(
     return {h: float(pi) - float(q.get(h, 0.0)) for h, pi in p_true.items()}
 
 
+def kl_from_market(
+    p_true: Mapping[int, float], q: Mapping[int, float]
+) -> float:
+    """VOI（情報価値）指標 D_KL(P ∥ q) = Σ_i P_i·log(P_i/q_i)。
+
+    「市場からどれだけ新しい情報を得たか」の情報理論的な量（nats）。P≡q（帰無）で 0。
+    Edge の期待値 E_P[Edge_i] と一致する（Edge_i=log(P_i/q_i) の定義から）。
+
+    使い方（VOI 解析）: 特徴量群（例: JRDB）を追加したモデルと無しのモデルで
+    ΔKL = mean_races[ KL(P_with‖q) − KL(P_without‖q) ] を測る。ΔNLL/ΔECE/ΔROI と併せて
+    「その特徴量が市場に対する情報量をどれだけ増やしたか」を単独で定量化できる。
+    注意: KL 増加は情報量の増加であって**正しさの保証ではない**（過学習でも増える）。
+    必ず ΔNLL（proper scoring・OOS）で正しさを確認した上で VOI を解釈する。
+    """
+    out = 0.0
+    for h, pi in p_true.items():
+        qi = q.get(h, 0.0)
+        if pi > 0 and qi > 0:
+            out += float(pi) * math.log(float(pi) / float(qi))
+    return max(0.0, out)
+
+
 def market_anchored_nll(
     q: Mapping[int, float],
     residual: Mapping[int, float],

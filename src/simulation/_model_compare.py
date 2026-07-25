@@ -114,7 +114,10 @@ def compare_models(
         nll_base/nll_chal, d_nll（挑戦−基準・負=改善）, d_nll_ci95（Bootstrap）,
         lrt_stat/lrt_p, brier_*, d_brier, ece_*, d_ece, n_races, success（bool）
     """
-    nll_b, nll_c, br_b, br_c = [], [], [], []
+    from src.policies._market_residual import kl_from_market
+    from src.policies._market_residual import market_probs
+
+    nll_b, nll_c, br_b, br_c, kl_b, kl_c = [], [], [], [], [], []
     pb_flat: list[float] = []
     pc_flat: list[float] = []
     y_flat: list[int] = []
@@ -130,6 +133,10 @@ def compare_models(
         nll_c.append(race_nll(pc, w))
         br_b.append(race_brier(pb, w))
         br_c.append(race_brier(pc, w))
+        if r.get("odds"):  # VOI: 市場からの情報獲得量 D_KL(P‖q)
+            q = market_probs(r["odds"])
+            kl_b.append(kl_from_market(pb, q))
+            kl_c.append(kl_from_market(pc, q))
         for h in pb:
             pb_flat.append(float(pb[h]))
             pc_flat.append(float(pc.get(h, 0.0)))
@@ -165,6 +172,11 @@ def compare_models(
         "brier_base": float(np.mean(br_b)), "brier_chal": float(np.mean(br_c)),
         "d_brier": float(np.mean(br_c) - np.mean(br_b)),
         "ece_base": e_b, "ece_chal": e_c, "d_ece": d_ece,
+        # VOI: 市場からの情報獲得量（nats）。ΔKL>0=市場に対する新情報が増えた
+        # （正しさは success 側の ΔNLL が担保。KL 単独では過学習でも増える点に注意）
+        "kl_market_base": float(np.mean(kl_b)) if kl_b else float("nan"),
+        "kl_market_chal": float(np.mean(kl_c)) if kl_c else float("nan"),
+        "d_kl_market": float(np.mean(kl_c) - np.mean(kl_b)) if kl_b else float("nan"),
         # 事前定義の成功条件: 改善・有意・較正非悪化（ROI は別途 evaluate_pnl で確認）
         "success": bool(d_nll < 0 and significant and d_ece <= 0.005),
     }
