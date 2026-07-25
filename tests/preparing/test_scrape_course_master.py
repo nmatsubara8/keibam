@@ -105,3 +105,68 @@ class TestTrackMap:
         assert len(TRACK_SLUG_TO_PLACE) == 10
         assert TRACK_SLUG_TO_PLACE["tokyo"] == "05"
         assert TRACK_SLUG_TO_PLACE["sapporo"] == "01"
+
+
+# ──────────────────────────────────────────
+# 2 段階処理（Stage1 取得→素テキスト保存 / Stage2 分析）
+# ──────────────────────────────────────────
+
+class TestTwoStage:
+    def test_stage1_builds_raw_record(self):
+        from scripts.scrape_course_master import build_raw_record
+
+        rec = build_raw_record(_HTML, "sapporo", "01")
+        assert rec["place_code"] == "01"
+        assert rec["turn_direction"] == 0.0
+        # 素テキストは要点抽出せず verbatim（オール洋芝 の記述が残る）
+        assert "オール洋芝" in rec["prose_raw"]
+        assert "芝" in rec["geometry"] and "ダート" in rec["geometry"]
+
+    def test_stage1_save_load_roundtrip(self, tmp_path):
+        from scripts.scrape_course_master import (
+            build_raw_record, load_raw_prose, save_raw_prose,
+        )
+
+        recs = {"01": build_raw_record(_HTML, "sapporo", "01")}
+        path = str(tmp_path / "course_prose.json")
+        save_raw_prose(recs, path)
+        loaded = load_raw_prose(path)
+        assert loaded["01"]["prose_raw"] == recs["01"]["prose_raw"]
+        assert loaded["01"]["geometry"]["芝"]["straight_length"] == 266.1
+
+    def test_stage2_analyze_from_raw(self):
+        from scripts.scrape_course_master import analyze_record, build_raw_record
+
+        rec = build_raw_record(_HTML, "sapporo", "01")
+        rows = analyze_record(rec)
+        assert len(rows) == 2
+        shiba = next(r for r in rows if r["race_type"] == "芝")
+        assert shiba["straight_length"] == 266.1
+        assert shiba["turf_type_code"] == 1.0     # 洋芝（Stage2 の要点抽出）
+        assert shiba["run_style_bias"] == 1.0      # 追い込み苦戦 → 前有利
+
+    def test_stage2_reanalyze_without_refetch(self, tmp_path):
+        """Stage1 の JSON を読み直して Stage2 だけ再実行できる（再フェッチ不要）。"""
+        from scripts.scrape_course_master import (
+            _stage_analyze, build_raw_record, load_raw_prose, save_raw_prose,
+        )
+
+        path = str(tmp_path / "course_prose.json")
+        save_raw_prose({"01": build_raw_record(_HTML, "sapporo", "01")}, path)
+        rows = _stage_analyze(load_raw_prose(path))
+        assert any(r["race_type"] == "芝" and r["straight_length"] == 266.1 for r in rows)
+
+
+class TestProseMarkerCoverage:
+    def test_wide_corner_variants(self):
+        from scripts.scrape_course_master import parse_course_prose
+
+        # 「半径がゆったり」（東京系の表現）も緩コーナーとして拾う
+        assert parse_course_prose("カーブの半径がゆったりしている").get("corner_radius_large") == 1.0
+        # 「タイト」「小回り」は急コーナー
+        assert parse_course_prose("2コーナーのカーブがかなりタイトな内回り").get("corner_radius_large") == 0.0
+
+    def test_fast_time_from_agari(self):
+        from scripts.scrape_course_master import parse_course_prose
+
+        assert parse_course_prose("レースの上がりタイムは速くなるのが常").get("time_bias") == 1.0

@@ -62,6 +62,9 @@ class LocalPaths:
     MASTER_DIR: str = os.path.join(DATA_DIR, "master")
     MASTER_RAW_HORSE_RESULTS_PATH: str = os.path.join(MASTER_DIR, "horse_results_updated_at.csv")
     # コース形状マスタ（JRA 公式コースページからスクレイプ・学習/ライブ共通）
+    # Stage1: 素テキスト（コース紹介プロセ＋幾何）を保存する raw ストア
+    COURSE_PROSE_PATH: str = os.path.join(MASTER_DIR, "course_prose.json")
+    # Stage2: 素テキストを分析して要点抽出した最終マスタ（学習/ライブが読む）
     COURSE_MASTER_PATH: str = os.path.join(MASTER_DIR, "course_master.csv")
 
     ### 卍式（①.5 補正）成果物のパス
