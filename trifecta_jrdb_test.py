@@ -32,20 +32,31 @@ from src.jrdb._parser import parse
 from src.policies._harville import prob_trifecta, prob_trifecta_place_strength
 from src.policies._market_residual import market_probs
 
-# 2/3着の順序に効く JRDB 展開予想（着順そのものを予測する指数）
-ORDER_SIGNALS = ("goal_juni", "ichi_idx")
+# 2/3着の順序に効く JRDB 展開予想（着順そのものを予測する指数・前日KYI）
+KYI_SIGNALS = ("goal_juni", "ichi_idx")
+# TYB 直前(発走15分前)の直交情報。paddock_idx=物理評価（純粋直交）/ odds_idx=直前オッズ由来
+# （市場変動を含むためリーク気味・要注意）。実運用では 15 分前に取得可能＝賭け前に使える。
+TYB_SIGNALS = ("paddock_idx", "odds_idx")
 _CENTRAL = {f"{i:02d}" for i in range(1, 11)}
 
 
-def load_races(jrdb_dir: str, central_only: bool = True) -> list[dict]:
-    """SED(着順+確定単勝)×KYI(展開指数) → 完全順序レース列（q/top3/signals）。"""
+def load_races(jrdb_dir: str, central_only: bool = True,
+               with_tyb: bool = False) -> tuple[list[dict], tuple[str, ...]]:
+    """SED(着順+確定単勝)×KYI(展開指数)[×TYB(直前)] → (完全順序レース列, 使用signal名)。"""
     sed = pd.concat([parse(f, "SED")[["race_id", "umaban", "kakutei_tansho", "chakujun"]]
                      for f in sorted(glob.glob(f"{jrdb_dir}/SED*.txt"))], ignore_index=True)
-    kcols = ["race_id", "umaban", *ORDER_SIGNALS]
-    kyi = pd.concat([parse(f, "KYI")[kcols]
+    kyi = pd.concat([parse(f, "KYI")[["race_id", "umaban", *KYI_SIGNALS]]
                      for f in sorted(glob.glob(f"{jrdb_dir}/KYI*.txt"))], ignore_index=True)
-    m = sed.merge(kyi, on=["race_id", "umaban"], how="inner").dropna(
-        subset=["kakutei_tansho", "chakujun"])
+    m = sed.merge(kyi, on=["race_id", "umaban"], how="inner")
+    signals = KYI_SIGNALS
+    if with_tyb:
+        tyb_files = sorted(glob.glob(f"{jrdb_dir}/TYB*.txt"))
+        if tyb_files:
+            tyb = pd.concat([parse(f, "TYB")[["race_id", "umaban", *TYB_SIGNALS]]
+                             for f in tyb_files], ignore_index=True)
+            m = m.merge(tyb, on=["race_id", "umaban"], how="left")
+            signals = KYI_SIGNALS + TYB_SIGNALS
+    m = m.dropna(subset=["kakutei_tansho", "chakujun"])
     m = m[m["kakutei_tansho"] > 1.0]
     if central_only:
         m = m[m["race_id"].astype(str).str[4:6].isin(_CENTRAL)]
@@ -62,14 +73,14 @@ def load_races(jrdb_dir: str, central_only: bool = True) -> list[dict]:
         if len(set(top3)) < 3 or any(t not in q for t in top3):
             continue
         sig: dict[int, dict[str, float]] = {}
-        for c in ORDER_SIGNALS:
-            v = pd.to_numeric(g[c], errors="coerce")
+        for c in signals:
+            v = pd.to_numeric(g[c], errors="coerce").fillna(0.0)
             z = (v - v.mean()) / (v.std() + 1e-6)
             for u, zz in zip(g["umaban"], z, strict=False):
                 sig.setdefault(int(u), {})[c] = float(zz) if pd.notna(zz) else 0.0
         races.append({"rid": str(rid), "q": q, "top3": tuple(top3), "sig": sig})
     races.sort(key=lambda r: r["rid"])
-    return races
+    return races, signals
 
 
 def _place_probs(q, sig, coef):
@@ -92,16 +103,20 @@ def _tri_nll(r, coef):
     return -np.log(max(p, 1e-12))
 
 
-def fit_coef(train, grid=np.arange(-0.3, 0.31, 0.1)):
-    """train の trifecta NLL 最小の係数（ORDER_SIGNALS の2次元グリッド）。"""
-    best = None
-    for cg in grid:
-        for ci in grid:
-            coef = {ORDER_SIGNALS[0]: float(cg), ORDER_SIGNALS[1]: float(ci)}
-            n = float(np.mean([_tri_nll(r, coef) for r in train]))
-            if best is None or n < best[0]:
-                best = (n, coef)
-    return best[1]
+def fit_coef(train, signals, grid=np.arange(-0.3, 0.31, 0.05), passes=3):
+    """train の trifecta NLL 最小の係数を座標降下で fit（任意個の signal 対応）。"""
+    coef = {s: 0.0 for s in signals}
+    for _ in range(passes):
+        for f in signals:
+            best_v, best_n = coef[f], float(np.mean([_tri_nll(r, coef) for r in train]))
+            for v in grid:
+                c2 = dict(coef)
+                c2[f] = float(v)
+                n = float(np.mean([_tri_nll(r, c2) for r in train]))
+                if n < best_n:
+                    best_n, best_v = n, float(v)
+            coef[f] = best_v
+    return coef
 
 
 def main() -> None:
@@ -109,15 +124,18 @@ def main() -> None:
     ap.add_argument("--jrdb-dir", default="/tmp/jrdb_all")
     ap.add_argument("--train-frac", type=float, default=0.6)
     ap.add_argument("--n-boot", type=int, default=1000)
+    ap.add_argument("--with-tyb", action="store_true",
+                    help="TYB直前(パドック指数/オッズ指数)も order signal に加える")
     args = ap.parse_args()
 
-    races = load_races(args.jrdb_dir)
+    races, signals = load_races(args.jrdb_dir, with_tyb=args.with_tyb)
     n_tr = int(len(races) * args.train_frac)
     tr, te = races[:n_tr], races[n_tr:]
-    print(f"完全順序レース: {len(races):,}（train {len(tr):,} / test {len(te):,}）")
+    print(f"完全順序レース: {len(races):,}（train {len(tr):,} / test {len(te):,}）"
+          f"  signals={signals}")
 
-    coef = fit_coef(tr)
-    print(f"train最適係数: {{'goal_juni': {coef['goal_juni']:+.2f}, 'ichi_idx': {coef['ichi_idx']:+.2f}}}")
+    coef = fit_coef(tr, signals)
+    print(f"train最適係数: { {k: round(v, 2) for k, v in coef.items()} }")
 
     base = np.array([_tri_nll(r, None) for r in te])
     chal = np.array([_tri_nll(r, coef) for r in te])

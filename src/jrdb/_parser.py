@@ -35,7 +35,7 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
     共通列: race_id（変換済）, umaban（int）, ketto。加えて record_type 別の項目。
     """
     rt = record_type.upper()
-    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB}[rt]
+    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB}[rt]
     recs = _records(path)
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
@@ -59,7 +59,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
     df = pd.DataFrame({**cols, **rep_cols})
     df["race_id"] = df["race_key"].map(race_key_to_race_id)
     df["umaban"] = _num(df["umaban"]).astype("Int64")
-    df["ketto"] = df["ketto"].str.strip()
+    if "ketto" in df.columns:  # TYB 等は血統登録番号を持たない
+        df["ketto"] = df["ketto"].str.strip()
 
     # 数値項目（pace_yosou=H/M/S は文字なので除外・後段でコード化）
     numeric = {
@@ -75,6 +76,9 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
                 "furi", "mae_furi", "naka_furi", "ato_furi", "bataijuu",
                 "kakutei_fukusho_shita", "odds_10_tansho", "odds_10_fukusho"],
         "SKB": [],
+        "TYB": ["idm", "kishu_idx", "joho_idx", "odds_idx", "paddock_idx",
+                "sougou_idx", "bagu_change", "ashimoto_info", "torikeshi",
+                "tansho_odds", "fukusho_odds", "bataijuu"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])

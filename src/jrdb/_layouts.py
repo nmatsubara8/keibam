@@ -100,4 +100,27 @@ SKB_REPEAT = {
 }
 SKB_ASHIMOTO = {"ashimoto_sougou": (69, 3)}  # 脚元(総合)
 
-RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304}
+# TYB 直前情報データ（第4b版・2022.08.22）。レコード長128。発走15分前頃更新。
+# 前日KYIに無い直前情報: オッズ指数/パドック指数（馬体・気配の直前評価）＋直前オッズ/馬体重。
+TYB = {
+    "race_key": (1, 8),
+    "umaban": (9, 2),
+    "idm": (11, 5),           # 前日と同じ
+    "kishu_idx": (16, 5),
+    "joho_idx": (21, 5),
+    "odds_idx": (26, 5),      # オッズ指数（直前）
+    "paddock_idx": (31, 5),   # パドック指数（直前・馬体評価）
+    "sougou_idx": (41, 5),    # 総合指数（直前）
+    "bagu_change": (46, 1),   # 馬具変更情報
+    "ashimoto_info": (47, 1), # 脚元情報（0平行/1良化/2疑問/3悪化）
+    "torikeshi": (48, 1),     # 取消フラグ
+    "tansho_odds": (73, 6),   # 単勝オッズ（直前・ZZZ9.9）
+    "fukusho_odds": (79, 6),  # 複勝オッズ下
+    "odds_time": (85, 4),     # オッズ取得時間 HHMM
+    "bataijuu": (89, 3),      # 馬体重
+    "odds_mark": (95, 1),     # オッズ印
+    "paddock_mark": (96, 1),  # パドック印
+    "chokuzen_mark": (97, 1), # 直前総合印
+}
+
+RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128}

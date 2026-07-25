@@ -104,6 +104,32 @@ def test_parse_skb_tokki(tmp_path):
     assert df.loc[0, "race_id"] == "200201020201"
 
 
+def _tyb_record() -> bytes:
+    r = bytearray(b" " * 128)
+    _put(r, 1, "06251101")     # race_key: 場06 年25 回1 日1 R01
+    _put(r, 9, "03")           # 馬番
+    _put(r, 11, " 38.0")       # IDM
+    _put(r, 26, "  2.0")       # オッズ指数
+    _put(r, 31, "  3.4")       # パドック指数
+    _put(r, 73, "   9.2")      # 単勝オッズ（直前）
+    _put(r, 89, "444")         # 馬体重
+    return bytes(r) + b"\r\n"
+
+
+def test_parse_tyb(tmp_path):
+    """TYB（直前情報・血統登録番号なし）のパースと直前指数。"""
+    p = tmp_path / "TYB250105.txt"
+    p.write_bytes(_tyb_record())
+    df = parse(str(p), "TYB")
+    assert df.loc[0, "race_id"] == "202506010101"
+    assert df.loc[0, "umaban"] == 3
+    assert df.loc[0, "idm"] == 38.0
+    assert df.loc[0, "paddock_idx"] == 3.4
+    assert df.loc[0, "tansho_odds"] == 9.2
+    assert df.loc[0, "bataijuu"] == 444
+    assert "ketto" not in df.columns  # TYB は血統登録番号を持たない
+
+
 def test_multiple_records(tmp_path):
     p = tmp_path / "SKB020908.txt"
     p.write_bytes(_skb_record() + _skb_record())
