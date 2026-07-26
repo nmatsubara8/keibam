@@ -155,6 +155,38 @@ def place_payoff_lookup_from_returns(return_df: pd.DataFrame) -> dict:
     return lookup
 
 
+def win_payoff_lookup_from_returns(return_df: pd.DataFrame) -> dict:
+    """return_tables から単勝の {(race_id:str, 馬番:int): payoff_yen:float}。
+
+    単勝は 1 レース 1 頭（同着で複数のこともある）。列 0=券種 / 1=当選馬番 / 2=払戻。
+    複勝の同型パーサ（cat=="単勝"）。100円あたりの払戻。
+    """
+    if return_df is None or return_df.empty:
+        return {}
+    df = return_df
+    rid = df["race_id"].astype(str) if "race_id" in df.columns else df.index.to_series().astype(str)
+
+    def _col(i):
+        if i in df.columns:
+            return df[i]
+        return df[str(i)] if str(i) in df.columns else None
+
+    cat, win, pay = _col(0), _col(1), _col(2)
+    if cat is None or win is None or pay is None:
+        return {}
+    cat = cat.astype(str).str.strip()
+    mask = (cat == "単勝").to_numpy()
+    lookup: dict = {}
+    for r, w, p in zip(rid.to_numpy()[mask], win.astype(str).to_numpy()[mask],
+                       pay.astype(str).to_numpy()[mask], strict=False):
+        umas = _norm_cell(w)
+        pays = _norm_cell(p)
+        for u, pv in zip(umas, pays, strict=False):
+            if u.isdigit() and pv.replace(".", "", 1).isdigit():
+                lookup[(str(r), int(u))] = float(pv)
+    return lookup
+
+
 def merged_fukusho_lookup(payoffs_path: str, return_tables_path: str) -> dict:
     """複勝決済ルックアップを payoffs.pkl（中央archive）＋ return_tables.pkl（NAR/最近）で統合。
 

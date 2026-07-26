@@ -38,12 +38,17 @@ from src.policies._harville import (
     prob_quinella,
     prob_quinella_place_strength,
 )
-from src.tuning._payoffs import multi_bet_payoff_lookup, place_payoff_lookup_from_returns
+from src.tuning._payoffs import (
+    multi_bet_payoff_lookup,
+    place_payoff_lookup_from_returns,
+    win_payoff_lookup_from_returns,
+)
 from trifecta_jrdb_test import _place_probs, fit_coef, load_races
 
-# 検証対象8券種（単勝は帰無基準として参考掲載）
-BET_TYPES = [BetType.FUKUSHO, BetType.WAKUREN, BetType.WIDE, BetType.UMAREN,
+# 検証対象8券種（単勝は純粋帰無の基準＝JRDBが市場勝率を付け直せるかの直接テスト）
+BET_TYPES = [BetType.TANSHO, BetType.FUKUSHO, BetType.WAKUREN, BetType.WIDE, BetType.UMAREN,
              BetType.UMATAN, BetType.SANRENPUKU, BetType.SANRENTAN]
+_SINGLE = {BetType.TANSHO, BetType.FUKUSHO}
 _UNORDERED = {BetType.UMAREN, BetType.WIDE, BetType.SANRENPUKU}
 _SIZE = {BetType.WIDE: 2, BetType.UMAREN: 2, BetType.UMATAN: 2,
          BetType.SANRENPUKU: 3, BetType.SANRENTAN: 3}
@@ -130,6 +135,22 @@ def _scored_bets(r, coef, bet_type, *, strategy, top_m, ev_threshold, placebo, r
     takeout = TAKEOUT.get(bet_type, 0.2)
     out = []  # (key, fair_odds, score)
 
+    if bet_type == BetType.TANSHO:
+        # 単勝: 市場=q[h]（P1着そのもの）, モデル=plc[h]（JRDB付け直し）。EV=plc/q×(1−控除)。
+        # coef≡0 なら plc=q ＝ EV=(1−控除)<1 で ev 戦略は 0 点＝完全帰無。
+        top = [u for u, _ in sorted(q.items(), key=lambda kv: -kv[1])[:top_m]]
+        for h in top:
+            mp = q[h]
+            if mp <= 0:
+                continue
+            pp = plc[h] if coef else mp
+            fo = 1.0 / mp
+            score = (pp / mp * (1 - takeout)) if strategy == "ev" else pp
+            if strategy == "ev" and score <= ev_threshold:
+                continue
+            out.append(((h,), fo, score))
+        return out
+
     if bet_type == BetType.FUKUSHO:
         npl = _n_places(len(q))
         top = [u for u, _ in sorted(q.items(), key=lambda kv: -kv[1])[:top_m]]
@@ -206,7 +227,7 @@ def backtest(races, coef, payoffs, bet_type, *, strategy, top_m, max_bets,
         if not wins:
             continue
         # 決済 win_map: {combo_key: payoff/100}
-        if bet_type == BetType.FUKUSHO:
+        if bet_type in _SINGLE:
             win_map = {(k[1],): v / 100.0 for k, v in wins.items()}  # wins は {(rid,uma):pay}
         else:
             win_map = {c: p / 100.0 for c, p in wins}
@@ -259,9 +280,8 @@ def bootstrap_roi_ci(ledger, n_boot=2000, seed=0):
             float(np.percentile(roi, 97.5)))
 
 
-def _fukusho_payoffs(rt) -> dict:
-    """複勝を {rid: {(rid,uma): pay}} 形に（backtest の払戻取り出しに合わせる）。"""
-    flat = place_payoff_lookup_from_returns(rt)   # {(rid,uma): pay}
+def _single_payoffs(flat: dict) -> dict:
+    """{(rid,uma):pay} を {rid: {(rid,uma): pay}} 形へ（単一馬券の払戻取り出しに合わせる）。"""
     out: dict = {}
     for (rid, uma), pay in flat.items():
         out.setdefault(str(rid), {})[(str(rid), int(uma))] = pay
@@ -296,8 +316,10 @@ def main() -> None:
     print("-" * 78)
     results = {}
     for bt in BET_TYPES:
-        if bt == BetType.FUKUSHO:
-            pay = _fukusho_payoffs(rt)
+        if bt == BetType.TANSHO:
+            pay = _single_payoffs(win_payoff_lookup_from_returns(rt))
+        elif bt == BetType.FUKUSHO:
+            pay = _single_payoffs(place_payoff_lookup_from_returns(rt))
         else:
             pay = multi_bet_payoff_lookup(rt, bt)
         base = backtest(te, None, pay, bt, **kw)
