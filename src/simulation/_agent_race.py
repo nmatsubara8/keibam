@@ -186,7 +186,7 @@ def _front_distance(x: np.ndarray) -> np.ndarray:
 
 def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = None,
                 seed: int = 0, place_k: int = 3, ability_sigma: float = 0.15,
-                track_dynamics: bool = False) -> dict:
+                track_dynamics: bool = False, return_orders: bool = False) -> dict:
     """field を n_sim 回走らせ、勝率・複勝率(上位place_k)・平均着順・着順分布を返す。
 
     ability_sigma>0 のとき、各シミュレーションで能力を μ_i ± σ_i から引き直す
@@ -307,6 +307,10 @@ def monte_carlo(field: RaceField, n_sim: int = 2000, cfg: SimConfig | None = Non
         finish_counts[:, r] = (finish_rank == r).sum(axis=0)
     out = {"win": win, "place": place, "mean_rank": mean_rank,
            "finish_counts": finish_counts}
+    if return_orders:
+        # 各 sim の着順上位3頭の**馬インデックス**（(n_sim,3)・列=1着/2着/3着）。
+        # 連系の joint 確率（Harville が表せない着位間相関＝物理由来）を経験頻度で出す素。
+        out["top3_orders"] = np.argsort(finish_rank, axis=1)[:, :3]
     if track_dynamics:
         out["early_pos_rank"] = early_pos_rank.mean(axis=0)     # (n,) 序盤位置順位の平均
         out["early_speed"] = float(early_v.mean() / third)
