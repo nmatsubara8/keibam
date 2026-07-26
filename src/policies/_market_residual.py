@@ -31,7 +31,6 @@ import math
 from typing import Mapping
 
 from src.preprocessing._place_prob import implied_from_odds
-from src.preprocessing._place_prob import normalize
 
 
 def market_probs(odds_map: Mapping) -> dict[int, float]:

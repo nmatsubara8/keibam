@@ -24,7 +24,6 @@ strength() の単位は log-odds 換算前の生スケール。s_i への合流�
 from __future__ import annotations
 
 import dataclasses
-import math
 from abc import ABC
 from abc import abstractmethod
 from typing import Mapping

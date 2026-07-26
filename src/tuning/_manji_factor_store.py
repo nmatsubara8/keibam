@@ -198,7 +198,7 @@ def compute_head2head(featured: pd.DataFrame, *, lookback: int = 10) -> pd.Serie
     race_ranks = {r: {horse[i]: rank[i] for i in rows} for r, rows in race_rows.items()}
 
     score = np.full(n, np.nan)
-    for r, rows in race_rows.items():
+    for _r, rows in race_rows.items():
         d = date[rows[0]]
         S = {horse[i] for i in rows}
         for i in rows:
