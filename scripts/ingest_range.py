@@ -3,15 +3,16 @@
 `daily_ingest.sh` は「1日分」を取込むが、数日分をまとめて追いつきたい
 （例: 20260721 以降が未取込）場合はこのスクリプトを使う。
 
-特徴:
-    * 開催カレンダー（scrape_kaisai_date）から範囲内の「実際にレースがある日」
-      だけを対象にするため、開催の無い日を無駄に叩かない。
-      （race_id 先頭8桁は「年+場+回+日」でありカレンダー日付ではない。
-        日付は必ず開催カレンダー＝date 列を使うのがポイント。）
-    * 取込完了日を resume ファイルに1行1日で記録し、再実行時はスキップする。
-      途中でネットワーク断や中断があっても、完了済みの日を再取得しない。
-    * 各日は既存の `run_pipeline ingest --post-date` をそのまま呼ぶため、
-      増分マージ・DB upsert・featured 再生成の挙動は日次ジョブと完全に一致する。
+方式:
+    * 範囲内のカレンダー日を1日ずつ見て、日次取込と同じ出馬表スクレイプ
+      （scrape_race_id_race_time_list）で当日の race_id を確認する。
+      race_id が取れた日だけ `run_pipeline ingest --post-date` を呼ぶ。
+      （race_id 先頭8桁は「年+場+回+日」でカレンダー日付ではないため、
+        日付は必ず開催日=post_date を基準にする。）
+    * 取込に成功した日を resume ファイルに1行1日で記録し、再実行時は
+      記録済みの日をスキップする。中断・ネットワーク断からも安全に再開できる。
+    * 開催の無い日／出馬表を取得できなかった日は resume に記録しないため、
+      次回実行時に再確認される（取りこぼしを防ぐ）。
 
 使い方:
     # 20260721 から今日まで取込む
@@ -23,7 +24,7 @@
     # --from 省略時: resume ファイルの最終完了日の翌日から（無ければ7日前から）
     python scripts/ingest_range.py
 
-    # 対象日の確認だけ（取込は行わない）
+    # 各日の開催有無を確認するだけ（取込は行わない）
     python scripts/ingest_range.py --from 20260721 --list-only
 """
 
@@ -60,8 +61,7 @@ def _to_ymd8(s: str) -> str:
     digits = str(s).replace("-", "").replace("/", "").strip()[:8]
     if len(digits) != 8 or not digits.isdigit():
         raise ValueError(f"日付は YYYYMMDD もしくは YYYY-MM-DD で指定してください: {s!r}")
-    # 妥当性検証（存在しない日付を弾く）
-    dt.datetime.strptime(digits, "%Y%m%d")
+    dt.datetime.strptime(digits, "%Y%m%d")  # 存在しない日付を弾く
     return digits
 
 
@@ -72,6 +72,18 @@ def _plus_one_day(ymd8: str) -> str:
 
 def _today_ymd8() -> str:
     return dt.date.today().strftime("%Y%m%d")
+
+
+def _calendar_days(from_ymd8: str, to_ymd8: str) -> list[str]:
+    """[from, to]（両端含む）のカレンダー日を昇順の8桁文字列リストで返す。"""
+    start = dt.datetime.strptime(from_ymd8, "%Y%m%d").date()
+    end = dt.datetime.strptime(to_ymd8, "%Y%m%d").date()
+    days: list[str] = []
+    d = start
+    while d <= end:  # ② 両端を含む（>= from かつ <= to）
+        days.append(d.strftime("%Y%m%d"))
+        d += dt.timedelta(days=1)
+    return days
 
 
 # ---------------------------------------------------------------------------
@@ -98,39 +110,20 @@ def _mark_done(resume_file: Path, ymd8: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 開催日（実際にレースがある日）の列挙
+# 開催有無のプローブ / 1日分の取込
 # ---------------------------------------------------------------------------
 
-def _race_days_in_range(from_ymd8: str, to_ymd8: str) -> list[str]:
-    """開催カレンダーから [from, to]（両端含む）の開催日を昇順で返す。
+def _probe_race_ids(ymd8: str) -> list[str]:
+    """当日の出馬表から race_id 一覧を取得する（日次取込と同じ経路）。
 
-    scrape_kaisai_date は from<=d<to（上限排他）なので、to を含めるため
-    to+1日を渡す。返り値の最終列（=開催日）から8桁日付を取り出す。
+    開催が無い日・出馬表を取得できなかった日は空リストを返す
+    （scrape_race_id_race_time_list はエラー時も ([], []) を返す）。
     """
-    from src.preparing._scrape_kaisai_date import scrape_kaisai_date
+    from src.preparing._scrape_shutuba import scrape_race_id_race_time_list
 
-    from_date = f"{from_ymd8[:4]}-{from_ymd8[4:6]}-{from_ymd8[6:8]}"
-    to_excl = _plus_one_day(to_ymd8)
-    to_date = f"{to_excl[:4]}-{to_excl[4:6]}-{to_excl[6:8]}"
+    race_ids, _ = scrape_race_id_race_time_list(ymd8)
+    return list(race_ids or [])
 
-    df = scrape_kaisai_date(from_date=from_date, to_date=to_date)
-    if df is None or len(df) == 0:
-        return []
-
-    # 開催日は最終列（規約）。8桁日付のみ採用し、範囲内に厳密に絞る。
-    date_col = df.columns[-1]
-    dates = (
-        df[date_col].dropna().astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-    )
-    days = sorted(
-        {d for d in dates if d.isdigit() and len(d) == 8 and from_ymd8 <= d <= to_ymd8}
-    )
-    return days
-
-
-# ---------------------------------------------------------------------------
-# 1日分の取込（既存 run_pipeline を subprocess で呼ぶ）
-# ---------------------------------------------------------------------------
 
 def _ingest_one_day(ymd8: str) -> bool:
     """`run_pipeline ingest --post-date` を1日分実行し成否を返す。"""
@@ -171,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--list-only", action="store_true",
-        help="対象開催日を表示するだけで取込は行わない",
+        help="各日の開催有無を確認するだけで取込は行わない",
     )
     args = parser.parse_args(argv)
 
@@ -191,42 +184,51 @@ def main(argv: list[str] | None = None) -> int:
         from_ymd8 = (dt.date.today() - dt.timedelta(days=DEFAULT_LOOKBACK_DAYS)).strftime("%Y%m%d")
         logger.info("--from 省略かつ resume 空: 既定で %s から", from_ymd8)
 
-    # ② 両端を含める（>= from かつ <= to）。from > to は何もしない。
     if from_ymd8 > to_ymd8:
         logger.info("開始日 %s が終了日 %s より後です。取込対象なし。", from_ymd8, to_ymd8)
         return 0
 
     logger.info("取込対象範囲: %s 〜 %s（両端含む）", from_ymd8, to_ymd8)
-    logger.info("開催カレンダーを取得中...")
-    race_days = _race_days_in_range(from_ymd8, to_ymd8)
-    if not race_days:
-        logger.info("範囲内に開催日がありません。取込対象なし。")
-        return 0
 
-    # ③ resume ファイルに done がある日はスキップ
-    todo = [d for d in race_days if d not in done]
+    cal_days = _calendar_days(from_ymd8, to_ymd8)
+    # ③ resume に done がある日はスキップ
+    todo_days = [d for d in cal_days if d not in done]
     logger.info(
-        "開催日 %d 日（うち未取込 %d 日、取込済 %d 日）: %s",
-        len(race_days), len(todo), len(race_days) - len(todo), race_days,
+        "カレンダー %d 日（うち未処理 %d 日、取込済 %d 日）",
+        len(cal_days), len(todo_days), len(cal_days) - len(todo_days),
     )
 
-    if args.list_only:
-        logger.info("--list-only: 取込は行いません。未取込 = %s", todo)
-        return 0
-
-    if not todo:
-        logger.info("🎉 すべて取込済みです。")
-        return 0
-
-    failed: list[str] = []
-    for ymd8 in todo:
-        if _ingest_one_day(ymd8):
-            _mark_done(resume_file, ymd8)
-            done.add(ymd8)
+    # 各日をプローブして開催のある日だけを抽出
+    logger.info("各日の開催有無を確認中...")
+    race_days: list[str] = []
+    for d in todo_days:
+        rids = _probe_race_ids(d)
+        if rids:
+            race_days.append(d)
+            logger.info("▶ %s: %d レース（取込対象）", d, len(rids))
         else:
-            failed.append(ymd8)
+            logger.info("· %s: 開催なし/取得できず（resume には記録せず次回再確認）", d)
+
+    if args.list_only:
+        logger.info("--list-only: 開催あり %d 日 = %s", len(race_days), race_days)
+        return 0
+
+    if not race_days:
+        logger.info("取込対象（開催あり）の日がありません。")
+        return 0
+
+    ingested: list[str] = []
+    failed: list[str] = []
+    for d in race_days:
+        if _ingest_one_day(d):
+            _mark_done(resume_file, d)
+            done.add(d)
+            ingested.append(d)
+        else:
+            failed.append(d)
 
     logger.info("=" * 60)
+    logger.info("取込完了: %s", ingested or "なし")
     if failed:
         logger.warning("失敗（未完了）した日: %s", failed)
         logger.info("再実行例: python scripts/ingest_range.py --from %s --to %s", failed[0], to_ymd8)

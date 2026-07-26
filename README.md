@@ -170,10 +170,11 @@ python -m src.pipeline.run_pipeline ingest --race-id 202605030211 --force
 python -m src.pipeline.run_pipeline ingest --post-date 20260607 --source jravan
 
 # 数日分をまとめて追いつく（catch-up・レジューム対応）
-# 開催カレンダーから範囲内の開催日だけを1日ずつ取込み、完了日を
-# logs/ingest_resume.txt に記録するため中断しても再開できる（両端を含む）。
+# 範囲内のカレンダー日を1日ずつ出馬表スクレイプで確認し、開催のある日だけ
+# ingest --post-date を実行。取込済み日を logs/ingest_resume.txt に記録するため
+# 中断しても再開できる（範囲は両端を含む）。
 python scripts/ingest_range.py --from 20260721            # 20260721〜今日
-python scripts/ingest_range.py --from 20260721 --list-only  # 対象日の確認のみ
+python scripts/ingest_range.py --from 20260721 --list-only  # 各日の開催有無の確認のみ
 ```
 
 取得元は `AbstractRaceDataSource` で抽象化され、結果/情報/払戻/馬/血統の全データを
