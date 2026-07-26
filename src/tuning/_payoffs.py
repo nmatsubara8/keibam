@@ -79,8 +79,9 @@ def trifecta_payoff_lookup(return_df: pd.DataFrame) -> dict:
 
 
 _LABELS = {"umaren": "馬連", "umatan": "馬単", "wide": "ワイド",
-           "sanrenpuku": "三連複", "sanrentan": "三連単"}
+           "sanrenpuku": "三連複", "sanrentan": "三連単", "wakuren": "枠連"}
 _ORDERED = {"umatan", "sanrentan"}
+# 枠連の買い目トークンは馬番ではなく枠番(1-8)。それ以外は size と非順序扱いは馬連と同じ。
 
 
 def multi_bet_payoff_lookup(return_df: pd.DataFrame, bet_type: str) -> dict:
@@ -99,7 +100,8 @@ def multi_bet_payoff_lookup(return_df: pd.DataFrame, bet_type: str) -> dict:
     lc = "0" if "0" in return_df.columns else 0
     cc = "1" if "1" in return_df.columns else 1
     pc = "2" if "2" in return_df.columns else 2
-    size = {"umaren": 2, "umatan": 2, "wide": 2, "sanrenpuku": 3, "sanrentan": 3}[bet_type]
+    size = {"umaren": 2, "umatan": 2, "wide": 2, "sanrenpuku": 3, "sanrentan": 3,
+            "wakuren": 2}[bet_type]
     sub = return_df[return_df[lc].astype(str).str.strip() == label]
     rid_s = (sub["race_id"].astype(str) if "race_id" in sub.columns
              else sub.index.to_series().astype(str))

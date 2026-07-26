@@ -53,7 +53,7 @@ def load_races(jrdb_dir: str, central_only: bool = True,
             "extract_dir('<lzh/zipのフォルダ>','<展開先>')\" で .txt 化してください。")
     sed = pd.concat([parse(f, "SED")[["race_id", "umaban", "kakutei_tansho", "chakujun"]]
                      for f in sed_files], ignore_index=True)
-    kyi = pd.concat([parse(f, "KYI")[["race_id", "umaban", *KYI_SIGNALS]]
+    kyi = pd.concat([parse(f, "KYI")[["race_id", "umaban", "wakuban", *KYI_SIGNALS]]
                      for f in kyi_files], ignore_index=True)
     m = sed.merge(kyi, on=["race_id", "umaban"], how="inner")
     signals = KYI_SIGNALS
@@ -86,7 +86,10 @@ def load_races(jrdb_dir: str, central_only: bool = True,
             z = (v - v.mean()) / (v.std() + 1e-6)
             for u, zz in zip(g["umaban"], z, strict=False):
                 sig.setdefault(int(u), {})[c] = float(zz) if pd.notna(zz) else 0.0
-        races.append({"rid": str(rid), "q": q, "top3": tuple(top3), "sig": sig})
+        waku = {int(u): int(w) for u, w in
+                zip(g["umaban"], pd.to_numeric(g["wakuban"], errors="coerce"), strict=False)
+                if pd.notna(w) and int(u) in q}
+        races.append({"rid": str(rid), "q": q, "top3": tuple(top3), "sig": sig, "waku": waku})
     races.sort(key=lambda r: r["rid"])
     return races, signals
 

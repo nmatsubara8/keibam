@@ -337,6 +337,38 @@ def prob_wide_place_strength(
     return sum(prob_trio_place_strength(win_probs, place_probs, a, b, c) for c in others)
 
 
+def prob_place_place_strength(
+    win_probs: Probabilities, place_probs: Probabilities, horse: int, n_places: int = 3
+) -> float:
+    """複勝（horse が top-n_places 内）を 1着=win / 2・3着=place強度 で。place=win で素の複勝に一致。
+
+    P(top-n) = P(1着) + P(2着) + …。σ=τ=place_probs で marginal を組む（O(n²)）。
+    """
+    pi = normalize(win_probs)
+    plc = normalize(place_probs)
+    total = pi[horse]                       # P(1着)
+    for j in pi:
+        if j == horse:
+            continue
+        d2 = 1.0 - plc[j]
+        if d2 > 0:
+            total += pi[j] * plc[horse] / d2       # P(2着)
+    if n_places >= 3:
+        for j in pi:
+            if j == horse:
+                continue
+            d2 = 1.0 - plc[j]
+            if d2 <= 0:
+                continue
+            for k in pi:
+                if k in (j, horse):
+                    continue
+                d3 = 1.0 - plc[j] - plc[k]
+                if d3 > 0:
+                    total += pi[j] * (plc[k] / d2) * (plc[horse] / d3)   # P(3着)
+    return min(1.0, total)
+
+
 def combo_probability_place_strength(
     bet_type: str, win_probs: Probabilities, place_probs: Probabilities,
     combo: Sequence[int],
@@ -345,6 +377,8 @@ def combo_probability_place_strength(
     c = list(combo)
     if bet_type == BetType.TANSHO:
         return normalize(win_probs)[c[0]]
+    if bet_type == BetType.FUKUSHO:
+        return prob_place_place_strength(win_probs, place_probs, c[0])
     if bet_type == BetType.UMATAN:
         return prob_exacta_place_strength(win_probs, place_probs, c[0], c[1])
     if bet_type == BetType.UMAREN:

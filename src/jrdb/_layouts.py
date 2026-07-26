@@ -10,6 +10,7 @@ from __future__ import annotations
 KYI = {
     "race_key": (1, 8),
     "umaban": (9, 2),
+    "wakuban": (324, 1),     # 枠番（1-8・枠連用。JRA分割規則と一致を確認済み）
     "ketto": (11, 8),
     "bamei": (19, 36),       # 全角18文字
     # ── 各種指数（JRDB 独自・市場から導けない直交情報）──
