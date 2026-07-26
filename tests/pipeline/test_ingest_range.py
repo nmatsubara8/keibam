@@ -36,6 +36,15 @@ class TestDateUtils:
     def test_plus_one_day_crosses_month(self):
         assert ingest_range._plus_one_day("20260731") == "20260801"
 
+    def test_calendar_days_inclusive_both_ends(self):
+        # ② from と to の両端を含む
+        assert ingest_range._calendar_days("20260721", "20260724") == [
+            "20260721", "20260722", "20260723", "20260724",
+        ]
+
+    def test_calendar_days_single_day(self):
+        assert ingest_range._calendar_days("20260721", "20260721") == ["20260721"]
+
 
 # ---------------------------------------------------------------------------
 # resume ファイル
@@ -62,9 +71,17 @@ class TestResumeFile:
 # ---------------------------------------------------------------------------
 
 class TestMain:
-    def _patch(self, monkeypatch, race_days, ingested):
-        """開催日列挙と1日取込を差し替え、実際に取込まれた日を ingested に記録する。"""
-        monkeypatch.setattr(ingest_range, "_race_days_in_range", lambda f, t: list(race_days))
+    def _patch(self, monkeypatch, race_day_set, ingested):
+        """開催プローブと1日取込を差し替える。
+
+        race_day_set に含まれる日は「開催あり」、それ以外は「開催なし」として
+        扱い、実際に取込まれた日を ingested に記録する。
+        """
+        race_day_set = set(race_day_set)
+        monkeypatch.setattr(
+            ingest_range, "_probe_race_ids",
+            lambda ymd8: ["r1", "r2"] if ymd8 in race_day_set else [],
+        )
 
         def fake_ingest(ymd8):
             ingested.append(ymd8)
@@ -73,7 +90,7 @@ class TestMain:
         monkeypatch.setattr(ingest_range, "_ingest_one_day", fake_ingest)
 
     def test_inclusive_bounds_ingests_both_ends(self, tmp_path, monkeypatch):
-        # ② from(=20260721) と to(=20260726) の両端を含む
+        # ② from(=20260721) と to(=20260726) の両端を含む。開催日は両端のみ。
         ingested: list[str] = []
         self._patch(monkeypatch, ["20260721", "20260726"], ingested)
         rf = tmp_path / "resume.txt"
@@ -84,8 +101,20 @@ class TestMain:
         assert ingested == ["20260721", "20260726"]
         assert ingest_range._load_done(rf) == {"20260721", "20260726"}
 
+    def test_non_race_days_are_skipped_and_not_recorded(self, tmp_path, monkeypatch):
+        # 開催なしの日は取込まず resume にも記録しない（次回再確認される）
+        ingested: list[str] = []
+        self._patch(monkeypatch, ["20260726"], ingested)  # 開催は 26 のみ
+        rf = tmp_path / "resume.txt"
+        rc = ingest_range.main(
+            ["--from", "20260721", "--to", "20260726", "--resume-file", str(rf)]
+        )
+        assert rc == 0
+        assert ingested == ["20260726"]
+        assert ingest_range._load_done(rf) == {"20260726"}
+
     def test_already_done_days_are_skipped(self, tmp_path, monkeypatch):
-        # ③ resume に記録済みの日は取込まない
+        # ③ resume に記録済みの日は再取込しない（プローブもしない）
         ingested: list[str] = []
         self._patch(monkeypatch, ["20260721", "20260726"], ingested)
         rf = tmp_path / "resume.txt"
@@ -97,7 +126,7 @@ class TestMain:
         assert ingested == ["20260726"]  # 21 はスキップされ 26 のみ
 
     def test_failed_day_not_marked_done_and_returns_1(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ingest_range, "_race_days_in_range", lambda f, t: ["20260721"])
+        monkeypatch.setattr(ingest_range, "_probe_race_ids", lambda ymd8: ["r1"])
         monkeypatch.setattr(ingest_range, "_ingest_one_day", lambda ymd8: False)
         rf = tmp_path / "resume.txt"
         rc = ingest_range.main(
