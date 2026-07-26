@@ -326,7 +326,8 @@ def main() -> None:
         print(f"{_NAME[bt]:<8}" + "".join(f"{c:>9}" for c in cells))
 
     print("\n【train定義買値帯を test で検証（帯選択=trainのみ＝OOS・CI下限で判定）】")
-    print(f"{'券種':<8}{'選択帯':>7}{'test ROI':>10}{'CI下限':>9}{'CI上限':>9}{'placebo':>9}{'的中':>6}{'点数':>7}  判定")
+    print(f"{'券種':<8}{'選択帯':>7}{'test ROI':>10}{'CI下限':>9}{'CI上限':>9}"
+          f"{'placebo':>9}{'的中':>6}{'点数':>7}  判定")
     print("-" * 78)
     for bt in BET_TYPES:
         pay = results[bt][0]
