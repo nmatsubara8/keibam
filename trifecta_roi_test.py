@@ -30,7 +30,9 @@ import pandas as pd
 from src.constants._local_paths import LocalPaths
 from src.policies._harville import prob_trifecta, prob_trifecta_place_strength
 from src.tuning._payoffs import trifecta_payoff_lookup
-from trifecta_jrdb_test import _place_probs, fit_coef, load_races
+from src.simulation._order_model import load_races
+from src.simulation._order_model import fit_signal_coef as fit_coef
+from src.simulation._order_model import place_probs_from_signals as _place_probs
 
 
 def candidate_combos(q: dict, top_m: int) -> list[tuple[int, int, int]]:

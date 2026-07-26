@@ -9,137 +9,26 @@
   1着=市場単勝そのまま π=softmax(log q_win)。
   2/3着=JRDB調整の place 強度 σ=τ=softmax(log q_win + Σ coef_c·z(JRDB_c))。
   coef≡0 で素の Harville に退化（帰無）。coef は train の trifecta NLL 最小で fit。
+共通ハーネス（レース読込・place強度較正・係数fit）は src.simulation._order_model に集約。
 
 判定（2段）:
 - Stage A（本スクリプト・JRDB データのみで可）: 実着順(SED chakujun)の trifecta listwise NLL を
   baseline(Harville from 単勝) と比較。OOS＋Bootstrap CI＋placebo(signalシャッフル)。
-  **確認済み(2025-26中央4,526R): ΔNLL−0.011 CI上端<0 有意 / placebo で改善消失。**
+  **確認済み(2025-26中央4,526R・フル直前suite9指数): ΔNLL−0.0223 CI上端<0 / placebo で消失。**
 - Stage B（要 return_tables＝連系払戻・ユーザー環境）: 実際の三連単配当で ROI を測り、
-  控除(約27.5%)を超えるか。NLL改善(較正)が ROI に化けるかは別問題（本スクリプトは
-  --payoffs 指定時のみ ROI 節を実行）。
+  控除(約27.5%)を超えるか。NLL改善(較正)が ROI に化けるかは別問題（multibet_roi_test）。
 
 実行: python trifecta_jrdb_test.py --jrdb-dir /tmp/jrdb_all
 """
 from __future__ import annotations
 
 import argparse
-import glob
 
 import numpy as np
-import pandas as pd
 
-from src.jrdb._parser import parse
-from src.policies._harville import prob_trifecta, prob_trifecta_place_strength
-from src.policies._market_residual import market_probs
-
-# 2/3着の順序に効く JRDB 前日KYI signal（全て賭け前に入手可能・forward-safe）。
-# chokuzen_signal_scan.py の OOS走査で、goal+ichi だけの ΔNLL−0.0097 が、下記フルsuiteで
-# joint ΔNLL−0.0223（CI95(-0.036,-0.010)・placebo消失）へ約2倍に拡大することを確認。
-# joint非ゼロ: goal/ichi/idm/ten/pace/agari/gekiso(激走)/manken(万券)/joushoudo(上昇度)。
-# start_idx/deokure_rate は単独★（位置と直交する出遅れ次元）だが joint では goal と冗長。
-# 注意: ΔNLL は較正であって ROI ではない（この帯は「較正改善・ROI帰無」と既知）。ROIは
-# multibet_roi_test の CI下限>1.0 で最終判定する。
-KYI_SIGNALS = ("goal_juni", "ichi_idx", "idm", "ten_idx", "pace_idx", "agari_idx",
-               "gekiso_idx", "manken_idx", "joushoudo")
-# TYB 直前(発走15分前)の直交情報。paddock_idx=物理評価（純粋直交）/ odds_idx=直前オッズ由来
-# （市場変動を含むためリーク気味・要注意）。実運用では 15 分前に取得可能＝賭け前に使える。
-TYB_SIGNALS = ("paddock_idx", "odds_idx")
-_CENTRAL = {f"{i:02d}" for i in range(1, 11)}
-
-
-def load_races(jrdb_dir: str, central_only: bool = True,
-               with_tyb: bool = False) -> tuple[list[dict], tuple[str, ...]]:
-    """SED(着順+確定単勝)×KYI(展開指数)[×TYB(直前)] → (完全順序レース列, 使用signal名)。"""
-    sed_files = sorted(glob.glob(f"{jrdb_dir}/SED*.txt"))
-    kyi_files = sorted(glob.glob(f"{jrdb_dir}/KYI*.txt"))
-    if not sed_files or not kyi_files:
-        raise SystemExit(
-            f"JRDB txt が見つかりません（{jrdb_dir}/SED*.txt={len(sed_files)} "
-            f"KYI*.txt={len(kyi_files)}）。--jrdb-dir を展開済みディレクトリに。"
-            "\nアーカイブは: python -c \"from src.jrdb._extract import extract_dir; "
-            "extract_dir('<lzh/zipのフォルダ>','<展開先>')\" で .txt 化してください。")
-    sed = pd.concat([parse(f, "SED")[["race_id", "umaban", "kakutei_tansho", "chakujun"]]
-                     for f in sed_files], ignore_index=True)
-    kyi = pd.concat([parse(f, "KYI")[["race_id", "umaban", "wakuban", *KYI_SIGNALS]]
-                     for f in kyi_files], ignore_index=True)
-    m = sed.merge(kyi, on=["race_id", "umaban"], how="inner")
-    signals = KYI_SIGNALS
-    if with_tyb:
-        tyb_files = sorted(glob.glob(f"{jrdb_dir}/TYB*.txt"))
-        if tyb_files:
-            tyb = pd.concat([parse(f, "TYB")[["race_id", "umaban", *TYB_SIGNALS]]
-                             for f in tyb_files], ignore_index=True)
-            m = m.merge(tyb, on=["race_id", "umaban"], how="left")
-            signals = KYI_SIGNALS + TYB_SIGNALS
-    m = m.dropna(subset=["kakutei_tansho", "chakujun"])
-    m = m[m["kakutei_tansho"] > 1.0]
-    if central_only:
-        m = m[m["race_id"].astype(str).str[4:6].isin(_CENTRAL)]
-    races = []
-    for rid, g in m.groupby(m["race_id"].astype(str)):
-        g = g.dropna(subset=["chakujun"])
-        if len(g) < 6:
-            continue
-        q = market_probs({int(u): float(o) for u, o in
-                          zip(g["umaban"], g["kakutei_tansho"], strict=False)})
-        if len(q) < 6:
-            continue
-        top3 = [int(x) for x in g.sort_values("chakujun")["umaban"].head(3)]
-        if len(set(top3)) < 3 or any(t not in q for t in top3):
-            continue
-        sig: dict[int, dict[str, float]] = {}
-        for c in signals:
-            v = pd.to_numeric(g[c], errors="coerce").fillna(0.0)
-            z = (v - v.mean()) / (v.std() + 1e-6)
-            for u, zz in zip(g["umaban"], z, strict=False):
-                sig.setdefault(int(u), {})[c] = float(zz) if pd.notna(zz) else 0.0
-        waku = {int(u): int(w) for u, w in
-                zip(g["umaban"], pd.to_numeric(g["wakuban"], errors="coerce"), strict=False)
-                if pd.notna(w) and int(u) in q}
-        races.append({"rid": str(rid), "q": q, "top3": tuple(top3), "sig": sig, "waku": waku})
-    races.sort(key=lambda r: r["rid"])
-    return races, signals
-
-
-def _place_probs(q, sig, coef):
-    """JRDB 調整の place 強度 softmax（coef≡0 で q に一致＝帰無）。"""
-    if not coef:
-        return q
-    s = {u: np.log(max(q[u], 1e-9)) + sum(coef[c] * sig.get(u, {}).get(c, 0.0) for c in coef)
-         for u in q}
-    mx = max(s.values())
-    ex = {u: np.exp(v - mx) for u, v in s.items()}
-    z = sum(ex.values())
-    return {u: v / z for u, v in ex.items()}
-
-
-def _tri_nll(r, coef):
-    if not coef:
-        p = prob_trifecta(r["q"], *r["top3"])
-    else:
-        p = prob_trifecta_place_strength(r["q"], _place_probs(r["q"], r["sig"], coef), *r["top3"])
-    return -np.log(max(p, 1e-12))
-
-
-_COEF_GRID = np.arange(-0.3, 0.31, 0.05)
-
-
-def fit_coef(train, signals, grid=None, passes=3):
-    """train の trifecta NLL 最小の係数を座標降下で fit（任意個の signal 対応）。"""
-    if grid is None:
-        grid = _COEF_GRID
-    coef = {s: 0.0 for s in signals}
-    for _ in range(passes):
-        for f in signals:
-            best_v, best_n = coef[f], float(np.mean([_tri_nll(r, coef) for r in train]))
-            for v in grid:
-                c2 = dict(coef)
-                c2[f] = float(v)
-                n = float(np.mean([_tri_nll(r, c2) for r in train]))
-                if n < best_n:
-                    best_n, best_v = n, float(v)
-            coef[f] = best_v
-    return coef
+from src.simulation._order_model import load_races
+from src.simulation._order_model import fit_signal_coef as fit_coef
+from src.simulation._order_model import trifecta_nll as _tri_nll
 
 
 def main() -> None:

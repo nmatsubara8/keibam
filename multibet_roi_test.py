@@ -43,7 +43,9 @@ from src.tuning._payoffs import (
     place_payoff_lookup_from_returns,
     win_payoff_lookup_from_returns,
 )
-from trifecta_jrdb_test import _place_probs, fit_coef, load_races
+from src.simulation._order_model import load_races
+from src.simulation._order_model import fit_signal_coef as fit_coef
+from src.simulation._order_model import place_probs_from_signals as _place_probs
 
 # 検証対象8券種（単勝は純粋帰無の基準＝JRDBが市場勝率を付け直せるかの直接テスト）
 BET_TYPES = [BetType.TANSHO, BetType.FUKUSHO, BetType.WAKUREN, BetType.WIDE, BetType.UMAREN,

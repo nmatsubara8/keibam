@@ -12,52 +12,17 @@
 from __future__ import annotations
 
 import argparse
-import glob
 
 import numpy as np
-import pandas as pd
 
-from src.jrdb._parser import parse
 from src.policies._harville import prob_trifecta, prob_trifecta_place_strength
-from src.policies._market_residual import market_probs
-from trifecta_jrdb_test import _place_probs, fit_coef
+from src.simulation._order_model import load_races
+from src.simulation._order_model import fit_signal_coef as fit_coef
+from src.simulation._order_model import place_probs_from_signals as _place_probs
 
 # 未incorporatedの候補（KYIにパース済み・archiveでOOS検証可能）
 CANDIDATES = ("idm", "ten_idx", "pace_idx", "agari_idx", "dochu_juni", "go3f_juni",
               "gekiso_idx", "manken_idx", "joushoudo", "start_idx", "deokure_rate")
-_CENTRAL = {f"{i:02d}" for i in range(1, 11)}
-
-
-def load(jrdb_dir, signals):
-    sed = pd.concat([parse(f, "SED")[["race_id", "umaban", "kakutei_tansho", "chakujun"]]
-                     for f in sorted(glob.glob(f"{jrdb_dir}/SED*.txt"))], ignore_index=True)
-    kyi = pd.concat([parse(f, "KYI")[["race_id", "umaban", *signals]]
-                     for f in sorted(glob.glob(f"{jrdb_dir}/KYI*.txt"))], ignore_index=True)
-    m = sed.merge(kyi, on=["race_id", "umaban"], how="inner")
-    m = m.dropna(subset=["kakutei_tansho", "chakujun"])
-    m = m[m["kakutei_tansho"] > 1.0]
-    m = m[m["race_id"].astype(str).str[4:6].isin(_CENTRAL)]
-    races = []
-    for rid, g in m.groupby(m["race_id"].astype(str)):
-        g = g.dropna(subset=["chakujun"])
-        if len(g) < 6:
-            continue
-        q = market_probs({int(u): float(o) for u, o in
-                          zip(g["umaban"], g["kakutei_tansho"], strict=False)})
-        if len(q) < 6:
-            continue
-        top3 = [int(x) for x in g.sort_values("chakujun")["umaban"].head(3)]
-        if len(set(top3)) < 3 or any(t not in q for t in top3):
-            continue
-        sig: dict = {}
-        for c in signals:
-            v = pd.to_numeric(g[c], errors="coerce").fillna(0.0)
-            z = (v - v.mean()) / (v.std() + 1e-6)
-            for u, zz in zip(g["umaban"], z, strict=False):
-                sig.setdefault(int(u), {})[c] = float(zz) if pd.notna(zz) else 0.0
-        races.append({"rid": str(rid), "q": q, "top3": tuple(top3), "sig": sig})
-    races.sort(key=lambda r: r["rid"])
-    return races
 
 
 def oos_dnll(tr, te, signals, base):
@@ -88,7 +53,7 @@ def main():
     args = ap.parse_args()
 
     allsig = ("goal_juni", "ichi_idx", *CANDIDATES)
-    races = load(args.jrdb_dir, allsig)
+    races, _ = load_races(args.jrdb_dir, signals=allsig)
     n_tr = int(len(races) * args.train_frac)
     tr, te = races[:n_tr], races[n_tr:]
     base = np.array([-np.log(max(prob_trifecta(r["q"], *r["top3"]), 1e-12)) for r in te])
