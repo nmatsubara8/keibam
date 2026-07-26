@@ -32,8 +32,15 @@ from src.jrdb._parser import parse
 from src.policies._harville import prob_trifecta, prob_trifecta_place_strength
 from src.policies._market_residual import market_probs
 
-# 2/3着の順序に効く JRDB 展開予想（着順そのものを予測する指数・前日KYI）
-KYI_SIGNALS = ("goal_juni", "ichi_idx")
+# 2/3着の順序に効く JRDB 前日KYI signal（全て賭け前に入手可能・forward-safe）。
+# chokuzen_signal_scan.py の OOS走査で、goal+ichi だけの ΔNLL−0.0097 が、下記フルsuiteで
+# joint ΔNLL−0.0223（CI95(-0.036,-0.010)・placebo消失）へ約2倍に拡大することを確認。
+# joint非ゼロ: goal/ichi/idm/ten/pace/agari/gekiso(激走)/manken(万券)/joushoudo(上昇度)。
+# start_idx/deokure_rate は単独★（位置と直交する出遅れ次元）だが joint では goal と冗長。
+# 注意: ΔNLL は較正であって ROI ではない（この帯は「較正改善・ROI帰無」と既知）。ROIは
+# multibet_roi_test の CI下限>1.0 で最終判定する。
+KYI_SIGNALS = ("goal_juni", "ichi_idx", "idm", "ten_idx", "pace_idx", "agari_idx",
+               "gekiso_idx", "manken_idx", "joushoudo")
 # TYB 直前(発走15分前)の直交情報。paddock_idx=物理評価（純粋直交）/ odds_idx=直前オッズ由来
 # （市場変動を含むためリーク気味・要注意）。実運用では 15 分前に取得可能＝賭け前に使える。
 TYB_SIGNALS = ("paddock_idx", "odds_idx")
