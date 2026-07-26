@@ -169,12 +169,18 @@ python -m src.pipeline.run_pipeline ingest --race-id 202605030211 --force
 # 省略時は UI（モデルラボでなく成績・設定ページ）で選択・保存した値、無ければ netkeiba。
 python -m src.pipeline.run_pipeline ingest --post-date 20260607 --source jravan
 
-# 数日分をまとめて追いつく（catch-up・レジューム対応）
-# 範囲内のカレンダー日を1日ずつ出馬表スクレイプで確認し、開催のある日だけ
-# ingest --post-date を実行。取込済み日を logs/ingest_resume.txt に記録するため
-# 中断しても再開できる（範囲は両端を含む）。
-python scripts/ingest_range.py --from 20260721            # 20260721〜今日
-python scripts/ingest_range.py --from 20260721 --list-only  # 各日の開催有無の確認のみ
+# 数日分をまとめて追いつく（catch-up・レジューム対応・ポライトネス配慮）
+# 範囲内のカレンダー日を出馬表スクレイプで確認し、開催のある日の race_id を
+# まとめて 1 回の ingest --race-id に渡す（出馬表の二重取得を避け、重い
+# テーブル再生成も 1 回で済ませる）。取込済み日を logs/ingest_resume.txt に
+# 記録するため中断しても再開でき、範囲は両端を含む。
+python scripts/ingest_range.py --from 20260721                 # 20260721〜今日
+python scripts/ingest_range.py --from 20260721 --list-only     # 各日の開催有無の確認のみ
+python scripts/ingest_range.py --from 20260721 --per-day       # 日単位（レジューム細粒度・その分低速）
+KEIBA_SCRAPE_DELAY=2 python scripts/ingest_range.py --from 20260721 --sleep-between 5  # さらに低負荷
+
+# リクエスト間隔（1〜3秒/件）と 1時間あたり上限（既定1000件）は常に適用され、
+# KEIBA_SCRAPE_DELAY / KEIBA_SCRAPE_JITTER_MAX / KEIBA_MAX_REQUESTS_PER_HOUR で調整可能
 ```
 
 取得元は `AbstractRaceDataSource` で抽象化され、結果/情報/払戻/馬/血統の全データを

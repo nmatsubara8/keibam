@@ -71,76 +71,88 @@ class TestResumeFile:
 # ---------------------------------------------------------------------------
 
 class TestMain:
-    def _patch(self, monkeypatch, race_day_set, ingested):
-        """開催プローブと1日取込を差し替える。
+    def _patch(self, monkeypatch, race_day_set, ingested, ok=True):
+        """開催プローブと ingest を差し替える。
 
-        race_day_set に含まれる日は「開催あり」、それ以外は「開催なし」として
-        扱い、実際に取込まれた日を ingested に記録する。
+        race_day_set に含まれる日は「開催あり」（race_id を返す）、それ以外は
+        「開催なし」として扱う。ingest 呼び出しごとに渡された race_id 群を
+        ingested に記録する（バッチ時は1回、per-day 時は日数分）。
         """
         race_day_set = set(race_day_set)
         monkeypatch.setattr(
             ingest_range, "_probe_race_ids",
-            lambda ymd8: ["r1", "r2"] if ymd8 in race_day_set else [],
+            lambda ymd8: [f"{ymd8}01", f"{ymd8}02"] if ymd8 in race_day_set else [],
         )
 
-        def fake_ingest(ymd8):
-            ingested.append(ymd8)
-            return True
+        def fake_ingest(race_ids, label):
+            ingested.append(list(race_ids))
+            return ok
 
-        monkeypatch.setattr(ingest_range, "_ingest_one_day", fake_ingest)
+        monkeypatch.setattr(ingest_range, "_ingest_race_ids", fake_ingest)
+
+    def _base_args(self, rf, extra=None):
+        # --sleep-between 0 で実スリープを避ける
+        args = ["--resume-file", str(rf), "--sleep-between", "0"]
+        return args + (extra or [])
 
     def test_inclusive_bounds_ingests_both_ends(self, tmp_path, monkeypatch):
         # ② from(=20260721) と to(=20260726) の両端を含む。開催日は両端のみ。
-        ingested: list[str] = []
+        # 既定（バッチ）: 両日の race_id をまとめて1回 ingest。
+        ingested: list[list[str]] = []
+        self._patch(monkeypatch, ["20260721", "20260726"], ingested)
+        rf = tmp_path / "resume.txt"
+        rc = ingest_range.main(self._base_args(rf, ["--from", "20260721", "--to", "20260726"]))
+        assert rc == 0
+        assert ingested == [["2026072101", "2026072102", "2026072601", "2026072602"]]
+        assert ingest_range._load_done(rf) == {"20260721", "20260726"}
+
+    def test_per_day_calls_ingest_per_race_day(self, tmp_path, monkeypatch):
+        ingested: list[list[str]] = []
         self._patch(monkeypatch, ["20260721", "20260726"], ingested)
         rf = tmp_path / "resume.txt"
         rc = ingest_range.main(
-            ["--from", "20260721", "--to", "20260726", "--resume-file", str(rf)]
+            self._base_args(rf, ["--from", "20260721", "--to", "20260726", "--per-day"])
         )
         assert rc == 0
-        assert ingested == ["20260721", "20260726"]
+        # 日ごとに1回ずつ、その日の race_id のみ
+        assert ingested == [["2026072101", "2026072102"], ["2026072601", "2026072602"]]
         assert ingest_range._load_done(rf) == {"20260721", "20260726"}
 
     def test_non_race_days_are_skipped_and_not_recorded(self, tmp_path, monkeypatch):
         # 開催なしの日は取込まず resume にも記録しない（次回再確認される）
-        ingested: list[str] = []
+        ingested: list[list[str]] = []
         self._patch(monkeypatch, ["20260726"], ingested)  # 開催は 26 のみ
         rf = tmp_path / "resume.txt"
-        rc = ingest_range.main(
-            ["--from", "20260721", "--to", "20260726", "--resume-file", str(rf)]
-        )
+        rc = ingest_range.main(self._base_args(rf, ["--from", "20260721", "--to", "20260726"]))
         assert rc == 0
-        assert ingested == ["20260726"]
+        assert ingested == [["2026072601", "2026072602"]]
         assert ingest_range._load_done(rf) == {"20260726"}
 
     def test_already_done_days_are_skipped(self, tmp_path, monkeypatch):
         # ③ resume に記録済みの日は再取込しない（プローブもしない）
-        ingested: list[str] = []
+        ingested: list[list[str]] = []
         self._patch(monkeypatch, ["20260721", "20260726"], ingested)
         rf = tmp_path / "resume.txt"
         rf.write_text("20260721\n", encoding="utf-8")
-        rc = ingest_range.main(
-            ["--from", "20260721", "--to", "20260726", "--resume-file", str(rf)]
-        )
+        rc = ingest_range.main(self._base_args(rf, ["--from", "20260721", "--to", "20260726"]))
         assert rc == 0
-        assert ingested == ["20260726"]  # 21 はスキップされ 26 のみ
+        assert ingested == [["2026072601", "2026072602"]]  # 21 はスキップ
+        assert ingest_range._load_done(rf) == {"20260721", "20260726"}
 
-    def test_failed_day_not_marked_done_and_returns_1(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ingest_range, "_probe_race_ids", lambda ymd8: ["r1"])
-        monkeypatch.setattr(ingest_range, "_ingest_one_day", lambda ymd8: False)
+    def test_failed_ingest_not_marked_done_and_returns_1(self, tmp_path, monkeypatch):
+        ingested: list[list[str]] = []
+        self._patch(monkeypatch, ["20260721"], ingested, ok=False)
         rf = tmp_path / "resume.txt"
-        rc = ingest_range.main(
-            ["--from", "20260721", "--to", "20260721", "--resume-file", str(rf)]
-        )
+        rc = ingest_range.main(self._base_args(rf, ["--from", "20260721", "--to", "20260721"]))
         assert rc == 1
         assert ingest_range._load_done(rf) == set()  # 失敗日は記録されない
 
     def test_list_only_does_not_ingest(self, tmp_path, monkeypatch):
-        ingested: list[str] = []
+        ingested: list[list[str]] = []
         self._patch(monkeypatch, ["20260721"], ingested)
         rf = tmp_path / "resume.txt"
         rc = ingest_range.main(
-            ["--from", "20260721", "--to", "20260721", "--list-only", "--resume-file", str(rf)]
+            self._base_args(rf, ["--from", "20260721", "--to", "20260721", "--list-only"])
         )
         assert rc == 0
         assert ingested == []
