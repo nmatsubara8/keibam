@@ -199,6 +199,7 @@ def backtest(races, coef, payoffs, bet_type, *, strategy, top_m, max_bets,
     band_stake = np.zeros(len(ODDS_BANDS))
     band_ret = np.zeros(len(ODDS_BANDS))
     band_hit = np.zeros(len(ODDS_BANDS), dtype=int)
+    ledger: dict = {}   # rid -> [stake_sum, ret_sum]（レース単位ブロックbootstrap用）
     for r in races:
         rid = r["rid"]
         wins = payoffs.get(rid)
@@ -225,12 +226,37 @@ def backtest(races, coef, payoffs, bet_type, *, strategy, top_m, max_bets,
             if payout > 0:
                 hit += 1
                 band_hit[bd] += 1
+            acc = ledger.setdefault(rid, [0.0, 0.0])
+            acc[0] += 1.0
+            acc[1] += payout
     band_roi = [band_ret[i] / band_stake[i] if band_stake[i] else float("nan")
                 for i in range(len(ODDS_BANDS))]
     return {"roi": ret / stake if stake else 0.0, "n_bets": n_bets, "hit": hit,
             "takeout": TAKEOUT.get(bet_type, 0.2),
             "band_roi": band_roi, "band_stake": band_stake.tolist(),
-            "band_hit": band_hit.tolist()}
+            "band_hit": band_hit.tolist(),
+            "ledger": [(v[0], v[1]) for v in ledger.values()]}
+
+
+def bootstrap_roi_ci(ledger, n_boot=2000, seed=0):
+    """レース単位ブロック・ブートストラップで ROI の (2.5%, 50%, 97.5%) を返す。
+
+    レース内の賭けは相関する（同一結果・重複買い目）ため、賭け単位ではなくレース単位で
+    (stake_sum, ret_sum) を再標本化する＝相関を壊さない honest な分散。的中が数本しか
+    無い穴セルでは下限がほぼ 0 に落ち、点推定の 1.0 超えが偶然だと露見する。
+    """
+    if not ledger:
+        return (float("nan"), float("nan"), float("nan"))
+    arr = np.asarray(ledger, dtype=float)          # (n_races, 2) = [stake, ret]
+    stakes, rets = arr[:, 0], arr[:, 1]
+    n = len(arr)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, n, size=(n_boot, n))
+    bs = rets[idx].sum(axis=1)
+    st = stakes[idx].sum(axis=1)
+    roi = np.where(st > 0, bs / st, 0.0)
+    return (float(np.percentile(roi, 2.5)), float(np.percentile(roi, 50)),
+            float(np.percentile(roi, 97.5)))
 
 
 def _fukusho_payoffs(rt) -> dict:
@@ -265,9 +291,9 @@ def main() -> None:
     print(f"係数(train三連単NLL最小): { {k: round(v, 2) for k, v in coef.items()} }")
 
     kw = dict(strategy=args.strategy, top_m=args.top_m, max_bets=args.max_bets)
-    print(f"\n【8券種 ROI（控除別・{args.strategy}戦略）】")
-    print(f"{'券種':<8}{'控除':>6}{'baseline':>10}{'JRDB込み':>10}{'placebo':>9}{'的中':>7}{'点数':>7}  判定")
-    print("-" * 70)
+    print(f"\n【8券種 ROI（控除別・{args.strategy}戦略）／ROIはレース単位ブロックbootstrap 95%CI付き】")
+    print(f"{'券種':<8}{'控除':>6}{'JRDB込み':>10}{'CI下限':>9}{'CI上限':>9}{'placebo':>9}{'的中':>6}{'点数':>7}  判定")
+    print("-" * 78)
     results = {}
     for bt in BET_TYPES:
         if bt == BetType.FUKUSHO:
@@ -278,10 +304,13 @@ def main() -> None:
         jr = backtest(te, coef, pay, bt, **kw)
         pl = backtest(te, coef, pay, bt, placebo=True, **kw)
         results[bt] = (pay, base, jr, pl)
-        edge = jr["roi"] > 1.0 and jr["roi"] > max(base["roi"], pl["roi"]) + 0.03
-        print(f"{_NAME[bt]:<8}{jr['takeout']*100:>5.1f}%{base['roi']:>10.3f}{jr['roi']:>10.3f}"
-              f"{pl['roi']:>9.3f}{jr['hit']:>7}{jr['n_bets']:>7}  "
+        lo, _mid, hi = bootstrap_roi_ci(jr["ledger"])
+        # 真の edge 判定は「点推定>1」ではなく「CI下限>1.0 かつ placebo を上回る」
+        edge = lo > 1.0 and jr["roi"] > pl["roi"] + 0.03
+        print(f"{_NAME[bt]:<8}{jr['takeout']*100:>5.1f}%{jr['roi']:>10.3f}{lo:>9.3f}{hi:>9.3f}"
+              f"{pl['roi']:>9.3f}{jr['hit']:>6}{jr['n_bets']:>7}  "
               + ("★控除超え" if edge else "帰無"))
+    print("  ※判定は「点推定>1」ではなく【CI下限>1.0】が必須。的中数一桁のセルは下限がほぼ0＝ノイズ。")
 
     # ── 買値範囲（オッズ帯別ROI＋train定義帯のOOS検証）──
     print(f"\n【買値範囲: フェアオッズ帯別ROI（JRDB込み・test）】 帯={_BAND_LABEL}")
@@ -296,9 +325,9 @@ def main() -> None:
             cells.append(f"{roi:>6.2f}({n})" if n and not np.isnan(roi) else f"{'—':>9}")
         print(f"{_NAME[bt]:<8}" + "".join(f"{c:>9}" for c in cells))
 
-    print("\n【train定義買値帯を test で検証（帯選択=trainのみ＝OOS・多重比較注意）】")
-    print(f"{'券種':<8}{'選択帯':>8}{'train ROI':>10}{'test ROI':>10}{'placebo':>9}{'点数':>7}  判定")
-    print("-" * 70)
+    print("\n【train定義買値帯を test で検証（帯選択=trainのみ＝OOS・CI下限で判定）】")
+    print(f"{'券種':<8}{'選択帯':>7}{'test ROI':>10}{'CI下限':>9}{'CI上限':>9}{'placebo':>9}{'的中':>6}{'点数':>7}  判定")
+    print("-" * 78)
     for bt in BET_TYPES:
         pay = results[bt][0]
         tr_full = backtest(tr, coef, pay, bt, **kw)
@@ -306,18 +335,19 @@ def main() -> None:
         cand = [(tr_full["band_roi"][i], i) for i in range(len(ODDS_BANDS))
                 if tr_full["band_stake"][i] >= 30 and not np.isnan(tr_full["band_roi"][i])]
         if not cand:
-            print(f"{_NAME[bt]:<8}{'—':>8}{'(train賭け不足)':>29}")
+            print(f"{_NAME[bt]:<8}{'—':>7}{'(train賭け不足)':>32}")
             continue
         best_band = max(cand)[1]
         te_b = backtest(te, coef, pay, bt, band_filter=best_band, **kw)
         pl_b = backtest(te, coef, pay, bt, band_filter=best_band, placebo=True, **kw)
-        win = te_b["roi"] > 1.0 and te_b["roi"] > pl_b["roi"] + 0.03
-        print(f"{_NAME[bt]:<8}{_BAND_LABEL[best_band]:>8}{max(cand)[0]:>10.3f}"
-              f"{te_b['roi']:>10.3f}{pl_b['roi']:>9.3f}{te_b['n_bets']:>7}  "
+        lo, _mid, hi = bootstrap_roi_ci(te_b["ledger"])
+        win = lo > 1.0 and te_b["roi"] > pl_b["roi"] + 0.03
+        print(f"{_NAME[bt]:<8}{_BAND_LABEL[best_band]:>7}{te_b['roi']:>10.3f}{lo:>9.3f}{hi:>9.3f}"
+              f"{pl_b['roi']:>9.3f}{te_b['hit']:>6}{te_b['n_bets']:>7}  "
               + ("★控除超え" if win else "帰無"))
 
-    print("\n※ ROI>1.0 かつ baseline/placebo を明確に上回る券種・帯のみ edge 候補。")
-    print("  買値帯選択は train のみ＝OOS だが K帯からの選択は多重比較（placebo で検定）。")
+    print("\n※ 真の edge は【CI下限>1.0 かつ placebo を明確に上回る】セルのみ。点推定の 1.0 超えは")
+    print("  的中数一桁×高オッズ帯のファットテール・ノイズであり、CI下限で即棄却される（多重比較込み）。")
     print("  --strategy topk / --with-tyb / --top-m --max-bets も試す。")
 
 
