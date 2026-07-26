@@ -78,6 +78,48 @@ def trifecta_payoff_lookup(return_df: pd.DataFrame) -> dict:
     return out
 
 
+_LABELS = {"umaren": "馬連", "umatan": "馬単", "wide": "ワイド",
+           "sanrenpuku": "三連複", "sanrentan": "三連単"}
+_ORDERED = {"umatan", "sanrentan"}
+
+
+def multi_bet_payoff_lookup(return_df: pd.DataFrame, bet_type: str) -> dict:
+    """return_tables から任意の連系券種の {race_id: [(combo, payoff_yen), ...]}。
+
+    ワイド/複勝は 1 レースに複数当選（最大3）＝複数 (combo, payoff) を返す。順序券種
+    （馬単/三連単）は combo が順序付きタプル、非順序（馬連/ワイド/三連複）は昇順ソート。
+    形式: 列 '0'=券種 / '1'=買い目（'13 - 15' や '13 → 15 → 10'・複数はスペース連結）/
+    '2'=払戻（スペース連結）。区切りは順序→ / 非順序- の混在を数字トークン抽出で吸収。
+    """
+    if return_df is None or return_df.empty:
+        return {}
+    label = _LABELS.get(bet_type)
+    if label is None:
+        return {}
+    lc = "0" if "0" in return_df.columns else 0
+    cc = "1" if "1" in return_df.columns else 1
+    pc = "2" if "2" in return_df.columns else 2
+    size = {"umaren": 2, "umatan": 2, "wide": 2, "sanrenpuku": 3, "sanrentan": 3}[bet_type]
+    sub = return_df[return_df[lc].astype(str).str.strip() == label]
+    rid_s = (sub["race_id"].astype(str) if "race_id" in sub.columns
+             else sub.index.to_series().astype(str))
+    out: dict = {}
+    for rid, combo, pay in zip(rid_s, sub[cc].astype(str), sub[pc].astype(str), strict=False):
+        nums = [int(x) for x in combo.replace("→", " ").replace("-", " ").split() if x.isdigit()]
+        pays = [float(x) for x in pay.replace(",", "").split() if x.replace(".", "").isdigit()]
+        # size 個ずつに区切って複数当選を復元（ワイドは 2×3=6 馬番 / 3 払戻）
+        combos = [tuple(nums[i:i + size]) for i in range(0, len(nums), size)]
+        rows = []
+        for i, cmb in enumerate(combos):
+            if len(cmb) != size or i >= len(pays):
+                continue
+            key = cmb if bet_type in _ORDERED else tuple(sorted(cmb))
+            rows.append((key, pays[i]))
+        if rows:
+            out.setdefault(str(rid), []).extend(rows)
+    return out
+
+
 def place_payoff_lookup_from_returns(return_df: pd.DataFrame) -> dict:
     """return_tables（netkeiba 生払戻）から複勝の {(race_id:str, 馬番:int): payoff_yen:float}。
 

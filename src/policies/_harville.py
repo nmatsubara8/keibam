@@ -299,6 +299,65 @@ def prob_trifecta_place_strength(
     return p1 * (plc[second] / d2) * (plc[third] / d3)
 
 
+def prob_exacta_place_strength(
+    win_probs: Probabilities, place_probs: Probabilities, first: int, second: int
+) -> float:
+    """馬単（first→second）を 1着=win / 2着=place強度 で。place=win で素の prob_exacta に一致。"""
+    pi = normalize(win_probs)
+    plc = normalize(place_probs)
+    p1 = pi[first]
+    d2 = 1.0 - plc[first]
+    if p1 >= 1.0 or d2 <= 0:
+        return 0.0
+    return p1 * (plc[second] / d2)
+
+
+def prob_quinella_place_strength(
+    win_probs: Probabilities, place_probs: Probabilities, a: int, b: int
+) -> float:
+    """馬連（順不同 top2）。両順序の place強度馬単の和。"""
+    return (prob_exacta_place_strength(win_probs, place_probs, a, b)
+            + prob_exacta_place_strength(win_probs, place_probs, b, a))
+
+
+def prob_trio_place_strength(
+    win_probs: Probabilities, place_probs: Probabilities, a: int, b: int, c: int
+) -> float:
+    """三連複（順不同 top3）。全6順列の place強度三連単の和。"""
+    return sum(prob_trifecta_place_strength(win_probs, place_probs, f, s, t)
+               for f, s, t in permutations((a, b, c)))
+
+
+def prob_wide_place_strength(
+    win_probs: Probabilities, place_probs: Probabilities, a: int, b: int
+) -> float:
+    """ワイド（a,b が共に top3）。Σ_c 三連複place強度(a,b,c) で厳密算出。"""
+    p = normalize(win_probs)
+    others = [u for u in p if u not in (a, b)]
+    return sum(prob_trio_place_strength(win_probs, place_probs, a, b, c) for c in others)
+
+
+def combo_probability_place_strength(
+    bet_type: str, win_probs: Probabilities, place_probs: Probabilities,
+    combo: Sequence[int],
+) -> float:
+    """券種別に place強度版の的中確率を返すディスパッチ（place=win で素の Harville）。"""
+    c = list(combo)
+    if bet_type == BetType.TANSHO:
+        return normalize(win_probs)[c[0]]
+    if bet_type == BetType.UMATAN:
+        return prob_exacta_place_strength(win_probs, place_probs, c[0], c[1])
+    if bet_type == BetType.UMAREN:
+        return prob_quinella_place_strength(win_probs, place_probs, c[0], c[1])
+    if bet_type == BetType.WIDE:
+        return prob_wide_place_strength(win_probs, place_probs, c[0], c[1])
+    if bet_type == BetType.SANRENPUKU:
+        return prob_trio_place_strength(win_probs, place_probs, c[0], c[1], c[2])
+    if bet_type == BetType.SANRENTAN:
+        return prob_trifecta_place_strength(win_probs, place_probs, c[0], c[1], c[2])
+    raise ValueError(f"place強度未対応の券種: {bet_type}")
+
+
 def fit_place_exponents(
     races: Sequence[tuple[Probabilities, tuple[int, int, int]]],
     *,
