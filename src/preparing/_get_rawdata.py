@@ -17,7 +17,7 @@ from src.constants._url_paths import UrlPaths
 from src.preparing.table_creator import TableCreator
 
 
-def _create_table(alias: str, create_method: str, skip: bool) -> pd.DataFrame:
+def _create_table(alias: str, create_method: str, skip: bool, only_ids=None) -> pd.DataFrame:
     url_paths = UrlPaths()
     # alias に対応する UrlPaths タプルから出力 pkl パスを求める
     attr = None
@@ -35,6 +35,11 @@ def _create_table(alias: str, create_method: str, skip: bool) -> pd.DataFrame:
 
     creator = TableCreator()
     creator.set_args(alias)
+    # only_ids 指定時は当該 id の bin だけを処理する（増分取込で全件再パースを回避）。
+    # 処理結果は transfer_temp_file が data/raw の正本へ race_id/horse_id キーでマージするため、
+    # 既存全件は保持される（喪失しない）。
+    if only_ids is not None:
+        creator.only_ids = [str(i) for i in only_ids]
     getattr(creator, create_method)()
     if not os.path.exists(save_path):
         import logging
@@ -45,34 +50,34 @@ def _create_table(alias: str, create_method: str, skip: bool) -> pd.DataFrame:
     return pd.read_pickle(save_path)
 
 
-def get_rawdata_results(html_files_race=None, skip: bool = True) -> pd.DataFrame:
+def get_rawdata_results(html_files_race=None, skip: bool = True, only_ids=None) -> pd.DataFrame:
     """race HTML からレース結果テーブルを生成する（results.pkl）。"""
-    return _create_table("race_results_table", "create_race_results_table", skip)
+    return _create_table("race_results_table", "create_race_results_table", skip, only_ids)
 
 
-def get_rawdata_info(html_files_race=None, skip: bool = True) -> pd.DataFrame:
+def get_rawdata_info(html_files_race=None, skip: bool = True, only_ids=None) -> pd.DataFrame:
     """race HTML からレース情報テーブルを生成する（race_info.pkl）。"""
-    return _create_table("race_info_table", "create_race_info_table", skip)
+    return _create_table("race_info_table", "create_race_info_table", skip, only_ids)
 
 
-def get_rawdata_return(html_files_race=None, skip: bool = True) -> pd.DataFrame:
+def get_rawdata_return(html_files_race=None, skip: bool = True, only_ids=None) -> pd.DataFrame:
     """race HTML から払戻テーブルを生成する（return_tables.pkl）。"""
-    return _create_table("race_return_table", "create_race_return_table", skip)
+    return _create_table("race_return_table", "create_race_return_table", skip, only_ids)
 
 
-def get_rawdata_horse_info(html_files_horse=None, skip: bool = True) -> pd.DataFrame:
+def get_rawdata_horse_info(html_files_horse=None, skip: bool = True, only_ids=None) -> pd.DataFrame:
     """horse HTML から馬の基本情報テーブルを生成する（horse_info.pkl）。"""
-    return _create_table("horse_info_table", "create_horse_info_table", skip)
+    return _create_table("horse_info_table", "create_horse_info_table", skip, only_ids)
 
 
-def get_rawdata_horse_results(html_files_horse=None, skip: bool = True) -> pd.DataFrame:
+def get_rawdata_horse_results(html_files_horse=None, skip: bool = True, only_ids=None) -> pd.DataFrame:
     """horse HTML から馬の過去成績テーブルを生成する（horse_results.pkl）。"""
-    return _create_table("horse_results_table", "create_horse_results_table", skip)
+    return _create_table("horse_results_table", "create_horse_results_table", skip, only_ids)
 
 
-def get_rawdata_peds(html_files_peds=None, skip: bool = True) -> pd.DataFrame:
+def get_rawdata_peds(html_files_peds=None, skip: bool = True, only_ids=None) -> pd.DataFrame:
     """ped HTML から血統テーブルを生成する（peds.pkl）。"""
-    return _create_table("peds_list", "scrape_peds_list", skip)
+    return _create_table("peds_list", "scrape_peds_list", skip, only_ids)
 
 
 def update_rawdata(filepath: str, new_df: pd.DataFrame) -> None:

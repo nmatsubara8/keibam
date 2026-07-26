@@ -47,4 +47,32 @@ def add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
         around_num[around_num < 0] = float("nan")
         df["distance_x_around"] = df["course_len"].astype(float) * around_num
 
+    # ── 脚質 × 直線長（差し=1 × 長い直線 で有利）: コース形状マスタ由来 ──
+    if "leg_type_binary" in df.columns and "course_straight_length" in df.columns:
+        df["legtype_x_straight"] = (
+            pd.to_numeric(df["leg_type_binary"], errors="coerce")
+            * pd.to_numeric(df["course_straight_length"], errors="coerce")
+        )
+
+    # ── 枠番 × 幅員（広いコースは外枠不利が緩む）─────────────────────
+    if "枠番" in df.columns and "course_width_max" in df.columns:
+        df["frame_x_width"] = (
+            pd.to_numeric(df["枠番"], errors="coerce")
+            * pd.to_numeric(df["course_width_max"], errors="coerce")
+        )
+
+    # ── 脚質 × コース脚質バイアス（出走馬×コース相性）────────────────
+    # fit = run_style_bias × (1 - 2*leg_type_binary): 前馬(0)→+bias, 差し馬(1)→−bias。
+    if "leg_type_binary" in df.columns and "course_run_style_bias" in df.columns:
+        leg = pd.to_numeric(df["leg_type_binary"], errors="coerce")
+        bias = pd.to_numeric(df["course_run_style_bias"], errors="coerce")
+        df["style_course_fit"] = bias * (1.0 - 2.0 * leg)
+
+    # ── 脚質 × 距離別ガイド脚質バイアス（出走馬×コース×距離の相性）─────
+    # course_master（track 単位）より粒度が細かい距離固有バイアスでの相性評価。
+    if "leg_type_binary" in df.columns and "guide_run_style_bias" in df.columns:
+        leg = pd.to_numeric(df["leg_type_binary"], errors="coerce")
+        gbias = pd.to_numeric(df["guide_run_style_bias"], errors="coerce")
+        df["style_guide_fit"] = gbias * (1.0 - 2.0 * leg)
+
     return df

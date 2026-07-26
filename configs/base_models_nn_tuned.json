@@ -1,0 +1,20 @@
+{
+  "models": ["lightgbm", "xgboost", "catboost", "nn"],
+  "tune_per_model": true,
+  "n_trials": 50,
+  "nn_tune_trials": 25,
+  "nn_tune_epochs": 40,
+  "nn_tune_max_rows": 120000,
+  "nn_entity_exclude": ["horse_id"],
+  "nn_search_space": {
+    "arch": ["mlp"],
+    "lr": [1e-4, 1.5e-3],
+    "dropout": [0.1, 0.5],
+    "weight_decay": [1e-7, 1e-3],
+    "batch_size": [256, 512, 1024],
+    "pre_norm": ["layer_norm", "batch_norm", "none"],
+    "n_layers": [1, 4],
+    "layer_width": [64, 128, 256, 512]
+  },
+  "nn_params": {"epochs": 100, "batch_size": 512, "max_train_rows": 200000}
+}

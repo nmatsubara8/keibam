@@ -8,7 +8,7 @@ import os
 import pandas as pd
 import pytest
 
-from src.preparing.DataLoader import DataLoader
+from src.preparing._data_loader import DataLoader
 
 
 def _make_loader(tmp_path):
@@ -71,6 +71,53 @@ def test_transfer_keeps_race_id_dedup(tmp_path):
     assert row["kaisai_date"].iloc[0] == 2
 
 
+def test_transfer_preserves_multirow_per_race(tmp_path):
+    """results 系（1 レース複数馬）は race_id だけで潰さず全馬行を保持する（欠損バグ回帰）。"""
+    loader = _make_loader(tmp_path)
+    loader.save_file_name = "test_results_for_unittest.pkl"
+
+    # 既存: レース 1 の 3 頭
+    existing = pd.DataFrame(
+        {"race_id": [1, 1, 1], "馬番": [1, 2, 3], "着順": [1, 2, 3]}
+    )
+    existing.to_pickle(loader.get_local_comp_file_path(loader.alias))
+
+    # 新規: レース 2 の 2 頭
+    new = pd.DataFrame({"race_id": [2, 2], "馬番": [1, 2], "着順": [1, 2]})
+    new.to_csv(loader.get_local_temp_file_path(), index=False)
+
+    loader.transfer_temp_file()
+
+    out = pd.read_pickle(loader.get_local_comp_file_path(loader.alias))
+    # レース1（3頭）+ レース2（2頭）= 5 行。race_id 単独 dedup なら 2 行に潰れていた。
+    assert len(out) == 5
+    assert (out["race_id"] == 1).sum() == 3
+    assert (out["race_id"] == 2).sum() == 2
+
+
+def test_transfer_rescrape_replaces_whole_race(tmp_path):
+    """同一 race_id の再取得は、その race の既存行を丸ごと新データで置換する。"""
+    loader = _make_loader(tmp_path)
+    loader.save_file_name = "test_results_for_unittest.pkl"
+
+    # 既存: レース 1 の 3 頭（古い）
+    existing = pd.DataFrame(
+        {"race_id": [1, 1, 1], "馬番": [1, 2, 3], "着順": [9, 9, 9]}
+    )
+    existing.to_pickle(loader.get_local_comp_file_path(loader.alias))
+
+    # 再取得: レース 1 を 2 頭で（修正後）
+    new = pd.DataFrame({"race_id": [1, 1], "馬番": [1, 2], "着順": [1, 2]})
+    new.to_csv(loader.get_local_temp_file_path(), index=False)
+
+    loader.transfer_temp_file()
+
+    out = pd.read_pickle(loader.get_local_comp_file_path(loader.alias))
+    # 古い 3 頭は消え、新しい 2 頭に置換（着順も新データ）
+    assert len(out) == 2
+    assert set(out["着順"]) == {1, 2}
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_raw():
     """テスト用 save_file_name が万一 ./data/raw に作られても掃除する。"""
@@ -78,6 +125,7 @@ def _cleanup_raw():
     for name in (
         "test_kaisai_date_list_for_unittest.pkl",
         "test_race_id_list_for_unittest.pkl",
+        "test_results_for_unittest.pkl",
     ):
         p = os.path.join("./data/raw", name)
         if os.path.exists(p):

@@ -50,7 +50,7 @@ class DataLoader:
         self.from_date = from_date
         self.to_date = to_date
 
-    # プロジェクトルート（DataLoader.py の 3階層上）を絶対パスで保持
+    # プロジェクトルート（_data_loader.py の 3階層上）を絶対パスで保持
     _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     @classmethod
@@ -276,11 +276,15 @@ class DataLoader:
                 None,
             )
             if key_col is not None and key_col in existing.columns:
+                # キー単位の「置換」: 新データに含まれる race_id/horse_id の既存行は丸ごと
+                # 落とし、新データで差し替える（再スクレイプ＝最新で上書き）。
                 old_only = existing[~existing[key_col].isin(new_df[key_col])]
                 new_df = pd.concat([old_only, new_df], ignore_index=True)
-                # 過去の単純追記で蓄積した重複（同一キー）も含めてここで一掃する。
-                # 新データ優先のため後勝ち（keep="last"）。
-                new_df = new_df.drop_duplicates(subset=[key_col], keep="last").reset_index(drop=True)
+                # 重複排除は「全列一致」のみ（subset=[key_col] だと results/return/
+                # horse_results のように 1 キーに複数行ある表で行の所属単位を潰し、
+                # 馬・払戻・過去走が消える＝学習データ欠損になるため）。
+                # 全列一致は過去の単純追記で生じた完全重複だけを安全に除去する。
+                new_df = new_df.drop_duplicates(keep="last").reset_index(drop=True)
             else:
                 # キー不明でも既存データは捨てない（重複の可能性より喪失の方が重い）
                 logger.warning(

@@ -10,6 +10,8 @@ data/**/*.csv
 data/**/**/*.bin
 data/**/*.pkl
 data/*.pkl
+data/**/*.pkl.bak
+data/*.pkl.bak
 # Phase 2: Parquet バックアップも容量が大きいため除外
 data/**/*.parquet
 data/*.parquet
@@ -19,6 +21,12 @@ data/keibam.db-wal
 data/keibam.db-shm
 models/**/*.pickle
 *.pickle
+# 実行時生成の評価成果物（環境ごとに再生成。version_history.json のみ追跡）
+models/odds_dynamics_eval.json
+models/odds_gravity.json
+models/bet_type_params.json
+models/selected_data_source.json
+models/takeout_calibration.json
 .DS_Store
 playground.ipynb
 
@@ -163,3 +171,12 @@ data/tmp/**
 # cron ログ（構造は .gitkeep で保持）
 logs/*.log
 !logs/.gitkeep
+.claude/
+
+# CatBoost 学習時の作業ディレクトリ
+catboost_info/
+data/**/*.json
+data/*.json
+
+# コースガイド手入力ソース（生成物 course_guide_master.csv は無視のまま追跡対象にする）
+!data/master/course_guide.csv

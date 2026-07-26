@@ -53,6 +53,10 @@ class Simulator:
                 n_bets_race += n_bets
                 bet_amount_race += bet_amount
                 return_amount_race += return_amount
+
+            # 実際に賭けが成立したレースのみ記録する。払戻テーブル欠損や閾値未満で
+            # 1 枚も賭けなかったレース（n_bets=0）を含めると的中率が希釈されるため除外。
+            if n_bets_race > 0:
                 returns_per_race_dict[race_id] = {
                     "n_bets": n_bets_race,
                     "bet_amount": bet_amount_race,

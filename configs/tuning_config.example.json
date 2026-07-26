@@ -1,0 +1,19 @@
+{
+  "_comment": "標準的な探索設定（8 パラメータ・100 試行）。まずこちらで十分。",
+  "method": "optuna",
+  "n_trials": 100,
+  "timeout": null,
+  "num_boost_round": 1000,
+  "early_stopping_rounds": 50,
+  "seed": 100,
+  "search_space": {
+    "num_leaves":        [8, 256],
+    "learning_rate":     [0.01, 0.3],
+    "lambda_l1":         [1e-8, 10.0],
+    "lambda_l2":         [1e-8, 10.0],
+    "feature_fraction":  [0.4, 1.0],
+    "bagging_fraction":  [0.4, 1.0],
+    "bagging_freq":      [1, 7],
+    "min_child_samples": [5, 100]
+  }
+}

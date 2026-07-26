@@ -21,6 +21,10 @@ import os
 import pandas as pd
 import streamlit as st
 
+from app._bet_type_optimizer import BET_TYPE_LABELS
+from app._bet_type_optimizer import default_grid
+from app._bet_type_optimizer import optimize_all
+from app._bet_type_optimizer import results_to_frame
 from app._data_loader import find_model_paths
 from app._data_loader import list_model_versions
 from app._data_loader import load_model_by_version
@@ -30,7 +34,12 @@ from app._model_compare import comparison_table
 from app._model_compare import cumulative_profit
 from app._model_compare import recent_race_slice
 from app._model_compare import simulate_model
+from app._model_eval import _load_return_processor
 from app._model_eval import load_featured_data
+from src.policies._bet_type_params import OPTIMIZABLE_BET_TYPES
+from src.policies._bet_type_params import bet_type_params_path
+from src.policies._bet_type_params import latest_bet_type_params
+from src.policies._bet_type_params import save_bet_type_params
 from app._tuning_job import refresh_job_status
 from app._tuning_job import start_tuning_job
 from app._tuning_job import stop_tuning_job
@@ -43,7 +52,10 @@ st.title("🧪 モデルラボ")
 
 SELECTED_PARAMS_PATH = os.path.join("models", "selected_params.json")
 
-tabs = st.tabs(["🔧 ハイパラ探索結果", "🆚 モデル比較シミュレーション", "📈 オッズ力学モデル"])
+tabs = st.tabs([
+    "🔧 ハイパラ探索結果", "🆚 モデル比較シミュレーション",
+    "📈 オッズ力学モデル", "🎛️ 券種別最適化",
+])
 
 
 @st.cache_data(show_spinner=False)
@@ -124,7 +136,7 @@ with tabs[0]:
         def _rec_category(r):
             return r.get("category") or COMBINED
 
-        # カテゴリ選択（統合 + LightGBMTuner で個別探索した中央 芝/ダート/障害 等）
+        # 対象モデル選択（統合 + LightGBMTuner で個別探索した中央 芝/ダート/障害 等）
         categories = sorted({_rec_category(r) for r in history}, key=lambda c: (c != COMBINED, c))
         sel_category = st.selectbox(
             "対象モデル",
@@ -186,8 +198,8 @@ with tabs[0]:
         else:
             st.info(
                 f"「{CATEGORY_LABELS.get(sel_category, sel_category)}」の探索結果です"
-                "（`retrain --tune-categories` で生成）。カテゴリ別モデルはこの探索結果で"
-                "自動学習されます。個別 rank の再指定によるカテゴリ別再学習は今後対応予定です。"
+                "（`retrain --tune-categories` で生成）。カテゴリ別 Place ヘッドはこの探索結果で"
+                "自動学習されます。個別 rank 指定によるカテゴリ別再学習は今後対応予定です。"
             )
 
         if os.path.exists(SELECTED_PARAMS_PATH):
@@ -240,11 +252,13 @@ with tabs[1]:
 
         summaries: dict[str, dict] = {}
         profits: dict[str, pd.Series] = {}
+        diags: dict[str, dict] = {}
         progress = st.progress(0.0)
         for i, version in enumerate(sel_versions):
             try:
                 ai = _load_model(version)
-                summary, per_race = simulate_model(ai, featured_slice, bet_label, threshold)
+                summary, per_race, diag = simulate_model(ai, featured_slice, bet_label, threshold)
+                diags[version] = diag
                 if summary:
                     summaries[version] = summary
                     profits[version] = cumulative_profit(per_race)
@@ -254,7 +268,19 @@ with tabs[1]:
         progress.empty()
 
         if not summaries:
-            st.warning("条件に合致する馬券がありませんでした（閾値を下げてみてください）")
+            # 結果が空の理由を診断情報から区別して案内する。
+            matched = max((d.get("n_matched_races", 0) for d in diags.values()), default=0)
+            covered = max((d.get("n_covered_races", 0) for d in diags.values()), default=0)
+            if matched == 0:
+                st.warning("条件に合致する馬券がありませんでした（スコア閾値を下げてみてください）")
+            elif covered == 0:
+                st.warning(
+                    f"閾値を超えて賭けた {matched} レースすべてに払戻データがありません。"
+                    f"`{bet_label}` の払戻テーブル（return_tables）が未取得の可能性があります。"
+                    " ingest で払戻データを取得するか、別の馬券種・期間をお試しください。"
+                )
+            else:
+                st.warning("有効な集計結果が得られませんでした（払戻データを確認してください）。")
         else:
             st.subheader("📊 比較結果")
             comp = comparison_table(summaries)
@@ -330,3 +356,121 @@ with tabs[2]:
             "アンサンブル重みは検証 KL の逆数比。最良の総合判断モデル（ensemble）の"
             "予測確定オッズが odds_watch 経由で EV 計算に供給されます。"
         )
+
+# ──────────────────────────────────────────────────────────────────
+# Tab 4: 券種別最適化（最適化レイヤの管理）
+# ──────────────────────────────────────────────────────────────────
+with tabs[3]:
+    st.subheader("券種別の EV 選定パラメータを最適化・管理")
+    st.caption(
+        "単勝勝率モデル + Harville を土台に、券種ごとの **EV 閾値 / 温度 β（人気側の尖り）/ "
+        "確率較正** を実払戻バックテストで最適化します。連系の推定オッズは単勝オッズから "
+        "Harville で導出（過去の連オッズは遡及取得不可のため）。保存した最適パラメータは "
+        "予測ページの EV 選定に反映されます。"
+    )
+
+    _params_path = bet_type_params_path("models")
+    _saved = latest_bet_type_params(_params_path)
+    if _saved:
+        st.markdown("**現在保存中の券種別パラメータ（最新）**")
+        st.dataframe(
+            pd.DataFrame(
+                {bt: p.to_dict() for bt, p in _saved.items()}
+            ).T.rename_axis("券種"),
+            use_container_width=True,
+        )
+    else:
+        st.info("まだ保存された券種別パラメータはありません（既定値で動作中）。")
+
+    model_paths_bt = find_model_paths("models")
+    if not model_paths_bt:
+        st.info("models/ にモデルがありません。`retrain` を実行してください。")
+    else:
+        version_names_bt = [os.path.basename(p).replace(".pickle", "") for p in model_paths_bt]
+        colA, colB, colC = st.columns(3)
+        with colA:
+            sel_ver_bt = st.selectbox("モデルバージョン", version_names_bt, key="bto_version")
+        with colB:
+            objective = st.selectbox(
+                "最適化指標", ["return_rate", "sharpe_ratio"],
+                format_func=lambda x: {"return_rate": "回収率", "sharpe_ratio": "シャープレシオ"}[x],
+                key="bto_objective",
+            )
+        with colC:
+            min_bets = st.number_input("最小賭け枚数（過学習防止）", 1, 1000, 30, key="bto_min_bets")
+
+        sel_bts = st.multiselect(
+            "対象券種", list(OPTIMIZABLE_BET_TYPES),
+            default=list(OPTIMIZABLE_BET_TYPES),
+            format_func=lambda b: BET_TYPE_LABELS.get(b, b), key="bto_bets",
+        )
+        test_frac = st.slider("検証期間（直近レースの割合）", 0.05, 0.5, 0.2, 0.05, key="bto_test_frac")
+
+        if st.button("🚀 券種別最適化を実行", type="primary", key="run_bto") and sel_bts:
+            featured = _load_featured()
+            rp = _load_return_processor()
+            if featured is None or featured.empty:
+                st.error("featured_data.pkl がありません。ingest を実行してください。")
+            elif rp is None:
+                st.error("払戻テーブル（return_tables）がありません。ingest を実行してください。")
+            else:
+                with st.spinner("バックテスト探索中…"):
+                    ai = _load_model(sel_ver_bt)
+                    featured_slice = recent_race_slice(featured, test_frac)
+                    # 払戻実績から較正済みの券種別控除率があれば連系推定オッズに反映する
+                    from src.policies._takeout_calibration import latest_takeout_map
+                    from src.policies._takeout_calibration import takeout_calibration_path
+                    calib_takeout = latest_takeout_map(takeout_calibration_path())
+                    if calib_takeout:
+                        st.caption(
+                            "較正済み控除率を適用: "
+                            + ", ".join(f"{BET_TYPE_LABELS.get(bt, bt)}={t:.3f}"
+                                        for bt, t in calib_takeout.items())
+                        )
+                    params_map, metrics_map, all_results = optimize_all(
+                        ai, featured_slice, rp, bet_types=sel_bts,
+                        grid=default_grid(), objective=objective, min_bets=int(min_bets),
+                        takeout=calib_takeout or 0.2,
+                    )
+                    st.session_state["bto_result"] = {
+                        "params_map": params_map, "metrics_map": metrics_map,
+                        "all_results": all_results, "objective": objective,
+                    }
+
+        if "bto_result" in st.session_state:
+            r = st.session_state["bto_result"]
+            st.markdown("**最適化結果（券種別ベスト）**")
+            summary_rows = []
+            for bt, params in r["params_map"].items():
+                m = r["metrics_map"].get(bt, {})
+                summary_rows.append({
+                    "券種": BET_TYPE_LABELS.get(bt, bt),
+                    "EV閾値": params.ev_threshold, "温度": params.temperature,
+                    "確率較正": params.prob_scale,
+                    "回収率": m.get("return_rate"), "的中率": m.get("hit_rate"),
+                    "シャープ": m.get("sharpe_ratio"), "賭け枚数": m.get("n_bets"),
+                })
+            st.dataframe(
+                pd.DataFrame(summary_rows).style.format({
+                    "回収率": "{:.1%}", "的中率": "{:.1%}", "シャープ": "{:.2f}",
+                }, na_rep="—"),
+                use_container_width=True, hide_index=True,
+            )
+
+            with st.expander("券種ごとのグリッド探索詳細"):
+                for bt, res in r["all_results"].items():
+                    st.markdown(f"**{BET_TYPE_LABELS.get(bt, bt)}**")
+                    df = results_to_frame(res)
+                    if df.empty:
+                        st.caption("賭けが成立しませんでした（払戻データ・閾値を確認）。")
+                    else:
+                        st.dataframe(df.head(10), use_container_width=True, hide_index=True)
+
+            if st.button("💾 この最適パラメータを保存", key="save_bto"):
+                save_bet_type_params(
+                    r["params_map"], _params_path,
+                    objective=r["objective"],
+                    metrics=r["metrics_map"],
+                )
+                st.success(f"{_params_path} に {len(r['params_map'])} 券種を保存しました。"
+                           " 予測ページの EV 選定に反映されます。")

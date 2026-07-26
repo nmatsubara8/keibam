@@ -46,36 +46,55 @@ def _load_config():
     return load_operation_config()
 
 
+@st.cache_resource(show_spinner="特徴量データを読み込み中…")
+def _load_featured(path: str):
+    """特徴量 pickle を1回だけ読み込み再利用する。
+
+    毎リラン（selectbox 変更等）で 800MB 超の pickle を読み直すと
+    メモリを使い果たして OOM (Killed) するため、cache_resource で
+    プロセス内に1コピーだけ保持する。
+    """
+    return pd.read_pickle(path)
+
+
 op_config = _load_config()
 
 # ------------------------------------------------------------------
-# モデルの探索（統合モデル + 6 分割カテゴリ別モデル）
+# 適用モデルの選択（既定=最新。再学習で蓄積した複数バージョンから選べる）
 # ------------------------------------------------------------------
-from app._data_loader import parse_model_name
-from app._data_loader import resolve_model_path_for_race
-from src.constants._model_category import CATEGORY_LABELS
-from src.constants._model_category import categorize
-from src.training._category_split import recover_race_type
-
-model_paths = find_model_paths()  # 新しい順（統合 + カテゴリ別）
+model_paths = find_model_paths()  # 新しい順
 if not model_paths:
     st.error("モデルが見つかりません。先に `run_pipeline.py --job retrain` を実行してください。")
     st.stop()
 
-# メタは name（version + __category）優先でキー化（カテゴリ別モデルの AUC も引ける）
-_meta_by_name = {m.get("name", m["version"]): m for m in list_model_versions()}
+_meta_by_version = {m["version"]: m for m in list_model_versions()}
 
 
 def _model_label(path: str) -> str:
-    version, category = parse_model_name(path)
-    stem = os.path.basename(path).replace(".pickle", "")
-    meta = _meta_by_name.get(stem) or _meta_by_name.get(version)
-    cat_label = CATEGORY_LABELS.get(category, category)
-    label = f"{version}〔{cat_label}〕"
+    version = os.path.basename(path).replace(".pickle", "")
+    meta = _meta_by_version.get(version)
     if meta and meta.get("auc_test") is not None:
-        return f"{label}（AUC {meta['auc_test']:.4f}）"
-    return label
+        return f"{version}（AUC {meta['auc_test']:.4f}）"
+    return version
 
+
+st.sidebar.subheader("適用モデル")
+sel_path = st.sidebar.selectbox(
+    "モデルバージョン",
+    model_paths,
+    index=0,  # 既定は最新
+    format_func=_model_label,
+    help="再学習で蓄積された複数バージョンから予測に使うモデルを選択（既定=最新）",
+)
+st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
+
+# 6 分割（全国/地方 × 芝/ダート/障害）のカテゴリ別 Place ヘッドを、選択レースに応じて自動選択する。
+_auto_cat = st.sidebar.checkbox(
+    "レース種別で自動選択（推奨）",
+    value=True,
+    help="全国/地方 × 芝/ダート/障害 の 6 分割から、選択レースに対応する Place ヘッドを自動で使う"
+    "（該当が無ければ統合モデルにフォールバック）",
+)
 
 # ------------------------------------------------------------------
 # レース選択
@@ -84,7 +103,7 @@ st.subheader("レース選択")
 
 featured_path = LocalPaths.FEATURED_DATA_PATH
 try:
-    featured_df = pd.read_pickle(featured_path)
+    featured_df = _load_featured(featured_path)
     available_races = sorted(featured_df.index.unique().tolist(), reverse=True)
 except FileNotFoundError:
     st.error("特徴量データが見つかりません。先に ingestion を実行してください。")
@@ -97,44 +116,29 @@ if not race_id:
 
 X = featured_df.loc[[race_id]]
 
-# レースの馬場種別からカテゴリを判定
+# ------------------------------------------------------------------
+# 選択レースのカテゴリに応じて Place ヘッドを解決（統合フォールバック付き）
+# ------------------------------------------------------------------
+from app._data_loader import resolve_place_model_path_for_race
+from src.constants._model_category import CATEGORY_LABELS
+from src.constants._model_category import categorize
+from src.training._category_split import recover_race_type
+
 _rt_series = recover_race_type(X).dropna()
 _race_type = _rt_series.iloc[0] if not _rt_series.empty else None
 _race_category = categorize(race_id, _race_type)
 
-# ------------------------------------------------------------------
-# 適用モデルの選択（既定=レース種別で自動選択。手動上書きも可能）
-# ------------------------------------------------------------------
-st.sidebar.subheader("適用モデル")
-_auto = st.sidebar.checkbox(
-    "レース種別で自動選択（推奨）",
-    value=True,
-    help="全国/地方 × 芝/ダート/障害 の 6 分割から、選択レースに対応するモデルを自動で使う"
-    "（該当が無ければ統合モデルにフォールバック）",
-)
-
-if _auto:
-    sel_path, used_category = resolve_model_path_for_race(race_id, _race_type)
-    if sel_path is None:
-        st.error("モデルの読み込みに失敗しました。")
-        st.stop()
-    _target = CATEGORY_LABELS.get(_race_category, "分類不能") if _race_category else "分類不能"
-    _used = CATEGORY_LABELS.get(used_category, used_category)
-    st.sidebar.caption(f"レース種別: {_target}")
-    st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
-    if _race_category is not None and used_category != _race_category:
-        st.sidebar.info(f"「{_target}」の専用モデルが無いため統合モデルで予測します。")
+if _auto_cat:
+    eff_path, used_category = resolve_place_model_path_for_race(sel_path, race_id, _race_type)
 else:
-    sel_path = st.sidebar.selectbox(
-        "モデルバージョン",
-        model_paths,
-        index=0,  # 既定は最新
-        format_func=_model_label,
-        help="蓄積された統合/カテゴリ別モデルから予測に使うモデルを手動選択",
-    )
-    st.sidebar.caption(f"適用中: `{_model_label(sel_path)}`")
+    eff_path, used_category = sel_path, (_race_category or "combined")
 
-model = _load_model(sel_path)
+_target_label = CATEGORY_LABELS.get(_race_category, "分類不能") if _race_category else "分類不能"
+st.sidebar.caption(f"レース種別: {_target_label} / 使用ヘッド: {CATEGORY_LABELS.get(used_category, used_category)}")
+if _auto_cat and _race_category is not None and used_category != _race_category:
+    st.sidebar.info(f"「{_target_label}」専用 Place ヘッドが無いため統合モデルで予測します。")
+
+model = _load_model(eff_path)
 
 if model is None:
     st.error("モデルの読み込みに失敗しました。")
@@ -145,7 +149,24 @@ if model is None:
 # ------------------------------------------------------------------
 with st.spinner("予測中…"):
     try:
-        candidates = run_prediction(model.effective_model, X, op_config)
+        # モデルラボで保存した券種別最適化パラメータがあれば EV 選定に反映する。
+        from src.policies._bet_type_params import bet_type_params_path
+        from src.policies._bet_type_params import latest_bet_type_params
+
+        bt_params = latest_bet_type_params(bet_type_params_path("models")) or None
+        # 較正済み控除率（calibrate-takeout の出力）があれば連系推定オッズに反映される。
+        from src.policies._takeout_calibration import latest_takeout_map
+        from src.policies._takeout_calibration import takeout_calibration_path
+
+        _calib_takeout = latest_takeout_map(takeout_calibration_path("models"))
+        if _calib_takeout:
+            st.caption(
+                "🎯 較正済み控除率を連系推定オッズに適用中: "
+                + ", ".join(f"{bt}={t:.3f}" for bt, t in _calib_takeout.items())
+            )
+        candidates = run_prediction(
+            model.effective_model, X, op_config, bet_type_params=bt_params
+        )
     except Exception as e:
         st.error(f"予測エラー: {e}")
         st.stop()

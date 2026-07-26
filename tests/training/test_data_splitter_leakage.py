@@ -50,6 +50,7 @@ def _make_featured_with_chakujun(n_races=60, horses=8, seed=0):
                     "date": date,
                     ResultsCols.RANK: chakujun,  # '着順'
                     "rank": 1 if chakujun < 4 else 0,
+                    "rank_win": 1 if chakujun == 1 else 0,
                     ResultsCols.TANSHO_ODDS: float(rng.uniform(1.5, 20.0)),
                     "feat_a": float(rng.normal()),
                 }
@@ -79,6 +80,77 @@ class TestChakujunNotLeaked:
         ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
         assert "rank" not in ds.X_train.columns
         assert "rank" not in ds.X_test.columns
+
+    def test_both_labels_dropped_from_features(self):
+        """rank(top3) と rank_win(1着) は**両方**特徴量から落ちること（相互リーク防止）。"""
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        for col in ("rank", "rank_win"):
+            assert col not in ds.X_train.columns
+            assert col not in ds.X_test.columns
+        ds.make_stacking_splits(meta_ratio=0.3)
+        for col in ("rank", "rank_win"):
+            assert col not in ds.X_base_train.columns
+            assert col not in ds.X_meta_train.columns
+            assert col not in ds.X_calib.columns
+
+
+class TestObjectFeatureCoercion:
+    """object dtype の特徴量列（best_class_won 等）を数値へ強制するセーフティネット。
+
+    脚質集計の best_class_won は race_class_level が None を返すと object dtype に
+    なり得る。DataSplitter が学習入力を数値化しないと LightGBM が
+    "pandas dtypes must be int, float or bool" で落ちる。既存 parquet を再ビルド
+    せず学習可能にするため、DataSplitter が object 特徴量列を数値化することを保証する。
+    """
+
+    def test_object_feature_column_coerced_to_numeric(self):
+        df = _make_featured_with_chakujun()
+        # best_class_won を "3"/"未勝利"(非数値) 混在の object 列として注入
+        vals = ["3" if i % 2 == 0 else "未勝利" for i in range(len(df))]
+        df = df.assign(best_class_won=pd.Series(vals, index=df.index, dtype="object"))
+        assert df["best_class_won"].dtype == object
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        # 学習特徴量として数値化されている（非数値→NaN、float 化）
+        assert ds.X_train["best_class_won"].dtype.kind == "f"
+        # .values が object にならず float 行列として取り出せる（LightGBM 契約）
+        arr = ds.X_train.drop(columns=[c for c in ds.X_train.columns
+                                       if ds.X_train[c].dtype == object], errors="ignore").values
+        assert arr.dtype.kind == "f"
+
+    def test_protected_non_numeric_columns_survive(self):
+        # date/horse_id は数値化せず保持（date は時系列分割キー）
+        df = _make_featured_with_chakujun()
+        df = df.assign(horse_id=[f"h{i}" for i in range(len(df))])
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        # date はそのまま（分割が機能している＝train/test が非空）
+        assert len(ds.X_train) > 0 and len(ds.X_test) > 0
+
+
+class TestTargetColumn:
+    """target_col で Place(rank) / Win(rank_win) ヘッドを切替える。"""
+
+    def test_default_target_is_top3(self):
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2)
+        # 既定は rank(top3)。着順<4 が 1
+        assert ds.y_train.equals(ds.train_data["rank"])
+
+    def test_win_target_selects_rank_win(self):
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2, target_col="rank_win")
+        assert ds.y_train.equals(ds.train_data["rank_win"])
+        assert ds.y_test.equals(ds.test_data["rank_win"])
+        # 1着のみ正例 → top3 ラベルより正例が少ない
+        assert ds.y_train.sum() < ds.train_data["rank"].sum()
+
+    def test_win_target_stacking_labels(self):
+        df = _make_featured_with_chakujun()
+        ds = DataSplitter(df, test_size=0.2, valid_size=0.2, target_col="rank_win")
+        ds.make_stacking_splits(meta_ratio=0.3)
+        assert ds.y_base_train.equals(ds.base_train_data["rank_win"])
+        assert ds.y_meta_train.equals(ds.meta_train_data["rank_win"])
+        assert ds.y_calib.equals(ds.valid_data_optuna["rank_win"])
 
     def test_chakujun_dropped_from_stacking_splits(self):
         df = _make_featured_with_chakujun()

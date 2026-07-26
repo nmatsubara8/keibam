@@ -66,6 +66,26 @@ class TestUpsertReadRoundtrip:
         assert "馬番" in out.columns
         assert "horse_id" in out.columns
 
+    def test_read_restores_numeric_dtypes(self, tmp_path):
+        """DB(テキスト保持)から読むと数値列は数値型に復元され、ID/混在列は文字列維持。"""
+        import pandas as pd
+
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        df = _results_df().reset_index()
+        df["着順"] = ["1", "中", "2"]  # 非数値混在 → 文字列維持されるべき
+        df = df.set_index("race_id")
+        repo.upsert("raw_results", df)
+
+        out = repo.read("raw_results")
+        # 純粋数値列（馬番）は数値型に復元され、除算等が可能
+        assert pd.api.types.is_numeric_dtype(out["馬番"])
+        assert (out["馬番"] / 2).notna().all()
+        # ID 列・混在列は文字列のまま
+        assert out.index.dtype == object
+        assert set(out.index.unique()) == {"202401010101"}
+        assert out["horse_id"].map(type).eq(str).all()
+        assert out["着順"].map(lambda v: isinstance(v, str)).all()
+
     def test_upsert_inserts_all_rows(self, tmp_path):
         repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
         df = _results_df()
@@ -176,6 +196,50 @@ class TestAutoMigrate:
         repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
         migrated = repo.auto_migrate_if_empty("raw_results", str(tmp_path / "nope.pkl"))
         assert migrated == 0
+
+
+class TestRangeIndexGuard:
+    """既定 RangeIndex を race_id に昇格させない（行番号→race_id のデータ破損を防ぐ）。"""
+
+    def test_rangeindex_without_race_id_raises(self, tmp_path):
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        # race_id 列も race_id index も無い（既定 RangeIndex）→ 破損を防ぐため弾く
+        df = pd.DataFrame({"馬番": [1, 2, 3], "horse_id": ["H1", "H2", "H3"]})
+        with pytest.raises(ValueError, match="RangeIndex"):
+            repo.upsert("raw_results", df)
+
+    def test_race_id_column_with_rangeindex_is_ok(self, tmp_path):
+        """正準形式（RangeIndex + race_id 列）は従来どおり通る。"""
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        df = pd.DataFrame(
+            {
+                "馬番": [1, 2, 3],
+                "horse_id": ["H1", "H2", "H3"],
+                "race_id": ["202401010101", "202401010101", "202401010101"],
+            }
+        )  # RangeIndex + race_id 列
+        inserted = repo.upsert("raw_results", df)
+        assert inserted == 3
+        out = repo.read("raw_results")
+        assert set(out.index.unique()) == {"202401010101"}
+
+
+class TestClear:
+    """clear: テーブル全行削除（破損データ復旧用）。"""
+
+    def test_clear_removes_all_rows(self, tmp_path):
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        repo.upsert("raw_results", _results_df())
+        assert repo.has_rows("raw_results")
+
+        deleted = repo.clear("raw_results")
+        assert deleted == 3
+        assert not repo.has_rows("raw_results")
+
+    def test_clear_unknown_alias_raises(self, tmp_path):
+        repo = RawDataRepo(db_path=str(tmp_path / "test.db"))
+        with pytest.raises(ValueError, match="unknown alias"):
+            repo.clear("does_not_exist")
 
 
 class TestUnknownAlias:

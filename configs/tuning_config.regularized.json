@@ -1,0 +1,24 @@
+{
+  "_comment": "汎化重視の探索設定。form/person_te 追加(582列)で LightGBM が過学習気味(OOS logloss 悪化)なため、木を小さく・列/行サブサンプル強め・正則化下限を上げて汎化を優先する。objective=binary_logloss。200試行・90分打ち切り。boosting_type は gbdt 固定（dart は early_stopping 非対応で扱いにくい）。",
+  "method": "optuna",
+  "n_trials": 200,
+  "timeout": 5400,
+  "num_boost_round": 2000,
+  "early_stopping_rounds": 100,
+  "seed": 100,
+  "search_space": {
+    "num_leaves":        [8, 128],
+    "max_depth":         [3, 10],
+    "learning_rate":     [0.005, 0.1],
+    "n_estimators":      [200, 2000],
+    "lambda_l1":         [1e-3, 20.0],
+    "lambda_l2":         [1e-3, 20.0],
+    "feature_fraction":  [0.3, 0.8],
+    "bagging_fraction":  [0.5, 0.9],
+    "bagging_freq":      [1, 7],
+    "min_child_samples": [20, 400],
+    "min_child_weight":  [1e-3, 100.0],
+    "min_split_gain":    [0.0, 1.0],
+    "path_smooth":       [0.0, 20.0]
+  }
+}

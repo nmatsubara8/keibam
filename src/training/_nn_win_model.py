@@ -20,9 +20,12 @@ KB 追加（§2）:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
+
+_log = logging.getLogger(__name__)
 
 
 class NnWinModel:
@@ -57,19 +60,37 @@ class NnWinModel:
         patience: int = 10,
         min_delta: float = 1e-4,
         val_ratio: float = 0.2,
+        max_train_rows: int | None = None,
+        arch: str = "mlp",
+        dropout: float = 0.2,
+        conv_channels=(32, 64),
+        kernel_size: int = 3,
+        pre_norm: str | None = None,
+        weight_decay: float = 0.0,
     ) -> None:
         self._cat_cards = categorical_cardinalities or {}
         self._n_numeric = n_numeric
         self._hidden_dims = tuple(hidden_dims)
+        # アーキテクチャ種別: "mlp"（既定）/ "cnn"（Embedding+数値ベクトルを 1D 系列とみなす Conv1d）
+        self._arch = arch
+        self._dropout = dropout
+        self._conv_channels = tuple(conv_channels)
+        self._kernel_size = kernel_size
+        # concat 後の結合ベクトルに適用する正規化: "layer_norm" / "batch_norm" / None（既定）
+        self._pre_norm = pre_norm
         self._epochs = epochs
         self._lr = lr
         self._batch_size = batch_size
+        # Adam の L2 正則化（重み減衰）。0.0=無効（既定）。過学習抑制の探索ノブ。
+        self._weight_decay = weight_decay
         self._seed = seed
         self._pos_weight = pos_weight
         self._rank_threshold = rank_threshold
         self._patience = patience
         self._min_delta = min_delta
         self._val_ratio = val_ratio
+        # メモリ・学習時間の上限。学習行数がこれを超えたら（時系列順を保って）部分標本化する。
+        self._max_train_rows = max_train_rows
         self._net: Any = None
 
     def _build_net(self) -> "Any":  # type: ignore[return]
@@ -83,34 +104,59 @@ class NnWinModel:
         )
         emb_out = sum(_embedding_dim(self._cat_cards[i]) for i in cat_indices)
         in_dim = emb_out + self._n_numeric
+        num_idx = [i for i in range(in_dim_total(self._cat_cards, self._n_numeric)) if i not in cat_indices]
 
-        # アーキテクチャ: Linear → BatchNorm1d → ReLU → Dropout（KB shard-21）
-        layers: list = []
-        prev = in_dim
-        for h in self._hidden_dims:
-            layers += [nn.Linear(prev, h), nn.BatchNorm1d(h), nn.ReLU(), nn.Dropout(0.2)]
-            prev = h
-        layers += [nn.Linear(prev, 1)]
+        # concat 後の正規化層（Embedding スケールと数値スケールの不揃いを補正）
+        if self._pre_norm == "layer_norm":
+            norm_layer: "nn.Module | None" = nn.LayerNorm(in_dim)
+        elif self._pre_norm == "batch_norm":
+            norm_layer = nn.BatchNorm1d(in_dim)
+        else:
+            norm_layer = None
+
+        if self._arch == "cnn":
+            head = _build_cnn_head(in_dim, self._conv_channels, self._kernel_size, self._dropout)
+        else:
+            # MLP: Linear → BatchNorm1d → ReLU → Dropout（KB shard-21）
+            layers: list = []
+            prev = in_dim
+            for h in self._hidden_dims:
+                layers += [nn.Linear(prev, h), nn.BatchNorm1d(h), nn.ReLU(), nn.Dropout(self._dropout)]
+                prev = h
+            layers += [nn.Linear(prev, 1)]
+            head = nn.Sequential(*layers)
+
+        is_cnn = self._arch == "cnn"
 
         class _Net(nn.Module):
-            def __init__(self, embs, mlp, cat_idx, num_idx):
+            def __init__(self, embs, norm, head, cat_idx, num_idx, is_cnn):
                 super().__init__()
                 self.embs = embs
-                self.mlp = nn.Sequential(*mlp)
+                self.norm = norm  # None または LayerNorm/BatchNorm1d
+                self.head = head
                 self.cat_idx = cat_idx
                 self.num_idx = num_idx
+                self.is_cnn = is_cnn
 
             def forward(self, x):
                 parts = []
                 for k, ci in enumerate(self.cat_idx):
-                    parts.append(self.embs[k](x[:, ci].long()))
+                    # 学習/推論でカテゴリ集合がずれてコードが Embedding サイズを超える/
+                    # 負になる場合に備え、有効範囲 [0, num_embeddings-1] にクランプする。
+                    idx = x[:, ci].long().clamp_(0, self.embs[k].num_embeddings - 1)
+                    parts.append(self.embs[k](idx))
                 if self.num_idx:
                     parts.append(x[:, self.num_idx])
                 h = torch.cat(parts, dim=1) if parts else x
-                return self.mlp(h).squeeze(-1)
+                # concat 直後に正規化（Embedding 出力と標準化済み数値のスケール差を補正）
+                if self.norm is not None:
+                    h = self.norm(h)
+                if self.is_cnn:
+                    # 結合特徴ベクトルを 1ch の 1D 系列 (B, 1, in_dim) として畳み込む
+                    h = h.unsqueeze(1)
+                return self.head(h).squeeze(-1)
 
-        num_idx = [i for i in range(in_dim_total(self._cat_cards, self._n_numeric)) if i not in cat_indices]
-        return _Net(embeddings, layers, cat_indices, num_idx)
+        return _Net(embeddings, norm_layer, head, cat_indices, num_idx, is_cnn)
 
     def _binarize_targets(self, y: np.ndarray) -> np.ndarray:
         """rank_threshold で y を二値化する。
@@ -129,12 +175,24 @@ class NnWinModel:
         import torch
         from torch import nn
 
-        x_full = torch.as_tensor(np.asarray(x, dtype=np.float32))
-        y_full = torch.as_tensor(self._binarize_targets(y).astype(np.float32))
-        if sample_weight is not None:
-            w_full = torch.as_tensor(np.asarray(sample_weight, dtype=np.float32))
-        else:
-            w_full = None
+        # GPU があれば使う（無ければ CPU）。VPS/CI 等 GPU 無し環境は自動で CPU にフォールバック。
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        x_arr = np.asarray(x, dtype=np.float32)
+        y_arr = self._binarize_targets(y).astype(np.float32)
+        w_arr = np.asarray(sample_weight, dtype=np.float32) if sample_weight is not None else None
+
+        # メモリ上限: 学習行数を時系列順を保って部分標本化（早期 val split の整合のため sort）
+        if self._max_train_rows is not None and len(x_arr) > self._max_train_rows:
+            rng = np.random.default_rng(self._seed)
+            idx = np.sort(rng.choice(len(x_arr), self._max_train_rows, replace=False))
+            x_arr, y_arr = x_arr[idx], y_arr[idx]
+            if w_arr is not None:
+                w_arr = w_arr[idx]
+
+        x_full = torch.as_tensor(x_arr).to(device)
+        y_full = torch.as_tensor(y_arr).to(device)
+        w_full = torch.as_tensor(w_arr).to(device) if w_arr is not None else None
 
         # Early Stopping 用の内部検証ホールドアウト分割（時系列順は呼び出し側で担保済み）
         n = len(x_full)
@@ -147,12 +205,12 @@ class NnWinModel:
             x_tr, y_tr, w_tr = x_full, y_full, w_full
             x_val = y_val = None
 
-        self._net = self._build_net()
-        opt = torch.optim.Adam(self._net.parameters(), lr=self._lr)
+        self._net = self._build_net().to(device)
+        opt = torch.optim.Adam(self._net.parameters(), lr=self._lr, weight_decay=self._weight_decay)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(self._epochs, 1))
 
         pw = (
-            torch.tensor([self._pos_weight], dtype=torch.float32)
+            torch.tensor([self._pos_weight], dtype=torch.float32).to(device)
             if self._pos_weight is not None
             else None
         )
@@ -162,12 +220,35 @@ class NnWinModel:
 
         best_val = float("inf")
         best_state = None
+        best_epoch = -1
         epochs_no_improve = 0
         n_tr = len(x_tr)
+        # 構造（各中間層のユニット数）を明示する。mlp は隠れ層列、cnn は conv チャネル列。
+        if self._arch == "cnn":
+            struct = f"cnn conv={list(self._conv_channels)} k={self._kernel_size}"
+        else:
+            struct = f"mlp hidden={list(self._hidden_dims)}"
+        _log.info(
+            "[NN] fit 開始: %s dropout=%g pre_norm=%s wd=%g | train=%d val=%d epochs=%d batch=%d lr=%g device=%s",
+            struct,
+            self._dropout,
+            self._pre_norm,
+            self._weight_decay,
+            n_tr,
+            len(x_val) if x_val is not None else 0,
+            self._epochs,
+            self._batch_size,
+            self._lr,
+            device.type,
+        )
 
-        for _ in range(self._epochs):
+        epoch_run = 0
+        for epoch in range(self._epochs):
+            epoch_run = epoch + 1
             self._net.train()  # BatchNorm/Dropout を学習モードに（KB shard-38）
-            perm = torch.randperm(n_tr)
+            perm = torch.randperm(n_tr, device=device)
+            train_loss_sum = 0.0
+            train_batches = 0
             for start in range(0, n_tr, self._batch_size):
                 idx = perm[start : start + self._batch_size]
                 # BatchNorm1d は batch サイズ 1 だと分散計算で失敗するためスキップ
@@ -180,7 +261,10 @@ class NnWinModel:
                     loss = (loss * w_tr[idx]).mean()
                 loss.backward()
                 opt.step()
+                train_loss_sum += float(loss.detach())
+                train_batches += 1
             scheduler.step()
+            train_loss = train_loss_sum / max(train_batches, 1)
 
             # Early Stopping 判定（検証ホールドアウトがある場合のみ）
             if x_val is not None and len(x_val) > 1:
@@ -189,18 +273,37 @@ class NnWinModel:
                     val_logits = self._net(x_val)
                     val_loss_fn = nn.BCEWithLogitsLoss(pos_weight=pw)
                     val_loss = float(val_loss_fn(val_logits, y_val))
-                if best_val - val_loss > self._min_delta:
+                improved = best_val - val_loss > self._min_delta
+                _log.info(
+                    "[NN] epoch %d/%d train_loss=%.4f val_loss=%.4f%s",
+                    epoch_run,
+                    self._epochs,
+                    train_loss,
+                    val_loss,
+                    " *" if improved else "",
+                )
+                if improved:
                     best_val = val_loss
                     best_state = {k: v.clone() for k, v in self._net.state_dict().items()}
+                    best_epoch = epoch_run
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     if epochs_no_improve >= self._patience:
+                        _log.info("[NN] Early Stopping（patience=%d）", self._patience)
                         break
+            else:
+                _log.info("[NN] epoch %d/%d train_loss=%.4f", epoch_run, self._epochs, train_loss)
 
         # ベスト状態を復元（早期打ち切り時の過学習回避）
         if best_state is not None:
             self._net.load_state_dict(best_state)
+        _log.info(
+            "[NN] fit 完了: 実行 %d epoch / best epoch=%d best_val_loss=%.4f",
+            epoch_run,
+            best_epoch,
+            best_val,
+        )
         return self
 
     def predict_proba(self, x) -> np.ndarray:
@@ -209,10 +312,39 @@ class NnWinModel:
         import torch
 
         self._net.eval()  # BatchNorm/Dropout を評価モードに（KB shard-38）
+        x_in = np.nan_to_num(np.asarray(x, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        dev = next(self._net.parameters()).device      # 学習時のデバイス（cuda/cpu）に合わせる
         with torch.no_grad():
-            logits = self._net(torch.as_tensor(np.asarray(x, dtype=np.float32)))
-            p = torch.sigmoid(logits).numpy()
+            logits = self._net(torch.as_tensor(x_in).to(dev))
+            p = torch.sigmoid(logits).cpu().numpy()
+        # 万一 NaN が出ても meta 学習器（NaN 不可）を壊さないよう 0.5 に丸める
+        p = np.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
         return np.column_stack([1.0 - p, p])
+
+
+def _build_cnn_head(in_dim: int, conv_channels: tuple, kernel_size: int, dropout: float):
+    """結合特徴ベクトル (B, 1, in_dim) を畳み込む 1D-CNN ヘッドを構築する。
+
+    Conv1d(→ch) → BatchNorm1d → ReLU → Dropout を conv_channels 個積み、
+    AdaptiveMaxPool1d で系列長を 1 に潰してから Linear(→1) で logit を出す。
+    入力長 in_dim に依存しない構造（pad='same' 相当 + Adaptive pooling）にして
+    特徴数の変化に頑健にする。
+    """
+    from torch import nn
+
+    pad = kernel_size // 2
+    convs: list = []
+    prev_ch = 1
+    for ch in conv_channels:
+        convs += [
+            nn.Conv1d(prev_ch, ch, kernel_size=kernel_size, padding=pad),
+            nn.BatchNorm1d(ch),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        ]
+        prev_ch = ch
+    convs += [nn.AdaptiveMaxPool1d(1), nn.Flatten(), nn.Linear(prev_ch, 1)]
+    return nn.Sequential(*convs)
 
 
 def _embedding_dim(cardinality: int) -> int:

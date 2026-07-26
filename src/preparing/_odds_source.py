@@ -50,6 +50,26 @@ class AbstractOddsSource(ABC):
         """1 レースの現在オッズ [(馬番, 単勝オッズ), ...] を返す。"""
         raise NotImplementedError
 
+    def fetch_win_and_place_odds(
+        self, race_id: str
+    ) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+        """(単勝, 複勝) の [(馬番, オッズ), ...] を返す。
+
+        複勝オッズを配信できるソース（netkeiba の b1 ページは単勝と複勝が同居）だけが
+        意味のある place を返す。持たないソース（JRA-VAN 速報の単勝のみ 等）は複勝を空で返す。
+        odds_watch は overlay 蓄積のためこれを優先して使い、複勝は同一ページ取得ぶんで
+        追加リクエストなしに得る。
+        """
+        return self.fetch_win_odds(race_id), []
+
+    def capture_bet_types(self, race_id: str, bet_types, post_time, captured_at):
+        """連系(馬連/三連複 等)を OddsSnapshot 群として返す。既定は空（対応ソースが override）。
+
+        連系 ΔR² 検証用の事前オッズ蓄積。単勝/複勝(b1)と違い各券種は別ページ＝**追加リクエスト**
+        なので odds_watch では既定 OFF、env で明示有効化して使う。
+        """
+        return []
+
     def close(self) -> None:  # noqa: B027 — 既定は何もしない（リソース保持ソース用フック）
         pass
 
@@ -74,15 +94,52 @@ class NetkeibaOddsSource(AbstractOddsSource):
         race_ids, times = scrape_race_id_race_time_list(date_str)
         return build_race_post_times(race_ids, times, date_str)
 
-    def fetch_win_odds(self, race_id: str) -> list[tuple[int, float]]:
+    def _parse_b1(self, race_id: str):
+        """b1 ページ（単勝・複勝が同居）を 1 回取得し (単勝rows, 複勝rows) を返す。
+
+        単勝は id パーサ→旧DOMのクラスパーサへフォールバック。複勝は id パーサのみ
+        （旧DOMにクラスフォールバックが無いページでは空＝そのティックは複勝取れず）。
+        取得は 1 回だけなので複勝を足しても netkeiba へのリクエストは増えない。
+        """
         from src.constants._bet_types import BetType
         from src.preparing._odds_snapshot import parse_combo_odds_html
         from src.preparing._odds_snapshot import parse_win_odds_html
 
         scraper = self._ensure_scraper()
         html = scraper.fetch_html(race_id, BetType.TANSHO)
-        rows = parse_combo_odds_html(html, BetType.TANSHO) or parse_win_odds_html(html)
+        win = parse_combo_odds_html(html, BetType.TANSHO) or parse_win_odds_html(html)
+        place = parse_combo_odds_html(html, BetType.FUKUSHO)
+        return win, place
+
+    @staticmethod
+    def _to_pairs(rows) -> list[tuple[int, float]]:
         return [(int(combo[0]), float(odds)) for combo, odds in rows]
+
+    def fetch_win_odds(self, race_id: str) -> list[tuple[int, float]]:
+        win, _ = self._parse_b1(race_id)
+        return self._to_pairs(win)
+
+    def fetch_win_and_place_odds(
+        self, race_id: str
+    ) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+        """b1 を 1 回取得して単勝・複勝を同時に返す（追加リクエストなし）。"""
+        win, place = self._parse_b1(race_id)
+        return self._to_pairs(win), self._to_pairs(place)
+
+    def capture_bet_types(self, race_id: str, bet_types, post_time, captured_at):
+        """指定券種(馬連=b4/三連複=b7 等)を各ページから捕捉し OddsSnapshot 群を返す。
+
+        OddsSnapshotScraper.capture が券種→ページ(ODDS_PAGE_TYPE)を解決する。各券種＝1ページ
+        取得（追加リクエスト）。失敗券種はスキップ（当該レースの他券種・他レースは止めない）。
+        """
+        scraper = self._ensure_scraper()
+        out: list = []
+        for bt in bet_types:
+            try:
+                out.extend(scraper.capture(str(race_id), bt, post_time, captured_at))
+            except Exception as e:  # noqa: BLE001 — 1券種の失敗で全体を止めない
+                logger.warning("[odds_source] %s 捕捉失敗 race=%s: %s", bt, race_id, e)
+        return out
 
     def close(self) -> None:
         if self._scraper is not None and getattr(self._scraper, "_scraper", None) is not None:

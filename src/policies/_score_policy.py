@@ -4,6 +4,7 @@ from typing import Callable
 
 import pandas as pd
 
+from src.constants._horse_results_cols import HorseResultsCols
 from src.constants._results_cols import ResultsCols
 
 # const
@@ -12,12 +13,39 @@ _SCORE = "score"
 PROB = "prob"
 CURRENT_ODDS = "current_odds"
 
-# predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ）
-_DROP_FOR_PREDICT = [ResultsCols.TANSHO_ODDS, "rank", "date", ResultsCols.RANK]
+# predict_proba に渡す前に除外する非特徴量列（目的変数・日付・オッズ・ID）。
+# 学習時の _DROP_FOR_TRAIN（rank/date/horse_id/単勝/着順/通過）と列数を揃える必要がある。
+# horse_id を除外し損ねると特徴量が 1 列多くなり LightGBM が
+# "number of features ... is not the same as ... training data" で失敗する。
+# CORNER('通過') は post-race のコーナー通過順（リーク列）。_DROP_FOR_TRAIN と対で除外する。
+_DROP_FOR_PREDICT = [
+    "horse_id", ResultsCols.TANSHO_ODDS, "rank", "rank_win", "date",
+    ResultsCols.RANK, HorseResultsCols.CORNER,
+]
 
 # score_policy が参照する非特徴量列（枠番・馬番 + 除外列）。モデルの特徴量ではないが
 # 推論時に X へ残す必要がある列の単一の定義元（KeibaAI.calc_score が参照する）。
 META_COLS = [ResultsCols.UMABAN, ResultsCols.WAKUBAN, *_DROP_FOR_PREDICT]
+
+
+def _coerce_for_predict(frame: pd.DataFrame) -> pd.DataFrame:
+    """特徴量フレームを LightGBM が扱える数値に正規化する。
+
+    pandas の nullable 拡張dtype（Int64/Float64/boolean）や object 列に pd.NA(NAType) が
+    あると、LightGBM/numpy が ``float() argument must be ... not 'NAType'`` で落ちる。
+    該当列だけ ``to_numeric``→float64（pd.NA→np.nan）に変換し、欠損は LightGBM が
+    ネイティブに扱える np.nan へ統一する。通常の float64/int64 列は触らない。
+    """
+    bad_cols = [
+        c for c in frame.columns
+        if pd.api.types.is_extension_array_dtype(frame[c].dtype) or frame[c].dtype == object
+    ]
+    if not bad_cols:
+        return frame
+    out = frame.copy()
+    for c in bad_cols:
+        out[c] = pd.to_numeric(out[c], errors="coerce").astype("float64")
+    return out
 
 
 # common funcs
@@ -33,7 +61,7 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
     # UMABANの個数がWAKUBANの個数よりも多い場合にwakuban_flagを設定
     wakuban_flag = (umaban_count_per_race > wakuban_count_per_race).astype(int)
     wakuban_flag.name = "wakuban_flag"
-    X_pred = X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore")
+    X_pred = _coerce_for_predict(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))
     try:
         score = model.predict_proba(X_pred)[:, 1]
     except Exception:
@@ -145,7 +173,9 @@ class ExpectedValueScorePolicy(AbstractScorePolicy):
 
     @staticmethod
     def calc(model, X: pd.DataFrame) -> pd.DataFrame:
-        prob = model.predict_proba(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))[:, 1]
+        prob = model.predict_proba(
+            _coerce_for_predict(X.drop(_DROP_FOR_PREDICT, axis=1, errors="ignore"))
+        )[:, 1]
         table = X[[ResultsCols.UMABAN]].copy()
         table[PROB] = prob
         table[CURRENT_ODDS] = X[ResultsCols.TANSHO_ODDS].astype(float)

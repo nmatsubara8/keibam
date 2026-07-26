@@ -110,6 +110,43 @@ TABLE_SPECS: dict[str, TableSpec] = {
         primary_key=("race_id", "checkpoint", "model", "umaban"),
         index_col=None,
     ),
+    # レース当日ノート（調教評価/パドック/厩舎コメント）。いずれも (race_id, 馬番) で一意、
+    # results と同じく race_id を index に持たせる。再取得は当該 race_id の行を総入替する。
+    "raw_training": TableSpec(
+        table_name="raw_training",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
+    "raw_paddock": TableSpec(
+        table_name="raw_paddock",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
+    "raw_comment": TableSpec(
+        table_name="raw_comment",
+        primary_key=("race_id", "馬番"),
+        index_col="race_id",
+    ),
+    # 予想印（レース×馬×予想家のロング）。(race_id,馬番,predictor_yid) で一意。
+    # race_id を index に持たせ、再取得は当該 race_id の行を総入替する。
+    "raw_yoso_marks": TableSpec(
+        table_name="raw_yoso_marks",
+        primary_key=("race_id", "馬番", "predictor_yid"),
+        index_col="race_id",
+    ),
+    # 人物の年度別成績。(entity_type, entity_id, year) で一意。entity_id を index に持たせ、
+    # 再取得は当該人物の行を総入替する。
+    "raw_person_yearly": TableSpec(
+        table_name="raw_person_yearly",
+        primary_key=("entity_type", "entity_id", "year"),
+        index_col="entity_id",
+    ),
+    # 予想家プロフィール由来スキル prior。predictor_yid で一意。
+    "raw_yoso_predictor": TableSpec(
+        table_name="raw_yoso_predictor",
+        primary_key=("predictor_yid",),
+        index_col="predictor_yid",
+    ),
 }
 
 
@@ -124,6 +161,12 @@ PICKLE_PATH_TO_ALIAS: dict[str, str] = {
     LocalPaths.RAW_PEDS_PATH: "raw_peds",
     LocalPaths.RAW_ODDS_SNAPSHOT_PATH: "raw_odds_snapshots",
     LocalPaths.RAW_ODDS_PREDICTIONS_PATH: "raw_odds_predictions",
+    LocalPaths.RAW_TRAINING_PATH: "raw_training",
+    LocalPaths.RAW_PADDOCK_PATH: "raw_paddock",
+    LocalPaths.RAW_COMMENT_PATH: "raw_comment",
+    LocalPaths.RAW_YOSO_MARKS_PATH: "raw_yoso_marks",
+    LocalPaths.RAW_PERSON_YEARLY_PATH: "raw_person_yearly",
+    LocalPaths.RAW_YOSO_PREDICTOR_PATH: "raw_yoso_predictor",
 }
 
 

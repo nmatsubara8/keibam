@@ -8,6 +8,25 @@ from src.constants._units import COURSE_LEN_BUCKET_METERS
 from src.preprocessing._abstract_data_processor import AbstractDataProcessor
 
 
+def parse_corner(x, n):
+    """通過順文字列（例 "3-3-2-1"）から n 番目のコーナー位置を取り出す。
+
+    n=1 は最初、n=4 は最終コーナー。文字列以外（NaN 等）や数字を含まない値
+    （空文字・"-"・DB 復元時の空通過順）は欠損（pd.NA）として扱い、
+    ``int(re.findall(...)[0])`` が IndexError で落ちるのを防ぐ。
+    """
+    if not isinstance(x, str):
+        return x
+    nums = re.findall(r"\d+", x)
+    if not nums:
+        return pd.NA
+    if n == 4:
+        return int(nums[-1])
+    if n == 1:
+        return int(nums[0])
+    return pd.NA
+
+
 class HorseResultsProcessor(AbstractDataProcessor):
     def __init__(self, filepath):
         """
@@ -31,25 +50,23 @@ class HorseResultsProcessor(AbstractDataProcessor):
         # 日付をdatetime型に設定
         df["date"] = pd.to_datetime(df[Cols.DATE])
 
-        # 賞金のNaNを0で埋める
-        # df[Cols.PRIZE].fillna(0, inplace=True)
-        df[Cols.PRIZE] = df[Cols.PRIZE].fillna(0)
+        # 賞金を数値化（DB復元時は string dtype・カンマ区切り "1,600.0" のことがある）。
+        # 多窓集計(§2i)で mean 等を取るため float へ。欠損・解釈不能は 0 で埋める。
+        df[Cols.PRIZE] = pd.to_numeric(
+            df[Cols.PRIZE].astype(str).str.replace(",", "", regex=False),
+            errors="coerce",
+        ).fillna(0)
 
         # 1着の着差を0にする（xが0より小さい場合は、0、xが0以上の場合、xを返す）
+        df[Cols.RANK_DIFF] = pd.to_numeric(df[Cols.RANK_DIFF], errors="coerce").fillna(0)
         df[Cols.RANK_DIFF] = df[Cols.RANK_DIFF].map(lambda x: 0 if x < 0 else x)
 
-        # レース展開データ
-        # n=1: 最初のコーナー位置, n=4: 最終コーナー位置
-        def corner(x, n):
-            if not isinstance(x, str):
-                return x
-            elif n == 4:
-                return int(re.findall(r"\d+", x)[-1])
-            elif n == 1:
-                return int(re.findall(r"\d+", x)[0])
+        # 上がり3F（終盤の脚力）を数値化（多窓集計の対象にするため）。"34.5" 等→float。
+        df[Cols.NOBORI] = pd.to_numeric(df[Cols.NOBORI], errors="coerce")
 
-        df["first_corner"] = df[Cols.CORNER].map(lambda x: corner(x, 1))
-        df["final_corner"] = df[Cols.CORNER].map(lambda x: corner(x, 4))
+        # レース展開データ（n=1: 最初のコーナー位置, n=4: 最終コーナー位置）
+        df["first_corner"] = df[Cols.CORNER].map(lambda x: parse_corner(x, 1))
+        df["final_corner"] = df[Cols.CORNER].map(lambda x: parse_corner(x, 4))
 
         df["final_to_rank"] = df["final_corner"] - df[Cols.RANK]
         df["first_to_rank"] = df["first_corner"] - df[Cols.RANK]
@@ -82,6 +99,15 @@ class HorseResultsProcessor(AbstractDataProcessor):
             datetime_s = datetime_s.fillna(to_datetime(format_))
         # フォーマット例外は欠損値になる
         df["time_seconds"] = (datetime_s - basetime).dt.total_seconds()
+
+        # §2l スピード指数（タイム偏差）: (競馬場×種別×距離×馬場) ごとの基準タイムから
+        # 何σ速かったか。faster=正。生タイムは馬場/距離差で比較不能なため標準化して相対化する。
+        # 基準は母集団統計（着順という結果は使わない）。当該走のタイムのみで算出されリーク無し。
+        speed_keys = [Cols.PLACE, "race_type", "course_len", Cols.GROUND_STATE]
+        grp = df.groupby(speed_keys)["time_seconds"]
+        base_mean = grp.transform("mean")
+        base_std = grp.transform("std")
+        df["speed_figure"] = (base_mean - df["time_seconds"]) / (base_std + 1e-8)
 
         # インデックス名を与える
         # df.index.name = "horse_id"
@@ -135,6 +161,7 @@ class HorseResultsProcessor(AbstractDataProcessor):
                 "race_type",
                 "course_len",
                 "time_seconds",
+                "speed_figure",
             ]
         ]
 

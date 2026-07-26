@@ -7,9 +7,26 @@ operation_mode: advisory
 
 # 資金・リスク
 bankroll: 100000.0
-kelly_fraction_ratio: 0.5   # フラクショナル・ケリー係数（0<r<=1）
+kelly_fraction_ratio: 0.25  # フラクショナル・ケリー係数（0<r<=1）。払戻はパリミュチュエルで
+                            #   確定オッズどおり（正しい）だが、選定時は暫定オッズ近似のため実戦で
+                            #   緩やかに目減りしうる。未実証のため保守的な1/4ケリー（前向き検証後に引き上げ可）
 per_bet_cap_ratio: 0.05     # 1馬券あたり上限（bankroll比）
 max_daily_ratio: 1.0        # 1日総投資上限（bankroll比）
+
+# 単勝の買い目制約（損失最小化のための足切り。利益は出ない）
+#   ⚠ 訂正(2026-07): 旧コメントは「回収率1.9–2.1・エッジ本物」と記していたが、
+#   validate_edge.py の再監査（直近26,790レース）で否定された。tansho・オッズ≤15 で
+#   本番回収率≈0.80 かつプラセボ（レース内シャッフル）≈0.80 と同等＝モデルに genuine edge なし
+#   （回収率≈控除率ぶんの負け）。モデルが単勝オッズ特徴で市場をほぼ模写するため市場に勝てない。
+#   以下の 2 値は「大穴を避けて損失を抑える」制約であって利益戦略ではない。実弾投票は非推奨。
+max_odds: 15.0             # これ超（人気薄・-EV でブレ大）は買わない＝損失抑制
+tansho_ev_threshold: 1.1   # 単勝EV下限（既定 BetThresholds の1.78を上書き）
+
+# EV 較正（calibrate-ev の 補正Harville/r̂較正/市場合成）をライブ選定に適用する。
+#   OOS 検証（fit=2024/eval=2025）で無較正の大穴垂れ流しが解消し全体回収率 27%→76% に改善。
+#   models/{place_exponents,win_calibrator,blend_weights}.json を使用（無ければ自動で従来挙動）。
+#   必ず OOS で fit したものを使うこと（学習年で fit すると退化。Benter §5）。false で無効化。
+use_ev_calibration: true
 
 # 安全装置（損失ストップ / kill switch）
 kill_switch_enabled: true   # 当日実現損失が上限超で推奨/記録を停止する

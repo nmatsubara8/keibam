@@ -19,9 +19,60 @@ def test_build_odds_url_maps_bet_type_to_page_type():
     assert "race_id=202401010101" in url
 
 
+def test_build_odds_url_central_uses_race_domain():
+    # 中央（場コード 01）は従来どおり race.netkeiba.com/odds/index.html
+    url = build_odds_url("202401010101", BetType.TANSHO)
+    assert url.startswith("https://race.netkeiba.com/odds/index.html?")
+
+
+def test_build_odds_url_nar_uses_nar_domain_and_path():
+    # 地方（門別30・大井44）は nar.netkeiba.com、パスは /odds/（index.html なし・実 URL 準拠）
+    assert build_odds_url("202630072201", BetType.TANSHO).startswith(
+        "https://nar.netkeiba.com/odds/?"
+    )
+    assert build_odds_url("202444010101", BetType.UMAREN).startswith(
+        "https://nar.netkeiba.com/odds/?"
+    )
+
+
 def test_build_odds_url_unknown_bet_type_raises():
     with pytest.raises(ValueError):
         build_odds_url("r1", "unknown")
+
+
+def test_scraper_uses_env_timeouts(monkeypatch):
+    """既定スクレイパは長めのタイムアウト（重い連系ページの描画待ち）を使う。"""
+    from src.preparing._odds_snapshot import OddsSnapshotScraper
+
+    monkeypatch.setenv("KEIBA_ODDS_SELECTOR_TIMEOUT_MS", "15000")
+    monkeypatch.setenv("KEIBA_ODDS_TIMEOUT_MS", "45000")
+    inner = OddsSnapshotScraper()._ensure_scraper()
+    assert inner._selector_timeout_ms == 15000
+    assert inner._timeout_ms == 45000
+
+
+def test_scraper_default_waits_for_odds_cells():
+    """既定の待機セレクタが実オッズセル（id^=odds-）を含む。"""
+    from src.preparing._odds_snapshot import OddsSnapshotScraper
+
+    assert "odds-" in OddsSnapshotScraper()._odds_table_selector
+
+
+def test_build_odds_url_wakuren_maps_to_b3():
+    """枠連が b3 ページにマップされる（カバレッジ拡大）。"""
+    url = build_odds_url("202401010101", BetType.WAKUREN)
+    assert "type=b3" in url
+
+
+def test_all_seven_bet_types_have_odds_page():
+    """単複/枠連/馬連/馬単/ワイド/三連複/三連単の全券種でオッズ URL を構築できる。"""
+    from src.preparing._odds_snapshot import ODDS_ID_TYPE
+    from src.preparing._odds_snapshot import ODDS_PAGE_TYPE
+
+    for bt in (BetType.TANSHO, BetType.FUKUSHO, BetType.WAKUREN, BetType.UMAREN,
+               BetType.UMATAN, BetType.WIDE, BetType.SANRENPUKU, BetType.SANRENTAN):
+        assert bt in ODDS_PAGE_TYPE and bt in ODDS_ID_TYPE
+        assert build_odds_url("202401010101", bt).startswith("https://race.netkeiba.com/odds/")
 
 
 def test_compute_minutes_to_post_positive_and_negative():
@@ -173,6 +224,25 @@ def test_parse_combo_odds_html_filters_other_bet_types():
     fukusho = parse_combo_odds_html(html, BetType.FUKUSHO)
     assert tansho == [((1,), 2.5)]
     assert fukusho == [((1,), 1.3)]
+
+
+def test_parse_combo_odds_html_underscore_separator():
+    """現行 b1 ページは券種コードと馬番列を `_` で区切る（``odds-1_07``）。
+
+    旧 DOM のハイフン区切り（``odds-1-07``）と並んで underscore も解釈できること。
+    回帰防止: これが壊れると午後の単勝オッズ取得が 0 件になり予測が崩壊する。
+    """
+    from src.preparing._odds_snapshot import parse_combo_odds_html
+
+    html = """
+    <td class="Odds Popular"><span id="odds-1_02">1.9</span></td>
+    <td class="Odds Popular"><span id="odds-1_10">5.0</span></td>
+    <td class="Odds"><span id="odds-2_02">1.1 - 1.1</span></td>
+    """
+    tansho = parse_combo_odds_html(html, BetType.TANSHO)
+    fukusho = parse_combo_odds_html(html, BetType.FUKUSHO)
+    assert sorted(tansho) == [((2,), 1.9), ((10,), 5.0)]
+    assert fukusho == [((2,), 1.1)]
 
 
 def test_parse_combo_odds_html_skips_pending_and_duplicates():

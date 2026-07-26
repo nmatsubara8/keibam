@@ -13,6 +13,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import os
+import re
 import shutil
 from typing import Optional
 
@@ -46,8 +47,28 @@ def check_file(
     err_age_h: Optional[float] = None,
     required: bool = True,
 ) -> CheckResult:
-    """ファイルの存在と鮮度（mtime からの経過時間）を点検する。"""
+    """ファイルの存在と鮮度（mtime からの経過時間）を点検する。
+
+    pkl が存在しない場合は DB の行数でフォールバック判定する。
+    """
     if not os.path.exists(path):
+        # DB にデータがあれば OK 扱い
+        try:
+            from src.storage._db import PICKLE_PATH_TO_ALIAS, get_engine
+            from sqlalchemy import text as _text
+
+            alias = PICKLE_PATH_TO_ALIAS.get(path)
+            if alias:
+                with get_engine().connect() as _conn:
+                    from src.storage import TABLE_SPECS
+                    spec = TABLE_SPECS.get(alias)
+                    if spec:
+                        row = _conn.execute(_text(f'SELECT COUNT(*) FROM "{spec.table_name}"')).fetchone()
+                        n = int(row[0]) if row else 0
+                        if n > 0:
+                            return CheckResult(name, OK, f"DB に {n:,} 行（pkl なし）")
+        except Exception:
+            pass
         level = ERROR if required else WARN
         return CheckResult(name, level, f"見つかりません: {path}")
     age = _age_hours(path, now)
@@ -112,6 +133,58 @@ def check_disk_space(path: str, *, warn_free_gb: float = 5.0, err_free_gb: float
     return CheckResult("disk", OK, f"空き {free_gb:.1f}GB")
 
 
+_PROD_MODEL_DATE_PREFIX = re.compile(r"^\d{8}_")
+
+
+def _newest_production_model(models_dir: str) -> Optional[str]:
+    """日付接頭辞の本番 Place モデル（YYYYMMDD_..._keibam.pickle・__suffix 除く）で最新を返す。"""
+    prod = [
+        p for p in model_pickle_paths(models_dir)
+        if (b := os.path.basename(p)).endswith("_keibam.pickle")
+        and _PROD_MODEL_DATE_PREFIX.match(b) and "__" not in b
+    ]
+    return prod[0] if prod else None
+
+
+def check_calibration(models_dir: str, *, now: dt.datetime) -> CheckResult:
+    """EV 較正物（calibrate-ev の出力）が現行モデルに対して鮮度切れでないか点検する。
+
+    use_ev_calibration は既定 ON（config）。較正物が無い／モデルより古い（＝再学習後に
+    calibrate-ev を再実行していない）と、ライブ選定が古い較正を使い回して回収率が劣化する。
+    再学習のたびに `calibrate-ev --years <直近年>` を実行すること。
+    """
+    from src.simulation._calibrate import (
+        blend_weights_path,
+        place_exponents_path,
+        win_calibrator_path,
+    )
+
+    arts = [place_exponents_path(models_dir), win_calibrator_path(models_dir),
+            blend_weights_path(models_dir)]
+    present = [p for p in arts if os.path.exists(p)]
+    if not present:
+        return CheckResult(
+            "calibration", WARN,
+            "EV較正が未fit（models/*.json 無し）。calibrate-ev --years <直近年> を実行してください",
+        )
+    model = _newest_production_model(models_dir)
+    if model is None:
+        return CheckResult("calibration", OK, f"較正物 {len(present)}/3 あり（本番モデル未検出）")
+    model_mtime = os.path.getmtime(model)
+    newest_art = max(os.path.getmtime(p) for p in present)
+    if newest_art < model_mtime:
+        stale_h = (model_mtime - newest_art) / 3600.0
+        return CheckResult(
+            "calibration", WARN,
+            f"較正がモデルより {stale_h:.1f}h 古い（再学習後に calibrate-ev 未実行）。再fit 推奨",
+        )
+    missing = 3 - len(present)
+    detail = f"較正物 {len(present)}/3・モデルと同鮮度"
+    if missing:
+        detail += f"（未fit {missing} 種は該当補正なしで動作）"
+    return CheckResult("calibration", OK, detail)
+
+
 def check_featured_meta(db_path: Optional[str] = None) -> CheckResult:
     try:
         from src.storage._featured import load_featured_meta
@@ -169,6 +242,7 @@ def run_doctor(
     for name, path in data_paths.items():
         results.append(check_file(name, path, now=now, warn_age_h=data_warn_age_h))
     results.append(check_models(models_dir, now=now, warn_age_h=model_warn_age_h))
+    results.append(check_calibration(models_dir, now=now))
     results.append(check_db_connection(db_path))
     results.append(check_featured_meta(db_path))
     results.append(check_disk_space(models_dir if os.path.isdir(models_dir) else ".", warn_free_gb=warn_free_gb))

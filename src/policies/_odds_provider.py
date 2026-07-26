@@ -40,15 +40,36 @@ class HistoricalOddsProvider(AbstractOddsProvider):
     Parameters
     ----------
     tansho_odds_by_race : {race_id: {馬番: 単勝オッズ}}
-    takeout : 控除率（連系の推定オッズに反映）。
+    takeout : 控除率（連系の推定オッズに反映）。``float`` で全券種共通、または
+        ``{bet_type: takeout}`` の Mapping で券種別に指定できる（払戻実績からの較正値。
+        src/policies/_takeout_calibration.py 参照）。Mapping に無い券種は
+        ``default_takeout`` にフォールバックする。
     """
 
-    def __init__(self, tansho_odds_by_race: Mapping, takeout: float = 0.2) -> None:
+    def __init__(
+        self,
+        tansho_odds_by_race: Mapping,
+        takeout: float | Mapping[str, float] = 0.2,
+        default_takeout: float = 0.2,
+    ) -> None:
         self._tansho_odds_by_race = tansho_odds_by_race
         self._takeout = takeout
+        self._default_takeout = default_takeout
+
+    def _takeout_for(self, bet_type: str) -> float:
+        """券種別の控除率を返す（Mapping 指定時は券種別、未登録は既定値）。"""
+        if isinstance(self._takeout, Mapping):
+            return float(self._takeout.get(bet_type, self._default_takeout))
+        return float(self._takeout)
 
     @classmethod
-    def from_score_table(cls, table, umaban_col: str, odds_col: str, takeout: float = 0.2) -> "HistoricalOddsProvider":
+    def from_score_table(
+        cls,
+        table,
+        umaban_col: str,
+        odds_col: str,
+        takeout: float | Mapping[str, float] = 0.2,
+    ) -> "HistoricalOddsProvider":
         """race_id を index に持つテーブルから {race_id: {馬番: 単勝オッズ}} を構築する。"""
         odds_by_race: dict = {}
         for race_id, race_df in table.groupby(level=0):
@@ -60,8 +81,7 @@ class HistoricalOddsProvider(AbstractOddsProvider):
     def _market_win_probs(self, race_id) -> dict[int, float]:
         """単勝オッズの逆数を控除率で正規化した市場勝率。"""
         odds_map = self._tansho_odds_by_race[race_id]
-        implied = {umaban: 1.0 / odds for umaban, odds in odds_map.items() if odds and odds > 0}
-        return harville.normalize(implied)
+        return harville.implied_from_odds(odds_map, normalized=True)
 
     def get_odds(self, race_id, bet_type: str, combo: Sequence[int]) -> float:
         combo = list(combo)
@@ -73,7 +93,41 @@ class HistoricalOddsProvider(AbstractOddsProvider):
         prob = harville.combo_probability(bet_type, win_probs, combo)
         if prob <= 0:
             return 0.0
-        return (1.0 - self._takeout) / prob
+        return (1.0 - self._takeout_for(bet_type)) / prob
+
+
+class StoredFinalOddsProvider(AbstractOddsProvider):
+    """取得済みの確定オッズ実績（fetch-final-odds → odds_snapshots）を供給する。
+
+    過去レースの連系確定オッズが取得できている組合せは**実績値**を返し、無い組合せは
+    fallback（通常は単勝オッズから Harville 推定する HistoricalOddsProvider）へ委譲する。
+    実績の有無を区別したいので、実績ヒット時は実値・ミス時は推定値という意味になる。
+
+    Parameters
+    ----------
+    final_odds_lookup : {(race_id, bet_type, combo_key): odds}
+        `build_final_odds_lookup` の出力。combo_key は `canonical_combo` 正規化済み。
+    fallback : 実績が無い組合せに使う供給（Harville 推定等）。
+    """
+
+    def __init__(self, final_odds_lookup: Mapping, fallback: AbstractOddsProvider) -> None:
+        self._lookup = dict(final_odds_lookup)
+        self._fallback = fallback
+
+    def has_actual(self, race_id, bet_type: str, combo: Sequence[int]) -> bool:
+        """指定組合せの実績オッズが取得済みか。"""
+        from src.constants._bet_types import combo_key
+
+        return (str(race_id), bet_type, combo_key(bet_type, combo)) in self._lookup
+
+    def get_odds(self, race_id, bet_type: str, combo: Sequence[int]) -> float:
+        from src.constants._bet_types import combo_key
+
+        key = (str(race_id), bet_type, combo_key(bet_type, combo))
+        odds = self._lookup.get(key)
+        if odds is not None and odds > 0:
+            return float(odds)
+        return self._fallback.get_odds(race_id, bet_type, combo)
 
 
 class PredictedOddsProvider(AbstractOddsProvider):
@@ -92,11 +146,19 @@ class PredictedOddsProvider(AbstractOddsProvider):
         self,
         predicted_final_odds: Mapping,
         fallback: AbstractOddsProvider,
-        takeout: float = 0.2,
+        takeout: float | Mapping[str, float] = 0.2,
+        default_takeout: float = 0.2,
     ) -> None:
         self._predicted = dict(predicted_final_odds)
         self._fallback = fallback
         self._takeout = takeout
+        self._default_takeout = default_takeout
+
+    def _takeout_for(self, bet_type: str) -> float:
+        """券種別の控除率を返す（Mapping 指定時は券種別、未登録は既定値）。"""
+        if isinstance(self._takeout, Mapping):
+            return float(self._takeout.get(bet_type, self._default_takeout))
+        return float(self._takeout)
 
     def _race_predictions(self, race_id) -> dict[int, float]:
         return {
@@ -122,9 +184,8 @@ class PredictedOddsProvider(AbstractOddsProvider):
             return float(odds)
 
         # 連系: 予測単勝オッズ → 市場勝率 → Harville 組合せ確率 → 控除後オッズ
-        implied = {umaban: 1.0 / o for umaban, o in preds.items()}
-        win_probs = harville.normalize(implied)
+        win_probs = harville.implied_from_odds(preds, normalized=True)
         prob = harville.combo_probability(bet_type, win_probs, combo)
         if prob <= 0:
             return self._fallback.get_odds(race_id, bet_type, combo)
-        return (1.0 - self._takeout) / prob
+        return (1.0 - self._takeout_for(bet_type)) / prob

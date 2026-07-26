@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import dataclasses
 import datetime as dt
+import logging
+import os
 import re
 from typing import Iterable
 from typing import Sequence
@@ -21,12 +23,15 @@ from typing import Sequence
 from src.constants._bet_types import BetType
 from src.constants._odds_phases import classify_phase
 
+logger = logging.getLogger(__name__)
+
 
 # netkeiba オッズページの type コード（馬券種 → ?type=bN）。
-# 単勝・複勝は同一ページ(b1)に同居する。
+# 単勝・複勝は同一ページ(b1)に同居する。枠連は b3。
 ODDS_PAGE_TYPE = {
     BetType.TANSHO: "b1",
     BetType.FUKUSHO: "b1",
+    BetType.WAKUREN: "b3",
     BetType.UMAREN: "b4",
     BetType.WIDE: "b5",
     BetType.UMATAN: "b6",
@@ -36,9 +41,11 @@ ODDS_PAGE_TYPE = {
 
 # オッズセルの id 属性 `odds-<type>-<馬番列>` の type コード（馬券種 → N）。
 # ページの type=bN とは異なり、単勝(1)・複勝(2)は b1 ページ内で別コードを持つ。
+# 枠連(3) は馬番ではなく枠番の組合せを表す（払戻側も枠単位）。
 ODDS_ID_TYPE = {
     BetType.TANSHO: "1",
     BetType.FUKUSHO: "2",
+    BetType.WAKUREN: "3",
     BetType.UMAREN: "4",
     BetType.WIDE: "5",
     BetType.UMATAN: "6",
@@ -46,15 +53,21 @@ ODDS_ID_TYPE = {
     BetType.SANRENTAN: "8",
 }
 
-# 馬券種ごとの id 抽出パターン（パース時の再コンパイルを避けるため事前コンパイル）
+# 馬券種ごとの id 抽出パターン（パース時の再コンパイルを避けるため事前コンパイル）。
+# netkeiba は券種コードと馬番列の区切りに `_`（単勝/複勝の現行 DOM: ``odds-1_07``）と
+# `-`（連系の一部 DOM）の両方を使う実績があるため、どちらの区切りも許容する。
 _ODDS_ID_RE = {
-    bet_type: re.compile(rf"^odds-{code}-(\d+)$") for bet_type, code in ODDS_ID_TYPE.items()
+    bet_type: re.compile(rf"^odds-{code}[-_](\d+)$") for bet_type, code in ODDS_ID_TYPE.items()
 }
 
 # オッズ値（"12.3" / レンジ "1.5 - 2.0"）の数値部分
 _ODDS_VALUE_RE = re.compile(r"\d+(?:\.\d+)?")
 
-_ODDS_BASE_URL = "https://race.netkeiba.com/odds/index.html"
+# オッズページも主催者でドメインが分かれる（中央=race.netkeiba.com / 地方=nar.netkeiba.com）。
+# パスも異なる: 中央は /odds/index.html、地方は /odds/（実 URL で確認）。type コード
+# （b1単複/b3枠連/b4馬連/b5ワイド/b6馬単/b7三連複/b8三連単）は中央・地方で共通。
+_ODDS_PATH_CENTRAL = "/odds/index.html"
+_ODDS_PATH_LOCAL = "/odds/"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -75,11 +88,21 @@ class OddsSnapshot:
 
 
 def build_odds_url(race_id: str, bet_type: str) -> str:
-    """馬券種に応じた netkeiba オッズページ URL を構築する（純粋関数）。"""
+    """馬券種に応じた netkeiba オッズページ URL を構築する（純粋関数）。
+
+    race_id の主催者区分でドメインを切り替える（中央=race.netkeiba.com /
+    地方=nar.netkeiba.com）。中央の race_id では従来と同一 URL を返す。
+    """
+    from src.constants._model_category import ORG_LOCAL
+    from src.constants._model_category import live_netkeiba_base_for_race_id
+    from src.constants._model_category import organizer_of_race_id
+
     page_type = ODDS_PAGE_TYPE.get(bet_type)
     if page_type is None:
         raise ValueError(f"未対応の馬券種です: {bet_type}")
-    return f"{_ODDS_BASE_URL}?type={page_type}&race_id={race_id}"
+    path = _ODDS_PATH_LOCAL if organizer_of_race_id(race_id) == ORG_LOCAL else _ODDS_PATH_CENTRAL
+    base = live_netkeiba_base_for_race_id(race_id) + path
+    return f"{base}?type={page_type}&race_id={race_id}"
 
 
 def compute_minutes_to_post(post_time: dt.datetime, captured_at: dt.datetime) -> int:
@@ -134,6 +157,33 @@ def snapshots_from_rows(
 def combo_to_str(combo: Sequence[int]) -> str:
     """combo タプルを DB 保存用の文字列（例 ``"3-7-11"``）へ変換する（純粋関数）。"""
     return "-".join(str(int(x)) for x in combo)
+
+
+def build_final_odds_lookup(
+    snapshots: Sequence[OddsSnapshot], bet_types: Sequence[str] | None = None
+) -> dict[tuple[str, str, str], float]:
+    """スナップショット群から確定オッズ lookup を構築する（純粋関数）。
+
+    キーは ``(race_id, bet_type, combo_key)``、値は最新 captured_at のオッズ。
+    combo_key は `canonical_combo`（順不同は昇順正規化）で EV 選定時の combo と一致させる。
+    fetch-final-odds で取得した実績オッズを `StoredFinalOddsProvider` に渡す用途。
+
+    bet_types を指定すると当該券種だけに絞る。
+    """
+    from src.constants._bet_types import combo_key
+
+    allow = set(bet_types) if bet_types is not None else None
+    best: dict[tuple[str, str, str], tuple[dt.datetime, float]] = {}
+    for s in snapshots:
+        if allow is not None and s.bet_type not in allow:
+            continue
+        if s.odds is None or float(s.odds) <= 0:
+            continue
+        key = (str(s.race_id), s.bet_type, combo_key(s.bet_type, s.combo))
+        prev = best.get(key)
+        if prev is None or s.captured_at >= prev[0]:
+            best[key] = (s.captured_at, float(s.odds))
+    return {k: v[1] for k, v in best.items()}
 
 
 def snapshots_to_records(snapshots: Sequence[OddsSnapshot]) -> list[dict]:
@@ -269,18 +319,34 @@ class OddsSnapshotScraper:
     Parameters
     ----------
     scraper : AbstractScraper 実装。None の場合は PlaywrightScraper を遅延生成する。
-    odds_table_selector : JS 描画完了を待つ CSS セレクタ（既定はオッズテーブル）。
+    odds_table_selector : JS 描画完了を待つ CSS セレクタ（既定はオッズセル id）。
+
+    Notes
+    -----
+    連系（馬連〜三連単）のオッズページは組合せ数が多く JS 描画に時間がかかるため、
+    既定 PlaywrightScraper の短いセレクタ待ち（3 秒）では描画前に空 HTML を返し
+    パース 0 件になりやすい。本アダプタは待機セレクタを実オッズセル
+    （``[id^=odds-]``）にし、タイムアウトを延長する（環境変数で調整可）:
+        KEIBA_ODDS_TIMEOUT_MS           ページ遷移タイムアウト（既定 45000）
+        KEIBA_ODDS_SELECTOR_TIMEOUT_MS  オッズセル描画待ち（既定 15000）
     """
 
-    def __init__(self, scraper=None, odds_table_selector: str = ".RaceOdds_HorseList, .Odds") -> None:
+    def __init__(
+        self, scraper=None, odds_table_selector: str = "[id^=odds-], .RaceOdds_HorseList, .Odds"
+    ) -> None:
         self._scraper = scraper
         self._odds_table_selector = odds_table_selector
 
     def _ensure_scraper(self):
         if self._scraper is None:
+            import os
+
             from src.preparing._scraper import PlaywrightScraper
 
-            self._scraper = PlaywrightScraper()
+            self._scraper = PlaywrightScraper(
+                timeout_ms=int(os.environ.get("KEIBA_ODDS_TIMEOUT_MS", "45000")),
+                selector_timeout_ms=int(os.environ.get("KEIBA_ODDS_SELECTOR_TIMEOUT_MS", "15000")),
+            )
         return self._scraper
 
     def fetch_html(self, race_id: str, bet_type: str) -> str:
@@ -311,4 +377,31 @@ class OddsSnapshotScraper:
         rows = parse_combo_odds_html(html, bet_type)
         if not rows and bet_type in (BetType.TANSHO, BetType.FUKUSHO):
             rows = parse_win_odds_html(html)
+        if not rows:
+            self._diagnose_empty(race_id, bet_type, html)
         return snapshots_from_rows(race_id, bet_type, rows, post_time, captured_at)
+
+    @staticmethod
+    def _diagnose_empty(race_id: str, bet_type: str, html: str) -> None:
+        """取得 0 件のとき、生 HTML を解析して原因の切り分け情報を出す。
+
+        KEIBA_ODDS_DEBUG=1 のときのみ動作（通常運用ではノイズを出さない）:
+        - 生 HTML に ``id="odds-"`` セルがあるのにパース 0 件 → パーサ/セレクタ問題。
+        - 無い + 「終了/提供前」等の文言 → ページが確定オッズを配信していない。
+        KEIBA_ODDS_DEBUG_DIR 指定時は HTML をファイルへダンプして目視確認できる。
+        """
+        if os.environ.get("KEIBA_ODDS_DEBUG") not in ("1", "true", "True"):
+            return
+        has_odds_id = 'id="odds-' in html
+        markers = [m for m in ("オッズ", "発売", "確定", "終了", "提供") if m in html]
+        logger.warning(
+            "[odds-debug] race=%s bet=%s 0件: html_len=%d odds_idセル=%s 文言=%s",
+            race_id, bet_type, len(html), has_odds_id, markers,
+        )
+        dump_dir = os.environ.get("KEIBA_ODDS_DEBUG_DIR")
+        if dump_dir:
+            os.makedirs(dump_dir, exist_ok=True)
+            path = os.path.join(dump_dir, f"{race_id}_{bet_type}.html")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(html)
+            logger.warning("[odds-debug] HTML をダンプ: %s", path)

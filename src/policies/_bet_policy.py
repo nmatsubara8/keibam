@@ -9,7 +9,9 @@ import pandas as pd
 from src.constants._bet_thresholds import RiskLimits
 from src.constants._bet_types import COMBO_SIZE
 from src.constants._bet_types import ORDERED
+from src.constants._bet_types import BetType
 from src.constants._results_cols import ResultsCols
+from src.policies import _bet_type_params as bet_type_params
 from src.policies import _harville as harville
 from src.policies._bet_candidate import BetCandidate
 from src.policies._odds_provider import AbstractOddsProvider
@@ -176,22 +178,78 @@ class ExpectedValueBetPolicy:
         bet_types=None,
         risk_limits: RiskLimits = _DEFAULT_RISK_LIMITS,
         ev_max: float = float("inf"),
+        bet_type_params=None,
+        direct_place_prob: bool = True,
+        place_exponents=None,
+        win_calibrator=None,
+        blend_weights=None,
+        unratable_fallback: bool = False,
     ) -> None:
         self._odds_provider = odds_provider
         self._thresholds = thresholds
         self._bet_types = list(bet_types) if bet_types is not None else list(thresholds.keys())
         self._risk = risk_limits
         self._ev_max = ev_max
+        # ベンター/芦谷スレッドの opt-in 配線（いずれも None で従来挙動を完全保持）:
+        # - place_exponents: 連系の順序確率を Benter べき乗補正 Harville で算出（§_harville）
+        # - win_calibrator: 勝率 r̂ をレース内 isotonic 較正（本命過小評価の是正・§_calibration）
+        # - blend_weights: モデル勝率と市場 implied を対数線形プール合成（ベンター2段目・§_blend）
+        self._place_exponents = place_exponents
+        self._win_calibrator = win_calibrator
+        self._blend_weights = blend_weights
+        # unratable（初出走・データ無し）馬に公衆 implied 勝率を割り当てる（ベンター §3）。
+        # True かつ select に unratable_by_race を渡したときのみ作動（初出走のみのレースは除外）。
+        self._unratable_fallback = unratable_fallback
+        # Stage A: 複勝はモデルの top3 出力（place_prob_table もしくは PROB 列）を
+        # **直接** 的中確率に使う（Harville 再導出しない）。Place ヘッドが top3 を
+        # 直接予測しているため、これが本来の複勝確率。False で従来の Harville 経路。
+        self._direct_place_prob = direct_place_prob
+        # 券種別最適化パラメータ（DI）。{券種: BetTypeParams}。指定券種は temperature /
+        # prob_scale / ev_threshold / ev_max を上書きする。未指定券種は従来挙動
+        # （thresholds[券種] と ev_max、温度・較正なし）を完全に保持する。
+        self._bet_type_params = dict(bet_type_params) if bet_type_params else {}
 
-    def select(self, prob_table: pd.DataFrame) -> list:
-        """較正勝率テーブルから BetCandidate のリストを返す。
+    def select(
+        self,
+        prob_table: pd.DataFrame,
+        place_prob_table: pd.DataFrame | None = None,
+        unratable_by_race: dict | None = None,
+    ) -> list:
+        """較正確率テーブルから BetCandidate のリストを返す。
 
         prob_table: race_id を index に持ち、列 [ResultsCols.UMABAN, "prob"] を含む DataFrame。
+            連系の Harville 計算に使う「勝率」相当（Stage B では Win ヘッド出力）。
+        place_prob_table: 複勝の top3 確率テーブル（同形式）。省略時は prob_table を流用
+            （Place ヘッド単独運用＝base モデルが top3 を出している前提）。
+        unratable_by_race: {race_id: {初出走の馬番...}}。unratable_fallback=True のとき、
+            該当馬を公衆 implied 勝率で置換する（初出走のみのレースは除外）。
         """
+        place_map = self._build_place_map(place_prob_table)
+        unr_map = unratable_by_race or {}
         candidates = []
         for race_id, race_df in prob_table.groupby(level=0):
-            candidates.extend(self._select_for_race(race_id, race_df))
+            candidates.extend(
+                self._select_for_race(
+                    race_id, race_df,
+                    place_probs=place_map.get(race_id),
+                    unratable=unr_map.get(race_id),
+                )
+            )
         return candidates
+
+    @staticmethod
+    def _build_place_map(place_prob_table: pd.DataFrame | None) -> dict:
+        """place_prob_table を {race_id: {馬番: top3確率}} に変換する（無ければ空）。"""
+        if place_prob_table is None or place_prob_table.empty:
+            return {}
+        out: dict = {}
+        for race_id, df in place_prob_table.groupby(level=0):
+            out[race_id] = {
+                u: float(p)
+                for u, p in zip(df[ResultsCols.UMABAN], df[PROB], strict=False)
+                if pd.notna(p) and p > 0
+            }
+        return out
 
     def judge(self, score_table: pd.DataFrame, **params) -> dict:
         """既存 BetPolicy* と同じ {race_id: {馬券種: [馬番...]}} 形式で返す。
@@ -210,13 +268,36 @@ class ExpectedValueBetPolicy:
                     umaban_list.append(umaban)
         return bet_dict
 
-    def _select_for_race(self, race_id, race_df: pd.DataFrame) -> list:
+    def _select_for_race(
+        self,
+        race_id,
+        race_df: pd.DataFrame,
+        place_probs: dict | None = None,
+        unratable: set | None = None,
+    ) -> list:
         # 確率の健全性ガード: NaN/<=0 は Harville 正規化を汚染するため win_probs から除外する
         win_probs = {
             u: float(p)
             for u, p in zip(race_df[ResultsCols.UMABAN], race_df[PROB], strict=False)
             if pd.notna(p) and p > 0
         }
+        # unratable（初出走）馬の公衆フォールバック（ベンター §3・opt-in）。較正/合成より先に
+        # 適用し、初出走馬はモデル勝率でなく公衆 implied 勝率に置換する。初出走のみのレースは
+        # モデルが全く効かないため除外する（候補なし）。
+        if self._unratable_fallback and unratable:
+            win_probs = self._apply_unratable_fallback(race_id, win_probs, unratable)
+            if not win_probs:
+                return []
+        # 複勝直接確率: place_prob_table 指定があればそれ、無ければ prob_table を流用
+        # （base モデルが top3 を予測している前提＝Stage A）。place_probs は較正/合成前の
+        # 元の win_probs を使う（複勝/ワイドは Place ヘッド系で、勝率較正の対象外）。
+        if place_probs is None:
+            place_probs = dict(win_probs)
+        # 勝率較正 → 市場合成（連系 Harville に渡す勝率を整える。いずれも opt-in）。
+        if self._win_calibrator is not None:
+            win_probs = self._apply_calibration(win_probs)
+        if self._blend_weights is not None:
+            win_probs = self._apply_blend(race_id, win_probs)
         # 低確率帯のノイズを足切り（KB 7.3）
         eligible = [u for u, p in win_probs.items() if p >= self._risk.MIN_WIN_PROB]
 
@@ -226,16 +307,42 @@ class ExpectedValueBetPolicy:
             if len(eligible) < size:
                 continue
             generator = permutations if bet_type in ORDERED else combinations
-            threshold = self._thresholds[bet_type]
+            # 券種別パラメータがあれば EV 閾値・上限・温度・較正を上書きする。
+            bt_params = self._bet_type_params.get(bet_type)
+            if bt_params is not None:
+                threshold = bt_params.ev_threshold
+                ev_max = bt_params.ev_max
+                bt_win_probs = bet_type_params.apply_temperature(win_probs, bt_params.temperature)
+                prob_scale = bt_params.prob_scale
+            else:
+                threshold = self._thresholds[bet_type]
+                ev_max = self._ev_max
+                bt_win_probs = win_probs
+                prob_scale = 1.0
             for combo in generator(eligible, size):
-                prob = harville.combo_probability(bet_type, win_probs, combo)
+                if self._direct_place_prob and bet_type == BetType.FUKUSHO:
+                    # Stage A: 複勝はモデルの top3 出力を直接使う（Harville 再導出しない）
+                    base_p = place_probs.get(combo[0])
+                    if base_p is None or base_p <= 0:
+                        continue
+                    prob = base_p * prob_scale
+                elif self._direct_place_prob and bet_type == BetType.WIDE:
+                    # ワイドは Place の top3 marginal から固定サイズ近似で joint を作る
+                    pw = harville.prob_wide_from_place(place_probs, combo[0], combo[1])
+                    if pw <= 0:
+                        continue
+                    prob = pw * prob_scale
+                else:
+                    prob = harville.combo_probability(
+                        bet_type, bt_win_probs, combo, self._place_exponents
+                    ) * prob_scale
                 odds = self._odds_provider.get_odds(race_id, bet_type, combo)
                 # オッズ健全性ガード: NaN / <=0 / inf の異常オッズは EV 計算せずスキップ
                 if not (math.isfinite(odds) and odds > 0):
                     continue
                 ev = prob * odds
                 # 期待値が閾値超〜上限以内のもののみ採用（上限で超高倍率を除外。§7）
-                if threshold < ev <= self._ev_max:
+                if threshold < ev <= ev_max:
                     race_candidates.append(
                         BetCandidate(
                             race_id=race_id,
@@ -249,3 +356,47 @@ class ExpectedValueBetPolicy:
         # リスク管理: 1レースの投票枚数を上限未満に。期待値上位を採用（KB 7.3）。
         race_candidates.sort(key=lambda c: c.expected_value, reverse=True)
         return race_candidates[: self._risk.MAX_TICKETS_PER_RACE]
+
+    def _apply_unratable_fallback(self, race_id, win_probs: dict, unratable: set) -> dict:
+        """初出走馬を公衆 implied 勝率で置換する。初出走のみのレースは空 dict（除外）。"""
+        from src.policies._unratable import is_unratable_only, public_fallback
+
+        if is_unratable_only(win_probs.keys(), unratable):
+            return {}
+        public: dict = {}
+        for u in win_probs:
+            o = self._odds_provider.get_odds(race_id, BetType.TANSHO, (u,))
+            if math.isfinite(o) and o > 0:
+                public[u] = 1.0 / o
+        if not public:
+            return win_probs  # 公衆オッズが無ければ置換できない（モデル勝率を維持）
+        return public_fallback(win_probs, public, unratable)
+
+    def _apply_calibration(self, win_probs: dict) -> dict:
+        """勝率を isotonic 較正してレース内で Σ=1 に再正規化する（本命過小評価の是正）。"""
+        umabans = list(win_probs.keys())
+        if not umabans:
+            return win_probs
+        cal = self._win_calibrator.predict([win_probs[u] for u in umabans])
+        total = float(sum(cal))
+        if total <= 0:
+            return win_probs
+        return {u: float(c) / total for u, c in zip(umabans, cal, strict=False)}
+
+    def _apply_blend(self, race_id, win_probs: dict) -> dict:
+        """モデル勝率と市場 implied 勝率（単勝オッズ由来）を対数線形プール合成する。"""
+        from src.policies._blend import combine_logpool
+
+        public: dict = {}
+        for u in win_probs:
+            o = self._odds_provider.get_odds(race_id, BetType.TANSHO, (u,))
+            if math.isfinite(o) and o > 0:
+                public[u] = 1.0 / o
+        total = float(sum(public.values()))
+        if total <= 0:
+            return win_probs  # 市場オッズが無ければ合成しない
+        public = {u: p / total for u, p in public.items()}
+        blended = combine_logpool(
+            win_probs, public, self._blend_weights.alpha, self._blend_weights.beta
+        )
+        return blended or win_probs

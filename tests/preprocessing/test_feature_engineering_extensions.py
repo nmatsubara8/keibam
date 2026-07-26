@@ -103,6 +103,98 @@ class TestFeatureEngineeringInteraction:
 
 
 # ──────────────────────────────────────────
+# §2m(Batch A): add_derived_features
+# ──────────────────────────────────────────
+
+class TestAddDerivedFeatures:
+    def test_cols_added(self):
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        for c in ("単勝_log", "kinryo_per_weight", "is_layoff", "is_back_to_back"):
+            assert c in df.columns
+
+    def test_log_odds_value(self):
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        assert df["単勝_log"].iloc[0] == pytest.approx(np.log1p(2.5))
+
+    def test_kinryo_per_weight_value(self):
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        assert df["kinryo_per_weight"].iloc[0] == pytest.approx(56.0 / 450.0)
+
+    def test_layoff_flag(self):
+        # interval=[30,60,20,45] → is_layoff(>=56)=[0,1,0,0]
+        fe = _make_fe(_base_df())
+        fe.add_derived_features()
+        df = fe.featured_data
+        assert df["is_layoff"].tolist() == [0.0, 1.0, 0.0, 0.0]
+
+    def test_returns_self_for_chaining(self):
+        fe = _make_fe(_base_df())
+        assert fe.add_derived_features() is fe
+
+
+# ──────────────────────────────────────────
+# 開催日の周期性: add_date_cyclical
+# ──────────────────────────────────────────
+
+class TestAddDateCyclical:
+    def test_cols_added(self):
+        fe = _make_fe(_base_df())
+        fe.add_date_cyclical()
+        df = fe.featured_data
+        assert "sin_date" in df.columns
+        assert "cos_date" in df.columns
+
+    def test_values_match_formula(self):
+        fe = _make_fe(_base_df())
+        fe.add_date_cyclical()
+        df = fe.featured_data
+        # 2023-01-01 は年内通日 1
+        angle = 2 * np.pi * 1 / 365.25
+        assert df["sin_date"].iloc[0] == pytest.approx(np.sin(angle) + 1)
+        assert df["cos_date"].iloc[0] == pytest.approx(np.cos(angle) + 1)
+
+    def test_shifted_into_non_negative_range(self):
+        fe = _make_fe(_base_df())
+        fe.add_date_cyclical()
+        df = fe.featured_data
+        for c in ("sin_date", "cos_date"):
+            assert (df[c] >= 0).all()
+            assert (df[c] <= 2).all()
+
+    def test_leap_year_uses_365_25(self):
+        # うるう年 2024-12-31 は dayofyear=366。365.25 正規化で角度 > 2π になる。
+        df = _base_df()
+        df["date"] = pd.to_datetime(["2024-12-31"] * 4)
+        fe = _make_fe(df)
+        fe.add_date_cyclical()
+        angle = 2 * np.pi * 366 / 365.25
+        assert fe.featured_data["sin_date"].iloc[0] == pytest.approx(np.sin(angle) + 1)
+
+    def test_missing_date_column_is_noop(self):
+        df = _base_df().drop(columns=["date"])
+        fe = _make_fe(df)
+        assert fe.add_date_cyclical() is fe
+        assert "sin_date" not in fe.featured_data.columns
+
+    def test_nat_date_becomes_nan(self):
+        df = _base_df()
+        df["date"] = pd.NaT
+        fe = _make_fe(df)
+        fe.add_date_cyclical()
+        assert fe.featured_data["sin_date"].isna().all()
+
+    def test_returns_self_for_chaining(self):
+        fe = _make_fe(_base_df())
+        assert fe.add_date_cyclical() is fe
+
+
+# ──────────────────────────────────────────
 # §2g: add_race_level_zscore via FeatureEngineering
 # ──────────────────────────────────────────
 

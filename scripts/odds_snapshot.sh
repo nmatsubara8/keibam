@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # odds_snapshot.sh — 時系列オッズの自動取得・予測自動再計算（cron 定期ジョブ）
 #
-# odds_watch がチェックポイント（発走 30/10/5/1 分前 ±1.5 分）に入ったレースだけ
+# odds_watch が発走30分前〜実締切（+10分猶予/確定検知）に入ったレースだけ
 # オッズを取得し、取得のたびにオッズ力学モデルで「次時点」「発走時（確定）」の
 # 予測を再計算して保存する。チェックポイント外の起動は対象 0 件で即終了（安価）。
 #
-# crontab 例（開催日の 9〜16 時に 2 分間隔）:
-#   */2 9-16 * * 6,0 /path/to/keibam/scripts/odds_snapshot.sh >> /path/to/keibam/logs/cron.log 2>&1
+# crontab 例（開催日の 9〜16 時に 3 分間隔＝発走30分前から3分おき）:
+#   */3 9-16 * * 6,0 /path/to/keibam/scripts/odds_snapshot.sh >> /path/to/keibam/logs/cron.log 2>&1
 #
 # 開催が無い日は取得対象 0 件として即終了する（エラーにならない）。
 

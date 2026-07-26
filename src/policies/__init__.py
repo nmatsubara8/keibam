@@ -20,8 +20,38 @@ from src.policies._bet_policy import (
     BetPolicyUmatanNagashi,
     ExpectedValueBetPolicy,
 )
+from src.policies._bold_play import (
+    BoldPlayDesign,
+    bet_to_target_stake,
+    parlay_reach_prob,
+    single_shot_reach_prob,
+)
+from src.policies._loss_minimization import (
+    GateResult,
+    LossMinimizationConfig,
+    LossMinimizingPolicy,
+    calibrated_takeout_fn,
+    evaluate_candidate,
+    expected_loss,
+    filter_candidates,
+    load_effective_takeout_fn,
+    turnover_cap_for_loss_budget,
+)
 
 __all__ = [
+    "LossMinimizationConfig",
+    "LossMinimizingPolicy",
+    "GateResult",
+    "evaluate_candidate",
+    "filter_candidates",
+    "expected_loss",
+    "turnover_cap_for_loss_budget",
+    "calibrated_takeout_fn",
+    "load_effective_takeout_fn",
+    "BoldPlayDesign",
+    "single_shot_reach_prob",
+    "parlay_reach_prob",
+    "bet_to_target_stake",
     "AbstractScorePolicy",
     "BasicScorePolicy",
     "StdScorePolicy",

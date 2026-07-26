@@ -8,7 +8,9 @@ import pytest
 from src.constants._bet_types import BetType
 from src.constants._odds_phases import OddsPhase
 from src.preparing._odds_snapshot import OddsSnapshot
+from src.policies import _arbitrage as _arb
 from src.training._odds_feature_builder import build_training_frame
+from src.training._odds_feature_builder import recover_pools_by_phase
 from src.training._odds_feature_builder import snapshots_to_phase_table
 from src.training._odds_feature_builder import train_odds_predictor
 
@@ -145,3 +147,62 @@ class TestTrainOddsPredictor:
         cur_sum = (1.0 / features.loc[race, "current_odds"]).sum()
         pred_sum = (1.0 / pred.loc[race]).sum()
         assert pred_sum == pytest.approx(cur_sum, rel=1e-6)
+
+
+# ──────────────────────────────────────────
+# プール逆算（V_t 復元）の配線（芦谷 2012）
+# ──────────────────────────────────────────
+
+def _trifecta_snaps(race_id, phase, pool_S, counts, minutes):
+    """既知の総売上 S と {combo: 売上枚数} から三連単スナップショット群を作る。"""
+    snaps = []
+    for combo, s in counts.items():
+        odds = _arb.odds_of(pool_S, s, truncate=False)
+        snaps.append(_snap(race_id, list(combo), odds, phase, minutes,
+                           bet_type=BetType.SANRENTAN))
+    return snaps
+
+
+class TestRecoverPoolsByPhase:
+    def _counts(self):
+        return {(1, 2, 3): 50, (1, 3, 2): 30, (2, 1, 3): 20, (3, 2, 1): 8, (2, 3, 1): 13}
+
+    def test_recovers_pool_per_phase(self):
+        c = self._counts()
+        snaps = (
+            _trifecta_snaps("r1", OddsPhase.THIRTY_MIN, 10000, c, 30)
+            + _trifecta_snaps("r1", OddsPhase.T0, 14000, c, 1)
+        )
+        pools = recover_pools_by_phase(snaps, BetType.SANRENTAN)
+        assert pools[("r1", OddsPhase.THIRTY_MIN)] == 10000
+        assert pools[("r1", OddsPhase.T0)] == 14000
+
+    def test_ignores_other_bet_types_and_singletons(self):
+        # 単一組合せのみ・他券種は逆算しない
+        snaps = [_snap("r1", [1], 3.0, OddsPhase.THIRTY_MIN, bet_type=BetType.TANSHO)]
+        assert recover_pools_by_phase(snaps, BetType.SANRENTAN) == {}
+
+
+class TestBuildFrameWithPool:
+    def test_pool_features_added_when_enabled(self):
+        c = {(1, 2, 3): 50, (1, 3, 2): 30, (2, 1, 3): 20, (3, 2, 1): 8, (2, 3, 1): 13}
+        # 三連単で 30分前=10000 → T0=14000 にプール成長。current_phase=THIRTY_MIN
+        snaps = (
+            _trifecta_snaps("r1", OddsPhase.PREV_DAY, 5000, c, 1200)
+            + _trifecta_snaps("r1", OddsPhase.THIRTY_MIN, 10000, c, 30)
+            + _trifecta_snaps("r1", OddsPhase.T0, 14000, c, 1)
+        )
+        features, _, feature_cols = build_training_frame(
+            snaps, bet_type=BetType.SANRENTAN, include_pool=True
+        )
+        assert "pool_current" in feature_cols
+        assert f"pool_log_ratio_{OddsPhase.PREV_DAY}" in feature_cols
+        row = features.iloc[0]
+        assert row["pool_current"] == 10000
+        # 5000 → 10000 の成長 = log(10000/5000) = log 2
+        assert row[f"pool_log_ratio_{OddsPhase.PREV_DAY}"] == pytest.approx(np.log(2.0))
+
+    def test_no_pool_features_by_default(self):
+        snaps = _race_series("r1", 1, 4.0, 3.5, 3.0, 2.5)
+        _, _, feature_cols = build_training_frame(snaps)
+        assert not any(c.startswith("pool_") for c in feature_cols)

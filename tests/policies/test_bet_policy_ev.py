@@ -75,6 +75,80 @@ def test_multiple_races():
     assert race_ids == {"r1", "r2"}
 
 
+# ──────────────────────────────────────────
+# Stage A: 複勝はモデルの top3 出力を直接使う
+# ──────────────────────────────────────────
+
+class TestDirectPlaceProb:
+    def test_fukusho_uses_model_prob_directly(self):
+        # モデル top3 出力 0.4 をそのまま的中確率に。odds=3 → EV=1.2
+        table = _prob_table("r1", [(1, 0.4), (2, 0.4), (3, 0.4)])
+        policy = ExpectedValueBetPolicy(
+            _FixedOddsProvider(3.0), thresholds={BetType.FUKUSHO: 1.0}
+        )
+        selected = policy.select(table)
+        c1 = next(c for c in selected if c.combo == (1,))
+        assert c1.probability == pytest.approx(0.4)
+        assert c1.expected_value == pytest.approx(1.2)
+
+    def test_direct_differs_from_harville(self):
+        # direct=False（従来 Harville 経路）では複勝確率が正規化勝率由来になり
+        # 直接出力 0.4 と一致しない（再導出されている）ことを示す。
+        table = _prob_table("r1", [(1, 0.4), (2, 0.3), (3, 0.3)])
+        direct = ExpectedValueBetPolicy(
+            _FixedOddsProvider(3.0), thresholds={BetType.FUKUSHO: 0.0},
+            direct_place_prob=True,
+        ).select(table)
+        harv = ExpectedValueBetPolicy(
+            _FixedOddsProvider(3.0), thresholds={BetType.FUKUSHO: 0.0},
+            direct_place_prob=False,
+        ).select(table)
+        p_direct = next(c for c in direct if c.combo == (1,)).probability
+        p_harv = next(c for c in harv if c.combo == (1,)).probability
+        assert p_direct == pytest.approx(0.4)
+        assert p_harv != pytest.approx(0.4)
+
+    def test_wide_uses_place_based_joint(self):
+        # ワイドは Place marginal から Hájek 近似で joint を作る（独立積でも Harville でもない）
+        from src.policies import _harville as harville
+
+        table = _prob_table("r1", [(1, 0.8), (2, 0.7), (3, 0.6), (4, 0.4)])
+        policy = ExpectedValueBetPolicy(
+            _FixedOddsProvider(2.0), thresholds={BetType.WIDE: 0.0}
+        )
+        selected = policy.select(table)
+        c12 = next(c for c in selected if set(c.combo) == {1, 2})
+        place_map = {1: 0.8, 2: 0.7, 3: 0.6, 4: 0.4}
+        expected = harville.prob_wide_from_place(place_map, 1, 2)
+        assert c12.probability == pytest.approx(expected)
+
+    def test_wide_disabled_falls_back_to_harville(self):
+        from src.policies import _harville as harville
+
+        table = _prob_table("r1", [(1, 0.8), (2, 0.7), (3, 0.6), (4, 0.4)])
+        policy = ExpectedValueBetPolicy(
+            _FixedOddsProvider(2.0), thresholds={BetType.WIDE: 0.0},
+            direct_place_prob=False,
+        )
+        selected = policy.select(table)
+        c12 = next(c for c in selected if set(c.combo) == {1, 2})
+        win_probs = {1: 0.8, 2: 0.7, 3: 0.6, 4: 0.4}
+        expected = harville.prob_wide(win_probs, 1, 2)
+        assert c12.probability == pytest.approx(expected)
+
+    def test_separate_place_table_used_for_fukusho(self):
+        # prob_table（Win ヘッド相当）と place_prob_table（Place ヘッド）を分離。
+        # 複勝は place 側 0.55 を使い、win 側 0.2 は使わない。
+        win_table = _prob_table("r1", [(1, 0.2), (2, 0.2), (3, 0.2)])
+        place_table = _prob_table("r1", [(1, 0.55), (2, 0.5), (3, 0.5)])
+        policy = ExpectedValueBetPolicy(
+            _FixedOddsProvider(2.0), thresholds={BetType.FUKUSHO: 0.0}
+        )
+        selected = policy.select(win_table, place_prob_table=place_table)
+        c1 = next(c for c in selected if c.combo == (1,))
+        assert c1.probability == pytest.approx(0.55)
+
+
 def test_ev_max_excludes_super_high_ev():
     # odds=100, prob=0.5 -> EV=50 をオーバーする ev_max=10 で除外
     table = _prob_table("r1", [(1, 0.5), (2, 0.5)])

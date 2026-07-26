@@ -42,11 +42,28 @@ class ResultsProcessor(AbstractDataProcessor):
         df[Cols.UMABAN] = pd.to_numeric(df[Cols.UMABAN], errors="coerce").astype("Int64")
 
         # 6/6出走数追加
-        df["n_horses"] = df.index.map(df.index.value_counts())
+        df = self._add_n_horses(df)
 
         # カラム抽出
         df = self._select_columns(df)
 
+        return df
+
+    def _add_n_horses(self, raw):
+        """出走頭数 n_horses を「同一 race_id の実出走数」で付与する。
+
+        旧実装 ``df.index.map(df.index.value_counts())`` は生 pickle が
+        RangeIndex（race_id は通常列）の形状だと各行 index が一意になり、
+        n_horses が全馬 1 に縮退した。この縮退列は featured_data 本流の
+        _rel_rank（着順/頭数）を壊す。race_id を明示的に取り出し groupby
+        サイズで実頭数を数える（_horse_features.py の頭数算出と同規約）。
+        """
+        df = raw.copy()
+        if "race_id" in df.columns:
+            race_ids = df["race_id"]
+        else:  # race_id がインデックス側（processor 往復後の pickle 等）
+            race_ids = df.index.to_series()
+        df["n_horses"] = race_ids.groupby(race_ids).transform("size").to_numpy()
         return df
 
     def _preprocess_rank(self, raw):
@@ -61,6 +78,9 @@ class ResultsProcessor(AbstractDataProcessor):
         df.dropna(subset=[Cols.RANK], inplace=True)
         df[Cols.RANK] = df[Cols.RANK].astype(int)
         df["rank"] = df[Cols.RANK].map(lambda x: 1 if x < 4 else 0)
+        # Win ヘッド用の第二ラベル（1着=1）。Place ヘッド(rank=top3) と別目的変数。
+        # 学習入力からは rank と同様に必ず除外する（_DROP_FOR_TRAIN / _DROP_FOR_PREDICT）。
+        df["rank_win"] = df[Cols.RANK].map(lambda x: 1 if x == 1 else 0)
         return df
 
     def _select_columns(self, raw):
@@ -71,33 +91,29 @@ class ResultsProcessor(AbstractDataProcessor):
         # race_id がインデックスにあり列にない場合（pickle 再保存後の状態）は列に復元する
         if "race_id" not in df.columns and df.index.name == "race_id":
             df = df.reset_index()
-        df = df[
-            [
-                "race_id",
-                Cols.RANK,  # 着順 (actual finishing position; used for jockey/trainer/sire stats)
-                Cols.WAKUBAN,  # 枠番
-                Cols.UMABAN,  # 馬番
-                # Cols.HORSE_NAME, # 馬名
-                # Cols.SEX_AGE, # 性齢
-                Cols.KINRYO,  # 斤量
-                # Cols.JOCKEY, # 騎手
-                # Cols.TIME # タイム
-                # Cols.RANK_DIFF # 着差
-                Cols.TANSHO_ODDS,  # 単勝
-                # Cols.POPULARITY, # 人気
-                # Cols.WEIGHT_AND_DIFF, # 馬体重
-                # Cols.TRAINER, # 調教師
-                "horse_id",
-                "jockey_id",
-                "trainer_id",
-                "owner_id",
-                "性",
-                "年齢",
-                "体重",
-                "体重変化",
-                "n_horses",
-                "rank",
-            ]
+        cols = [
+            "race_id",
+            Cols.RANK,  # 着順 (actual finishing position; used for jockey/trainer/sire stats)
+            Cols.WAKUBAN,  # 枠番
+            Cols.UMABAN,  # 馬番
+            Cols.KINRYO,  # 斤量
+            Cols.TANSHO_ODDS,  # 単勝
+            "horse_id",
+            "jockey_id",
+            "trainer_id",
+            "owner_id",
+            "性",
+            "年齢",
+            "体重",
+            "体重変化",
+            "n_horses",
+            "rank",
+            "rank_win",
         ]
+        # 通過（コーナー順）はアーカイブ取込 results に有り、脚質(leg_type)算出の入力になる。
+        # 旧スクレイプ data に無い場合もあるため、存在するときだけ保持する（欠落で KeyError しない）。
+        if "通過" in df.columns:
+            cols.append("通過")
+        df = df[cols]
         df.set_index("race_id", inplace=True)
         return df

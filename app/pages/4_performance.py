@@ -251,6 +251,43 @@ max_daily_ratio: {op_config.max_daily_ratio}
         " `operation_mode` を `full_auto` にする場合は規約・法的リスクを確認してください。"
     )
 
+    # ── データ取得元の選択 ───────────────────────────────────────────
+    st.divider()
+    st.subheader("データ取得元（データソース）")
+    st.caption(
+        "ingest が結果/情報/払戻/馬/血統を取得する元を選びます。netkeiba（スクレイピング）が既定。"
+        " JRA-VAN 等は Windows エージェントが `data/incoming/jravan/<種別>/<id>.json` に置いた"
+        " ファイルを受信します（JV-Link は Windows 専用 COM のため）。"
+    )
+    from src.preparing._data_source import (  # noqa: E402
+        DATA_SOURCE_LABELS,
+        available_data_sources,
+        load_selected_source,
+        save_selected_source,
+    )
+
+    _sources = available_data_sources()
+    _current = load_selected_source()
+    sel_source = st.selectbox(
+        "データソース",
+        _sources,
+        index=_sources.index(_current) if _current in _sources else 0,
+        format_func=lambda s: DATA_SOURCE_LABELS.get(s, s),
+        key="data_source_select",
+    )
+    if st.button("💾 データソースを保存", key="save_data_source"):
+        save_selected_source(sel_source)
+        st.success(
+            f"データソースを `{sel_source}` に設定しました。"
+            f" 以降の `ingest`（--source 未指定時）はこのソースを使います。"
+        )
+    if sel_source == "jravan":
+        st.info(
+            "JRA-VAN 受信ディレクトリ: `data/incoming/jravan/`（results/race_info/return/"
+            "horse_results/horse_info/peds 配下に `<id>.json` を pandas split 形式で配置）。"
+            " Windows 側エージェント（JV-Link 購読 → JSON 出力）は別途必要です。"
+        )
+
     st.divider()
     st.subheader("継続学習ジョブ実行")
     st.caption("以下のコマンドを VPS の cron に登録してください。")

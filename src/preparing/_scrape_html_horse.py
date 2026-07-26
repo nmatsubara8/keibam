@@ -43,10 +43,14 @@ def scrape_html_horse_with_master(horse_id_list, skip: bool = True):
         existing = {p.stem for p in save_dir.glob("*.bin")}
         to_scrape_ids = [h for h in ids if h not in existing]
         if not to_scrape_ids:
-            logger.info("scrape_html_horse: 全 horse_id 取得済みのためスキップ (%d 件)", len(ids))
+            logger.info(
+                "scrape_html_horse: 全 horse_id 取得済みのためスキップ (%d 件)"
+                "（ネット非アクセス）", len(ids),
+            )
             return sorted(save_dir.glob("*.bin"))
         logger.info(
-            "scrape_html_horse: %d 件中 %d 件取得済み → %d 件をダウンロード",
+            "🌐 scrape_html_horse: %d 件中 %d 件取得済み → %d 件を netkeiba から"
+            "ダウンロード（ポライトネス制御あり）",
             len(ids), len(ids) - len(to_scrape_ids), len(to_scrape_ids),
         )
     else:

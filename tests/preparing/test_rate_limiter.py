@@ -37,24 +37,26 @@ class TestPoliteInterval:
         assert polite_interval(-1) == 0.0
 
     def test_floors_base_to_min_interval(self):
-        # 1 秒未満の正の値は netkeiba 自主規制の最低 1 秒に切上げる
+        # 最低インターバル（4 秒）未満の正の値は切上げる
         v = polite_interval(0.2, jitter_max=0)
         assert v == MIN_INTERVAL_SEC
 
     def test_jitter_within_range(self):
-        # 既定 jitter（2.0）で合計 1〜3 秒程度になる
+        # 既定 jitter（2.0）で合計 4〜6 秒程度になる
         for _ in range(50):
             v = polite_interval(1.0, jitter_max=2.0)
             assert MIN_INTERVAL_SEC <= v <= MIN_INTERVAL_SEC + 2.0
 
     def test_jitter_uses_injected_rng(self):
+        # base 1.0 は MIN_INTERVAL_SEC(4.0) に切上げ + 揺らぎ 1.5 = 5.5
         v = polite_interval(1.0, jitter_max=2.0, rng=lambda a, b: 1.5)
-        assert v == 2.5
+        assert v == MIN_INTERVAL_SEC + 1.5
 
     def test_env_defaults(self, monkeypatch):
-        monkeypatch.setenv("KEIBA_SCRAPE_DELAY", "1.4")
+        # 4 秒以上の指定はそのまま基準値として使われる（切上げ対象外）
+        monkeypatch.setenv("KEIBA_SCRAPE_DELAY", "5.0")
         monkeypatch.setenv("KEIBA_SCRAPE_JITTER_MAX", "0")
-        assert polite_interval() == 1.4
+        assert polite_interval() == 5.0
 
     def test_env_zero_disables(self, monkeypatch):
         monkeypatch.setenv("KEIBA_SCRAPE_DELAY", "0")

@@ -12,16 +12,21 @@ from ._odds_phases import OddsPhase
 # チェックポイント（タイマー取得の対象時点）
 # ---------------------------------------------------------------------------
 
-# 発走前のオッズ取得チェックポイント（分前）と対応フェーズ。
-# odds_watch はこの時点 ±CHECKPOINT_TOLERANCE_MIN に入ったレースだけを取得する。
-CHECKPOINT_MINUTES = {
-    OddsPhase.THIRTY_MIN: 30,
-    OddsPhase.T10: 10,
-    OddsPhase.T5: 5,
-    OddsPhase.T0: 1,
-}
+# オッズ取得スケジュール（odds_watch / select_checkpoint_races が使用）。
+# 「発走 DENSE_WINDOW_MIN 分前から、起動間隔ごとに毎ティック取得」する密取得を基本とする
+# （実際の取得間隔は cron/--interval に一致。3分おきにしたいなら cron */3 / --interval 180）。
+#   - DENSE_WINDOW_MIN: 発走 N 分前以内は毎ティック取得（既定 30 = 30分前から）。
+#   - SPARSE_CHECKPOINT_MINUTES: それ以前にも取りたい早期基準点（既定は無効＝空）。必要なら (60,) 等。
+#   - POST_GRACE_MIN: 予定/実発走を過ぎても +N 分まで取得を継続（実締切の安全弁）。発走時刻が
+#       公式に遅延（発走時刻変更）した場合は毎ティックの再取得で post が追従するため mtp も追従し、
+#       grace は「公式変更されない数分の輪乗り遅れ」を吸収する小さめの値で足りる。
+# フェーズ分類（オッズ力学モデル用）は classify_phase が minutes_to_post から独立に行うため、
+# この取得スケジュールの変更はモデルのフェーズ構造（thirty_min/t10/t5/t0）に影響しない。
+SPARSE_CHECKPOINT_MINUTES: tuple[int, ...] = ()
+DENSE_WINDOW_MIN = 30
+POST_GRACE_MIN = 10
 
-# チェックポイント許容幅（分）。cron/ループの実行間隔より広くとる。
+# 早期チェックポイントの許容幅（分）。cron/ループの実行間隔より広くとる。
 CHECKPOINT_TOLERANCE_MIN = 1.5
 
 # ---------------------------------------------------------------------------

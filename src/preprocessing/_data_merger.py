@@ -9,19 +9,22 @@
 
 import logging
 import sys
+from typing import ClassVar
+from typing import Optional
 
 import pandas as pd
 from tqdm.auto import tqdm
 
 from src.constants._feature_cols import (
-    AGG_STATS,
     JOCKEY_RECENT_N,
     N_RACES_LIST,
-    PACE_CATEGORY_MAP,
-    PACE_RECENT_N,
-    SIRE_RECENT_YEARS,
 )
-from src.constants._horse_results_cols import HorseResultsCols as HRCols
+from src.preprocessing import _course_guide as _cg
+from src.preprocessing import _course_shape as _cs
+from src.preprocessing import _horse_features as _hf
+from src.preprocessing import _pedigree_features as _pf
+from src.constants._results_cols import ResultsCols
+from src.preprocessing import _yoso_features as _yf
 from src.preprocessing._data_cleaner import convert_column_types
 from src.preprocessing._data_cleaner import dict_selector
 from src.preprocessing._horse_info_processor import HorseInfoProcessor
@@ -45,13 +48,43 @@ class DataMerger:
         peds_processor: PedsProcessor,
         target_cols: list,
         group_cols: list,
+        training_df: Optional[pd.DataFrame] = None,
+        paddock_df: Optional[pd.DataFrame] = None,
+        comment_df: Optional[pd.DataFrame] = None,
+        yoso_marks_df: Optional[pd.DataFrame] = None,
+        person_yearly_df: Optional[pd.DataFrame] = None,
+        yoso_predictor_df: Optional[pd.DataFrame] = None,
+        odds_signals_df: Optional[pd.DataFrame] = None,
+        rating_df: Optional[pd.DataFrame] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
         self._horse_results = horse_results_processor.preprocessed_data
         self._horse_info = horse_info_processor.preprocessed_data.drop(["owner_id"], axis=1)
         self._peds = peds_processor.preprocessed_data
+        # レース当日ノート（(race_id, 馬番) 属性）。未提供なら空＝マージは no-op。
+        self._training = training_df if training_df is not None else pd.DataFrame()
+        self._paddock = paddock_df if paddock_df is not None else pd.DataFrame()
+        self._comment = comment_df if comment_df is not None else pd.DataFrame()
+        # 予想印ロング（race_id×馬番×予想家）。未提供なら空＝マージは no-op。
+        self._yoso_marks = yoso_marks_df if yoso_marks_df is not None else pd.DataFrame()
+        # 人物の年度別成績（entity_id×year）。未提供なら空＝マージは no-op。
+        self._person_yearly = person_yearly_df if person_yearly_df is not None else pd.DataFrame()
+        # 予想家スキル prior（predictor_yid×1行）。未提供なら空＝マージは no-op。
+        self._yoso_predictor = yoso_predictor_df if yoso_predictor_df is not None else pd.DataFrame()
+        # 市場歪み特徴（(race_id, 馬番) × overlay 群）。未提供なら空＝マージは no-op。
+        self._odds_signals = odds_signals_df if odds_signals_df is not None else pd.DataFrame()
+        # Elo レーティング特徴（(race_id, 馬番) × ELO_FEATURE_COLS）。未提供なら空＝マージは no-op。
+        self._ratings = rating_df if rating_df is not None else pd.DataFrame()
+        # コース形状マスタ（JRA 公式スクレイプ・place×race_type で静的結合）。未生成なら空表。
+        from src.constants._local_paths import LocalPaths
+        self._course_shape = _cs.load_course_master(LocalPaths.COURSE_MASTER_PATH)
+        # 距離別コースガイド（書籍/ガイド由来・place×race_type×距離で静的結合）。未生成なら空表。
+        self._course_guide = _cg.load_course_guide_master(LocalPaths.COURSE_GUIDE_MASTER_PATH)
         self._target_cols = target_cols
+        # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
+        # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
+        self._group_target_cols = ["着順"] if "着順" in target_cols else target_cols
         self._group_cols = group_cols
         self._merged_data = pd.DataFrame()
         self._separated_results_dict: dict = {}
@@ -59,19 +92,66 @@ class DataMerger:
         self._separated_hr_with_sire_dict: dict = {}
 
     def merge(self):
-        self._merge_race_info()
-        logger.debug("merge_infos\n%s", self._results.sort_values(by="race_id").head().T)
-
-        self._merge_horse_results()
-        logger.debug("merge_horse\n%s", self._merged_data.sort_values(by="horse_id").head().T)
-
-        self._merge_horse_info()
-        logger.debug("merge_horse_info\n%s", self._merged_data.sort_values(by="horse_id").head().T)
-
-        self._merge_peds()
         import os as _os
-        _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
-        self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+        import time as _time
+
+        def _step(name: str, fn) -> None:
+            t0 = _time.perf_counter()
+            fn()
+            logger.info("[merge] %s: %.1fs", name, _time.perf_counter() - t0)
+
+        self._normalize_join_keys()
+        _step("race_info", self._merge_race_info)
+        _step("course_shape", self._merge_course_shape)
+        _step("course_guide", self._merge_course_guide)
+        _step("race_day_notes", self._merge_race_day_notes)
+        _step("yoso_marks", self._merge_yoso_marks)
+        _step("yoso_skill", self._add_yoso_predictor_skill)
+        _step("yoso_profile", self._add_yoso_profile_skill)
+        _step("odds_signals", self._merge_odds_signals)
+        _step("horse_ratings", self._merge_horse_ratings)
+        _step("person_yearly", self._merge_person_yearly)
+        _step("person_te", self._merge_person_target_encoding)
+        _step("context_te", self._merge_context_target_encoding)
+        _step("entity_te", self._merge_entity_target_encoding)
+        _step("horse_results", self._merge_horse_results)
+        _step("horse_info", self._merge_horse_info)
+        _step("peds", self._merge_peds)
+        _step("serve_history", self._write_serve_history)
+
+        # 旧実装にあった巨大データ(数十万行)の debug CSV ダンプは to_csv だけで数分かかる
+        # ため既定で無効化（純粋なサンドボックス用）。KEIBA_DUMP_MERGE_CSV=1 でのみ書き出す。
+        if _os.environ.get("KEIBA_DUMP_MERGE_CSV") == "1":
+            _os.makedirs("./data/tmp/for_sandbox", exist_ok=True)
+            t0 = _time.perf_counter()
+            self.merged_data.to_csv("./data/tmp/for_sandbox/test_df.csv", index=True)
+            logger.info("[merge] debug CSV dump: %.1fs", _time.perf_counter() - t0)
+
+    @staticmethod
+    def _to_id_str(values: pd.Series | pd.Index) -> pd.Series | pd.Index:
+        """ID（horse_id/race_id）を統一フォーマットの文字列へ正規化する。
+
+        DB 復元由来（object 文字列）と pickle 由来（Int64/float64）が混在しても
+        merge キーの dtype が一致するよう、全て文字列化し float の末尾 ``.0`` を除去する。
+        欠損は文字列化で "nan"/"<NA>" 等になり得るが、それらは元々ジョインしないため許容する。
+        """
+        as_str = values.astype(str)
+        return as_str.str.replace(r"\.0$", "", regex=True)
+
+    def _normalize_join_keys(self) -> None:
+        """horse_id / race_id の merge キーをソース横断で文字列に正規化する。
+
+        netkeiba(pickle) と DB 復元データが混在しても join できるよう、
+        DataMerger が参照する全テーブルの horse_id 列・index を文字列へ揃える。
+        """
+        if "horse_id" in self._results.columns:
+            self._results["horse_id"] = self._to_id_str(self._results["horse_id"])
+        if self._horse_results.index.name == "horse_id":
+            self._horse_results.index = self._to_id_str(self._horse_results.index)
+        if self._horse_info.index.name == "horse_id":
+            self._horse_info.index = self._to_id_str(self._horse_info.index)
+        if self._peds.index.name == "horse_id":
+            self._peds.index = self._to_id_str(self._peds.index)
 
     def _merge_race_info(self):
         # race_id インデックスの dtype 不一致（int64/float64 vs str）によるジョイン失敗を防ぐ
@@ -81,60 +161,510 @@ class DataMerger:
         dict_ = dict_selector("_results")
         self._results = convert_column_types(self._results, dict_)
 
-    def _separate_by_date(self):
+    def _merge_course_shape(self):
+        """コース形状マスタ（course_* 属性）を results に静的結合する（開催×race_type）。
+
+        _merge_race_info の後に呼ぶ（開催/race_type が必要）。CSV 未生成でも course_* は
+        NaN で生成され、ライブ推論とも同じ CSV を読むため列パリティが保たれる。
+        """
+        self._results = _cs.add_course_shape_features(self._results, self._course_shape)
+
+    def _merge_course_guide(self):
+        """距離別コースガイド（guide_* 属性）を results に静的結合する（開催×race_type×距離）。
+
+        _merge_race_info の後に呼ぶ（開催/race_type/course_len が必要）。CSV 未生成でも
+        guide_* は NaN で生成され、ライブ推論とも同じ CSV を読むため列パリティが保たれる。
+        """
+        self._results = _cg.add_course_guide_features(self._results, self._course_guide)
+
+    def _merge_race_day_notes(self):
+        """調教評価/パドック/厩舎コメントを (race_id, 馬番) で results に左結合する。
+
+        各ソースは race_id を index に持つ raw（馬番=列）。未提供（空）はスキップ。
+        horse_id 等の重複列は持ち込まず、値列のみを結合する。race_info の後・
+        horse_results の前に実行し、当日属性として date ループに乗せて伝播させる。
+        """
+        specs = [
+            (self._training, ["調教評価", "映像グレード"]),
+            (self._paddock, ["パドック評価", "パドックコメント"]),
+            (self._comment, ["厩舎コメント", "コメント評価"]),
+        ]
+        if all(df is None or df.empty for df, _ in specs):
+            return
+        if "馬番" not in self._results.columns:
+            return
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+
+        for df, value_cols in specs:
+            if df is None or df.empty:
+                continue
+            notes = df.reset_index()
+            if "race_id" not in notes.columns:
+                notes = notes.rename(columns={notes.columns[0]: "race_id"})
+            notes["race_id"] = notes["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+            if "馬番" not in notes.columns:
+                continue
+            notes["_umaban_key"] = pd.to_numeric(notes["馬番"], errors="coerce").astype("Int64")
+            cols = ["race_id", "_umaban_key"] + [c for c in value_cols if c in notes.columns]
+            notes = notes[cols].drop_duplicates(["race_id", "_umaban_key"])
+            left = left.merge(notes, on=["race_id", "_umaban_key"], how="left")
+
+        self._results = left.drop(columns=["_umaban_key"]).set_index("race_id")
+
+    def _merge_yoso_marks(self):
+        self._results = _yf.merge_yoso_marks(self._results, self._yoso_marks)
+
+    def _add_yoso_predictor_skill(self):
+        self._results = _yf.add_yoso_predictor_skill(self._results, self._yoso_marks)
+
+    def _add_yoso_profile_skill(self):
+        self._results = _yf.add_yoso_profile_skill(self._results, self._yoso_marks, self._yoso_predictor)
+
+    def _merge_odds_signals(self):
+        """市場歪み特徴（複勝/三連複/三連単 overlay）を (race_id, 馬番) で左結合する。
+
+        確定オッズ由来でリーク無し（``単勝`` と同じ前提）。run_pipeline 側で
+        ``build_market_signal_frame`` により事前計算された DataFrame を受け取り、値列のみ
+        左結合する。未提供（空）はスキップ。
+        """
+        if self._odds_signals is None or self._odds_signals.empty:
+            return
+        if "馬番" not in self._results.columns:
+            return
+        from src.preprocessing._market_signals import MARKET_SIGNAL_COLS
+
+        sig = self._odds_signals.copy()
+        if "race_id" not in sig.columns or "馬番" not in sig.columns:
+            return
+        sig["race_id"] = sig["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        sig["_umaban_key"] = pd.to_numeric(sig["馬番"], errors="coerce").astype("Int64")
+        value_cols = [c for c in MARKET_SIGNAL_COLS if c in sig.columns]
+        sig = sig[["race_id", "_umaban_key", *value_cols]].drop_duplicates(
+            ["race_id", "_umaban_key"]
+        )
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+        merged = left.merge(sig, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
+
+    def _merge_horse_ratings(self):
+        """ペアワイズ Elo 特徴（elo_rating 等）を (race_id, 馬番) で左結合する。
+
+        各値は「そのレースの**出走前**」レーティング（preprocessing._ratings が日付昇順で
+        構築済み・リーク無し）。run_pipeline 側で `build_rating_frame` により事前計算された
+        DataFrame を受け取り、値列のみ左結合する。未提供（空）はスキップ。
+        _merge_odds_signals と同じ (race_id, 馬番) join パターン。
+        """
+        if self._ratings is None or self._ratings.empty:
+            return
+        if "馬番" not in self._results.columns:
+            return
+        from src.constants._feature_cols import ELO_FEATURE_COLS
+
+        rt = self._ratings.copy()
+        if "race_id" not in rt.columns or "馬番" not in rt.columns:
+            return
+        rt["race_id"] = rt["race_id"].astype(str).str.replace(r"\.0$", "", regex=True)
+        rt["_umaban_key"] = pd.to_numeric(rt["馬番"], errors="coerce").astype("Int64")
+        value_cols = [c for c in ELO_FEATURE_COLS if c in rt.columns]
+        rt = rt[["race_id", "_umaban_key", *value_cols]].drop_duplicates(
+            ["race_id", "_umaban_key"]
+        )
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        left = base.reset_index()
+        left["_umaban_key"] = pd.to_numeric(left["馬番"], errors="coerce").astype("Int64")
+        merged = left.merge(rt, on=["race_id", "_umaban_key"], how="left")
+        self._results = merged.drop(columns=["_umaban_key"], errors="ignore").set_index("race_id")
+
+    # 人物年度別成績から featured に乗せる統計（前年=as-of 結合）
+    _PERSON_STAT_COLS: ClassVar[tuple] = ("勝率", "複勝率", "芝勝率", "ダート勝率", "重賞勝利", "出走回数")
+
+    def _merge_person_yearly(self):
+        """騎手/調教師の『前年』年度別成績を as-of 結合する（リーク無し）。
+
+        当該レース年 Y に対し year=Y-1（完了済みの前年）の成績を結合する。当年は集計途中
+        （リーク）なので使わない。jockey_py_* / trainer_py_* を付与。未提供（空）はスキップ。
+        """
+        if self._person_yearly is None or self._person_yearly.empty:
+            return
+        if "date" not in self._results.columns:
+            return
+        # index を列に正規化（_pkey index は捨て、旧 entity_id index は復元）。二重移行で
+        # _pkey 列が残っていても安全に除去する。
+        py = self._person_yearly
+        if "entity_id" in py.columns:
+            py = py.reset_index(drop=True)
+        else:
+            py = py.reset_index()
+            if "entity_id" not in py.columns:
+                py = py.rename(columns={py.columns[0]: "entity_id"})
+        py = py.drop(columns=["_pkey"], errors="ignore")
+        if "entity_type" not in py.columns or "year" not in py.columns:
+            return
+
+        base = self._results
+        base.index = base.index.astype(str).str.replace(r"\.0$", "", regex=True)
+        base.index.name = "race_id"
+        res = base.reset_index()
+        res["_pry"] = pd.to_datetime(res["date"], errors="coerce").dt.year - 1
+
+        from src.preprocessing._person_id import canon_person_id
+
+        # breeder_id は results に無く horse_info にある。後段の horse_info マージと衝突しない
+        # よう一時列 _breeder_tmp に horse_id 経由で引き、最後に drop する。
+        if (
+            "horse_id" in res.columns
+            and self._horse_info is not None
+            and not self._horse_info.empty
+            and "breeder_id" in self._horse_info.columns
+        ):
+            bi = self._horse_info[["breeder_id"]].rename(columns={"breeder_id": "_breeder_tmp"}).copy()
+            bi.index = bi.index.astype(str)
+            res["horse_id"] = res["horse_id"].astype(str)
+            res = res.merge(bi, left_on="horse_id", right_index=True, how="left")
+
+        stat_cols = [c for c in self._PERSON_STAT_COLS if c in py.columns]
+        for etype, idcol, prefix in (
+            ("jockey", "jockey_id", "jockey_py"),
+            ("trainer", "trainer_id", "trainer_py"),
+            ("owner", "owner_id", "owner_py"),
+            ("breeder", "_breeder_tmp", "breeder_py"),
+        ):
+            if idcol not in res.columns or not stat_cols:
+                continue
+            sub = py[py["entity_type"] == etype][["entity_id", "year"] + stat_cols].copy()
+            if sub.empty:
+                continue
+            sub = sub.rename(columns={c: f"{prefix}_{c}" for c in stat_cols})
+            sub = sub.rename(columns={"entity_id": idcol, "year": "_pry"})
+            # 結合キーを正準化（jockey/trainer は5桁ゼロ埋め、owner/breeder は素通し）
+            sub[idcol] = sub[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
+            sub["_pry"] = pd.to_numeric(sub["_pry"], errors="coerce")
+            res[idcol] = res[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
+            res = res.merge(sub.drop_duplicates([idcol, "_pry"]), on=[idcol, "_pry"], how="left")
+
+        self._results = res.drop(columns=["_pry", "_breeder_tmp"], errors="ignore").set_index("race_id")
+
+    # ライブ推論(ShutubaDataMerger)が person_te / form-from-results を serve で再計算するために
+    # 必要な results 履歴の列（着順・date・entity・context）。FeatureEngineering で改名/dummy化される
+    # 前の生列をここで確保して永続化する。
+    _SERVE_HISTORY_COLS: ClassVar[tuple] = (
+        "horse_id", "jockey_id", "trainer_id", "owner_id", "馬番", "着順", "n_horses",
+        "date", "course_len", "race_type", "ground_state1", "ground_state2", "開催", "斤量",
+        "weather",  # weather×ground_state 交互作用 TE を serve でも同一計算するため
+    )
+
+    def _write_serve_history(self) -> None:
+        """ライブ推論用の履歴スナップショット（slim）を保存する（学習時のみ）。
+
+        merge 済み self._merged_data から person_te / form 再構成に必要な列だけを抜き出し、
+        SERVE_HISTORY_PATH に保存。ShutubaDataMerger が読み、train と同じ関数で serve 特徴を
+        再計算する（train/serve skew ゼロ）。失敗は non-fatal。
+        """
+        import os
+
+        from src.constants._local_paths import LocalPaths
+
+        df = self._merged_data
+        if df is None or df.empty:
+            return
+        cols = [c for c in self._SERVE_HISTORY_COLS if c in df.columns]
+        if not {"horse_id", "着順", "date"}.issubset(cols):
+            logger.warning("[serve-history] 必要列不足のためスキップ（horse_id/着順/date）")
+            return
+        try:
+            snap = df[cols].copy()
+            os.makedirs(os.path.dirname(LocalPaths.SERVE_HISTORY_PATH), exist_ok=True)
+            snap.to_pickle(LocalPaths.SERVE_HISTORY_PATH)
+            logger.info(
+                "[serve-history] %d 行・%d 列を保存: %s",
+                len(snap), len(cols), LocalPaths.SERVE_HISTORY_PATH,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[serve-history] 保存失敗(non-fatal): %s", e)
+
+    def _merge_person_target_encoding(self):
+        """騎手/調教師/馬主(×context) の全履歴 expanding target-encoding を付与する（PyCon A1/A2）。
+
+        `_merge_person_yearly`（前年の年度集計）より細粒度で、results 履歴から
+        **当該レースより厳密に過去（date<自分・同日も除外）** の勝率/複勝率を集計しスムージング
+        （少数カテゴリを全体平均へ縮小）する。学習・推論で同一計算・リーク無し（`_target_encoding`
+        の単体テストで担保）。列（context 含む）が無い spec は自動スキップ。
+
+        env: ``KEIBA_DISABLE_PERSON_TE=1`` で無効化 / ``KEIBA_TE_ALPHA`` でスムージング強度（既定20）。
+        ライブ推論は別途スナップショット経路が要る（未整備なので backtest 特徴として先行導入）。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_PERSON_TE") == "1":
+            return
+        if "date" not in self._results.columns or ResultsCols.RANK not in self._results.columns:
+            return
+        from src.preprocessing._target_encoding import build_person_form_features
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = build_person_form_features(
+            self._results, date_col="date", rank_col=ResultsCols.RANK, alpha=alpha
+        )
+        if feats.shape[1] == 0:
+            logger.info("[person_te] 付与できる列がありません（entity/context 列不足）")
+            return
+        # feats は self._results と同一行順（positional）。重複 index に強い to_numpy 代入。
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[person_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
+
+    def _merge_context_target_encoding(self):
+        """開催/クラス(context)の全履歴 expanding target-encoding を付与する。
+
+        高カーディナリティの One-Hot（開催 57 種）や順序カテゴリ（race_class）を、当該レースより
+        **厳密に過去（date<自分・同日除外）** の勝率/複勝率としてスムージング付きで 1 列に符号化する
+        （person_te と同じ `expanding_target_encode`＝リーク無し・単体テスト済み）。One-Hot は残すため
+        A/B 比較可能。列が無い spec は自動スキップ。
+
+        env: ``KEIBA_DISABLE_CONTEXT_TE=1`` で無効化 / ``KEIBA_TE_ALPHA`` でスムージング強度（既定20）。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_CONTEXT_TE") == "1":
+            return
+        if "date" not in self._results.columns or ResultsCols.RANK not in self._results.columns:
+            return
+        from src.preprocessing._target_encoding import DEFAULT_CONTEXT_SPECS
+        from src.preprocessing._target_encoding import build_person_form_features
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = build_person_form_features(
+            self._results, specs=DEFAULT_CONTEXT_SPECS, date_col="date",
+            rank_col=ResultsCols.RANK, alpha=alpha,
+        )
+        if feats.shape[1] == 0:
+            logger.info("[context_te] 付与できる列がありません（開催/race_class 列不足）")
+            return
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[context_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
+
+    def _merge_entity_target_encoding(self):
+        """エンティティ交互作用（騎手×調教師・馬×騎手・騎手×馬主）の expanding TE を付与する。
+
+        単独エンティティ（騎手/調教師/馬主=person_te、馬=_horse_features）ではなく「組合せ効果」を
+        狙う。高カーディナリティで大半が初出＝prior へ縮小されるため、スムージングで希少組合せの
+        ブレを抑える。context_te と同じ `expanding_target_encode`（リーク無し・単体テスト済み）。
+
+        env: ``KEIBA_DISABLE_ENTITY_TE=1`` で無効化 / ``KEIBA_TE_ALPHA`` でスムージング強度（既定20）。
+        """
+        import os
+
+        if os.environ.get("KEIBA_DISABLE_ENTITY_TE") == "1":
+            return
+        if "date" not in self._results.columns or ResultsCols.RANK not in self._results.columns:
+            return
+        from src.preprocessing._target_encoding import DEFAULT_ENTITY_INTERACTION_SPECS
+        from src.preprocessing._target_encoding import build_person_form_features
+
+        alpha = float(os.environ.get("KEIBA_TE_ALPHA", "20"))
+        feats = build_person_form_features(
+            self._results, specs=DEFAULT_ENTITY_INTERACTION_SPECS, date_col="date",
+            rank_col=ResultsCols.RANK, alpha=alpha,
+        )
+        if feats.shape[1] == 0:
+            logger.info("[entity_te] 付与できる列がありません（entity 列不足）")
+            return
+        for c in feats.columns:
+            self._results[c] = feats[c].to_numpy()
+        logger.info("[entity_te] %d 列を追加（α=%.0f）: %s", feats.shape[1], alpha, list(feats.columns))
+
+    def _merge_horse_results(self):
+        """日付ごとに horse_results / results をスライスしてマージする。
+
+        全ての「date < target_date」フィルタを searchsorted に統一し、
+        ループごとの全件コピーを排除してメモリを節約する。
+        """
+        import numpy as np
+
         logger.info("separating horse results by date")
         dict_ = dict_selector("_horse_results")
         self._horse_results = convert_column_types(self._horse_results, dict_)
 
-        # Pre-join horse_results with sire id (peds_0) for §2j sire stats.
-        if "peds_0" in self._peds.columns:
-            hr_with_sire = self._horse_results.join(self._peds[["peds_0"]], how="left")
+        # KEIBA_FORM_FROM_RESULTS=1: 馬ページ未取得の馬の form を results 自己結合で補完する。
+        # 率・適性・距離・馬場系が scraping 無しで埋まる（速度/脚質/クラス系はページ固有列が
+        # 無いため既存ガードで自動スキップ）。リーク回避は下段の date スライスに委譲。
+        import os as _os
+
+        if _os.environ.get("KEIBA_FORM_FROM_RESULTS") == "1":
+            from src.preprocessing._horse_features import build_horse_results_from_results
+
+            scraped_ids = (
+                set(self._horse_results.index.astype(str))
+                if not self._horse_results.empty else set()
+            )
+            # 学習は self._results（＝全レース履歴）から。ライブ推論(ShutubaDataMerger)は
+            # self._results が出馬表（着順なし）なので、注入された履歴スナップショットから再構成する。
+            recon_source = getattr(self, "_form_history_results", None)
+            if recon_source is None:
+                recon_source = self._results
+            recon = build_horse_results_from_results(recon_source)
+            if not recon.empty:
+                recon = recon[~recon.index.astype(str).isin(scraped_ids)]  # 未取得馬のみ（二重計上回避）
+            if not recon.empty:
+                before = len(self._horse_results)
+                self._horse_results = pd.concat([self._horse_results, recon])
+                logger.info(
+                    "[form-from-results] 未取得馬 %d 頭・%d 行を results から補完（%d→%d 行）",
+                    recon.index.nunique(), len(recon), before, len(self._horse_results),
+                )
+
+        # peds_0=父(sire), peds_32=母父(broodmare sire)。実データ検証で母=peds_31(各馬ほぼ固有)、
+        # その次の peds_32 が母父(199ユニーク・父と12%重複)と確認。存在する血統列を horse_results に
+        # 付与し、過去走の産駒成績から sire/damsire 集計に使う。
+        ped_cols = [c for c in ("peds_0", "peds_32") if c in self._peds.columns]
+        if ped_cols:
+            hr_with_sire = self._horse_results.join(self._peds[ped_cols], how="left")
         else:
             hr_with_sire = self._horse_results.copy()
 
-        for date, df_by_date in tqdm(self._results.groupby("date")):
-            self._separated_results_dict[date] = df_by_date
-            horse_id_list = df_by_date["horse_id"].unique()  # noqa: F841  pandas query の @horse_id_list で参照
-            # Past horse results (only horses racing on this date)
-            self._separated_horse_results_dict[date] = self._horse_results.query(
-                "date < @date"
-            ).query("horse_id in @horse_id_list")
-            # Past horse results with sire info (all horses, for §2j aggregation by sire)
-            self._separated_hr_with_sire_dict[date] = hr_with_sire.query("date < @date")
+        # horse_results / hr_with_sire を日付ソート済みで保持
+        hr_sorted = self._horse_results.sort_values("date").reset_index()
+        hr_dates = hr_sorted["date"].values
+        hrs_sorted = hr_with_sire.sort_values("date").reset_index()
+        hrs_dates = hrs_sorted["date"].values
 
-    def _merge_horse_results(self):
-        self._separate_by_date()
+        # 騎手・調教師統計を self._results に直接付与（ループ内の全件コピーを排除）。
+        # race_id をキーにした merge は (race_id, trainer_id) が非一意になり得るため使わず、
+        # 位置ベースで列を付与してインデックス（race_id）と整合させる。
+        self._attach_jockey_trainer_stats()
+
         logger.info("merging horse_results")
-        output_results_dict: dict = {}
+        output_list: list = []
 
-        for date in tqdm(self._separated_results_dict):
-            results = self._separated_results_dict[date].copy()
-            horse_results = self._separated_horse_results_dict[date].copy()
+        for date, df_by_date in tqdm(self._results.groupby("date")):
+            horse_id_list = df_by_date["horse_id"].unique()
 
-            # ── §2i: Multi-window × multi-stat aggregation ────────────
-            # None は全レース集計（ウィンドウなし）
+            cut = int(np.searchsorted(hr_dates, date, side="left"))
+            past_hr = (
+                hr_sorted.iloc[:cut].set_index("horse_id")
+                if cut > 0
+                else hr_sorted.iloc[:0].set_index("horse_id")
+            )
+            horse_results = past_hr[past_hr.index.isin(horse_id_list)]
+
+            cut2 = int(np.searchsorted(hrs_dates, date, side="left"))
+            self._separated_hr_with_sire_dict[date] = (
+                hrs_sorted.iloc[:cut2].set_index("horse_id") if cut2 > 0
+                else hrs_sorted.iloc[:0].set_index("horse_id")
+            )
+
+            # df_by_date は既に jockey/trainer 統計列を含む（race_id インデックス保持）
+            results = df_by_date.copy()
+
             for n_races in [*N_RACES_LIST, None]:
                 results = self._merge_aggregates(results, horse_results, n_races)
 
-            # Latest race date (for interval feature in FeatureEngineering)
             latest = horse_results.groupby("horse_id")["date"].max().rename("latest")
             results = results.merge(latest, left_on="horse_id", right_index=True, how="left")
 
-            # ── §2c: Jockey / trainer stats ────────────────────────────
-            results = self._add_jockey_trainer_stats(results, date)
-
-            # ── §2d: Pace / leg type stats ─────────────────────────────
             results = self._add_pace_stats(results, horse_results)
-
-            # ── §2e: Course condition stats ────────────────────────────
+            results = self._add_growth_stats(results, horse_results)
+            results = self._add_prev_race_features(results, horse_results)
+            results = self._add_aptitude_stats(results, horse_results)
+            results = self._add_speed_figure_stats(results, horse_results)
             results = self._add_course_condition_stats(results, horse_results)
-
-            # ── §2j: Sire stats ────────────────────────────────────────
+            results = self._add_type_ground_stats(results, horse_results)
+            results = self._add_race_class_stats(results, horse_results)
+            results = self._add_career_stats(results, horse_results)
+            results = self._add_recent_form_stats(results, horse_results)
+            results = self._add_opponent_strength_stats(results, horse_results)
             results = self._add_sire_stats(results, date)
+            results = self._add_damsire_stats(results, date)
 
-            output_results_dict[date] = results
+            output_list.append(results)
+            del self._separated_hr_with_sire_dict[date]
 
-        self._merged_data = pd.concat([output_results_dict[d] for d in output_results_dict])
+        # ignore_index=False で race_id インデックスを温存する
+        # （下流の FeatureEngineering は race_id をインデックスから参照する）
+        self._merged_data = pd.concat(output_list)
+
+    def _attach_jockey_trainer_stats(self) -> None:
+        """騎手・調教師・馬主の直近 JOCKEY_RECENT_N レース統計列を self._results に付与する。
+
+        groupby + rolling で全レースを1回で計算する（ループ内の全件コピーを排除）。
+        race_id は self._results の（非一意な）インデックスなので、列ではなく
+        位置ベースで結果を書き戻し、インデックスとの不整合を防ぐ。
+        shift(1) で自レースを除外し、未来情報のリークを防ぐ。
+
+        馬主は従来「生の owner_id（ラベル符号化）」しか特徴量が無く、GBDT が ID を
+        丸暗記して過学習しやすかった（重要度診断で owner_id が突出）。騎手・調教師と
+        同じく平滑な勝率/平均着順を与え、汎化可能な馬主シグナルにする。
+        """
+        rank_col = "着順"
+        n_horses_col = "n_horses"
+        has_rank = rank_col in self._results.columns and n_horses_col in self._results.columns
+        has_jockey = "jockey_id" in self._results.columns
+        if not has_rank or not has_jockey:
+            return
+        has_trainer = "trainer_id" in self._results.columns
+        has_owner = "owner_id" in self._results.columns
+
+        # 位置を保持したまま計算するため reset_index（race_id は捨てて位置で戻す）
+        res = self._results.reset_index(drop=True).copy()
+        res["_pos"] = range(len(res))
+        rank_num = pd.to_numeric(res[rank_col], errors="coerce")
+        n_horses_num = pd.to_numeric(res[n_horses_col], errors="coerce")
+        res["_is_win"] = (rank_num == 1).astype("float32")
+        res["_rel_rank"] = (rank_num / n_horses_num).astype("float32")
+
+        def _recent(id_col: str, win_name: str, rank_name: str) -> None:
+            nonlocal res
+            # 位置ベース shift(1) は「同一 id が同一レースに複数行」あると同一レース他馬を
+            # ウィンドウに取り込みリークする（旧年代は id が単一定数に潰れ全馬が1グループ＝
+            # 同レース総取り込み、近代でも同一レース複数頭の調教師/馬主で顕在化）。
+            # まず (id, date) 単位に集約してから日付方向に shift(1).rolling で「当該開催日より
+            # 前 N 開催」を平均し、同一レース(=同一 id×date)を構造的に除外する。
+            daily = (
+                res.groupby([id_col, "date"], sort=True)[["_is_win", "_rel_rank"]]
+                .mean()
+                .reset_index()
+                .sort_values([id_col, "date"], kind="stable")
+            )
+            daily[win_name] = daily.groupby(id_col)["_is_win"].transform(
+                lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
+            )
+            daily[rank_name] = daily.groupby(id_col)["_rel_rank"].transform(
+                lambda x: x.shift(1).rolling(JOCKEY_RECENT_N, min_periods=1).mean()
+            )
+            # (id, date) 粒度の統計を各行へ broadcast（多対一）。_pos は保持され最後に整列で戻す。
+            res = res.merge(
+                daily[[id_col, "date", win_name, rank_name]], on=[id_col, "date"], how="left"
+            )
+
+        _recent("jockey_id", "jockey_win_rate", "jockey_avg_rank")
+        if has_trainer:
+            _recent("trainer_id", "trainer_win_rate", "trainer_avg_rank")
+        if has_owner:
+            _recent("owner_id", "owner_win_rate", "owner_avg_rank")
+
+        # 元の行順に戻して self._results へ位置ベースで列を付与
+        res = res.sort_values("_pos")
+        cols = ["jockey_win_rate", "jockey_avg_rank"]
+        if has_trainer:
+            cols += ["trainer_win_rate", "trainer_avg_rank"]
+        if has_owner:
+            cols += ["owner_win_rate", "owner_avg_rank"]
+        for c in cols:
+            self._results[c] = res[c].to_numpy()
 
     # ──────────────────────────────────────────
     # §2c: Jockey / trainer aggregate features
@@ -192,154 +722,86 @@ class DataMerger:
     # §2d: Pace / leg-type features
     # ──────────────────────────────────────────
 
-    def _add_pace_stats(self, results: pd.DataFrame, horse_results: pd.DataFrame) -> pd.DataFrame:
-        """直近 N レースの脚質集計特徴量（pace_median / leg_type_binary / pace_at_distance）を追加。"""
-        if HRCols.PACE not in horse_results.columns:
-            return results
+    def _add_pace_stats(self, results, horse_results):
+        return _hf.add_pace_stats(results, horse_results)
 
-        hr = horse_results.copy()
-        hr["_pace_num"] = hr[HRCols.PACE].map(PACE_CATEGORY_MAP)
+    # ──────────────────────────────────────────
+    # §2k: Growth / form-trajectory features
+    # ──────────────────────────────────────────
 
-        # Overall pace median over last N races
-        n_hr = self._filter_horse_results(hr, PACE_RECENT_N)
-        pace_median = n_hr.groupby(level=0)["_pace_num"].median().rename("pace_median")
+    def _add_growth_stats(self, results, horse_results):
+        return _hf.add_growth_stats(results, horse_results)
 
-        # leg_type_binary: 逃/先(< 2) → 0, 差/追(>= 2) → 1, 中間値 → NaN
-        def _to_binary(v: float) -> float:
-            if pd.isna(v) or v == 1.5:
-                return float("nan")
-            return 0.0 if v < 2.0 else 1.0
+    # ──────────────────────────────────────────
+    # §2m: Previous-race comparison features (Batch A)
+    # ──────────────────────────────────────────
 
-        leg_binary = pace_median.map(_to_binary).rename("leg_type_binary")
+    def _add_prev_race_features(self, results, horse_results):
+        return _hf.add_prev_race_features(results, horse_results)
 
-        results = results.merge(pace_median, left_on="horse_id", right_index=True, how="left")
-        results = results.merge(leg_binary, left_on="horse_id", right_index=True, how="left")
+    # ──────────────────────────────────────────
+    # §2n: Aptitude features — wet track & racecourse (Batch B)
+    # ──────────────────────────────────────────
 
-        # pace_at_distance: 同距離帯(±100m = ±1 in 100m units)での脚質中央値
-        if "course_len" not in results.columns or "course_len" not in hr.columns:
-            return results
+    def _add_aptitude_stats(self, results, horse_results):
+        return _hf.add_aptitude_stats(results, horse_results)
 
-        current_info = results[["horse_id", "course_len"]].drop_duplicates("horse_id")
-        hr_reset = hr.reset_index()
-        hr_with_cur = hr_reset.merge(
-            current_info, on="horse_id", suffixes=("_past", "_cur")
-        )
-        at_dist = hr_with_cur[
-            abs(hr_with_cur["course_len_past"] - hr_with_cur["course_len_cur"]) <= 1
-        ]
-        pace_at_dist = at_dist.groupby("horse_id")["_pace_num"].median().rename("pace_at_distance")
-        results = results.merge(pace_at_dist, left_on="horse_id", right_index=True, how="left")
+    # ──────────────────────────────────────────
+    # §2l: Speed-figure features (Batch C)
+    # ──────────────────────────────────────────
 
-        return results
+    def _add_speed_figure_stats(self, results, horse_results):
+        return _hf.add_speed_figure_stats(results, horse_results)
+
+    # ──────────────────────────────────────────
+    # §2n: As-of career aggregate features（過去キャリア累計・リーク無し）
+    # ──────────────────────────────────────────
+
+    def _add_career_stats(self, results, horse_results):
+        return _hf.add_career_stats(results, horse_results)
+
+    def _add_recent_form_stats(self, results, horse_results):
+        return _hf.add_recent_form_stats(results, horse_results)
+
+    def _add_opponent_strength_stats(self, results, horse_results):
+        return _hf.add_opponent_strength_stats(results, horse_results)
 
     # ──────────────────────────────────────────
     # §2e: Course condition aggregate features
     # ──────────────────────────────────────────
 
-    def _add_course_condition_stats(
-        self, results: pd.DataFrame, horse_results: pd.DataFrame
-    ) -> pd.DataFrame:
-        """同距離帯勝率・同コース種別平均着順を追加する。"""
-        rank_col = HRCols.RANK  # '着順'
-        n_horses_col = HRCols.N_HORSES  # '頭数'
-        if horse_results.empty or rank_col not in horse_results.columns:
-            return results
-        if "course_len" not in results.columns:
-            return results
+    def _add_course_condition_stats(self, results, horse_results):
+        return _hf.add_course_condition_stats(results, horse_results)
 
-        hr = horse_results.copy()
-        hr["_is_win"] = (hr[rank_col] == 1).astype(float)
-        if n_horses_col in hr.columns:
-            hr["_rel_rank"] = hr[rank_col] / hr[n_horses_col]
+    def _add_type_ground_stats(self, results, horse_results):
+        return _hf.add_type_ground_stats(results, horse_results)
 
-        # Build per-horse current race info for distance/type filtering
-        info_cols = ["horse_id", "course_len"]
-        if "race_type" in results.columns:
-            info_cols.append("race_type")
-        current_info = results[info_cols].drop_duplicates("horse_id")
-
-        hr_reset = hr.reset_index()
-        hr_with_cur = hr_reset.merge(
-            current_info, on="horse_id", suffixes=("_past", "_cur")
-        )
-
-        # win_rate_at_distance: ±100m (±1 unit)
-        at_dist = hr_with_cur[
-            abs(hr_with_cur["course_len_past"] - hr_with_cur["course_len_cur"]) <= 1
-        ]
-        win_rate = at_dist.groupby("horse_id")["_is_win"].mean().rename("win_rate_at_distance")
-        results = results.merge(win_rate, left_on="horse_id", right_index=True, how="left")
-
-        # avg_rank_at_course_type: same race_type
-        if (
-            "_rel_rank" in hr_with_cur.columns
-            and "race_type_past" in hr_with_cur.columns
-            and "race_type_cur" in hr_with_cur.columns
-        ):
-            at_type = hr_with_cur[hr_with_cur["race_type_past"] == hr_with_cur["race_type_cur"]]
-            avg_rank = at_type.groupby("horse_id")["_rel_rank"].mean().rename("avg_rank_at_course_type")
-            results = results.merge(avg_rank, left_on="horse_id", right_index=True, how="left")
-
-        return results
+    def _add_race_class_stats(self, results, horse_results):
+        return _hf.add_race_class_stats(results, horse_results)
 
     # ──────────────────────────────────────────
     # §2j: Sire aggregate features
     # ──────────────────────────────────────────
 
     def _add_sire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
-        """種牡馬産駒の集計特徴量（sire_win_rate / sire_avg_rank / sire_recent_win_rate）を追加。
+        return _pf.add_sire_stats(
+            results, target_date,
+            hr_with_sire_dict=self._separated_hr_with_sire_dict, peds=self._peds,
+        )
 
-        _separated_hr_with_sire_dict は _separate_by_date() 内で peds_0 列を付与した
-        horse_results のサブセット（date < target_date）を保持する。
-        """
-        if target_date not in self._separated_hr_with_sire_dict:
-            return results
+    def _add_damsire_stats(self, results: pd.DataFrame, target_date) -> pd.DataFrame:
+        return _pf.add_damsire_stats(
+            results, target_date,
+            hr_with_sire_dict=self._separated_hr_with_sire_dict, peds=self._peds,
+        )
 
-        phs = self._separated_hr_with_sire_dict[target_date]
-        rank_col = HRCols.RANK  # '着順'
-        n_horses_col = HRCols.N_HORSES  # '頭数'
-
-        if "peds_0" not in phs.columns or phs.empty or rank_col not in phs.columns:
-            return results
-
-        phs = phs.copy()
-        # Use string representation of peds_0 to avoid category dtype issues in groupby
-        phs["_sire_key"] = phs["peds_0"].astype(str)
-        phs["_is_win"] = (phs[rank_col] == 1).astype(float)
-        if n_horses_col in phs.columns:
-            phs["_rel_rank"] = phs[rank_col] / phs[n_horses_col]
-
-        agg_dict: dict = {"_is_win": "mean"}
-        if "_rel_rank" in phs.columns:
-            agg_dict["_rel_rank"] = "mean"
-
-        sire_all = phs.groupby("_sire_key").agg(agg_dict)
-        sire_all.columns = [
-            "sire_win_rate" if c == "_is_win" else "sire_avg_rank"
-            for c in sire_all.columns
-        ]
-
-        # Recent N years sire stats
-        cutoff = pd.Timestamp(target_date) - pd.DateOffset(years=SIRE_RECENT_YEARS)
-        recent = phs[phs["date"] >= cutoff]
-        if not recent.empty:
-            sire_recent = recent.groupby("_sire_key")["_is_win"].mean().rename("sire_recent_win_rate")
-            sire_all = sire_all.join(sire_recent, how="left")
-        else:
-            sire_all["sire_recent_win_rate"] = float("nan")
-
-        # Current horses' sire key from peds
-        if "peds_0" not in self._peds.columns:
-            return results
-        horse_sire = self._peds[["peds_0"]].reset_index()
-        horse_sire["_sire_key"] = horse_sire["peds_0"].astype(str)
-
-        horse_sire_indexed = horse_sire[["horse_id", "_sire_key"]].set_index("horse_id")
-        results = results.merge(horse_sire_indexed, left_on="horse_id", right_index=True, how="left")
-        results = results.merge(sire_all, left_on="_sire_key", right_index=True, how="left")
-        results = results.drop(columns=["_sire_key"], errors="ignore")
-
-        return results
+    def _add_pedigree_stats(
+        self, results: pd.DataFrame, target_date, peds_col: str, prefix: str
+    ) -> pd.DataFrame:
+        return _pf.add_pedigree_stats(
+            results, target_date, peds_col, prefix,
+            hr_with_sire_dict=self._separated_hr_with_sire_dict, peds=self._peds,
+        )
 
     # ──────────────────────────────────────────
     # Core helpers
@@ -385,7 +847,7 @@ class DataMerger:
         for group_col in self._group_cols:
             if group_col not in results.columns:
                 continue
-            summarized_with = self._summarize_with(hr, self._target_cols, group_col).add_suffix(
+            summarized_with = self._summarize_with(hr, self._group_target_cols, group_col).add_suffix(
                 f"_{group_col}{suffix}"
             )
             results = results.merge(
@@ -393,24 +855,11 @@ class DataMerger:
             )
         return results
 
-    def _filter_horse_results(self, horse_results: pd.DataFrame, n_races: int) -> pd.DataFrame:
-        """直近 n_races レースに絞る（index=horse_id の前提）。"""
-        return horse_results.sort_values("date", ascending=False).groupby(level=0).head(n_races)
+    def _filter_horse_results(self, horse_results, n_races):
+        return _hf.filter_horse_results(horse_results, n_races)
 
-    def _summarize(self, horse_results: pd.DataFrame, target_cols: list) -> pd.DataFrame:
-        """§2i: horse_id ごとに target_cols を AGG_STATS で多統計量集計する。
+    def _summarize(self, horse_results, target_cols):
+        return _hf.summarize(horse_results, target_cols)
 
-        返り値の列名形式: {col}_{stat}（例: 着順_mean, 着順_std）
-        呼び出し元で .add_suffix("_5R") 等を付与する。
-        """
-        agg = horse_results.groupby(level=0)[target_cols].agg(AGG_STATS)
-        agg.columns = [f"{col}_{stat}" for col, stat in agg.columns]
-        return agg
-
-    def _summarize_with(
-        self, horse_results: pd.DataFrame, target_cols: list, group_col: str
-    ) -> pd.DataFrame:
-        """(horse_id, group_col) ごとに target_cols を AGG_STATS で集計する。"""
-        agg = horse_results.groupby(["horse_id", group_col])[target_cols].agg(AGG_STATS)
-        agg.columns = [f"{col}_{stat}" for col, stat in agg.columns]
-        return agg
+    def _summarize_with(self, horse_results, target_cols, group_col):
+        return _hf.summarize_with(horse_results, target_cols, group_col)

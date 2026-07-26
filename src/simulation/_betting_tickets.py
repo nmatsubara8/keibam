@@ -44,15 +44,29 @@ class _BettingStrategy(ABC):
     min_horses: int = 1
 
     def __init__(self, return_table: pd.DataFrame) -> None:
+        # race_id の型をソース非依存にする: 払戻テーブルは pickle 由来だと int、
+        # DB 復元由来だと str になり、照合キー(actions)と型が食い違うと
+        # 「race_id not in index」で全件スキップ＝買い目0 になる。index を str に
+        # 正規化し、place() 側も str 化して常に str 同士で照合する。
+        if return_table is not None and not return_table.empty:
+            return_table = return_table.copy(deep=False)
+            return_table.index = return_table.index.astype(str)
         self._table = return_table
 
     def place(self, race_id, umaban, amount: int):
+        race_id = str(race_id)
         if umaban is None or len(umaban) < self.min_horses:
             logger.warning("betting_tickets: 例外 umaban=%s", umaban)
             return 0, 0, 0
         keys = self._expand(umaban)
         n_bets = len(keys)
         if n_bets == 0:
+            return 0, 0, 0
+        if race_id not in self._table.index:
+            # 払戻テーブルに該当レースが無い（return_tables 未取得・対象外）場合は
+            # 払戻を評価できないため「賭けなかった」扱い（0,0,0）にして集計から除外する。
+            # （.loc[race_id] が KeyError を投げてシミュレーション全体が落ちるのを防ぐ）
+            logger.debug("betting_tickets: race_id=%s が払戻テーブルに無いためスキップ", race_id)
             return 0, 0, 0
         bet_amount = n_bets * amount
         return_amount = self._sum_returns(race_id, keys, amount)
@@ -87,6 +101,31 @@ class _BettingStrategy(ABC):
     @abstractmethod
     def _match(self, win_value, key) -> bool:
         """`win_X` セルと購入券キーが一致するか。"""
+
+    # 単一点決済（BOX 展開しない。EV バックテスト用）---------------------------
+
+    def single_key(self, combo: Sequence):
+        """1 つの組合せ（combo）を 1 点として照合するキーに変換する。
+
+        既定は `_expand` の単一要素版。順序あり券種（馬単/三連単）は順序を保持、
+        順序なし券種は sorted で正規化する（各サブクラスの `_expand` と整合）。
+        """
+        keys = self._expand(combo)
+        return keys[0] if keys else None
+
+    def settle_key(self, race_id, key, amount: int):
+        """単一キー（1 点）だけを決済する。BOX のように組合せを再生成しない。
+
+        EV 選定が「その組合せ 1 点」を買う前提のバックテスト用。`place()` と異なり
+        `_expand` を通さないため、順列券種でも 1 点のまま評価できる。
+        """
+        if key is None:
+            return 0, 0, 0
+        race_id = str(race_id)
+        if self._table is None or self._table.empty or race_id not in self._table.index:
+            return 0, 0, 0
+        return_amount = self._sum_returns(race_id, [key], amount)
+        return 1, amount, return_amount
 
 
 class _SingleStrategy(_BettingStrategy):
@@ -202,3 +241,28 @@ class BettingTickets:
 
     def bet_sanrentan_box(self, race_id: str, umaban: list, amount: int):
         return self._sanrentan_box.place(race_id, umaban, amount)
+
+    # 単一点決済（EV バックテスト用。BOX のように組合せを再生成しない）-----------
+
+    def _strategy_for(self, bet_type: str):
+        return {
+            BetType.TANSHO: self._tansho,
+            BetType.FUKUSHO: self._fukusho,
+            BetType.WAKUREN: self._wakuren,
+            BetType.UMAREN: self._umaren,
+            BetType.UMATAN: self._umatan_box,
+            BetType.WIDE: self._wide,
+            BetType.SANRENPUKU: self._sanrenpuku,
+            BetType.SANRENTAN: self._sanrentan_box,
+        }.get(bet_type)
+
+    def settle_one(self, bet_type: str, race_id, combo, amount: int = 1):
+        """組合せ 1 点だけを決済して `(n_bets, bet_amount, return_amount)` を返す。
+
+        順序あり券種（馬単/三連単）は combo の順序をそのまま 1 点として評価する
+        （`bet_*_box` のように全順列へ展開しない）。未知券種は (0,0,0)。
+        """
+        strat = self._strategy_for(bet_type)
+        if strat is None:
+            return 0, 0, 0
+        return strat.settle_key(race_id, strat.single_key(combo), amount)

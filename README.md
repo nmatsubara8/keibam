@@ -164,7 +164,17 @@ python -m src.pipeline.run_pipeline ingest --race-id 202605030211
 
 # 誤情報修正時: DB 行を事前 DELETE して再投入
 python -m src.pipeline.run_pipeline ingest --race-id 202605030211 --force
+
+# データ取得元を切替（既定 netkeiba / jravan=ファイル受信）。
+# 省略時は UI（モデルラボでなく成績・設定ページ）で選択・保存した値、無ければ netkeiba。
+python -m src.pipeline.run_pipeline ingest --post-date 20260607 --source jravan
 ```
+
+取得元は `AbstractRaceDataSource` で抽象化され、結果/情報/払戻/馬/血統の全データを
+ソース非依存に取得する（`src/preparing/_data_source.py`）。`NetkeibaDataSource`（スクレイプ）が
+既定で、`JraVanFileDropSource` は Windows 側 JV-Link エージェントが
+`data/incoming/jravan/<種別>/<id>.json`（pandas split 形式）に置いたファイルを受信する。
+UI の「🏆 成績・設定」→「データ取得元」で選択・保存できる（`ingest --source` 未指定時に使用）。
 
 ingest は「新規レースの HTML 取得 → テーブル化 → 既存 pickle へキー付きマージ →
 SQLite 冪等 upsert → 未知の馬の馬ページ/血統の差分取得 → 特徴量（featured_data）再生成」
@@ -172,19 +182,57 @@ SQLite 冪等 upsert → 未知の馬の馬ページ/血統の差分取得 → �
 
 ### 4-2. 学習（週次）
 
+> **運用標準（A/B 検証で確定）**
+> 予測器は **GBDT スタック（LightGBM×XGBoost×CatBoost）を `--since-year 2015` で学習**する。
+> ```bash
+> python -m src.pipeline.run_pipeline retrain --with-tuning --resume-tuning \
+>     --base-models-config configs/base_models_gbdt.json --since-year 2015
+> ```
+> Win auc_test ≈ **0.835**（内部 test）/ **0.840**（直近年 out-of-sample）。根拠となった A/B の結論:
+> - **NN は不採用**: NN を分離学習し meta 融合しても寄与 **Δ ≈ 0**（勝ち信号は GBDT が既に捕捉）。
+>   `--nn-standalone` / `build-combined` の経路は残すが本番では使わない。
+> - **全データ化は不要**: `--since-year` の A/B で **2010 ≈ 2015**（データ量は頭打ち・古いデータは非代表）。
+>   177万行フルは RAM を圧迫するだけで精度は伸びない。メモリが厳しい場合は `--float32-features` を併用。
+> - 規律: 集約統計を実測に合わせるのみ。logloss/回収率は最適化せず、マーケット・エッジは存在しない
+>   （AUC は予測精度の話で別軸。ライブ賭けはしない）。
+
 ```bash
 # 通常の再学習（スタッキング + 較正、約 3 分）
 python -m src.pipeline.run_pipeline retrain
 
-# Optuna ハイパラ探索つき（全 trial が成績順で models/tuning_history.json に保存される）
+# Optuna ハイパラ探索つき（LightGBMTuner の自動段階探索。探索範囲・回数は固定）
 python -m src.pipeline.run_pipeline retrain --with-tuning
+
+# 探索範囲・試行回数を制御する手書き Optuna 探索（method="optuna"）
+#   --n-trials を付けると optuna 方式に切替（--with-tuning は自動で有効化）
+python -m src.pipeline.run_pipeline retrain --n-trials 100
+#   打ち切り秒数を指定
+python -m src.pipeline.run_pipeline retrain --n-trials 200 --tuning-timeout 1800
+#   探索範囲を JSON 設定ファイルで指定（例: configs/tuning_config.example.json）
+python -m src.pipeline.run_pipeline retrain --tuning-config configs/tuning_config.example.json
 
 # 保存済み探索結果から任意の rank のパラメータで学習
 python -m src.pipeline.run_pipeline retrain --params-rank 2
 
 # UI（モデルラボ）で選択・保存したパラメータで学習
 python -m src.pipeline.run_pipeline retrain --use-selected-params
+
+# マルチ GBDT スタッキング（LightGBM + XGBoost + CatBoost + NN を base に）
+python -m src.pipeline.run_pipeline retrain --use-stacking \
+    --base-models-config configs/base_models_nn.example.json
 ```
+
+**base 学習器・meta 学習器の構成（`--base-models-config <JSON>`）**
+
+`configs/base_models_*.json` で base 学習器の種類と meta 学習器を切り替える:
+
+- `models`: `lightgbm` / `xgboost` / `catboost` / `nn` の組み合わせ
+- `meta_model`: スタッキング 2 段目の学習器
+  - `"logistic"`（既定）— LogisticRegression。線形結合で堅牢
+  - `"lightgbm"` — 浅い GBDT meta。base が多様なとき非線形な組み合わせを学習し改善し得る
+    （例: `configs/base_models_nn_gbdt_meta.json`）。meta 特徴量は base 予測確率の
+    数列のみと低次元のため、既定は `num_leaves=3` の極浅構成で過学習を抑える。
+    `meta_params` で上書き可能
 
 ### 4-3. ダッシュボード（Streamlit UI）
 
@@ -196,9 +244,10 @@ streamlit run app/Home.py
 |---|---|
 | 📊 ダッシュボード | データ・モデルの状態サマリ |
 | 🎯 予測・推奨 | レース選択 → 較正勝率 × EV → ケリー推奨額。**「🛒 発注カートへ追加」**で発注ページへ連携 |
-| 📈 オッズ推移 | スナップショットの推移グラフ + **オッズ力学モデル予測の照会**（各時点の実績 vs 次時点・確定予測のマトリクス） |
+| 📈 オッズ推移 | スナップショットの推移グラフ + **オッズ力学モデル予測の照会**（各時点の実績 vs 次時点・確定予測のマトリクス）+ **連系オッズ 実績 vs Harville 推定の比較照会** |
 | 🏆 成績・設定 | 回収率推移 / AUC / 特徴量重要度 / 較正プロット / config.yaml 編集 |
-| 🧪 モデルラボ | ①Optuna 探索結果を成績順に表示・**使用パラメータの選択** ②複数モデルの**同一条件バックテスト比較**（回収率・的中率・シャープレシオ・資金推移） ③**オッズ力学モデルの精度比較**（KL/勝ち馬 logloss/MAE/MAPE + アンサンブル重み） |
+| 🔍 バックテスト | ①単勝フルシミュレーション（EV 閾値） ②確信度スイープ ③**券種別バックテスト**（単勝以外も含む全 8 券種を選んで回収率・的中率・損益・累積推移を照会） |
+| 🧪 モデルラボ | ①Optuna 探索結果を成績順に表示・**使用パラメータの選択** ②複数モデルの**同一条件バックテスト比較**（全 8 券種対応・回収率・的中率・シャープレシオ・資金推移） ③**オッズ力学モデルの精度比較**（KL/勝ち馬 logloss/MAE/MAPE + アンサンブル重み） ④**券種別最適化**（EV 閾値・温度 β・確率較正を実払戻バックテストで券種別に最適化・保存→予測に反映） |
 | 🛒 発注 | 下記 4-5 参照 |
 
 ### 4-4. 時系列オッズの自動取得・予測再計算
@@ -222,10 +271,46 @@ python -m src.pipeline.odds_watch --once --source jravan
 予測は `data/raw/odds_predictions.pkl` + SQLite `raw_odds_predictions` に保存され、
 「📈 オッズ推移」ページの照会マトリクスに表示される。
 
+#### 過去レースの最終確定オッズ取得（全券種）
+
+払戻データ（的中組合せの確定配当）は `ingest` でレース結果ページから全 8 券種を取得済み。
+これに加えて、確定後の netkeiba オッズページから**全組合せの最終確定オッズ**を取得できる:
+
+```bash
+# 開催日を指定して当日全レースの確定オッズ（単複/枠連/馬連/馬単/ワイド/三連複/三連単）を取得
+python -m src.pipeline.run_pipeline fetch-final-odds --post-date 20240106
+# 個別レース・券種を絞る場合
+python -m src.pipeline.run_pipeline fetch-final-odds --race-id 202406010101 --bet-types umaren sanrentan
+
+# 取込済み（results.pkl）の過去全レースをバックフィル（resume 対応・取得済みは自動スキップ）
+python -m src.pipeline.run_pipeline fetch-final-odds --from-results
+#   年で絞る + 1 回 500 レースに分割（大量取得を小分けに実行。再実行で続きから）
+python -m src.pipeline.run_pipeline fetch-final-odds --from-results --years 2010 2011 --limit 500
+```
+
+> 注: `--post-date` は **その 1 日分**、`--from-results` は **取込済みの全 race_id** が対象。
+> 全 8 券種 × 数千レースは大規模スクレイプ（ポライトネスで ~2 秒/件 + 1000 件/時上限）に
+> なるため、`--years`/`--limit` で小分けし、resume（取得済みスキップ）で複数回に分けて実行する。
+> 5 レースごとに途中保存し「本バッチ +N 件 / 累計 M 件」を表示、0 件のレースは末尾に集計警告。
+>
+> 連系（馬連〜三連単）は組合せが多く JS 描画が重いため、描画待ちを延長できる:
+> `KEIBA_ODDS_SELECTOR_TIMEOUT_MS`（既定 15000）/ `KEIBA_ODDS_TIMEOUT_MS`（既定 45000）。
+> 取得 0 件が多いときはこれらを増やすと改善することがある。
+
+`data/raw/odds_snapshots.pkl` + `raw_odds_snapshots` に phase=t0（確定）として永続化される。
+リクエスト間隔は `KEIBA_SCRAPE_DELAY`（既定 1 秒+揺らぎ）で自主規制する。
+> 注: netkeiba が過去レースの確定オッズページを配信しているか・連系パーサの実 DOM は
+> 環境により未検証。まず 1〜2 レースで取得件数を確認してから一括実行を推奨。
+
 ```bash
 # スナップショット蓄積後（目安 4〜8 週）: モデル比較評価 + 重力統計・アンサンブル重みの更新
 python -m src.pipeline.run_pipeline evaluate-odds-dynamics
 ```
+
+評価は KL / シェア MAE / オッズ MAPE に加え、**勝ち馬 log-loss**（results の着順 1 着馬を
+正解とした予測シェアの負対数尤度）も算出し、モデルラボの「オッズ力学モデル」タブに表示する
+（results 未取得時のみ NaN）。結果は `models/odds_dynamics_eval.json` /
+`models/odds_gravity.json`（いずれも実行時生成・gitignore）に保存される。
 
 予測確定オッズを期待値計算に使うには `config.yaml` に `use_predicted_odds: true` を設定する
 （予測が無いレース/馬は現在オッズへ自動フォールバック）。
@@ -235,6 +320,9 @@ python -m src.pipeline.run_pipeline evaluate-odds-dynamics
 > JSON スキーマは `src/preparing/_odds_source.py` の docstring を参照。
 
 ### 4-5. 馬券発注フロー
+
+> 推奨馬券は検証済み戦略（**単勝・EV>1.1・オッズ≤15倍**）に絞られる。根拠・検証・運用パラメータは
+> [`docs/betting_strategy.md`](docs/betting_strategy.md) を参照。
 
 1. **予測**: 「🎯 予測・推奨」でレースを選び、推奨馬券を確認 → 「🛒 発注カートへ追加」
 2. **編集**: 「🛒 発注」ページで金額（100 円単位）を編集・発注対象を選択。
@@ -390,6 +478,7 @@ ingest/retrain 起動時に `auto_migrate_all` が空テーブルへ自動移行
 
 ## 8. 関連ドキュメント
 
+- [`docs/betting_strategy.md`](docs/betting_strategy.md) — 検証済み馬券戦略（単勝・EV>1.1・オッズ≤15）の根拠・検証・運用パラメータ
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — レイヤ設計・抽象境界・DI・ADR
 - [`docs/setup_vps.md`](docs/setup_vps.md) — VPS（Playwright）セットアップ・cron 運用
 - [`.claude-context.md`](.claude-context.md) — 開発履歴・修正の詳細ログ

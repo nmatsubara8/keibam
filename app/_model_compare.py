@@ -16,12 +16,18 @@ from src.constants._local_paths import LocalPaths
 logger = logging.getLogger(__name__)
 
 # UI で選択できる馬券種 → (BetPolicy クラス名, Simulator の action キー)
+# 全 8 券種に対応（枠連・馬単・三連単を含む）。枠連 BOX は score_table の
+# wakuban_flag 列で枠単位に集約するため、StdScorePolicy 等 _calc 由来の
+# score_table（wakuban_flag を含む）が必要。
 BET_POLICY_CHOICES = {
     "単勝": ("BetPolicyTansho", "tansho"),
     "複勝": ("BetPolicyFukusho", "fukusho"),
+    "枠連BOX": ("BetPolicyWakurenBox", "wakuren"),
     "馬連BOX": ("BetPolicyUmarenBox", "umaren"),
+    "馬単BOX": ("BetPolicyUmatanBox", "umatan"),
     "ワイドBOX": ("BetPolicyWideBox", "wide"),
     "三連複BOX": ("BetPolicySanrenpukuBox", "sanrenpuku"),
+    "三連単BOX": ("BetPolicySanrentanBox", "sanrentan"),
 }
 
 
@@ -47,21 +53,31 @@ def simulate_model(
     featured_slice: pd.DataFrame,
     bet_label: str,
     threshold: float,
-) -> tuple[dict, pd.DataFrame]:
+    return_processor=None,
+) -> tuple[dict, pd.DataFrame, dict]:
     """1 モデルのバックテストを実行する。
+
+    Parameters
+    ----------
+    return_processor : 払戻テーブル供給（DI）。None なら LocalPaths から読み込む
+        （テスト時は合成払戻テーブルを注入できる）。
 
     Returns
     -------
-    (summary, per_race) :
+    (summary, per_race, diag) :
         summary  — 回収率・的中率・シャープレシオ・最大DD 等（summarize_returns 出力）。
         per_race — レース毎の bet_amount / return_amount / hit_or_not。
+        diag     — 診断情報（n_matched_races: 閾値を超えて賭けたレース数,
+                   n_covered_races: そのうち払戻テーブルにデータがあったレース数）。
+                   結果が空のとき「閾値が高い」のか「払戻データ欠損」かを区別する。
     """
     import src.policies as policies
+    from src.constants._bet_types import BetType
     from src.policies._score_policy import StdScorePolicy
     from src.preprocessing._return_processor import ReturnProcessor
     from src.simulation._simulator import Simulator
 
-    policy_cls_name, _action_key = BET_POLICY_CHOICES[bet_label]
+    policy_cls_name, action_key = BET_POLICY_CHOICES[bet_label]
     policy_cls = getattr(policies, policy_cls_name)
 
     score_table = ai.calc_score(featured_slice, StdScorePolicy)
@@ -70,10 +86,29 @@ def simulate_model(
     # int64 のため、payout 照合キーを int に正規化する（race_id は常に数値）。
     actions = {int(race_id): bets for race_id, bets in actions.items()}
 
-    simulator = Simulator(ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH))
+    if return_processor is None:
+        return_processor = ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+
+    # 診断: 閾値を超えて賭けたレースのうち、払戻テーブルに存在する割合を測る。
+    # action_key を該当 BetType にマップして、その馬券種の払戻テーブルで照合する。
+    _action_to_bet_type = {
+        "tansho": BetType.TANSHO, "fukusho": BetType.FUKUSHO,
+        "wakuren": BetType.WAKUREN, "umaren": BetType.UMAREN, "umatan": BetType.UMATAN,
+        "wide": BetType.WIDE, "sanrenpuku": BetType.SANRENPUKU, "sanrentan": BetType.SANRENTAN,
+    }
+    bet_type = _action_to_bet_type.get(action_key, BetType.TANSHO)
+    payout_index = set(int(x) for x in return_processor.preprocessed_data[bet_type].index)
+    matched_ids = set(actions.keys())
+    covered_ids = matched_ids & payout_index
+    diag = {
+        "n_matched_races": len(matched_ids),
+        "n_covered_races": len(covered_ids),
+    }
+
+    simulator = Simulator(return_processor)
     per_race = simulator.calc_returns_per_race(actions)
     summary = simulator.calc_returns(actions)
-    return summary, per_race
+    return summary, per_race, diag
 
 
 def cumulative_profit(per_race: pd.DataFrame) -> pd.Series:

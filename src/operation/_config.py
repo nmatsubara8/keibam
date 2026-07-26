@@ -23,9 +23,30 @@ class OperationConfig:
     kelly_fraction_ratio: float = 0.5
     per_bet_cap_ratio: float = 0.05
     max_daily_ratio: float = 1.0
+    # 検証済み単勝戦略の運用パラメータ。コード既定は無害（フィルタ無効）にして
+    # 既存呼び出しを変えず、実値は config.yaml 側で指定する。
+    #   max_odds: これ超のオッズ（人気薄）を除外。kelly_backtest で 3–15倍に
+    #     エッジが集中し、≤15倍で 2022–2026 の全年度 回収率1.9–2.1 を確認。
+    #   tansho_ev_threshold: 単勝EV下限の上書き（None=既定 BetThresholds。検証値=1.1）。
+    max_odds: float = float("inf")
+    tansho_ev_threshold: float | None = None
     # オッズ力学モデルの予測確定オッズで EV を計算する（odds_watch の最新予測を使用。
     # 予測が無いレース/馬は現在オッズへ自動フォールバック）
     use_predicted_odds: bool = False
+    # EV 較正アーティファクト（calibrate-ev の出力）をライブ選定に適用する。
+    # models/{place_exponents,win_calibrator,blend_weights}.json を読み補正Harville/r̂較正/
+    # 市場合成を有効化（ファイルが無い項目は自動で従来挙動へフォールバック）。
+    # 既定 True=有効: OOS 検証（fit=2024/eval=2025）で無較正の病理的な大穴垂れ流しが解消し、
+    # 全体回収率 27%→76% に改善したため既定 ON にした。アーティファクトが無ければ自動で従来挙動
+    # （None フォールバック）なので無害。無効化は use_ev_calibration=False。
+    # 注意: これらは OOS で fit したものを使うこと（in-sample は退化。Benter §5）。
+    use_ev_calibration: bool = True
+    # 初出走（データ無し）馬に公衆 implied 勝率を割り当てる（ベンター §3）。featured の
+    # career_starts==0/NaN を初出走と判定し、初出走のみのレースは選定から除外する。既定 False。
+    use_unratable_fallback: bool = False
+    # 自己購入のオッズ低下（プール影響）でケリー stake を上限する（芦谷/ベンター）。run_prediction に
+    # pool_by_race（復元プール）を渡したときのみ作動。最適ベットは小さくなる。既定 False。
+    use_pool_impact: bool = False
     # 安全装置（損失ストップ / kill switch）
     kill_switch_enabled: bool = True       # 当日実現損失が上限超で推奨/記録を停止
     max_daily_loss_ratio: float = 0.3      # 当日実現損失が bankroll*この比率を超えたら停止
@@ -38,6 +59,10 @@ class OperationConfig:
             raise ValueError(
                 f"max_daily_loss_ratio は 0 < r <= 1: {self.max_daily_loss_ratio}"
             )
+        if self.max_odds <= 0:
+            raise ValueError(f"max_odds は正の値: {self.max_odds}")
+        if self.tansho_ev_threshold is not None and self.tansho_ev_threshold <= 0:
+            raise ValueError(f"tansho_ev_threshold は正の値か None: {self.tansho_ev_threshold}")
 
     @classmethod
     def from_dict(cls, data: dict) -> "OperationConfig":

@@ -283,7 +283,7 @@ def test_compute_full_backtest_summary_and_per_race():
     feat = _make_featured(n_races=20, horses_per_race=6)
     out = compute_full_backtest(_StubModel(), feat, ev_threshold=1.0)
 
-    assert set(out.keys()) == {"summary", "per_race"}
+    assert {"summary", "per_race", "per_bet"}.issubset(out.keys())
     summary, per_race = out["summary"], out["per_race"]
     # summary は summarize_returns 由来の主要キーを持つ
     for key in ("return_rate", "profit", "n_bets", "n_races"):

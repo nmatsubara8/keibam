@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 from sklearn.linear_model import LogisticRegression
 
-from src.constants._master import Master
 from src.constants._results_cols import ResultsCols
 from src.pipeline._retrain import RetrainConfig
 from src.pipeline._retrain import RetrainJob
@@ -16,9 +15,6 @@ from src.pipeline._retrain import evaluate_test
 from src.pipeline._retrain import load_metadata
 from src.pipeline._retrain import save_metadata
 from src.pipeline._retrain import version_name
-
-Master_TURF = Master.RACE_TYPE_TURF
-Master_DIRT = Master.RACE_TYPE_DIRT
 
 
 # ---------------------------------------------------------------------------
@@ -149,15 +145,11 @@ class _StubAI:
             return self._ds.y_test
 
     def __init__(self, df):
-        self.datasets = self._Datasets(df)
-        # evaluate_test は X_test から TANSHO_ODDS を落として predict_proba するため、
-        # モデルはその特徴量数（= X_test 列数 - 1）に合わせて学習する。
-        xt = self.datasets.X_test.drop([ResultsCols.TANSHO_ODDS], axis=1, errors="ignore")
-        n_features = max(1, xt.shape[1])
         rng = np.random.default_rng(0)
-        X = rng.normal(size=(len(df), n_features))
+        X = rng.normal(size=(len(df), 2))
         y = (X[:, 0] > 0).astype(int)
         self.effective_model = LogisticRegression(max_iter=200, random_state=0).fit(X, y)
+        self.datasets = self._Datasets(df)
 
     def train_with_stacking(self, **kwargs): pass
     def train_without_tuning(self): pass
@@ -167,15 +159,12 @@ class _StubAI:
 class _StubFactory:
     def __init__(self):
         self.saved = []
-        self.saved_calls = []
 
     def create(self, featured_data, test_size, valid_size):
         return _StubAI(featured_data)
 
-    def save(self, ai, version_name, category=None, models_dir="models"):
+    def save(self, ai, version_name):
         self.saved.append(version_name)
-        self.saved_calls.append((version_name, category))
-        return f"{models_dir}/{version_name}.pickle"
 
 
 def test_retrain_job_returns_meta(tmp_path):
@@ -219,139 +208,6 @@ def test_retrain_job_records_n_races(tmp_path):
     assert meta["n_races"] == len(df.index.unique())
 
 
-def _make_categorized_featured():
-    """race_type ワンホット + 全国/地方 race_id を持つ featured 風 DataFrame。
-
-    central_turf 5 レース / central_dirt 4 レース / local_dirt 3 レースを含む。
-    """
-    n_horses = 6
-    specs = [
-        ("central", "05", Master_TURF, 5, 0),
-        ("central", "05", Master_DIRT, 4, 100),
-        ("local", "44", Master_DIRT, 3, 200),
-    ]
-    rows = []
-    index = []
-    base = pd.Timestamp("2024-01-01")
-    day = 0
-    for _org, place, race_type, n_races, id_off in specs:
-        for i in range(n_races):
-            race_id = f"2024{place}{id_off + i:06d}"
-            day += 1
-            for h in range(n_horses):
-                rows.append(
-                    {
-                        "date": base + pd.Timedelta(days=day),
-                        "rank": h % 2,  # 各レースに 0/1 両クラスを含める
-                        ResultsCols.TANSHO_ODDS: 3.0,
-                        "feat_a": float(h),
-                        "race_type__芝": 1 if race_type == Master_TURF else 0,
-                        "race_type__ダート": 1 if race_type == Master_DIRT else 0,
-                        "race_type__障害": 0,
-                    }
-                )
-                index.append(race_id)
-    df = pd.DataFrame(rows)
-    df.index = index
-    return df
-
-
-def test_retrain_job_trains_category_models(tmp_path):
-    """全国/地方 × 芝/ダート の featured で統合 + カテゴリ別モデルが保存される。"""
-    df = _make_categorized_featured()
-    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, min_category_races=3)
-    factory = _StubFactory()
-    job = RetrainJob(factory, cfg)
-    meta = job.run(df, vname="vcat")
-
-    saved_categories = {cat for _v, cat in factory.saved_calls}
-    # 統合 + データが min 以上のカテゴリ 3 種
-    assert None in saved_categories or "combined" in saved_categories
-    assert "central_turf" in saved_categories
-    assert "central_dirt" in saved_categories
-    assert "local_dirt" in saved_categories
-    # 統合モデルのメタに学習済みカテゴリが記録される
-    assert set(meta["categories"]) == {"central_turf", "central_dirt", "local_dirt"}
-
-
-def test_retrain_job_skips_small_categories(tmp_path):
-    """min_category_races 未満のカテゴリは学習されない。"""
-    df = _make_categorized_featured()
-    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, min_category_races=4)
-    factory = _StubFactory()
-    job = RetrainJob(factory, cfg)
-    meta = job.run(df, vname="vcat2")
-    # local_dirt は 3 レースなのでスキップされる
-    assert "local_dirt" not in meta["categories"]
-    assert "central_turf" in meta["categories"]
-
-
-def test_retrain_job_no_category_split(tmp_path):
-    """train_categories=False なら統合モデルのみ。"""
-    df = _make_categorized_featured()
-    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, train_categories=False)
-    factory = _StubFactory()
-    job = RetrainJob(factory, cfg)
-    meta = job.run(df, vname="vcat3")
-    assert meta["categories"] == []
-    saved_categories = {cat for _v, cat in factory.saved_calls}
-    assert saved_categories == {"combined"}
-
-
-def test_tune_categories_tunes_each_category(tmp_path):
-    """tune_categories=True で、学習される各カテゴリが train_with_tuning を呼ぶ。"""
-    calls = {"tuning": 0, "no_tuning": 0}
-
-    class _RecAI(_StubAI):
-        def train_with_tuning(self):
-            calls["tuning"] += 1
-
-        def train_without_tuning(self):
-            calls["no_tuning"] += 1
-
-    class _RecFactory(_StubFactory):
-        def create(self, featured_data, test_size, valid_size):
-            return _RecAI(featured_data)
-
-    df = _make_categorized_featured()  # central_turf 5 / central_dirt 4 / local_dirt 3
-    cfg = RetrainConfig(
-        models_dir=str(tmp_path),
-        use_stacking=False,
-        min_category_races=3,
-        tune_categories=True,
-    )
-    job = RetrainJob(_RecFactory(), cfg)
-    meta = job.run(df, vname="vtune", with_tuning=False)
-
-    # 統合は with_tuning=False（no_tuning）、カテゴリ 3 種は tuning
-    assert calls["tuning"] == 3
-    assert calls["no_tuning"] == 1
-    assert set(meta["categories"]) == {"central_turf", "central_dirt", "local_dirt"}
-
-
-def test_tune_categories_default_off(tmp_path):
-    """既定（tune_categories=False）ではカテゴリは探索なしで学習される。"""
-    calls = {"tuning": 0, "no_tuning": 0}
-
-    class _RecAI(_StubAI):
-        def train_with_tuning(self):
-            calls["tuning"] += 1
-
-        def train_without_tuning(self):
-            calls["no_tuning"] += 1
-
-    class _RecFactory(_StubFactory):
-        def create(self, featured_data, test_size, valid_size):
-            return _RecAI(featured_data)
-
-    df = _make_categorized_featured()
-    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, min_category_races=3)
-    job = RetrainJob(_RecFactory(), cfg)
-    job.run(df, vname="vnotune", with_tuning=False)
-    assert calls["tuning"] == 0
-    assert calls["no_tuning"] == 4  # 統合 + カテゴリ 3
-
-
 def test_retrain_job_injects_lgb_params(tmp_path):
     """lgb_params 指定時は set_lgb_params で注入され、メタに記録される。"""
 
@@ -383,3 +239,404 @@ def test_retrain_job_injects_lgb_params(tmp_path):
     assert factory.created[0].injected_params == params
     assert meta["params_rank"] == 2
     assert meta["lgb_params"] == params
+
+
+def test_retrain_job_saves_tuned_base_models_config(tmp_path):
+    """tune_per_model 探索後、完成 config が tuned_base_models.json に保存され読み戻せる。"""
+    import json
+
+    from src.training._base_models_config import from_dict, load_base_models_config
+
+    class _TunedAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            # tune_nn 後にマージされた完成 config を模す（arch/構造が反映済み）
+            self.tuned_base_models_config = from_dict({
+                "models": ["lightgbm", "nn"],
+                "tune_per_model": True,
+                "nn_params": {"arch": "mlp", "hidden_dims": [96], "dropout": 0.33, "lr": 0.0007},
+            })
+
+    class _TunedFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _TunedAI(featured_data)
+
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True)
+    RetrainJob(_TunedFactory(), cfg).run(_make_featured(), vname="tv1", with_tuning=False)
+
+    out = tmp_path / "tuned_base_models.json"
+    assert out.exists()
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert saved["tune_per_model"] is True
+    assert saved["nn_params"]["hidden_dims"] == [96]
+    # 保存 JSON はそのまま固定運用 config として読み戻せる（往復）
+    cfg2 = load_base_models_config(str(out))
+    assert cfg2.nn_params["dropout"] == 0.33
+
+
+def test_retrain_job_skips_tuned_config_when_absent(tmp_path):
+    """通常学習（tuned_base_models_config 無し）では JSON を作らない。"""
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False)
+    RetrainJob(_StubFactory(), cfg).run(_make_featured(), vname="v1", with_tuning=False)
+    assert not (tmp_path / "tuned_base_models.json").exists()
+
+
+def test_retrain_job_logs_search_before_after_summary(tmp_path, caplog):
+    """末尾に「モデル探索の前後」サマリ（前回best→今回）が出力される。"""
+    import json
+    import logging
+
+    from src.training._base_models_config import from_dict
+
+    out = tmp_path / "tuned_base_models.json"
+    out.write_text(json.dumps({"models": ["lightgbm", "nn"], "_auc_test": 0.5}), encoding="utf-8")
+
+    class _TunedAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            self.tuned_base_models_config = from_dict({
+                "models": ["lightgbm", "nn"], "tune_per_model": True,
+            })
+
+    class _TunedFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _TunedAI(featured_data)
+
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True)
+    with caplog.at_level(logging.INFO, logger="src.pipeline._retrain"):
+        RetrainJob(_TunedFactory(), cfg).run(_make_featured(), vname="sv1", with_tuning=False)
+
+    text = "\n".join(r.message for r in caplog.records)
+    assert "モデル探索の前後" in text
+    assert "前回best" in text and "今回" in text  # 既存 0.5 との前後比較
+
+
+def test_retrain_job_keeps_better_existing_tuned_config(tmp_path):
+    """歴代 best 保持: 既存ファイルの auc_test が高ければ今回の学習で上書きしない。"""
+    import json
+
+    from src.training._base_models_config import from_dict
+
+    out = tmp_path / "tuned_base_models.json"
+    # 到達不能に高い _auc_test を持つ既存 best を置く（今回の auc_test ≤ 1.0 は必ず下回る）
+    out.write_text(
+        json.dumps({"models": ["lightgbm", "nn"], "nn_params": {"hidden_dims": [7]}, "_auc_test": 999.0}),
+        encoding="utf-8",
+    )
+
+    class _TunedAI(_StubAI):
+        def __init__(self, df):
+            super().__init__(df)
+            self.tuned_base_models_config = from_dict({
+                "models": ["lightgbm", "nn"], "tune_per_model": True,
+                "nn_params": {"hidden_dims": [96]},
+            })
+
+    class _TunedFactory(_StubFactory):
+        def create(self, featured_data, test_size, valid_size):
+            return _TunedAI(featured_data)
+
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True)
+    RetrainJob(_TunedFactory(), cfg).run(_make_featured(), vname="tv2", with_tuning=False)
+
+    saved = json.loads(out.read_text(encoding="utf-8"))
+    assert saved["_auc_test"] == 999.0                 # 据え置き（上書きされない）
+    assert saved["nn_params"]["hidden_dims"] == [7]    # 既存 best を維持
+
+
+# ---------------------------------------------------------------------------
+# Stage B: Win ヘッド併行学習（lightgbm/DataSplitter 非依存の軽量スタブ）
+# ---------------------------------------------------------------------------
+
+
+class _LightDatasets:
+    def __init__(self):
+        self._X = pd.DataFrame({"f": [0.1, 0.2, 0.3, 0.4]})
+        self._y = pd.Series([1, 0, 0, 1])
+
+    @property
+    def X_test(self):
+        return self._X
+
+    @property
+    def y_test(self):
+        return self._y
+
+
+class _LightAI:
+    def __init__(self, target_col):
+        X = np.array([[0.1], [0.2], [0.3], [0.4]])
+        y = np.array([1, 0, 0, 1])
+        self.effective_model = LogisticRegression(max_iter=200).fit(X, y)
+        self.datasets = _LightDatasets()
+        self.target_col = target_col
+
+    def train_with_stacking(self, **kwargs):
+        pass
+
+    def train_without_tuning(self):
+        pass
+
+
+class _TwoHeadFactory:
+    """target_col / suffix を尊重する 2 ヘッド対応スタブ。"""
+
+    def __init__(self):
+        self.saved = []  # (version, suffix, target_col)
+        self.created = []  # target_col
+
+    def create(self, featured_data, test_size, valid_size, target_col="rank"):
+        self.created.append(target_col)
+        return _LightAI(target_col)
+
+    def save(self, ai, version_name, suffix=""):
+        self.saved.append((version_name, suffix, ai.target_col))
+
+
+def test_retrain_trains_and_saves_win_head(tmp_path):
+    factory = _TwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    meta = job.run(_make_featured(), vname="v_2head", with_tuning=False)
+
+    # Place(rank) と Win(rank_win) の 2 ヘッドが create された
+    assert factory.created == ["rank", "rank_win"]
+    # 保存は Place(suffix="") と Win(suffix="__win") の 2 回
+    assert ("v_2head", "", "rank") in factory.saved
+    assert ("v_2head", "__win", "rank_win") in factory.saved
+    # メタに Win ヘッドの AUC が記録される
+    assert "win_head" in meta and "auc_test" in meta["win_head"]
+
+
+def test_retrain_win_head_reuses_tuned_params(tmp_path):
+    """--with-tuning 時、Place 探索の best_params が Win ヘッドにも流用される（既定パラメータのままにしない）。"""
+    tuned = {"num_leaves": 15, "learning_rate": 0.0076, "path_smooth": 18.0}
+
+    class _FakeStudy:
+        best_params = tuned
+        trials: list = []
+
+    class _ParamHeadAI(_LightAI):
+        def __init__(self, target_col):
+            super().__init__(target_col)
+            self.injected_params = None
+            if target_col == "rank":  # Place ヘッドだけが探索結果 study を持つ
+                self.tuning_study_ = _FakeStudy()
+
+        def set_lgb_params(self, params):
+            self.injected_params = params
+
+    class _ParamTwoHeadFactory(_TwoHeadFactory):
+        def __init__(self):
+            super().__init__()
+            self.ais: dict = {}
+
+        def create(self, featured_data, test_size, valid_size, target_col="rank"):
+            self.created.append(target_col)
+            ai = _ParamHeadAI(target_col)
+            self.ais[target_col] = ai
+            return ai
+
+    factory = _ParamTwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    job.run(_make_featured(), vname="v_tuned", with_tuning=True)
+
+    # Win ヘッドが Place 探索の best_params を受け取っている（既定パラメータのままではない）
+    assert factory.ais["rank_win"].injected_params == tuned
+    # Place ヘッドは探索経由なので set_lgb_params は呼ばれない
+    assert factory.ais["rank"].injected_params is None
+
+
+def test_retrain_win_head_prefers_explicit_lgb_params(tmp_path):
+    """明示 lgb_params 指定時は（tuning より）そちらを Win ヘッドへ注入する。"""
+    explicit = {"num_leaves": 31}
+
+    class _ParamHeadAI(_LightAI):
+        def __init__(self, target_col):
+            super().__init__(target_col)
+            self.injected_params = None
+
+        def set_lgb_params(self, params):
+            self.injected_params = params
+
+    class _ParamTwoHeadFactory(_TwoHeadFactory):
+        def __init__(self):
+            super().__init__()
+            self.ais: dict = {}
+
+        def create(self, featured_data, test_size, valid_size, target_col="rank"):
+            self.created.append(target_col)
+            ai = _ParamHeadAI(target_col)
+            self.ais[target_col] = ai
+            return ai
+
+    factory = _ParamTwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    job.run(_make_featured(), vname="v_expl", lgb_params=explicit, params_rank=1)
+
+    assert factory.ais["rank_win"].injected_params == explicit
+
+
+def test_retrain_skips_win_head_when_disabled(tmp_path):
+    factory = _TwoHeadFactory()
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=True, train_win_head=False)
+    job = RetrainJob(factory, cfg)
+    meta = job.run(_make_featured(), vname="v_place_only", with_tuning=False)
+
+    assert factory.created == ["rank"]  # Place のみ
+    assert all(suffix == "" for _, suffix, _ in factory.saved)
+    assert "win_head" not in meta
+
+
+def test_retrain_win_head_skipped_if_factory_unsupported(tmp_path):
+    """target_col 非対応の旧 factory では Win ヘッドを安全にスキップ（非致命）。"""
+    factory = _StubFactory()  # create(featured_data, test_size, valid_size) のみ
+    cfg = RetrainConfig(models_dir=str(tmp_path), use_stacking=False, train_win_head=True)
+    job = RetrainJob(factory, cfg)
+    # _StubAI は DataSplitter(lightgbm) を要するため、ここでは create が TypeError 以前に
+    # 失敗し得る。Win ヘッドが本体 retrain を壊さないこと（例外を投げない）だけ確認する。
+    try:
+        meta = job.run(_make_featured(), vname="v_compat", with_tuning=False)
+    except ModuleNotFoundError:
+        pytest.skip("lightgbm 未導入環境（Place ヘッド学習に必要）")
+    assert "win_head" not in meta
+
+
+# ---------------------------------------------------------------------------
+# 6 分割（全国/地方 × 芝/ダート/障害）カテゴリ別 Place ヘッド
+# ---------------------------------------------------------------------------
+
+from src.constants._master import Master  # noqa: E402
+
+
+def _make_categorized_featured(n_horses=6):
+    """race_type ワンホット + 全国/地方 race_id を持つ featured 風 DataFrame。
+
+    central_turf 5 / central_dirt 4 / local_dirt 3 レース。分割ロジックの検証用
+    （学習は _RecAI が stub 化するため date/rank/単勝 列は不要）。
+    """
+    specs = [
+        ("05", Master.RACE_TYPE_TURF, 5, 0),
+        ("05", Master.RACE_TYPE_DIRT, 4, 100),
+        ("44", Master.RACE_TYPE_DIRT, 3, 200),
+    ]
+    rows, index = [], []
+    for place, rt, n_races, off in specs:
+        for i in range(n_races):
+            rid = f"2024{place}{off + i:06d}"
+            for _ in range(n_horses):
+                rows.append({
+                    "feat_a": 1.0,
+                    "race_type__芝": 1 if rt == Master.RACE_TYPE_TURF else 0,
+                    "race_type__ダート": 1 if rt == Master.RACE_TYPE_DIRT else 0,
+                    "race_type__障害": 1 if rt == Master.RACE_TYPE_HURDLE else 0,
+                })
+                index.append(rid)
+    df = pd.DataFrame(rows)
+    df.index = index
+    return df
+
+
+class _RecAI(_LightAI):
+    """train_with_stacking の with_tuning を記録するスタブ AI。"""
+
+    def __init__(self, target_col):
+        super().__init__(target_col)
+        self.stacking_with_tuning = None
+        self.tuning_study_ = None
+
+    def train_with_stacking(self, **kwargs):
+        self.stacking_with_tuning = kwargs.get("with_tuning")
+
+
+class _RecFactory:
+    """target_col / suffix を尊重し、生成した AI と保存呼び出しを記録するスタブ。"""
+
+    def __init__(self):
+        self.saved = []   # (version, suffix)
+        self.created = []  # target_col
+        self.ais = []      # 生成順の _RecAI
+
+    def create(self, featured_data, test_size, valid_size, target_col="rank"):
+        self.created.append(target_col)
+        ai = _RecAI(target_col)
+        self.ais.append(ai)
+        return ai
+
+    def save(self, ai, version_name, suffix=""):
+        self.saved.append((version_name, suffix))
+
+
+def test_retrain_trains_category_place_heads(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=3,
+    )
+    factory = _RecFactory()
+    meta = RetrainJob(factory, cfg).run(df, vname="vcat", with_tuning=False)
+
+    suffixes = {s for _v, s in factory.saved}
+    assert "" in suffixes  # 統合 Place ヘッド
+    assert "__central_turf" in suffixes
+    assert "__central_dirt" in suffixes
+    assert "__local_dirt" in suffixes
+    assert set(meta["categories"]) == {"central_turf", "central_dirt", "local_dirt"}
+    assert "category_heads" in meta
+
+
+def test_retrain_skips_small_categories(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=4,
+    )
+    factory = _RecFactory()
+    meta = RetrainJob(factory, cfg).run(df, vname="vcat2", with_tuning=False)
+    # local_dirt は 3 レースなのでスキップ、central_turf(5)/central_dirt(4) は学習
+    assert "local_dirt" not in meta.get("categories", [])
+    assert "central_turf" in meta["categories"]
+
+
+def test_no_category_split(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, train_categories=False,
+    )
+    factory = _RecFactory()
+    meta = RetrainJob(factory, cfg).run(df, vname="vcat3", with_tuning=False)
+    assert "categories" not in meta
+    assert {s for _v, s in factory.saved} == {""}  # 統合のみ
+
+
+def test_tune_categories_passes_with_tuning(tmp_path):
+    """tune_categories=True で各カテゴリの train_with_stacking に with_tuning=True が渡る。"""
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=3, tune_categories=True,
+    )
+    factory = _RecFactory()
+    RetrainJob(factory, cfg).run(df, vname="vt", with_tuning=False)
+
+    combined_ai = factory.ais[0]      # 最初に create されるのは統合 Place ヘッド
+    category_ais = factory.ais[1:]
+    assert combined_ai.stacking_with_tuning is False  # 統合は run(with_tuning=False)
+    assert len(category_ais) == 3
+    assert all(a.stacking_with_tuning is True for a in category_ais)
+
+
+def test_tune_categories_default_off(tmp_path):
+    df = _make_categorized_featured()
+    cfg = RetrainConfig(
+        models_dir=str(tmp_path), use_stacking=True,
+        train_win_head=False, min_category_races=3,
+    )
+    factory = _RecFactory()
+    RetrainJob(factory, cfg).run(df, vname="vd", with_tuning=False)
+    category_ais = factory.ais[1:]
+    assert len(category_ais) == 3
+    assert all(a.stacking_with_tuning is False for a in category_ais)

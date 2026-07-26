@@ -60,6 +60,30 @@ def _make_X_multi(race_rows: dict) -> pd.DataFrame:
     return pd.concat(frames)
 
 
+class _FloatModel:
+    """predict_proba が X を float 配列化するスタブ（pd.NA だと TypeError）。"""
+
+    def predict_proba(self, X):
+        arr = np.asarray(X, dtype=float)  # pd.NA(NAType) が残っていると TypeError
+        p = np.full(len(arr), 0.5)
+        return np.column_stack([1.0 - p, p])
+
+
+def test_expected_value_policy_coerces_pd_na():
+    # nullable 拡張dtype の pd.NA を含む特徴量でも、np.nan に正規化され predict が通る
+    X = _make_X([(1, 1, 5.0), (2, 2, 3.0)])
+    X["feat"] = pd.array([1, pd.NA], dtype="Int64")
+    table = ExpectedValueScorePolicy.calc(_FloatModel(), X)
+    assert PROB in table.columns and len(table) == 2
+
+
+def test_basic_policy_coerces_object_na():
+    X = _make_X([(1, 1, 5.0), (2, 2, 3.0)])
+    X["feat"] = pd.Series([1.0, pd.NA], index=X.index, dtype=object)
+    result = BasicScorePolicy.calc(_FloatModel(), X)
+    assert "score" in result.columns and len(result) == 2
+
+
 # ──────────────────────────────────────────────────────
 # BasicScorePolicy
 # ──────────────────────────────────────────────────────

@@ -1,0 +1,5 @@
+{
+  "models": ["lightgbm", "xgboost", "catboost"],
+  "tune_per_model": false,
+  "n_trials": 50
+}

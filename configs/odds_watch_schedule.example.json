@@ -1,0 +1,9 @@
+{
+  "_comment": "連休など複数開催日の起動予定。python -m src.pipeline.odds_watch --schedule <このファイル> で、各開催日の start まで待って stop まで取得し、順に実行する。過去日は自動で読み飛ばす。date は YYYY-MM-DD/YYYYMMDD、start/stop は当日 'HH:MM' か ISO 'YYYY-MM-DDTHH:MM'。interval 省略時は --interval（既定120秒）。",
+  "interval": 120,
+  "sessions": [
+    {"date": "2026-07-18", "start": "09:20", "stop": "16:40"},
+    {"date": "2026-07-19", "start": "09:20", "stop": "16:40"},
+    {"date": "2026-07-20", "start": "09:20", "stop": "16:40"}
+  ]
+}

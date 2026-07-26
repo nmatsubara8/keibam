@@ -25,6 +25,7 @@ import datetime as dt
 import logging
 import os
 import pickle
+import time
 from typing import Sequence
 
 from src.constants._bet_types import BetType
@@ -34,6 +35,7 @@ from src.constants._odds_phases import OddsPhase
 from src.preparing._odds_snapshot import OddsSnapshot
 from src.preparing._odds_snapshot import OddsSnapshotScraper
 from src.preparing._odds_snapshot import merge_snapshots
+from src.preparing._rate_limiter import polite_interval
 
 logger = logging.getLogger(__name__)
 
@@ -101,17 +103,55 @@ def run(
     scraper: OddsSnapshotScraper,
     path: str = LocalPaths.RAW_ODDS_SNAPSHOT_PATH,
     captured_at: dt.datetime | None = None,
+    request_delay: float = 0.0,
+    persist_every: int = 0,
 ) -> list[OddsSnapshot]:
-    """指定レース・馬券種のオッズを取得し冪等追記する（DI で scraper を受け取る）。"""
+    """指定レース・馬券種のオッズを取得し冪等追記する（DI で scraper を受け取る）。
+
+    request_delay>0 のときは各リクエスト間に polite_interval（最低 1 秒+揺らぎ）の
+    間隔を挟む（過去レースの大量取得向け。単一 fetch 経路は時間上限のみで間隔を
+    持たないため）。既定 0.0 はライブ取得（odds_watch）の従来挙動を保持する。
+
+    persist_every>0 のときは N レースごとに途中保存し進捗ログを出す（大量バックフィルで
+    途中中断しても取得済み分を失わない＋生存確認のため）。既定 0 は最後に 1 回だけ保存
+    （ライブ取得の従来挙動）。
+    """
     captured_at = captured_at or dt.datetime.now()
     collected: list[OddsSnapshot] = []
-    for race_id in race_ids:
+    first = True
+    total = len(race_ids)
+    empty_races: list[str] = []
+    batch_added = 0
+    for i, race_id in enumerate(race_ids, 1):
+        race_count = 0
         for bet_type in bet_types:
+            if not first and request_delay > 0:
+                time.sleep(polite_interval(request_delay))
+            first = False
             try:
-                collected.extend(scraper.capture(race_id, bet_type, post_time, captured_at))
+                snaps = scraper.capture(race_id, bet_type, post_time, captured_at)
+                collected.extend(snaps)
+                race_count += len(snaps)
             except Exception as e:  # 1 レースの失敗で全体を止めない（リジューム前提）
                 logger.warning("capture failed race_id=%s bet_type=%s: %s", race_id, bet_type, e)
-    return persist(collected, path)
+        batch_added += race_count
+        if race_count == 0:
+            empty_races.append(str(race_id))
+        if persist_every and i % persist_every == 0:
+            merged = persist(collected, path)
+            logger.info(
+                "[odds capture] 進捗 %d/%d レース完了（本バッチ +%d 件 / 累計 %d 件）",
+                i, total, batch_added, len(merged),
+            )
+            collected = []
+            batch_added = 0
+    final = persist(collected, path)
+    if empty_races and persist_every:
+        logger.warning(
+            "[odds capture] %d/%d レースが 0 件（確定オッズ未配信 or 描画失敗の可能性）。例: %s",
+            len(empty_races), total, empty_races[:5],
+        )
+    return final
 
 
 def build_race_post_times(
@@ -137,25 +177,42 @@ def build_race_post_times(
 def select_checkpoint_races(
     pairs: Sequence[tuple[str, dt.datetime]],
     now: dt.datetime,
+    *,
+    confirmed: "Sequence[str] | set[str]" = (),
 ) -> list[tuple[str, dt.datetime, str]]:
-    """発走までの残分がチェックポイント（30/10/5/1 分前 ± 許容幅）にあるレースを選ぶ。
+    """いま取得すべきレースを返す（締切までの残り時間ベースの取得スケジュール）。
+
+    - 発走 ≤ DENSE_WINDOW_MIN 分前（既定 30）: 毎ティック取得（起動間隔ごと＝cron */3 で3分おき）。
+    - 早期 SPARSE_CHECKPOINT_MINUTES（既定は空）: あれば発走 N 分前 ±許容幅でも取得。
+    - **予定発走を過ぎても POST_GRACE_MIN 分まで継続**（実締切の安全弁）。post は呼び出し側が
+      毎ティック再取得するので、公式の発走時刻変更（大遅延）は post の追従で吸収され、grace は
+      公式変更されない数分の輪乗り遅れだけを担保する。
+    - ``confirmed``: 既に締切確定（オッズ撤去を検知）したレース ID は取得対象から外す。
 
     Returns
     -------
-    list[(race_id, post_time, phase)] : 該当チェックポイントのフェーズ付き。
-    無駄な全レース取得を避け、タイマー実行（cron */2 分等）のたびに
-    「いま取るべきレース」だけを返す純粋関数。
+    list[(race_id, post_time, phase)] : phase は minutes_to_post から分類（負値=締切超過は T0）。
+    無駄な全レース取得を避け、タイマー実行のたびに「いま取るべきレース」だけを返す純粋関数。
     """
-    from src.constants._odds_dynamics import CHECKPOINT_MINUTES
     from src.constants._odds_dynamics import CHECKPOINT_TOLERANCE_MIN
+    from src.constants._odds_dynamics import DENSE_WINDOW_MIN
+    from src.constants._odds_dynamics import POST_GRACE_MIN
+    from src.constants._odds_dynamics import SPARSE_CHECKPOINT_MINUTES
+    from src.constants._odds_phases import classify_phase
 
+    confirmed_set = set(confirmed)
     out: list[tuple[str, dt.datetime, str]] = []
     for race_id, post in pairs:
+        if race_id in confirmed_set:
+            continue  # 締切確定済み（オッズ撤去を検知）→ 取得しない
         mtp = (post - now).total_seconds() / 60
-        for phase, minutes in CHECKPOINT_MINUTES.items():
-            if abs(mtp - minutes) <= CHECKPOINT_TOLERANCE_MIN:
-                out.append((race_id, post, phase))
-                break
+        if mtp < -POST_GRACE_MIN:
+            continue  # 実締切＋猶予を過ぎた（発走後）→ 終了
+        take = mtp <= DENSE_WINDOW_MIN  # 発走30分前〜（猶予内の負値含む）は毎ティック取得
+        if not take:
+            take = any(abs(mtp - m) <= CHECKPOINT_TOLERANCE_MIN for m in SPARSE_CHECKPOINT_MINUTES)
+        if take:
+            out.append((race_id, post, classify_phase(int(round(mtp)))))
     return out
 
 

@@ -107,3 +107,18 @@ class TestNnWinModelTraining:
         model.fit(x, y)
         proba = model.predict_proba(x)
         assert np.all(np.isfinite(proba))
+
+    def test_fit_with_weight_decay(self):
+        """weight_decay（Adam L2）を指定しても学習・推論が壊れない。"""
+        x, y = self._make_data()
+        model = NnWinModel(n_numeric=4, epochs=3, hidden_dims=(16,), weight_decay=1e-4)
+        assert model._weight_decay == 1e-4
+        model.fit(x, y)
+        proba = model.predict_proba(x)
+        assert np.all(np.isfinite(proba))
+
+
+class TestWeightDecayDefault:
+    def test_default_weight_decay_is_zero(self):
+        # 既定は 0.0＝従来挙動（正則化なし）
+        assert NnWinModel()._weight_decay == 0.0

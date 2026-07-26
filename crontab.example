@@ -24,10 +24,10 @@ PROJECT_DIR=/path/to/keibam
 # 0 3 * * 1 [ $(date +\%d) -le 7 ] && $PROJECT_DIR/scripts/weekly_retrain.sh --tuning >> $PROJECT_DIR/logs/cron.log 2>&1
 
 # ── 時系列オッズ取得 + 予測自動再計算（開催日 = 土日） ───────────────────────
-# odds_watch がチェックポイント（発走 30/10/5/1 分前 ±1.5 分）到来レースだけ取得し、
+# odds_watch が発走30分前〜実締切（+10分猶予/確定検知）のレースを取得し、
 # オッズ力学モデルで次時点・確定オッズの予測を自動再計算する。
 # チェックポイント外の起動は対象 0 件で即終了するため 2 分間隔でも安価。
-*/2 9-16 * * 6,0 $PROJECT_DIR/scripts/odds_snapshot.sh >> $PROJECT_DIR/logs/cron.log 2>&1
+*/3 9-16 * * 6,0 $PROJECT_DIR/scripts/odds_snapshot.sh >> $PROJECT_DIR/logs/cron.log 2>&1
 
 # ── オッズ力学モデルの週次評価（重力統計・アンサンブル重みの更新） ───────────
 0 22 * * 0 cd $PROJECT_DIR && python -m src.pipeline.run_pipeline evaluate-odds-dynamics >> $PROJECT_DIR/logs/cron.log 2>&1

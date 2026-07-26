@@ -1,0 +1,242 @@
+"""Model 2 / Layer A: 因子バケットの点数を「学習期間の回収率」から較正する。
+
+卍さんの「回収率の高い条件に加点、低い条件に減点、信頼度の低い因子は排除、普遍的な
+傾向のみ採用」を前進安全に形式化する。ここに渡す featured は**学習期間のスライスだけ**で、
+未来（評価fold）は一切含めない。呼び出し側（外側 walk-forward）がその分離を保証する。
+
+点数式:
+    point(bucket) = clip( λ · (recovery − 1) · √n/(√n + c) , −clip, +clip )
+- recovery = そのバケットの単勝フラット回収率 = mean(単勝オッズ × [着順==1])。
+- √n/(√n+c) の収縮で小標本バケットを 0 に寄せる（ノイズ採掘の抑制＝「信頼度の低い因子は排除」）。
+- n < min_n のバケットは 0（不採用）。
+
+普遍性フィルタ（「明確・普遍的な傾向のみ」）:
+- 学習期間を時系列 K 分割し、各バケットの符号 sign(recovery−1) を測る。
+- 全期間の符号と一致するスライスの割合が min_agree 未満のバケットは 0 に落とす（不安定→排除）。
+これにより「過去の一時期だけ効いた偶然の条件」を弾き、時間に頑健な因子だけを残す。
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from src.constants._results_cols import ResultsCols
+from src.policies._manji_factors import NA, FACTORS
+
+
+def _win_and_odds(featured: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    win = (pd.to_numeric(featured[ResultsCols.RANK], errors="coerce") == 1).astype(float)
+    odds = pd.to_numeric(featured[ResultsCols.TANSHO_ODDS], errors="coerce")
+    return win, odds
+
+
+def bucket_recovery(featured: pd.DataFrame, factor: str) -> pd.DataFrame:
+    """因子 factor のバケット別 回収率(単勝フラット) と件数 n を返す。
+
+    recovery = mean(単勝オッズ × [着順==1])。index=bucket, columns=[recovery, n]。
+    """
+    from src.policies._manji_factors import factor_series
+    win, odds = _win_and_odds(featured)
+    bucket = factor_series(featured, factor).astype(object).fillna(NA)
+    ret = (odds * win)
+    df = pd.DataFrame({"bucket": bucket.to_numpy(), "ret": ret.to_numpy()})
+    df = df[df["bucket"] != NA]
+    df = df[np.isfinite(df["ret"])]
+    if df.empty:
+        return pd.DataFrame(columns=["recovery", "n"])
+    g = df.groupby("bucket")["ret"]
+    return pd.DataFrame({"recovery": g.mean(), "n": g.size()})
+
+
+def _time_slices(featured: pd.DataFrame, k: int) -> list[pd.DataFrame]:
+    """発走日順にレース単位で k 分割した featured スライスのリスト。"""
+    if k <= 1:
+        return [featured]
+    race_date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
+    order = list(race_date.index)
+    n = len(order)
+    bounds = [round(i * n / k) for i in range(k + 1)]
+    out = []
+    for i in range(k):
+        rids = order[bounds[i]:bounds[i + 1]]
+        if rids:
+            out.append(featured.loc[rids])
+    return out
+
+
+def _residualize_crosses(
+    points: dict[str, dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    """クロス因子 'A*B' の点を『加法成分を引いた交互作用残差』に置換する。
+
+    resid[bA|bB] = cross_point[bA|bB] − (point_A[bA] + point_B[bB])
+
+    こうすると **単独因子が加法成分**を、**クロスが純粋な相互作用**だけを担う。最終スコア
+    score = Σ_f w_f·point_f[bucket] で加法成分の二重計上が起きず、Optuna は単独の重み
+    (w_A,w_B) と相互作用の重み(w_cross) を独立に振れる。残差が全バケット 0 のクロス
+    （＝相互作用なし＝単独の和で説明可）は自動的に脱落する。
+    単独因子（クロスを含まない）は無改変。クロスが無ければ no-op。
+    """
+    from src.policies._manji_factors import CROSS_SEP
+    if not any(CROSS_SEP in f for f in points):
+        return points
+    out: dict[str, dict[str, float]] = {}
+    for f, bmap in points.items():
+        if CROSS_SEP not in f:
+            out[f] = bmap
+            continue
+        parts = f.split(CROSS_SEP)
+        singles = [points.get(p, {}) for p in parts]
+        rmap: dict[str, float] = {}
+        for bucket, pt in bmap.items():
+            comps = bucket.split("|")
+            if len(comps) == len(parts):
+                add = sum(sp.get(c, 0.0) for sp, c in zip(singles, comps, strict=False))
+                r = pt - add
+                if abs(r) > 1e-9:      # 加法とほぼ同じ=相互作用なし→脱落（浮動小数の残差も除去）
+                    rmap[bucket] = r
+            else:
+                rmap[bucket] = pt
+        if rmap:
+            out[f] = rmap
+    return out
+
+
+def calibrate_points(
+    featured: pd.DataFrame,
+    factor_names: list[str] | None = None,
+    *,
+    lam: float = 1.0,
+    shrink_c: float = 20.0,
+    clip: float = 2.0,
+    min_n: int = 30,
+    universality_slices: int = 3,
+    min_agree: float = 0.7,
+    residualize: bool = True,
+) -> dict[str, dict[str, float]]:
+    """学習期間 featured から points[factor][bucket] を導出する（Layer A）。
+
+    residualize=True のとき、クロス因子 'A*B' の点は交互作用残差に置換される
+    （_residualize_crosses 参照）。単独因子のみの呼び出しでは no-op。screen_crosses は
+    生のクロス点が必要なので residualize=False で呼ぶ。
+
+    Returns
+    -------
+    {factor: {bucket: point}}  point は [−clip, +clip]。不採用バケットは省略（=0点扱い）。
+    """
+    factor_names = factor_names or list(FACTORS)
+    slices = _time_slices(featured, universality_slices) if universality_slices > 1 else []
+    points: dict[str, dict[str, float]] = {}
+
+    for f in factor_names:
+        rec = bucket_recovery(featured, f)
+        if rec.empty:
+            continue
+        # 普遍性: 各バケットの符号がサブ期間で min_agree 以上一致するか
+        agree: dict[str, float] = {}
+        if slices:
+            full_sign = np.sign(rec["recovery"] - 1.0)
+            for b in rec.index:
+                fs = full_sign.get(b, 0.0)
+                if fs == 0.0:
+                    agree[b] = 0.0
+                    continue
+                hits = tot = 0
+                for sl in slices:
+                    sr = bucket_recovery(sl, f)
+                    if b in sr.index and sr.loc[b, "n"] >= max(5, min_n // 3):
+                        tot += 1
+                        if np.sign(sr.loc[b, "recovery"] - 1.0) == fs:
+                            hits += 1
+                agree[b] = (hits / tot) if tot else 0.0
+
+        fmap: dict[str, float] = {}
+        for b, row in rec.iterrows():
+            n = float(row["n"])
+            if n < min_n:
+                continue
+            if slices and agree.get(b, 0.0) < min_agree:
+                continue  # 不安定バケット→排除
+            shrink = np.sqrt(n) / (np.sqrt(n) + shrink_c)
+            pt = lam * (float(row["recovery"]) - 1.0) * shrink
+            pt = float(np.clip(pt, -clip, clip))
+            if pt != 0.0:
+                fmap[b] = pt
+        if fmap:
+            points[f] = fmap
+    if residualize:
+        points = _residualize_crosses(points)
+    return points
+
+
+def calibrate_factor_weights(
+    featured: pd.DataFrame,
+    factor_names: list[str] | None = None,
+    *,
+    valid_frac: float = 0.3,
+    gain: float = 0.5,
+    w_min: float = 0.0,
+    w_max: float = 2.0,
+    min_side: int = 200,
+    **cal_kwargs,
+) -> dict[str, float]:
+    """符号付き因子重み w_f を前進安全に推定する（過学習防止の二重取り回避）。
+
+    学習窓を時系列で calib(前) / valid(後) に分割し:
+      1. points を calib だけで較正（点の符号を決める）。
+      2. valid で各因子の「加点馬 vs 減点馬」の実回収率差 lift を測る。
+         lift = mean(単勝回収 | point>0) − mean(単勝回収 | point<0)。
+      3. lift を因子間で z-score 化し、**1.0 を中心に変調**:
+         w_f = clip(1 + gain·z(lift), w_min, w_max)。
+         強い因子は 1 超へ、弱い因子は 1 未満へ。w_min<0 なら方向逆転因子は負(反転)も可。
+
+    1.0 中心なので全因子が寄与し続け（スコア解像度が潰れない）、旧 max 正規化の
+    「1因子全振り→同点全買い→baseline崩壊」を回避する。点の符号は calib、重みは
+    valid で決めるので二重取りにならない。検証不能な因子は 1.0（中立）。
+
+    Returns: {factor: w_f}
+    """
+    factor_names = factor_names or list(FACTORS)
+    race_date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
+    order = list(race_date.index)
+    cut = int(len(order) * (1.0 - valid_frac))
+    calib_races, valid_races = order[:cut], order[cut:]
+    if not calib_races or not valid_races:
+        return {f: 1.0 for f in factor_names}
+    calib = featured.loc[calib_races]
+    valid = featured.loc[valid_races]
+
+    points = calibrate_points(calib, factor_names, **cal_kwargs)
+    from src.policies._manji_factors import buckets
+    win, odds = _win_and_odds(valid)
+    ret = (odds * win).to_numpy()
+    finite = np.isfinite(ret)
+    bk = buckets(valid, factor_names)
+
+    lifts: dict[str, float] = {}
+    for f in factor_names:
+        pmap = points.get(f, {})
+        if not pmap:
+            continue
+        pts = bk[f].map(lambda b, pmap=pmap: pmap.get(b, 0.0)).to_numpy(dtype=float)
+        # 効率市場では全バケットの点が負になりうるため、絶対 0 でなく「その因子の
+        # アクティブ馬(点≠0)の平均点」で相対分割する。点が相対的に高い(=less bad)馬 vs 低い馬。
+        active = finite & (pts != 0.0)
+        if active.sum() < 2 * min_side:
+            continue
+        mu_pt = float(pts[active].mean())
+        pos = ret[active & (pts > mu_pt)]
+        neg = ret[active & (pts < mu_pt)]
+        if len(pos) < min_side or len(neg) < min_side:
+            continue
+        lifts[f] = float(pos.mean() - neg.mean())
+
+    weights = {f: 1.0 for f in factor_names}  # 既定は中立（解像度を保つ）
+    if lifts:
+        arr = np.array(list(lifts.values()))
+        mu = float(arr.mean())
+        sd = float(arr.std()) or 1.0
+        for f, lift in lifts.items():
+            z = (lift - mu) / sd
+            weights[f] = float(np.clip(1.0 + gain * z, w_min, w_max))
+    return weights

@@ -84,6 +84,28 @@ def organizer_of_race_id(race_id) -> str:
     return ORG_CENTRAL if code in CENTRAL_PLACE_CODES else ORG_LOCAL
 
 
+# ライブ netkeiba のドメイン（主催者別）。開催カレンダー・レース一覧・出馬表・オッズ等の
+# 「当日/予定」ページは主催者でドメインが分かれる。履歴 DB（db.netkeiba.com）は両者共通で
+# NAR の race_id/horse_id も同じドメインで引けるため、DB 系は分岐不要（この定数は使わない）。
+LIVE_NETKEIBA_DOMAIN: dict[str, str] = {
+    ORG_CENTRAL: "race.netkeiba.com",  # 中央（JRA）
+    ORG_LOCAL: "nar.netkeiba.com",  # 地方（NAR）
+}
+
+
+def live_netkeiba_base(organizer: str) -> str:
+    """主催者区分（central/local）に対応するライブ netkeiba のベース URL（https://…）を返す。
+
+    未知値は中央（JRA）にフォールバックする（既存挙動を変えない安全側）。
+    """
+    return f"https://{LIVE_NETKEIBA_DOMAIN.get(organizer, LIVE_NETKEIBA_DOMAIN[ORG_CENTRAL])}"
+
+
+def live_netkeiba_base_for_race_id(race_id) -> str:
+    """race_id の主催者区分に応じたライブ netkeiba のベース URL を返す（NAR なら nar.…）。"""
+    return live_netkeiba_base(organizer_of_race_id(race_id))
+
+
 def race_type_to_slug(race_type_value) -> str | None:
     """race_type の正準値（"芝"/"ダート"/"障害"）を slug に変換する。
 

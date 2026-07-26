@@ -63,6 +63,102 @@ def test_run_collects_multiple_races(tmp_path):
     assert {s.race_id for s in merged} == {"r1", "r2"}
 
 
+def test_run_captures_all_bet_types(tmp_path):
+    """fetch-final-odds 相当: 複数券種すべてで capture が呼ばれる。"""
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    bet_types = [BetType.TANSHO, BetType.UMAREN, BetType.SANRENTAN]
+    merged = odds_scheduler.run(["r1"], post, bet_types, _StubScraper(), path=path)
+    assert {s.bet_type for s in merged} == set(bet_types)
+
+
+def test_run_request_delay_sleeps_between_requests(tmp_path, monkeypatch):
+    """request_delay>0 でリクエスト間に間隔待機が入る（過去レース大量取得向け）。"""
+    sleeps: list[float] = []
+    monkeypatch.setattr(odds_scheduler.time, "sleep", lambda s: sleeps.append(s))
+    # 揺らぎ 0 で決定的に
+    monkeypatch.setenv("KEIBA_SCRAPE_JITTER_MAX", "0")
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    # 2 レース × 2 券種 = 4 リクエスト → 先頭以外の 3 回 sleep
+    odds_scheduler.run(
+        ["r1", "r2"], post, [BetType.TANSHO, BetType.UMAREN], _StubScraper(),
+        path=path, request_delay=1.0,
+    )
+    assert len(sleeps) == 3
+    assert all(s >= 1.0 for s in sleeps)
+
+
+class _EmptyForSomeScraper:
+    """指定レースは空（確定オッズ未配信を模擬）、他は 1 件返すスタブ。"""
+
+    def __init__(self, empty_races):
+        self._empty = set(empty_races)
+
+    def capture(self, race_id, bet_type, post_time, captured_at):
+        if race_id in self._empty:
+            return []
+        return [make_snapshot(race_id, bet_type, [1], 2.0, post_time, captured_at)]
+
+
+def test_run_reports_empty_races(tmp_path, caplog):
+    """0 件のレースを集計し警告ログに出す（取得可否の可視化）。"""
+    import logging
+
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    scraper = _EmptyForSomeScraper(empty_races={"r2", "r4"})
+    with caplog.at_level(logging.WARNING, logger="src.preparing.odds_scheduler"):
+        merged = odds_scheduler.run(
+            ["r1", "r2", "r3", "r4"], post, [BetType.TANSHO], scraper,
+            path=path, persist_every=2,
+        )
+    # r1, r3 のみ収集
+    assert {s.race_id for s in merged} == {"r1", "r3"}
+    assert any("0 件" in r.message for r in caplog.records)
+
+
+def test_run_persist_every_writes_incrementally(tmp_path):
+    """persist_every>0 で途中保存され、中断しても取得済みが残る（resume 安全）。"""
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    race_ids = ["r1", "r2", "r3", "r4", "r5"]
+    merged = odds_scheduler.run(
+        race_ids, post, [BetType.TANSHO], _StubScraper(), path=path, persist_every=2,
+    )
+    # 全 5 レースが最終的に保存される
+    assert {s.race_id for s in merged} == set(race_ids)
+    # 途中保存により、再読込でも全件揃う（pkl に書かれている）
+    reloaded = odds_scheduler.load_snapshots(path)
+    assert {s.race_id for s in reloaded} == set(race_ids)
+
+
+def test_run_persist_every_zero_single_write(tmp_path, monkeypatch):
+    """persist_every=0（既定）は最後に 1 回だけ保存（ライブ取得の従来挙動）。"""
+    calls = {"n": 0}
+    real_persist = odds_scheduler.persist
+
+    def _counting_persist(snaps, p):
+        calls["n"] += 1
+        return real_persist(snaps, p)
+
+    monkeypatch.setattr(odds_scheduler, "persist", _counting_persist)
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    odds_scheduler.run(["r1", "r2", "r3"], post, [BetType.TANSHO], _StubScraper(), path=path)
+    assert calls["n"] == 1
+
+
+def test_run_request_delay_zero_no_sleep(tmp_path, monkeypatch):
+    """既定 request_delay=0 はライブ取得の従来挙動（待機なし）を保持する。"""
+    sleeps: list[float] = []
+    monkeypatch.setattr(odds_scheduler.time, "sleep", lambda s: sleeps.append(s))
+    path = os.path.join(tmp_path, "odds.pkl")
+    post = dt.datetime(2024, 1, 1, 15, 40)
+    odds_scheduler.run(["r1", "r2"], post, [BetType.TANSHO], _StubScraper(), path=path)
+    assert sleeps == []
+
+
 def test_run_continues_after_capture_failure(tmp_path):
     path = os.path.join(tmp_path, "odds.pkl")
     post = dt.datetime(2024, 1, 1, 15, 40)

@@ -211,9 +211,40 @@ def test_horse_results_processor_prize_nan_filled():
     assert rp.preprocessed_data[HRCols.PRIZE].iloc[0] == 0
 
 
+def test_horse_results_processor_prize_string_comma_numeric():
+    # DB復元時の文字列・カンマ区切り "1,600.0" → float 1600.0（多窓集計を可能にする）
+    rp = _make_processor(HorseResultsProcessor, _make_hr_raw({HRCols.PRIZE: "1,600.0"}))
+    val = rp.preprocessed_data[HRCols.PRIZE].iloc[0]
+    assert val == pytest.approx(1600.0)
+    assert pd.api.types.is_numeric_dtype(rp.preprocessed_data[HRCols.PRIZE])
+
+
 def test_horse_results_processor_time_seconds_positive():
     rp = _make_processor(HorseResultsProcessor, _make_hr_raw({HRCols.TIME: "1:35.2"}))
     assert rp.preprocessed_data["time_seconds"].iloc[0] > 0
+
+
+def test_horse_results_processor_nobori_numeric():
+    # 上りは文字列 "34.5" → float 34.5（多窓集計の対象にするため数値化）
+    rp = _make_processor(HorseResultsProcessor, _make_hr_raw({HRCols.NOBORI: "34.5"}))
+    assert rp.preprocessed_data[HRCols.NOBORI].iloc[0] == pytest.approx(34.5)
+
+
+def test_horse_results_processor_speed_figure_faster_is_higher():
+    # 同条件(東京/芝1600/良)で速い馬ほど speed_figure が大きい（faster=正）。
+    raw = pd.concat(
+        [
+            _make_hr_raw({"horse_id": "H001", HRCols.TIME: "1:35.2"}),  # 95.2s 遅い
+            _make_hr_raw({"horse_id": "H002", HRCols.TIME: "1:34.2"}),  # 94.2s 速い
+        ],
+        ignore_index=True,
+    )
+    rp = _make_processor(HorseResultsProcessor, raw)
+    df = rp.preprocessed_data
+    fast = df.loc["H002", "speed_figure"]
+    slow = df.loc["H001", "speed_figure"]
+    assert fast > slow
+    assert fast > 0 > slow  # 基準より速い=正、遅い=負
 
 
 # ──────────────────────────────────────────────────────

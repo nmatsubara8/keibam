@@ -5,16 +5,16 @@ netkeiba はスクレイピングに関連して通信制限が起きる旨を�
 （UA は `_scraper.py` の `_DEFAULT_USER_AGENT` で対応済み）。本モジュールは
 残りの自主規制 2 点を一元管理する:
 
-1. リクエスト間隔: 最低 1 秒以上 + ランダムな揺らぎ（既定で合計 1〜3 秒程度）
+1. リクエスト間隔: 最低 4 秒以上 + ランダムな揺らぎ（既定で合計 4〜6 秒程度）
 2. 大量取得時の 1 時間あたりリクエスト数の自主上限（スライディングウィンドウ）
 
 従来は `modules.py`（固定 ``time.sleep(delay)``）と `_scraper.py`
 （固定 ``rate_limit_sec``）に分散していた待機ロジックの SSOT。
 
 環境変数:
-    KEIBA_SCRAPE_DELAY           基準待機秒（既定 1.0。正の値は 1.0 未満でも 1.0 に切上げ、
+    KEIBA_SCRAPE_DELAY           基準待機秒（既定 4.0。正の値は 4.0 未満でも 4.0 に切上げ、
                                  0 以下は明示無効化＝待機なし。テスト用エスケープハッチ）
-    KEIBA_SCRAPE_JITTER_MAX      揺らぎ上限秒（既定 2.0 → 合計 1〜3 秒）
+    KEIBA_SCRAPE_JITTER_MAX      揺らぎ上限秒（既定 2.0 → 合計 4〜6 秒）
     KEIBA_MAX_REQUESTS_PER_HOUR  1 時間あたり上限（既定 1000。0 以下で無効）
 
 レイヤ: preparing（`_scraper.py` / `modules.py` から利用）。
@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 _HOUR_SEC = 3600.0
 
 # 最低インターバル（netkeiba 自主規制）。これ未満の正の値はここまで切上げる。
-MIN_INTERVAL_SEC = 1.0
+# 地方(NAR)含む取得の負荷配慮で 4 秒に設定（KEIBA_SCRAPE_DELAY で上げるのは可、下げても 4 秒に切上げ）。
+MIN_INTERVAL_SEC = 4.0
 
 
 # ---------------------------------------------------------------------------
@@ -50,14 +51,14 @@ def polite_interval(
 ) -> float:
     """1 リクエスト間に置くべき待機秒を返す（待機自体は呼出側が行う）。
 
-    - ``base`` が None なら環境変数 KEIBA_SCRAPE_DELAY（既定 1.0）。
+    - ``base`` が None なら環境変数 KEIBA_SCRAPE_DELAY（既定 4.0）。
     - ``base <= 0`` は「明示的な無効化」とみなし 0.0 を返す
       （単体テストが ``rate_limit_sec=0`` で待機を切る既存慣行を維持）。
-    - 正の ``base`` は MIN_INTERVAL_SEC (1.0) 未満でも 1.0 に切上げる。
-    - 揺らぎは ``uniform(0, jitter_max)`` を加算（既定 2.0 → 合計 1〜3 秒）。
+    - 正の ``base`` は MIN_INTERVAL_SEC (4.0) 未満でも 4.0 に切上げる。
+    - 揺らぎは ``uniform(0, jitter_max)`` を加算（既定 2.0 → 合計 4〜6 秒）。
     """
     if base is None:
-        base = float(os.environ.get("KEIBA_SCRAPE_DELAY", "1.0"))
+        base = float(os.environ.get("KEIBA_SCRAPE_DELAY", "4.0"))
     if base <= 0:
         return 0.0
     base = max(base, MIN_INTERVAL_SEC)

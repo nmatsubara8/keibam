@@ -11,11 +11,17 @@ import datetime as dt
 import json
 import os
 import pickle
+import re
 
 import pandas as pd
 
 from src.constants._local_paths import LocalPaths
 from src.operation._config import OperationConfig
+
+# 本番モデルの命名規則: version_name() = "YYYYMMDD_<prefix>"（既定 prefix=keibam）。
+# 実験モデル（--version-name noodds_keibam / base2016 等）は日付接頭辞を持たないので、
+# この正規表現で除外して「使い捨て実験が最新扱いで本番既定を乗っ取る」事故を防ぐ。
+_PROD_MODEL_DATE_PREFIX = re.compile(r"^\d{8}_")
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +52,20 @@ def list_model_versions(models_dir: str = "models") -> list[dict]:
 
 
 def find_model_paths(models_dir: str = "models") -> list[str]:
-    """models/ 配下の .pickle ファイル一覧を新しい順で返す。"""
+    """models/ 配下の KeibaAI モデル pickle 一覧を新しい順で返す。
+
+    retrain が生成するモデルはバージョン名 `YYYYMMDD_<prefix>`（既定 prefix=keibam）
+    で `*_keibam.pickle` として保存される。一方 models/ には旧フォーマットの
+    pickle（basemodel_*.pickle / tansho.pickle / fukusho.pickle 等の馬券ポリシーや
+    旧 DataFrame）が混在しており、これらは KeibaAI ではないため予測ページで
+    `'DataFrame' object has no attribute 'effective_model'` を引き起こす。
+    そのため正規モデルの命名規則（`_keibam.pickle` 接尾辞）に一致するもののみ返す。
+
+    さらに **日付接頭辞（YYYYMMDD_）を必須**にして、`--version-name` で付けた使い捨ての
+    実験モデル（noodds_keibam / base2016 等）を除外する。これがないと実験モデルが最新扱いで
+    本番既定を乗っ取る（find_model_paths[0] が実験モデルになる）事故が起きる。実験は日付接頭辞を
+    持たない名前を使えば自動で除外される。
+    """
     paths = []
     if not os.path.isdir(models_dir):
         return []
@@ -55,7 +74,7 @@ def find_model_paths(models_dir: str = "models") -> list[str]:
         if not os.path.isdir(full):
             continue
         for fname in sorted(os.listdir(full), reverse=True):
-            if fname.endswith(".pickle"):
+            if fname.endswith("_keibam.pickle") and _PROD_MODEL_DATE_PREFIX.match(fname):
                 paths.append(os.path.join(full, fname))
     return paths
 
@@ -154,6 +173,65 @@ def load_model_from_path(path: str):
     from src.training._keiba_ai_factory import KeibaAIFactory
 
     return KeibaAIFactory.load(path)
+
+
+def win_head_path_for(place_path: str) -> str:
+    """Place モデルパスから対応する Win ヘッドのパスを導く（``X.pickle`` → ``X__win.pickle``）。"""
+    if place_path.endswith(".pickle"):
+        return place_path[: -len(".pickle")] + "__win.pickle"
+    return place_path + "__win.pickle"
+
+
+def load_win_head_for(place_path: str):
+    """Place モデルに対応する Win ヘッド（<version>__win.pickle）を読み込む。
+
+    存在しなければ None（Win ヘッド未学習の旧モデル・--no-win-head 運用との後方互換）。
+    Stage B: 連系の Harville に真の勝率を供給する 1着予測モデル。
+    """
+    from src.training._keiba_ai_factory import KeibaAIFactory
+
+    win_path = win_head_path_for(place_path)
+    if not os.path.exists(win_path):
+        return None
+    return KeibaAIFactory.load(win_path)
+
+
+def category_model_path_for(place_path: str, category: str) -> str:
+    """統合 Place モデルパスから、カテゴリ別 Place ヘッドのパスを導く。
+
+    ``<version>.pickle`` → ``<version>__<category>.pickle``（例 ``__central_turf``）。
+    """
+    stem = place_path[: -len(".pickle")] if place_path.endswith(".pickle") else place_path
+    return f"{stem}__{category}.pickle"
+
+
+def resolve_place_model_path_for_race(place_path: str, race_id, race_type_value) -> tuple[str, str]:
+    """レースの主催者区分×馬場種別に対応する Place ヘッドのパスを解決する。
+
+    該当カテゴリ別モデル（<version>__<category>.pickle）があればそれを、無ければ
+    統合 Place モデル（place_path）へフォールバックする。
+
+    Returns
+    -------
+    (path, used) : path は使用するモデル pickle、used は選ばれたカテゴリ slug
+        （フォールバック時は "combined"）。
+    """
+    from src.constants._model_category import COMBINED
+    from src.constants._model_category import categorize
+
+    cat = categorize(race_id, race_type_value)
+    if cat is not None:
+        cat_path = category_model_path_for(place_path, cat)
+        if os.path.exists(cat_path):
+            return cat_path, cat
+    return place_path, COMBINED
+
+
+def available_categories_for(place_path: str) -> list[str]:
+    """指定バージョンで実在するカテゴリ別 Place ヘッドの slug 一覧を返す。"""
+    from src.constants._model_category import ALL_CATEGORIES
+
+    return [c for c in ALL_CATEGORIES if os.path.exists(category_model_path_for(place_path, c))]
 
 
 # ---------------------------------------------------------------------------

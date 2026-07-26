@@ -19,7 +19,8 @@ import pandas as pd
 from src.constants._local_paths import LocalPaths
 from src.constants._results_cols import ResultsCols
 
-_DROP_FOR_TRAIN = ["rank", "date", ResultsCols.TANSHO_ODDS]
+# training/_data_splitter.py の _DROP_FOR_TRAIN と一致させる
+_DROP_FOR_TRAIN = ["rank", "date", "horse_id", ResultsCols.TANSHO_ODDS, ResultsCols.RANK]
 
 
 # ---------------------------------------------------------------------------
@@ -56,15 +57,15 @@ def _get_splits(
     train, test = _split_by_date(featured_data, test_size)
     train_opt, calib = _split_by_date(train, valid_size)
 
-    X_calib = calib.drop(_DROP_FOR_TRAIN, axis=1)
+    X_calib = calib.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
     y_calib = calib["rank"]
 
-    # X_test: TANSHO_ODDS は残す（EV 計算で使う）
-    X_test = test.drop(["rank", "date"], axis=1)
+    # X_test: TANSHO_ODDS は残す（EV 計算で使う）、horse_id と RANK は除外
+    X_test = test.drop(["rank", "date", "horse_id", ResultsCols.RANK], axis=1, errors="ignore")
     y_test = test["rank"]
 
-    # モデル入力用: TANSHO_ODDS を除いた X_test
-    X_test_model = test.drop(_DROP_FOR_TRAIN, axis=1)
+    # モデル入力用: _DROP_FOR_TRAIN を全部除いた X_test（学習時と同一列構成）
+    X_test_model = test.drop(_DROP_FOR_TRAIN, axis=1, errors="ignore")
 
     return {
         "X_calib": X_calib,
@@ -72,6 +73,8 @@ def _get_splits(
         "X_test": X_test,
         "X_test_model": X_test_model,
         "y_test": y_test,
+        # 賭け明細用: 実着順（着順）。X_test からは除外しているため別途保持する。
+        "rank_actual": test[ResultsCols.RANK] if ResultsCols.RANK in test.columns else None,
     }
 
 
@@ -102,7 +105,7 @@ def compute_calib_curves(
         return None
 
     splits = _get_splits(featured_data, test_size, valid_size)
-    X_calib = splits["X_calib"].values
+    X_calib = splits["X_calib"]  # DataFrame のまま渡す（NN ストリームは列名で抽出）
     y_calib = np.asarray(splits["y_calib"]).astype(float)
 
     try:
@@ -142,7 +145,9 @@ def compute_stacking_auc(
         return None
 
     splits = _get_splits(featured_data, test_size, valid_size)
-    X_test_model = splits["X_test_model"].values
+    # stream-aware StackingModel は NN ストリーム導出に列名（DataFrame）を要求するため
+    # .values ではなく DataFrame をそのまま渡す（gbdt 側は内部で .values 化される）。
+    X_test_model = splits["X_test_model"]
     y_test = np.asarray(splits["y_test"]).astype(float)
 
     try:
@@ -151,14 +156,22 @@ def compute_stacking_auc(
     except Exception:
         return None
 
-    base_names = []
-    for m in stacking._base_models:
-        name = type(m).__name__
-        if "LGBM" in name or "LightGBM" in name:
-            name = "LightGBM"
-        elif "NN" in name or "Nn" in name:
-            name = "NN"
-        base_names.append(name)
+    ai_base_names = getattr(model, "base_model_names_", None)
+    if ai_base_names and len(ai_base_names) == len(base_probs):
+        base_names = list(ai_base_names)
+    else:
+        base_names = []
+        for m in stacking._base_models:
+            name = type(m).__name__
+            if "LGBM" in name or "LightGBM" in name:
+                name = "LightGBM"
+            elif "NN" in name or "Nn" in name:
+                name = "NN"
+            elif "XGB" in name or "XGBoost" in name:
+                name = "XGBoost"
+            elif "CatBoost" in name:
+                name = "CatBoost"
+            base_names.append(name)
 
     return {
         "y_true": y_test,
@@ -233,6 +246,69 @@ def compute_ev_sweep(
 # フルシミュレーション（AI 推奨通りに購入した場合の通算成績）
 # ---------------------------------------------------------------------------
 
+def _load_return_processor():
+    """ReturnProcessor を pkl → DB フォールバックで読み込む。失敗時は None。"""
+    try:
+        from src.preprocessing._return_processor import ReturnProcessor
+        return ReturnProcessor(LocalPaths.RAW_RETURN_TABLES_PATH)
+    except Exception:
+        return None
+
+
+def _fukusho_payout(rp, race_id, umaban: int) -> float:
+    """指定レース・馬番の複勝払戻を返す。的中なし or データなしは 0.0。"""
+    try:
+        from src.constants._bet_types import BetType
+        table = rp.preprocessed_data[BetType.FUKUSHO]
+        if race_id not in table.index:
+            return 0.0
+        row = table.loc[race_id]
+        # win_X は文字列のまま（ReturnProcessor で win_transform=None）
+        # 複数行ある場合は Series（loc で複数行マッチ）→ 最初の行を使う
+        if isinstance(row, pd.DataFrame):
+            row = row.iloc[0]
+        n_cols = sum(1 for c in row.index if c.startswith("win_"))
+        for i in range(n_cols):
+            win_val = row.get(f"win_{i}", 0)
+            if win_val == 0:
+                continue
+            s = str(win_val).strip()
+            if " " in s:
+                s = s.split()[0]
+            try:
+                if int(s) == int(umaban):
+                    return float(row.get(f"return_{i}", 0)) / 100.0
+            except (ValueError, TypeError):
+                continue
+    except Exception:
+        pass
+    return 0.0
+
+
+def _build_return_table_df(rp, race_id) -> pd.DataFrame:
+    """指定レースの全馬券種払戻を整理した DataFrame を返す。"""
+    try:
+        from src.preprocessing._return_processor import _LABEL
+        rows = []
+        for bet_type, label in _LABEL.items():
+            table = rp.preprocessed_data[bet_type]
+            if race_id not in table.index:
+                continue
+            t = table.loc[race_id]
+            if isinstance(t, pd.DataFrame):
+                t = t.iloc[0]
+            n_cols = sum(1 for c in t.index if c.startswith("win_"))
+            for i in range(n_cols):
+                win_val = t.get(f"win_{i}", 0)
+                ret_val = t.get(f"return_{i}", 0)
+                if win_val == 0 or ret_val == 0:
+                    continue
+                rows.append({"馬券種": label, "的中": str(win_val), "払戻(円)": int(ret_val)})
+        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["馬券種", "的中", "払戻(円)"])
+    except Exception:
+        return pd.DataFrame(columns=["馬券種", "的中", "払戻(円)"])
+
+
 def compute_full_backtest(
     model,
     featured_data: pd.DataFrame,
@@ -249,6 +325,8 @@ def compute_full_backtest(
                                 #   sharpe_ratio, max_drawdown, total_bet_amount
       "per_race": pd.DataFrame, # race_id, n_bets, bet_amount, return_amount,
                                 #   hit_or_not, cumulative_profit
+      "per_bet": pd.DataFrame,  # 掛け目明細（馬番・単勝・複勝・EV・着順 etc.）
+      "return_processor": ReturnProcessor | None,  # 払戻テーブル参照用
     }
     """
     splits = _get_splits(featured_data, test_size, valid_size)
@@ -260,7 +338,7 @@ def compute_full_backtest(
         eff = getattr(model, "effective_model", model)
         prob_win = np.asarray(eff.predict_proba(X_test_model.values))[:, 1]
     except Exception:
-        return {"summary": {}, "per_race": pd.DataFrame()}
+        return {"summary": {}, "per_race": pd.DataFrame(), "per_bet": pd.DataFrame(), "return_processor": None}
 
     odds_arr = np.asarray(X_test[ResultsCols.TANSHO_ODDS], dtype=float)
     ev_arr = prob_win * odds_arr
@@ -269,19 +347,52 @@ def compute_full_backtest(
     # race_id はインデックスに格納されている
     race_ids = X_test.index.to_numpy()
 
+    # 掛け目・実着順の明細用（無い場合は None 埋め）
+    umaban_arr = (
+        np.asarray(X_test[ResultsCols.UMABAN])
+        if ResultsCols.UMABAN in X_test.columns
+        else np.full(len(race_ids), None)
+    )
+    rank_actual = splits.get("rank_actual")
+    rank_arr = (
+        np.asarray(rank_actual) if rank_actual is not None else np.full(len(race_ids), None)
+    )
+
+    # 複勝払戻のために ReturnProcessor を遅延ロード
+    rp = _load_return_processor()
+
     per_race_dict: dict = {}
-    for race_id, ev, odds, win in zip(race_ids, ev_arr, odds_arr, wins, strict=False):
+    per_bet_rows: list = []
+    for race_id, umaban, prob, ev, odds, win, actual_rank in zip(
+        race_ids, umaban_arr, prob_win, ev_arr, odds_arr, wins, rank_arr, strict=False
+    ):
         if ev <= ev_threshold:
             continue
         payout = float(odds * win)
+        fukusho_ret = _fukusho_payout(rp, race_id, umaban) if rp is not None else None
         if race_id not in per_race_dict:
             per_race_dict[race_id] = {"n_bets": 0, "bet_amount": 0.0, "return_amount": 0.0}
         per_race_dict[race_id]["n_bets"] += 1
         per_race_dict[race_id]["bet_amount"] += 1.0
         per_race_dict[race_id]["return_amount"] += payout
+        row: dict = {
+            "race_id": race_id,
+            "馬番": umaban,
+            "予測勝率": float(prob),
+            "単勝オッズ": float(odds),
+            "EV": float(ev),
+            "着順": actual_rank,
+            "的中": int(win),
+            "払戻": payout,
+            "損益": payout - 1.0,
+        }
+        if fukusho_ret is not None:
+            row["複勝払戻"] = fukusho_ret
+            row["複勝的中"] = int(fukusho_ret > 0)
+        per_bet_rows.append(row)
 
     if not per_race_dict:
-        return {"summary": {}, "per_race": pd.DataFrame()}
+        return {"summary": {}, "per_race": pd.DataFrame(), "per_bet": pd.DataFrame(), "return_processor": rp}
 
     per_race_df = pd.DataFrame.from_dict(per_race_dict, orient="index")
     per_race_df.index.name = "race_id"
@@ -293,7 +404,9 @@ def compute_full_backtest(
     from src.simulation._metrics import summarize_returns
     summary = summarize_returns(per_race_df.set_index("race_id"))
 
-    return {"summary": summary, "per_race": per_race_df}
+    per_bet_df = pd.DataFrame(per_bet_rows)
+
+    return {"summary": summary, "per_race": per_race_df, "per_bet": per_bet_df, "return_processor": rp}
 
 
 # ---------------------------------------------------------------------------

@@ -23,6 +23,7 @@ class KeibaAI:
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
         self.feature_names_: list[str] | None = None  # 学習時の列順序（推論時の列整合用）
+        self._tuned_base_models_config: Any = None  # tune_per_model 探索後の完成 config（書き戻し用）
 
     @property
     def datasets(self):
@@ -33,6 +34,15 @@ class KeibaAI:
         """直近の Optuna 探索 study（未実行なら None）。全 trial の成績・パラメータを持つ。"""
         return getattr(self.__model_wrapper, "last_study_", None)
 
+    @property
+    def tuned_base_models_config(self):
+        """tune_per_model 探索後の完成 BaseModelsConfig（xgboost/catboost/nn の best 反映済み）。
+
+        探索を伴わない学習では None。retrain 側がこれを JSON 保存し、そのまま固定運用の
+        base_models config に書き戻せるようにする（§5⑤ の「書き戻し」を機械化）。
+        """
+        return self._tuned_base_models_config
+
     def set_lgb_params(self, params: dict) -> None:
         """LightGBM ハイパーパラメータを外部から注入する。
 
@@ -42,11 +52,13 @@ class KeibaAI:
         """
         self.__model_wrapper.set_params(params)
 
-    def train_with_tuning(self):
+    def train_with_tuning(self, tuning_config=None):
         """
         optunaでのチューニング後、訓練させる。
+
+        tuning_config で探索範囲・回数を制御できる（None なら LightGBMTuner）。
         """
-        self.__model_wrapper.tune_hyper_params(self.__datasets)
+        self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
         self.__model_wrapper.train(self.__datasets)
 
     def train_without_tuning(self):
@@ -55,7 +67,7 @@ class KeibaAI:
         """
         self.__model_wrapper.train(self.__datasets)
 
-    def train_with_stacking(self, meta_ratio: float = 0.3, with_tuning: bool = True) -> None:
+    def train_with_stacking(self, meta_ratio=0.3, with_tuning=True, tuning_config=None, base_models_config=None):
         """スタッキング+Isotonic 較正の Layer1 パイプラインを実行する。
 
         1. make_stacking_splits で base_train / meta_train / calib_holdout に分割
@@ -64,20 +76,32 @@ class KeibaAI:
            §2 EV境界 sigmoid 重み（§2h レース内正規化）を算出
         4. StackingModel (LightGBM + NN) を base_train で学習。LightGBM base には
            EV 重み、NN base には pos_weight（class imbalance 補正）を適用
-        5. meta_train で meta 特徴量を生成し LogisticRegression meta 学習器を学習
+        5. meta_train で meta 特徴量を生成し meta 学習器を学習
+           （base_models_config.meta_model="logistic"=LogisticRegression /
+           "lightgbm"=浅い GBDT meta。build_meta_model で構築）
         6. calib_holdout で Isotonic 較正し self._calibrated_model に保存
         """
-        import lightgbm as lgb
-        from sklearn.linear_model import LogisticRegression
+        import dataclasses
 
         from src.constants._bet_thresholds import TrainingWeights
 
+        from ._base_model_factory import build_base_models, build_meta_model
+        from ._base_models_config import BaseModelsConfig
         from ._calibrated_model import CalibratedModel
-        from ._stacking_model import StackingModel
+        from ._multi_model_tuner import tune_model, tune_nn
+        from ._stacking_model import StackingModel, derive_nn_input
 
-        self.__datasets.make_stacking_splits(meta_ratio=meta_ratio)
-        if with_tuning:
-            self.__model_wrapper.tune_hyper_params(self.__datasets)
+        bm_cfg = base_models_config or BaseModelsConfig()
+        # --tune-models（tune_only）: 空なら全モデル探索、指定時はそのモデルだけ探索し他は固定。
+        tune_only = set(getattr(bm_cfg, "tune_only", ()) or ())
+
+        def _want(model_name: str) -> bool:
+            return not tune_only or model_name in tune_only
+
+        self.__datasets.make_stacking_splits(meta_ratio=meta_ratio, build_optuna_datasets=with_tuning)
+        # LightGBM 探索は with_tuning かつ tune_only が lightgbm を含む（or 空）時のみ。
+        if with_tuning and _want("lightgbm"):
+            self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
 
         x_base = self.__datasets.X_base_train.values
         y_base = self.__datasets.y_base_train.values
@@ -85,49 +109,161 @@ class KeibaAI:
         # §2: ブートストラップ予測 → EV境界 sigmoid 重み（レース内正規化）
         ev_weights = self.__compute_base_ev_weights(x_base, y_base)
 
-        # base①: LightGBM（scale_pos_weight でクラス不均衡補正、EV 重みは sample_weight）
         params = dict(self.__model_wrapper.params)
         params.setdefault("scale_pos_weight", TrainingWeights.SCALE_POS_WEIGHT)
-        lgb_base = lgb.LGBMClassifier(**params)
-        base_models: list[Any] = [lgb_base]
-        base_sample_weights = [ev_weights]
 
-        # base②: NN（Entity Embedding）。専用 NN ストリーム（PreparedFeatures 経由で
-        # 標準化済み）が利用可能な場合**のみ**追加する。
-        # gbdt ストリーム（One-Hot/カテゴリ混在・§2g/§2i の NaN を含む生特徴量）を
-        # NN にそのまま渡すと、Entity Embedding が効かず数値スケールも未調整で学習が
-        # 破綻するため、2系統が揃うまで NN base は無効化する（LightGBM 単独で動作）。
-        # NOTE: NN へ X_nn_base_train を実際に供給するには StackingModel が base ごとに
-        #       異なる入力を受け取れるよう拡張する必要がある（2系統スタッキング完成は後続）。
-        if self.__datasets.X_nn_base_train is not None:
+        # XGB/CatBoost の per-model Optuna チューニング。
+        # with_tuning を要求する＝「--with-tuning 有無＝探索するか否か」を全モデルで統一。
+        # --with-tuning なしで tuned config を渡す固定運用では、ここは走らず stored params
+        # （build_base_models が cfg.*_params を採用）で学習する。
+        extra_tuned = {}
+        if with_tuning and bm_cfg.tune_per_model:
+            n = len(x_base)
+            split = int(n * 0.8)
+            x_bt, y_bt = x_base[:split], y_base[:split]
+            x_bv, y_bv = x_base[split:], y_base[split:]
+            for mname in bm_cfg.models:
+                if mname in ("xgboost", "catboost") and _want(mname):
+                    space = (
+                        bm_cfg.xgboost_search_space
+                        if mname == "xgboost"
+                        else bm_cfg.catboost_search_space
+                    )
+                    best = tune_model(
+                        mname, x_bt, y_bt, x_bv, y_bv, space,
+                        n_trials=bm_cfg.n_trials,
+                        timeout=bm_cfg.timeout,
+                        scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                    )
+                    extra_tuned[mname] = best
+
+        # NN の per-model Optuna 探索（構造・学習率・正規化を最適化）。with_tuning を要求。
+        if (with_tuning and bm_cfg.tune_per_model and _want("nn")
+                and "nn" in bm_cfg.models and self.__datasets.has_nn_stream):
+            try:
+                scaler = self.__datasets.nn_scaler
+                cards = self.__datasets.nn_categorical_cardinalities or {}
+                # NN ストリーム形式（derive 済み float 配列）を base_train から導出し 80/20 分割
+                nn_arr = derive_nn_input(scaler, self.__datasets.X_base_train)
+                nsplit = int(len(nn_arr) * 0.8)
+                best_nn = tune_nn(
+                    nn_arr[:nsplit], y_base[:nsplit],
+                    nn_arr[nsplit:], y_base[nsplit:],
+                    bm_cfg.nn_search_space,
+                    categorical_cardinalities=cards,
+                    n_numeric=len(scaler.numeric_cols),
+                    n_trials=bm_cfg.nn_tune_trials,
+                    timeout=bm_cfg.timeout,
+                    scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                    epochs=bm_cfg.nn_tune_epochs,
+                    max_train_rows=bm_cfg.nn_tune_max_rows,
+                )
+                if best_nn:
+                    # 探索した構造を nn_params に反映（epochs/batch 等の既存設定は残す）
+                    merged_nn = dict(bm_cfg.nn_params)
+                    merged_nn.update(best_nn)
+                    bm_cfg = dataclasses.replace(bm_cfg, nn_params=merged_nn)
+            except Exception as _e:
+                import logging as _l
+
+                _l.getLogger(__name__).warning("NN チューニング失敗のためスキップ: %s", _e)
+
+        if extra_tuned:
+            kw = {}
+            if "xgboost" in extra_tuned:
+                merged = dict(bm_cfg.xgboost_params)
+                merged.update(extra_tuned["xgboost"])
+                kw["xgboost_params"] = merged
+            if "catboost" in extra_tuned:
+                merged = dict(bm_cfg.catboost_params)
+                merged.update(extra_tuned["catboost"])
+                kw["catboost_params"] = merged
+            if kw:
+                bm_cfg = dataclasses.replace(bm_cfg, **kw)
+
+        # 探索済みの完成 config（lightgbm/xgboost/catboost/nn の best を全て反映）を公開する。
+        # 実際に探索した時（with_tuning かつ tune_per_model）のみ意味を持つ。固定運用（探索なし）の
+        # 再実行では公開しない＝tuned_base_models.json を上書き・比較しない。
+        # LightGBM の best（params: 主チューナ結果）は bm_cfg に無いため lightgbm_params に載せる。
+        # ただし --tune-models で LightGBM を探索しなかった時は params が既定値なので、既存の
+        # bm_cfg.lightgbm_params（stored best）を保持する（未探索モデルの best を defaults で潰さない）。
+        if with_tuning and getattr(bm_cfg, "tune_per_model", False):
+            lgb_p = dict(params) if _want("lightgbm") else dict(getattr(bm_cfg, "lightgbm_params", {}) or {})
+            self._tuned_base_models_config = dataclasses.replace(bm_cfg, lightgbm_params=lgb_p)
+
+        specs = build_base_models(bm_cfg, params, TrainingWeights.SCALE_POS_WEIGHT)
+        self.base_model_names_ = [s.name for s in specs]
+        base_models: list[Any] = [s.model for s in specs]
+        base_sample_weights = [ev_weights if s.weight == "ev" else None for s in specs]
+        base_streams = [s.stream for s in specs]
+
+        # NN base（Phase 2）: entity+numeric を専用ストリームとして消費する。
+        # entity/numeric 列は gbdt DataFrame 内に共存するため、StackingModel が
+        # nn_scaler で内部導出する（推論時も gbdt 1 枚から再構成でき契約は不変）。
+        if "nn" in bm_cfg.models and self.__datasets.has_nn_stream:
             try:
                 from ._nn_win_model import NnWinModel
 
-                nn_stream = self.__datasets.X_nn_base_train
+                cards = self.__datasets.nn_categorical_cardinalities or {}
+                scaler = self.__datasets.nn_scaler
+                nn_kwargs = {
+                    k: v for k, v in dict(bm_cfg.nn_params).items()
+                    if k in (
+                        "hidden_dims", "epochs", "lr", "batch_size", "max_train_rows",
+                        "arch", "dropout", "conv_channels", "kernel_size", "pre_norm",
+                        "weight_decay",
+                    )
+                }
                 base_models.append(
                     NnWinModel(
-                        n_numeric=nn_stream.shape[1],
+                        categorical_cardinalities=cards,
+                        n_numeric=len(scaler.numeric_cols),
                         pos_weight=TrainingWeights.SCALE_POS_WEIGHT,
+                        **nn_kwargs,
                     )
                 )
-                base_sample_weights.append(None)  # NN は pos_weight で補正、EV 重みは未適用
-            except Exception:
-                pass  # torch 未インストールの場合は LightGBM のみで動作
+                base_sample_weights.append(None)
+                base_streams.append("nn")
+                self.base_model_names_.append("NN")
+            except Exception as _e:
+                import logging as _l
 
-        stacking = StackingModel(base_models, LogisticRegression(max_iter=1000, random_state=100))
+                _l.getLogger(__name__).warning("NN base 構築失敗のためスキップ: %s", _e)
+
+        meta_model = build_meta_model(bm_cfg, scale_pos_weight=TrainingWeights.SCALE_POS_WEIGHT)
+        stacking = StackingModel(
+            base_models,
+            meta_model,
+            base_streams=base_streams,
+            nn_scaler=self.__datasets.nn_scaler,
+            nn_cat_cardinalities=self.__datasets.nn_categorical_cardinalities,
+        )
         stacking.fit(
-            x_base,
+            self.__datasets.X_base_train,
             y_base,
-            self.__datasets.X_meta_train.values,
+            self.__datasets.X_meta_train,
             self.__datasets.y_meta_train.values,
             base_sample_weights=base_sample_weights,
         )
         self._calibrated_model = CalibratedModel.fit(
             stacking,
-            self.__datasets.X_calib.values,
+            self.__datasets.X_calib,
             self.__datasets.y_calib.values,
         )
         self.feature_names_ = list(self.__datasets.X_base_train.columns)
+
+        # base LightGBM の特徴量重要度を ModelWrapper に反映（特徴量重要度ページ用）
+        try:
+            lgb_spec = next((s for s in specs if s.name == "LightGBM"), None)
+            if lgb_spec is not None:
+                fi_vals = lgb_spec.model.feature_importances_
+                fi_cols = self.__datasets.X_base_train.columns
+                self.__model_wrapper.feature_importance = (
+                    pd.DataFrame({"features": fi_cols, "importance": fi_vals})
+                    .sort_values("importance", ascending=False)
+                )
+        except Exception:
+            pass  # 重要度取得失敗は致命的でないため無視
 
     def __compute_base_ev_weights(self, x_base, y_base):
         """base_train でブートストラップ LightGBM を学習し EV境界重みを返す。
@@ -172,7 +308,10 @@ class KeibaAI:
         self.__model_wrapper.set_params(params)
 
     def feature_importance(self, num_features=20):
-        return self.__model_wrapper.feature_importance[:num_features]
+        fi = self.__model_wrapper.feature_importance
+        if fi is None:
+            return None
+        return fi[:num_features]
 
     def decide_action(self, score_table: pd.DataFrame, bet_policy: AbstractBetPolicy, **params) -> dict:
         """

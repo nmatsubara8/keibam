@@ -51,6 +51,53 @@ class FeatureEngineering:
         self.__data.drop("birthday", axis=1, inplace=True)
         return self
 
+    def add_derived_features(self):
+        """§2m(Batch A): 行内導出の市場・物理特徴を追加する（リーク無し）。
+
+        - ``単勝_log``          : log1p(単勝)。右に歪んだオッズ分布を対数化し決定木の分割効率を上げる。
+        - ``kinryo_per_weight`` : 斤量 ÷ 馬体重。小柄な馬への過斤量負荷を数理化。
+        - ``is_layoff``         : 休み明けフラグ（interval≥56日＝約8週、鉄砲適性）。
+        - ``is_back_to_back``   : 連闘フラグ（interval≤8日、詰まったローテ）。
+        interval は add_interval 後に存在する前提。各元列が無ければ該当特徴をスキップ。
+        """
+        import numpy as np
+
+        d = self.__data
+        if "単勝" in d.columns:
+            d["単勝_log"] = np.log1p(pd.to_numeric(d["単勝"], errors="coerce"))
+        if "斤量" in d.columns and "体重" in d.columns:
+            weight = pd.to_numeric(d["体重"], errors="coerce")
+            d["kinryo_per_weight"] = pd.to_numeric(d["斤量"], errors="coerce") / weight.replace(0, np.nan)
+        if "interval" in d.columns:
+            interval = pd.to_numeric(d["interval"], errors="coerce")
+            d["is_layoff"] = (interval >= 56).astype(float)
+            d["is_back_to_back"] = (interval <= 8).astype(float)
+            # 初出走（interval 欠損）はフラグも欠損にする
+            d.loc[interval.isna(), ["is_layoff", "is_back_to_back"]] = float("nan")
+        return self
+
+    def add_date_cyclical(self):
+        """開催日の周期性（季節性）を sin/cos の周期特徴量として追加する（リーク無し）。
+
+        - ``sin_date`` : sin(2π · 年内通日 / 365.25) + 1
+        - ``cos_date`` : cos(2π · 年内通日 / 365.25) + 1
+
+        年内通日（``dt.dayofyear`` 1〜366）を 365.25 で正規化することでうるう年を吸収し、
+        12/31 と 1/1 が連続する円環として季節を符号化する。+1 は値域を [-1, 1] から
+        [0, 2] にずらす（負値を避け、決定木以外でも扱いやすくする）。``date`` 列が無ければ
+        スキップ。NaT は NaN になる。
+        """
+        import numpy as np
+
+        d = self.__data
+        if "date" not in d.columns:
+            return self
+        doy = pd.to_datetime(d["date"], errors="coerce").dt.dayofyear
+        angle = 2 * np.pi * doy / 365.25
+        d["sin_date"] = np.sin(angle) + 1
+        d["cos_date"] = np.cos(angle) + 1
+        return self
+
     def dumminize_kaisai(self):
         """
         開催カラムをダミー変数化する
@@ -116,6 +163,23 @@ class FeatureEngineering:
     def dumminize_around(self):
         """aroundカラムをダミー変数化する"""
         return self._dummify("around", Master.AROUND_LIST, prefix="around_")
+
+    def add_race_class_level(self):
+        """現レースの格を順序値（格の大小）特徴量 ``race_class_level`` にする（リーク無し）。
+
+        ``dumminize_race_class`` の one-hot は格の順序（新馬<…<G1）を捨てるため、
+        ``Master.race_class_level`` で 1..9 の連続軸（新馬/未勝利=1 … L=6, G3=7, G2=8, G1=9）に
+        写像した列を別途追加する。GBDT/NN がクラスの単調性を直接学習でき、未知クラスは NaN。
+
+        ``race_class`` 列は ``dumminize_race_class`` が drop するため、本メソッドは
+        その**前**に呼ぶこと（FE チェーンで dumminize_race_class の直前に配置）。
+        """
+        from src.constants._master import race_class_level
+
+        if "race_class" not in self.__data.columns:
+            return self
+        self.__data["race_class_level"] = self.__data["race_class"].map(race_class_level)
+        return self
 
     def dumminize_race_class(self):
         """race_classカラムをダミー変数化する"""
@@ -187,6 +251,42 @@ class FeatureEngineering:
         """breeder_idをラベルエンコーディングして、Categorical型に変換する。"""
         return self.encode("breeder_id")
 
+    # ── レース当日ノート（調教/パドック）の符号化。列が無ければ各メソッド no-op ──
+
+    def encode_video_grade(self):
+        """映像グレード(A/B/C)を順序エンコード（A=2,B=1,C=0）。"""
+        col = "映像グレード"
+        if col not in self.__data.columns:
+            return self
+        self.__data[col] = self.__data[col].map(Master.VIDEO_GRADE_ORDINAL)
+        return self
+
+    def encode_training_eval(self):
+        """調教評価(テキスト)をベストエフォート順序スコアに数値化（未知=NaN）。
+
+        生テキストは raw pickle に保持済みのため、特徴側は数値列 ``調教評価_score`` に
+        置換して元のテキスト列を drop する（モデル入力にテキストを残さない）。
+        """
+        col = "調教評価"
+        if col not in self.__data.columns:
+            return self
+        self.__data["調教評価_score"] = self.__data[col].map(Master.TRAINING_EVAL_ORDINAL)
+        self.__data.drop(columns=[col], inplace=True)
+        return self
+
+    def dumminize_paddock_eval(self):
+        """パドック評価(A/B/穴)を one-hot 化（穴は順序軸でないため）。"""
+        return self._dummify("パドック評価", Master.PADDOCK_EVAL_LIST, prefix="パドック評価_")
+
+    def drop_text_note_columns(self):
+        """自由文コメント列を特徴量から除外する（raw pickle 側に保持・将来 TF-IDF）。"""
+        self.__data.drop(
+            columns=["パドックコメント", "厩舎コメント", "コメント評価"],
+            errors="ignore",
+            inplace=True,
+        )
+        return self
+
     def add_interaction_features(self):
         """§2b: 交互作用特徴量（frame_x_course / sex_x_month_sin/cos / distance_x_around）を追加。
 
@@ -206,13 +306,30 @@ class FeatureEngineering:
         """
         from src.constants._feature_cols import (
             AGG_STATS,
+            APTITUDE_FEATURE_COLS,
             COURSE_CONDITION_FEATURE_COLS,
+            DAMSIRE_FEATURE_COLS,
+            ELO_FEATURE_COLS,
+            GROWTH_FEATURE_COLS,
             JOCKEY_TRAINER_FEATURE_COLS,
+            MARKET_SIGNAL_FEATURE_COLS,
             N_RACES_LIST,
+            OPPONENT_STRENGTH_FEATURE_COLS,
             PACE_FEATURE_COLS,
+            PERSON_YEARLY_FEATURE_COLS,
+            RACE_CLASS_FEATURE_COLS,
             RACE_LEVEL_ZSCORE_COLS,
+            RECENT_FORM_FEATURE_COLS,
             SIRE_FEATURE_COLS,
+            SPEED_FIGURE_FEATURE_COLS,
+            TYPE_GROUND_FEATURE_COLS,
+            YOSO_FEATURE_COLS,
         )
+
+        # Batch A の連続値（前走比較・行内導出）もレース内相対化する。二値フラグは除く。
+        prev_derived_zscore_cols = [
+            "dist_change", "dist_change_ratio", "kinryo_delta", "単勝_log", "kinryo_per_weight",
+        ]
 
         # Start with G1 static list
         zscore_cols = [c for c in RACE_LEVEL_ZSCORE_COLS if c in self.__data.columns]
@@ -229,17 +346,44 @@ class FeatureEngineering:
         named_feature_cols = (
             JOCKEY_TRAINER_FEATURE_COLS
             + PACE_FEATURE_COLS
+            + GROWTH_FEATURE_COLS
             + COURSE_CONDITION_FEATURE_COLS
             + SIRE_FEATURE_COLS
+            + APTITUDE_FEATURE_COLS
+            + SPEED_FIGURE_FEATURE_COLS
+            + OPPONENT_STRENGTH_FEATURE_COLS
+            + DAMSIRE_FEATURE_COLS
+            # elo_field_mean はレース内一定（z は定数0）なので除外し、変動する Elo 列のみ相対化
+            + [c for c in ELO_FEATURE_COLS if c != "elo_field_mean"]
+            + YOSO_FEATURE_COLS
+            + PERSON_YEARLY_FEATURE_COLS
+            + MARKET_SIGNAL_FEATURE_COLS
+            + TYPE_GROUND_FEATURE_COLS
+            + RACE_CLASS_FEATURE_COLS
+            + RECENT_FORM_FEATURE_COLS
+            + prev_derived_zscore_cols
         )
         for col in named_feature_cols:
             if col in self.__data.columns and col not in zscore_cols:
                 zscore_cols.append(col)
 
-        # Apply within-race (race_id index level 0) Z-score normalisation
-        for col in zscore_cols:
-            self.__data[f"{col}_z"] = self.__data.groupby(level=0)[col].transform(
-                lambda x: (x - x.mean()) / (x.std() + 1e-8)
+        # Apply within-race (race_id index level 0) Z-score normalisation.
+        # 列ごとの groupby+lambda transform は「レース数 × 列数」回の Python 呼び出しに
+        # なり rebuild の主要ボトルネック（数十万グループ×数十列）。mean/std を C 実装の
+        # grouped transform で全列一括算出してベクトル化する（ddof=1 std で従来と数値一致）。
+        if zscore_cols:
+            import time
+
+            t0 = time.perf_counter()
+            grouped = self.__data.groupby(level=0)[zscore_cols]
+            means = grouped.transform("mean")
+            stds = grouped.transform("std")
+            z = (self.__data[zscore_cols] - means) / (stds + 1e-8)
+            z.columns = [f"{c}_z" for c in zscore_cols]
+            self.__data = pd.concat([self.__data, z], axis=1)
+            logger.info(
+                "[fe] race-level zscore: %d 列を %.1fs でベクトル化算出",
+                len(zscore_cols), time.perf_counter() - t0,
             )
 
         return self

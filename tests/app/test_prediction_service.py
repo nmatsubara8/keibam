@@ -52,6 +52,30 @@ def test_run_prediction_returns_candidates_when_ev_positive():
     assert all(c.expected_value > 1.0 for c in result)
 
 
+def test_run_prediction_max_odds_filters_longshots():
+    # 馬3は EV2.0(0.10*20) で閾値は超えるが、オッズ20倍 > max_odds=15 で除外されるべき。
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    thresholds = {BetType.TANSHO: 1.0}
+    uncapped = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
+    capped = run_prediction(model, X, _default_op_config(max_odds=15.0), thresholds=thresholds)
+    assert any(c.combo == (3,) for c in uncapped)  # 上限なしなら20倍馬は採用
+    assert all(c.odds <= 15.0 for c in capped)
+    assert all(c.combo != (3,) for c in capped)  # 上限ありなら20倍馬は除外
+
+
+def test_run_prediction_tansho_ev_threshold_override():
+    # 既定 BetThresholds(単勝1.78) では EV1.3 の本命は不採用。config で1.1へ下げると採用。
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+    model = _StubModel([0.65, 0.25, 0.10])
+    base = run_prediction(model, X, _default_op_config())
+    lowered = run_prediction(model, X, _default_op_config(tansho_ev_threshold=1.1))
+    base_tansho = [c for c in base if c.combo == (1,)]
+    lowered_tansho = [c for c in lowered if c.combo == (1,)]
+    assert not base_tansho       # 1.78 では本命(EV1.3)は出ない
+    assert lowered_tansho        # 1.1 では本命が出る
+
+
 def test_run_prediction_stake_within_bankroll():
     X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
     model = _StubModel([0.65, 0.25, 0.10])
@@ -72,6 +96,33 @@ def test_run_prediction_returns_empty_when_no_ev():
     assert result == []
 
 
+class _RowStub:
+    """x の行数に追従して確率を返すスタブ（除外で行数が変わっても shape が合う）。"""
+
+    def predict_proba(self, x):
+        n = len(x)
+        p = np.linspace(0.30, 0.08, n) if n > 1 else np.array([0.2])
+        return np.column_stack([1.0 - p, p])
+
+
+def test_run_prediction_drops_invalid_odds_horse_without_crashing():
+    """単勝が欠損(NaN)/非正の馬がいてもレース全体の予測は落ちず、その馬は買い目に出ない。"""
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3),
+                       (4, 4, float("nan"), 0.25), (5, 5, 0.0, 0.15)])
+    th = {BetType.TANSHO: 1.0, BetType.UMAREN: 1.0, BetType.SANRENPUKU: 1.0}
+    result = run_prediction(_RowStub(), X, _default_op_config(), thresholds=th)
+    assert isinstance(result, list)
+    # 欠損(4)・0倍(5)の馬は組み合わせに一切現れない
+    assert all(4 not in c.combo and 5 not in c.combo for c in result)
+
+
+def test_run_prediction_empty_when_fewer_than_two_valid_odds():
+    """有効オッズ馬が2頭未満なら選定不能で空（クラッシュしない）。"""
+    X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, float("nan"), 0.2)])
+    result = run_prediction(_RowStub(), X, _default_op_config(), thresholds={BetType.TANSHO: 0.0})
+    assert result == []
+
+
 def test_run_prediction_confidence_in_range():
     X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
     model = _StubModel([0.65, 0.25, 0.10])
@@ -79,6 +130,136 @@ def test_run_prediction_confidence_in_range():
     result = run_prediction(model, X, _default_op_config(), thresholds=thresholds)
     for c in result:
         assert 0.0 <= c.confidence <= 1.0
+
+
+class TestLiveTakeout:
+    def test_explicit_takeout_passthrough(self):
+        from app._prediction_service import _load_live_takeout
+
+        assert _load_live_takeout(0.25) == 0.25
+        m = {BetType.UMAREN: 0.3}
+        assert _load_live_takeout(m) is m
+
+    def test_auto_loads_calibration(self, monkeypatch):
+        import app._prediction_service as ps
+        import src.policies._takeout_calibration as tc
+
+        monkeypatch.setattr(tc, "latest_takeout_map", lambda path: {BetType.UMAREN: 0.27})
+        assert ps._load_live_takeout(None) == {BetType.UMAREN: 0.27}
+
+    def test_falls_back_to_default_when_no_calibration(self, monkeypatch):
+        import app._prediction_service as ps
+        import src.policies._takeout_calibration as tc
+
+        monkeypatch.setattr(tc, "latest_takeout_map", lambda path: {})
+        assert ps._load_live_takeout(None) == 0.2
+
+    def test_higher_takeout_lowers_combo_ev(self):
+        """券種別控除率を上げると連系（馬連）の推定オッズ＝EV が下がる。"""
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        thresholds = {BetType.UMAREN: 0.0}  # 全馬連を採用してEVを観測
+
+        def _umaren_ev(takeout):
+            res = run_prediction(
+                model, X, _default_op_config(), thresholds=thresholds, takeout=takeout
+            )
+            evs = [c.expected_value for c in res if c.bet_type == BetType.UMAREN]
+            return max(evs) if evs else None
+
+        low = _umaren_ev({BetType.UMAREN: 0.0})
+        high = _umaren_ev({BetType.UMAREN: 0.5})
+        assert low is not None and high is not None
+        assert high < low
+
+
+class TestEvCalibrationWiring:
+    def test_load_ev_artifacts_all_none_when_absent(self, tmp_path):
+        from app._prediction_service import _load_ev_artifacts
+
+        assert _load_ev_artifacts(str(tmp_path)) == (None, None, None)
+
+    def test_enabled_by_default_loads(self, monkeypatch):
+        """use_ev_calibration 既定 True では _load_ev_artifacts を呼ぶ（既定 ON）。"""
+        import app._prediction_service as ps
+
+        called = {"n": 0}
+
+        def _spy(*a, **k):
+            called["n"] += 1
+            return (None, None, None)
+
+        monkeypatch.setattr(ps, "_load_ev_artifacts", _spy)
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        ps.run_prediction(model, X, _default_op_config(), thresholds={BetType.TANSHO: 1.0})
+        assert called["n"] == 1
+
+    def test_disabled_when_off_does_not_load(self, monkeypatch):
+        """use_ev_calibration=False では _load_ev_artifacts を呼ばない（明示 OFF）。"""
+        import app._prediction_service as ps
+
+        called = {"n": 0}
+
+        def _spy(*a, **k):
+            called["n"] += 1
+            return (None, None, None)
+
+        monkeypatch.setattr(ps, "_load_ev_artifacts", _spy)
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        ps.run_prediction(
+            model, X, _default_op_config(use_ev_calibration=False),
+            thresholds={BetType.TANSHO: 1.0},
+        )
+        assert called["n"] == 0
+
+    def test_enabled_loads_and_applies_calibrator(self, monkeypatch):
+        """較正器を適用すると勝率（候補確率）が変わる（既定 ON vs 明示 OFF）。"""
+        import app._prediction_service as ps
+        from src.policies._calibration import IsotonicCalibrator
+
+        # 本命(高raw)を持ち上げる較正写像
+        cal = IsotonicCalibrator(x=(0.10, 0.65), y=(0.05, 0.95))
+        monkeypatch.setattr(ps, "_load_ev_artifacts", lambda *a, **k: (None, cal, None))
+
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        th = {BetType.TANSHO: 0.0}
+        base = ps.run_prediction(
+            model, X, _default_op_config(use_ev_calibration=False), thresholds=th
+        )
+        wired = ps.run_prediction(
+            model, X, _default_op_config(use_ev_calibration=True), thresholds=th
+        )
+        p_base = {c.combo: c.probability for c in base if c.bet_type == BetType.TANSHO}
+        p_wired = {c.combo: c.probability for c in wired if c.bet_type == BetType.TANSHO}
+        assert (1,) in p_base and (1,) in p_wired
+        assert p_wired[(1,)] != p_base[(1,)]  # 較正で勝率が変化
+
+
+class TestPoolImpactWiring:
+    def test_pool_impact_caps_stake_in_live(self):
+        """use_pool_impact=True かつ pool_by_race 指定で stake がプール影響で縮む。"""
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        th = {BetType.TANSHO: 1.0}
+        op = _default_op_config(tansho_ev_threshold=1.0)
+        base = run_prediction(model, X, op, thresholds=th)
+        op_pool = _default_op_config(tansho_ev_threshold=1.0, use_pool_impact=True)
+        capped = run_prediction(model, X, op_pool, thresholds=th, pool_by_race={"r1": 2000.0})
+        sb = sum(c.stake for c in base)
+        sc = sum(c.stake for c in capped)
+        assert sb > 0 and sc < sb  # プール影響で総 stake が縮む
+
+    def test_pool_impact_off_ignores_pool(self):
+        X = _make_X("r1", [(1, 1, 2.0, 0.1), (2, 2, 5.0, 0.2), (3, 3, 20.0, 0.3)])
+        model = _StubModel([0.65, 0.25, 0.10])
+        th = {BetType.TANSHO: 1.0}
+        op = _default_op_config(tansho_ev_threshold=1.0)
+        a = run_prediction(model, X, op, thresholds=th, pool_by_race={"r1": 50.0})
+        b = run_prediction(model, X, op, thresholds=th)
+        assert sum(c.stake for c in a) == pytest.approx(sum(c.stake for c in b))
 
 
 def test_default_thresholds_covers_all_bet_types():

@@ -48,6 +48,25 @@ def test_two_horse_quinella_is_certain():
     assert harville.prob_quinella({1: 0.6, 2: 0.4}, 1, 2) == pytest.approx(1.0)
 
 
+def test_wide_greater_than_quinella(win_probs):
+    # ワイド（共に3着以内）は馬連（共に2着以内）より緩いので確率が大きい
+    for a, b in combinations(win_probs, 2):
+        assert harville.prob_wide(win_probs, a, b) >= harville.prob_quinella(win_probs, a, b)
+
+
+def test_wide_in_three_horse_field_is_certain():
+    # 3頭立てなら任意の2頭は必ず共に3着以内
+    probs = {1: 0.6, 2: 0.3, 3: 0.1}
+    for a, b in combinations(probs, 2):
+        assert harville.prob_wide(probs, a, b) == pytest.approx(1.0)
+
+
+def test_wide_sum_equals_three_pairs(win_probs):
+    # 全ペアのワイド確率の総和 = 期待される「top3 内ペア数」= C(3,2) = 3
+    total = sum(harville.prob_wide(win_probs, a, b) for a, b in combinations(win_probs, 2))
+    assert pytest.approx(total, abs=1e-9) == 3.0
+
+
 def test_place_in_small_field_is_certain():
     # 3頭立てで複勝3着以内は確実
     probs = {1: 0.6, 2: 0.3, 3: 0.1}
@@ -65,3 +84,47 @@ def test_place_probabilities_sum_to_n_places(win_probs):
 def test_zero_total_raises():
     with pytest.raises(ValueError):
         harville.normalize({1: 0.0, 2: 0.0})
+
+
+# ──────────────────────────────────────────
+# Place ベースのワイド近似
+# ──────────────────────────────────────────
+
+
+def _place_probs():
+    # 較正済み top3 marginal（総和は厳密に 3 でなくてよい＝内部で正規化）
+    return {1: 0.9, 2: 0.7, 3: 0.6, 4: 0.5, 5: 0.3}
+
+
+def test_normalize_place_sums_to_n_places():
+    p = harville.normalize_place(_place_probs(), n_places=3)
+    assert pytest.approx(sum(p.values()), abs=1e-9) == 3.0
+
+
+def test_wide_from_place_below_independence():
+    # 固定サイズの負相関により joint < 独立積 p_a*p_b
+    place = _place_probs()
+    pn = harville.normalize_place(place)
+    pw = harville.prob_wide_from_place(place, 1, 2)
+    assert pw < pn[1] * pn[2]
+    assert pw > 0
+
+
+def test_wide_from_place_clipped_to_min_marginal():
+    place = _place_probs()
+    pn = harville.normalize_place(place)
+    pw = harville.prob_wide_from_place(place, 1, 2)
+    assert pw <= min(pn[1], pn[2]) + 1e-12
+
+
+def test_wide_from_place_missing_horse_is_zero():
+    assert harville.prob_wide_from_place(_place_probs(), 1, 99) == 0.0
+
+
+def test_wide_from_place_pairs_sum_to_three():
+    # 固定サイズ3抽出のペア包含確率の総和 ≈ C(3,2)=3（Hájek 近似なので概ね）
+    place = _place_probs()
+    total = sum(
+        harville.prob_wide_from_place(place, a, b) for a, b in combinations(place, 2)
+    )
+    assert total == pytest.approx(3.0, abs=0.25)

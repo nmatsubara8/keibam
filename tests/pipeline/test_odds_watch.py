@@ -31,32 +31,46 @@ from src.pipeline.odds_watch import recalculate_predictions
 
 
 class TestSelectCheckpointRaces:
-    def test_selects_races_at_checkpoints(self):
+    def test_captures_every_race_within_30min(self):
+        # 発走30分前から毎ティック（cron */3 で3分おき）。30〜0分前は全て取得。
         now = dt.datetime(2026, 6, 7, 15, 0)
         pairs = [
             ("r30", dt.datetime(2026, 6, 7, 15, 30)),  # 30 分前 → thirty_min
+            ("r20", dt.datetime(2026, 6, 7, 15, 20)),  # 20 分前 → thirty_min（旧仕様では対象外だった）
             ("r10", dt.datetime(2026, 6, 7, 15, 10)),  # 10 分前 → t10
             ("r05", dt.datetime(2026, 6, 7, 15, 5)),   # 5 分前 → t5
             ("r01", dt.datetime(2026, 6, 7, 15, 1)),   # 1 分前 → t0
-            ("r20", dt.datetime(2026, 6, 7, 15, 20)),  # 20 分前 → 対象外
-            ("rpast", dt.datetime(2026, 6, 7, 14, 50)),  # 発走済み → 対象外
         ]
-        targets = select_checkpoint_races(pairs, now)
-        by_id = {rid: phase for rid, _, phase in targets}
+        by_id = {rid: phase for rid, _, phase in select_checkpoint_races(pairs, now)}
         assert by_id == {
             "r30": OddsPhase.THIRTY_MIN,
+            "r20": OddsPhase.THIRTY_MIN,
             "r10": OddsPhase.T10,
             "r05": OddsPhase.T5,
             "r01": OddsPhase.T0,
         }
 
-    def test_tolerance_window(self):
+    def test_over_30min_not_taken(self):
         now = dt.datetime(2026, 6, 7, 15, 0)
-        # 31 分前は ±1.5 分の許容内
-        targets = select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 31))], now)
-        assert targets[0][2] == OddsPhase.THIRTY_MIN
-        # 33 分前は許容外
-        assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 33))], now) == []
+        # 31 分前は密ウィンドウ(30)外、早期 sparse も既定で無効 → 取得しない。
+        assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 15, 31))], now) == []
+
+    def test_grace_window_continues_past_post(self):
+        # 実締切の安全弁: 予定発走を過ぎても POST_GRACE_MIN(=10)分まで継続。負値の phase は T0。
+        now = dt.datetime(2026, 6, 7, 15, 0)
+        # 5 分前に発走済み（mtp=-5）→ 猶予内で取得継続
+        t = select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 14, 55))], now)
+        assert len(t) == 1 and t[0][2] == OddsPhase.T0
+        # ちょうど +10 分（猶予境界）→ 取得
+        assert len(select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 14, 50))], now)) == 1
+        # +11 分（猶予超過）→ 取得しない
+        assert select_checkpoint_races([("r", dt.datetime(2026, 6, 7, 14, 49))], now) == []
+
+    def test_confirmed_races_skipped(self):
+        now = dt.datetime(2026, 6, 7, 15, 0)
+        pairs = [("r1", dt.datetime(2026, 6, 7, 15, 10)), ("r2", dt.datetime(2026, 6, 7, 15, 10))]
+        out = select_checkpoint_races(pairs, now, confirmed={"r1"})
+        assert [rid for rid, _, _ in out] == ["r2"]  # 確定済み r1 は除外
 
 
 def _make_snapshots(race_id="202606070511"):
@@ -136,6 +150,155 @@ class TestLatestFinalOddsLookup:
         assert latest_final_odds_lookup(None) == {}
 
 
+class TestStatusSummary:
+    def _snaps(self):
+        from src.constants._bet_types import BetType
+        from src.preparing._odds_snapshot import make_snapshot
+
+        post1 = dt.datetime(2026, 6, 7, 15, 40)
+        post2 = dt.datetime(2026, 6, 7, 16, 10)
+        snaps = []
+        # r1: 発走30分前と27分前の2ティック・3頭
+        for cap in (dt.datetime(2026, 6, 7, 15, 10), dt.datetime(2026, 6, 7, 15, 13)):
+            for u, o in [(1, 2.0), (2, 4.0), (3, 8.0)]:
+                snaps.append(make_snapshot("r1", BetType.TANSHO, [u], o, post1, cap))
+        # r2: 1ティック・2頭（発走は後）
+        for u, o in [(1, 3.0), (2, 5.0)]:
+            snaps.append(make_snapshot("r2", BetType.TANSHO, [u], o, post2, dt.datetime(2026, 6, 7, 15, 40)))
+        return snaps
+
+    def test_summary_counts_and_order(self):
+        from src.pipeline.odds_watch import summarize_status
+
+        rows = summarize_status(self._snaps(), bet_type="tansho")
+        by = {r["race_id"]: r for r in rows}
+        assert by["r1"]["n_ticks"] == 2 and by["r1"]["n_horses"] == 3
+        assert by["r2"]["n_ticks"] == 1 and by["r2"]["n_horses"] == 2
+        # r1 の最終取得は 15:13（発走30分前→27分前）→ last_mtp=27
+        assert by["r1"]["last_mtp"] == 27
+        # 発走順（r1 15:40 → r2 16:10）でソート
+        assert [r["race_id"] for r in rows] == ["r1", "r2"]
+
+    def test_date_filter(self):
+        from src.pipeline.odds_watch import summarize_status
+
+        rows = summarize_status(self._snaps(), on_date="20260607", bet_type="tansho")
+        assert len(rows) == 2
+        assert summarize_status(self._snaps(), on_date="20260608", bet_type="tansho") == []
+
+    def test_format_empty_and_nonempty(self):
+        from src.pipeline.odds_watch import format_status_report, summarize_status
+
+        assert "まだありません" in format_status_report([])
+        rep = format_status_report(summarize_status(self._snaps(), bet_type="tansho"))
+        assert "r1" in rep and "取得状況" in rep
+
+    def test_single_tick_guard_flags_past_post_single_tick(self):
+        """発走済み & 1ティックのレースだけを警告対象にする（複数ティックは除外）。"""
+        from src.pipeline.odds_watch import past_post_single_tick, summarize_status
+
+        rows = summarize_status(self._snaps(), bet_type="tansho")
+        # 両レース発走後（16:20）: r1 は2ティックで安全、r2 は1ティックで警告。
+        stuck = past_post_single_tick(rows, dt.datetime(2026, 6, 7, 16, 20))
+        assert stuck == ["r2"]
+        # r2 発走前（15:50）: 発走済みは r1 のみ・2ティック → 警告ゼロ。
+        assert past_post_single_tick(rows, dt.datetime(2026, 6, 7, 15, 50)) == []
+
+    def test_status_report_shows_single_tick_warning(self):
+        """format_status_report は発走済み単一ティックを ⚠ 行で明示する。"""
+        from src.pipeline.odds_watch import format_status_report, summarize_status
+
+        rows = summarize_status(self._snaps(), bet_type="tansho")
+        rep = format_status_report(rows, now=dt.datetime(2026, 6, 7, 16, 20))
+        assert "⚠" in rep and "r2" in rep and "単一ティック" in rep
+
+
+class TestSchedule:
+    """--start-at / --stop-at の起動・終了スケジュール（純粋ロジック）。"""
+
+    def test_parse_when_iso_and_time_only(self):
+        from src.pipeline.odds_watch import parse_when
+
+        now = dt.datetime(2026, 7, 20, 8, 0)
+        assert parse_when("2026-07-21T09:30", now) == dt.datetime(2026, 7, 21, 9, 30)
+        assert parse_when("2026-07-20 16:30", now) == dt.datetime(2026, 7, 20, 16, 30)
+        # 'HH:MM' は now の当日そのままの時刻（秒以下は切り捨て）
+        assert parse_when("09:30", now) == dt.datetime(2026, 7, 20, 9, 30)
+
+    def test_wait_seconds_future_past_none(self):
+        from src.pipeline.odds_watch import wait_seconds
+
+        now = dt.datetime(2026, 7, 20, 9, 0)
+        assert wait_seconds(dt.datetime(2026, 7, 20, 9, 30), now) == 1800.0  # 30分後
+        assert wait_seconds(dt.datetime(2026, 7, 20, 8, 30), now) == 0.0      # 過去→即時
+        assert wait_seconds(None, now) == 0.0                                 # 未指定→即時
+
+    def test_should_stop_boundary_and_none(self):
+        from src.pipeline.odds_watch import should_stop
+
+        stop = dt.datetime(2026, 7, 20, 16, 30)
+        assert should_stop(stop, dt.datetime(2026, 7, 20, 16, 29)) is False
+        assert should_stop(stop, dt.datetime(2026, 7, 20, 16, 30)) is True   # 境界は停止
+        assert should_stop(stop, dt.datetime(2026, 7, 20, 16, 31)) is True
+        assert should_stop(None, dt.datetime(2026, 7, 20, 23, 59)) is False  # 未指定→無期限
+
+
+class TestSchedule:
+    """連休対応の複数開催日スケジュール（parse_schedule / pending_sessions）。"""
+
+    def _data(self):
+        return {
+            "interval": 90,
+            "sessions": [
+                # 意図的に日付逆順で渡し、start 昇順ソートを確認する
+                {"date": "2026-07-20", "start": "09:20", "stop": "16:40"},
+                {"date": "2026-07-18", "start": "09:20", "stop": "16:40"},
+                {"date": "2026-07-19", "start": "2026-07-19T09:20", "stop": "16:40"},
+            ],
+        }
+
+    def test_parse_schedule_sorts_and_reads_interval(self):
+        from src.pipeline.odds_watch import parse_schedule
+
+        sessions, interval = parse_schedule(self._data())
+        assert interval == 90
+        assert [s.date_str for s in sessions] == ["20260718", "20260719", "20260720"]
+        # 'HH:MM' も ISO 完全形も同じ datetime に解決される
+        assert sessions[1].start == dt.datetime(2026, 7, 19, 9, 20)
+        assert sessions[1].stop == dt.datetime(2026, 7, 19, 16, 40)
+
+    def test_parse_schedule_rejects_bad_date_and_range(self):
+        from src.pipeline.odds_watch import parse_schedule
+
+        with pytest.raises(ValueError):
+            parse_schedule({"sessions": [{"date": "2026-7-20", "start": "09:00", "stop": "16:00"}]})
+        with pytest.raises(ValueError):  # stop <= start
+            parse_schedule({"sessions": [{"date": "20260720", "start": "16:00", "stop": "09:00"}]})
+        with pytest.raises(ValueError):  # sessions 空
+            parse_schedule({"sessions": []})
+
+    def test_pending_skips_past_days(self):
+        from src.pipeline.odds_watch import parse_schedule, pending_sessions
+
+        sessions, _ = parse_schedule(self._data())
+        # 7/19 の途中で起動 → 7/18 は済み・7/19,7/20 が残る
+        now = dt.datetime(2026, 7, 19, 12, 0)
+        pend = pending_sessions(sessions, now)
+        assert [s.date_str for s in pend] == ["20260719", "20260720"]
+        # 全日程後は空
+        assert pending_sessions(sessions, dt.datetime(2026, 7, 21, 0, 0)) == []
+
+    def test_load_schedule_roundtrip(self, tmp_path):
+        import json
+
+        from src.pipeline.odds_watch import load_schedule
+
+        p = tmp_path / "sched.json"
+        p.write_text(json.dumps(self._data()), encoding="utf-8")
+        sessions, interval = load_schedule(str(p))
+        assert interval == 90 and len(sessions) == 3
+
+
 class TestRunOnce:
     def test_full_cycle_with_stub_source(self, tmp_path, monkeypatch):
         """スタブソースで 取得 → 永続化 → 再計算 → 予測保存 の 1 サイクルを検証。"""
@@ -168,6 +331,107 @@ class TestRunOnce:
         assert not preds.empty
         assert (preds["checkpoint"] == OddsPhase.THIRTY_MIN).all()
 
+    def test_captures_place_odds_when_source_supports_it(self, tmp_path, monkeypatch):
+        """複勝を返せるソースなら、同一サイクルで FUKUSHO スナップショットも永続化する。"""
+        from src.constants._bet_types import BetType
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+        from src.preparing.odds_scheduler import load_snapshots
+
+        snap_path = str(tmp_path / "s.pkl")
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", snap_path, raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        monkeypatch.delenv("KEIBA_ODDS_CAPTURE_PLACE", raising=False)  # 既定ON
+        now = dt.datetime(2026, 6, 7, 15, 10)
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("202606070511", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)]
+
+            def fetch_win_and_place_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)], [(1, 1.1), (2, 1.8), (3, 3.2)]
+
+            def close(self):
+                pass
+
+        result = run_once(_StubSource(), now=now)
+        assert result["n_snapshots"] == 6  # 単勝3 + 複勝3
+        snaps = load_snapshots(snap_path)
+        fuku = [s for s in snaps if s.bet_type == BetType.FUKUSHO]
+        assert len(fuku) == 3
+        assert {int(s.combo[0]) for s in fuku} == {1, 2, 3}
+
+    def test_captures_exotic_when_env_enabled(self, tmp_path, monkeypatch):
+        """KEIBA_ODDS_CAPTURE_EXOTIC 有効時、連系(馬連)スナップショットも永続化する。"""
+        from src.constants._bet_types import BetType
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+        from src.preparing._odds_snapshot import make_snapshot
+        from src.preparing.odds_scheduler import load_snapshots
+
+        snap_path = str(tmp_path / "s.pkl")
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", snap_path, raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        monkeypatch.setenv("KEIBA_ODDS_CAPTURE_EXOTIC", "umaren")
+        now = dt.datetime(2026, 6, 7, 15, 10)
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("202606070511", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)]
+
+            def fetch_win_and_place_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)], []
+
+            def capture_bet_types(self, race_id, bet_types, post_time, captured_at):
+                assert bet_types == ["umaren"]
+                return [make_snapshot(str(race_id), BetType.UMAREN, [1, 2], 15.5, post_time, captured_at)]
+
+            def close(self):
+                pass
+
+        run_once(_StubSource(), now=now)
+        snaps = load_snapshots(snap_path)
+        umaren = [s for s in snaps if s.bet_type == BetType.UMAREN]
+        assert len(umaren) == 1
+        assert tuple(int(x) for x in umaren[0].combo) == (1, 2)
+
+    def test_place_capture_disabled_by_env(self, tmp_path, monkeypatch):
+        """KEIBA_ODDS_CAPTURE_PLACE=0 なら複勝を捕捉せず単勝のみ（従来挙動）。"""
+        from src.constants._bet_types import BetType
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+        from src.preparing.odds_scheduler import load_snapshots
+
+        snap_path = str(tmp_path / "s.pkl")
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", snap_path, raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        monkeypatch.setenv("KEIBA_ODDS_CAPTURE_PLACE", "0")
+        now = dt.datetime(2026, 6, 7, 15, 10)
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("202606070511", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return [(1, 2.0), (2, 4.0), (3, 8.0)]
+
+            def fetch_win_and_place_odds(self, race_id):
+                raise AssertionError("CAPTURE_PLACE=0 では複勝経路を使わない")
+
+            def close(self):
+                pass
+
+        result = run_once(_StubSource(), now=now)
+        assert result["n_snapshots"] == 3
+        snaps = load_snapshots(snap_path)
+        assert all(s.bet_type == BetType.TANSHO for s in snaps)
+
     def test_no_checkpoint_is_cheap_noop(self, tmp_path, monkeypatch):
         from src.constants._local_paths import LocalPaths
         from src.pipeline.odds_watch import run_once
@@ -190,3 +454,49 @@ class TestRunOnce:
         result = run_once(_StubSource(), now=now)
         assert result["n_targets"] == 0
         assert result["n_predictions"] == 0
+
+    def test_empty_odds_past_post_marks_confirmed(self, tmp_path, monkeypatch):
+        """ライブ発走を過ぎてオッズが空（撤去）→ 締切確定として confirmed に追加。"""
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", str(tmp_path / "s.pkl"), raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        now = dt.datetime(2026, 6, 7, 15, 42)  # 発走(15:40)+2分
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("r1", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return []  # 締切後＝オッズ撤去
+
+            def close(self):
+                pass
+
+        confirmed: set[str] = set()
+        run_once(_StubSource(), now=now, confirmed=confirmed)
+        assert "r1" in confirmed
+
+    def test_empty_odds_before_post_not_confirmed(self, tmp_path, monkeypatch):
+        """発走前（遅延中）にオッズが一時的に空でも確定扱いしない（mtp>0）。"""
+        from src.constants._local_paths import LocalPaths
+        from src.pipeline.odds_watch import run_once
+
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_SNAPSHOT_PATH", str(tmp_path / "s.pkl"), raising=False)
+        monkeypatch.setattr(LocalPaths, "RAW_ODDS_PREDICTIONS_PATH", str(tmp_path / "p.pkl"), raising=False)
+        now = dt.datetime(2026, 6, 7, 15, 38)  # 発走2分前（mtp=+2）
+
+        class _StubSource:
+            def fetch_today_races(self, date_str):
+                return [("r1", dt.datetime(2026, 6, 7, 15, 40))]
+
+            def fetch_win_odds(self, race_id):
+                return []
+
+            def close(self):
+                pass
+
+        confirmed: set[str] = set()
+        result = run_once(_StubSource(), now=now, confirmed=confirmed)
+        assert "r1" not in confirmed and result["n_targets"] == 1

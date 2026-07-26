@@ -51,7 +51,7 @@ def scrape_race_id_list(kaisai_date_list=None, skip: bool = False):
     from src.constants._url_paths import UrlPaths
     from src.preparing.url_loader import KaisaiDateLoader
 
-    from src.preparing.DataLoader import DataLoader
+    from src.preparing._data_loader import DataLoader
 
     # list / tuple / Series で開催日が渡された場合は DataFrame に正規化する
     # （DataFrame の最終列に開催日を持たせる規約に合わせる）。

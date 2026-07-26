@@ -1,0 +1,6 @@
+{
+  "models": ["lightgbm", "xgboost", "nn"],
+  "tune_per_model": false,
+  "n_trials": 50,
+  "nn_params": {"arch": "mlp", "hidden_dims": [128], "dropout": 0.5, "pre_norm": "layer_norm", "lr": 0.00065, "batch_size": 512, "epochs": 80, "max_train_rows": 200000}
+}

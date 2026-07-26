@@ -73,7 +73,20 @@ class RawDataRepo:
                 # race_id は通常列として既にある（RangeIndex の場合）→ RangeIndex は捨てる
                 df_norm = df_norm.reset_index(drop=True)
             else:
-                # race_id が index に name として設定されている可能性 → index を column 化
+                # race_id が「無名の index」として設定されている可能性 → column 化する。
+                # ただし既定 RangeIndex(0,1,2,…) を race_id に昇格させると、行番号が
+                # race_id として保存され全レースが「1レース1行」に化ける（データ破損）。
+                # 実害が出たため、RangeIndex は race_id とみなさず明示的に弾く。
+                if isinstance(df_norm.index, pd.RangeIndex) or (
+                    df_norm.index.name is None
+                    and pd.api.types.is_integer_dtype(df_norm.index)
+                    and df_norm.index.equals(pd.RangeIndex(len(df_norm)))
+                ):
+                    raise ValueError(
+                        f"upsert({alias}): '{spec.index_col}' 列が無く index も既定 RangeIndex です。"
+                        f"行番号を {spec.index_col} に昇格させるとデータが破損するため中断します"
+                        f"（呼び出し側で {spec.index_col} 列を保持してください）。"
+                    )
                 df_norm.index = df_norm.index.rename(spec.index_col)
                 df_norm = df_norm.reset_index()
 
@@ -147,6 +160,31 @@ class RawDataRepo:
 
         if "ingested_at" in df.columns:
             df = df.drop(columns=["ingested_at"])
+
+        # SQLite は全列をテキストで保持するため、DB 復元すると本来数値の列も文字列で返る
+        # （scrape 由来の read_html は数値型）。下流の前処理は scrape 版 pickle の dtype を
+        # 前提にしているため、ここで型を揃える:
+        #   1) pandas 3.x の文字列拡張 dtype（pyarrow/string）は object に正規化。
+        #   2) 全非欠損値が数値化できる列だけ数値型へ復元（"中"/"3-3-2-1" 等の混在列は文字列維持）。
+        # ID 列（race_id / horse_id）と index_col は正準文字列のまま維持する
+        # （数値化すると "202401010101" → 202401010101 となり index 契約が壊れる）。
+        _keep_str = {"race_id", "horse_id"}
+        if spec.index_col is not None:
+            _keep_str.add(spec.index_col)
+        # 数値復元は前処理が算術するレース/馬系 raw のみ。オッズ系（combo="1" 等の
+        # 文字列キーを持つ）は対象外にして文字列のまま保つ。
+        restore_numeric = not alias.startswith("raw_odds")
+        for col in df.columns:
+            dtype = df[col].dtype
+            is_arrow_string = type(dtype).__name__ == "ArrowDtype" and "string" in str(dtype).lower()
+            if isinstance(dtype, pd.StringDtype) or is_arrow_string:
+                df[col] = df[col].astype(object)
+            if restore_numeric and df[col].dtype == object and col not in _keep_str:
+                converted = pd.to_numeric(df[col], errors="coerce")
+                # 元の非欠損が全て数値化できた列のみ置換（データ欠損させない）
+                orig_notna = df[col].notna().sum()
+                if orig_notna > 0 and converted.notna().sum() == orig_notna:
+                    df[col] = converted
 
         # auto_row_idx_col で自動付与した row_idx は、return_tables の場合は
         # 「raw DataFrame の元構造」には含まれていなかった列なので、PK の補助情報として
@@ -226,6 +264,20 @@ class RawDataRepo:
             deleted = result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0
 
         logger.info("[RawDataRepo] delete_by_index %s: %d rows deleted", alias, deleted)
+        return deleted
+
+    def clear(self, alias: str) -> int:
+        """テーブルの全行を削除する（破損データの復旧で正本を作り直す用途）。
+
+        Returns 削除行数。pickle 等の正本から作り直す前提の破壊的操作。
+        """
+        if alias not in TABLE_SPECS:
+            raise ValueError(f"unknown alias: {alias}")
+        spec = TABLE_SPECS[alias]
+        with self._engine.begin() as conn:
+            result = conn.execute(text(f'DELETE FROM "{spec.table_name}"'))
+            deleted = result.rowcount if result.rowcount is not None and result.rowcount >= 0 else 0
+        logger.info("[RawDataRepo] clear %s: %d rows deleted", alias, deleted)
         return deleted
 
     # ------------------------------------------------------------------

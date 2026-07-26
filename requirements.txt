@@ -22,3 +22,7 @@ html5lib
 pyarrow
 chardet
 sqlalchemy>=2.0
+xgboost
+catboost
+torch  # 任意: NN base 学習器（--base-models に nn を含める場合のみ必要）
+lhafile  # 任意: JRDB の .lzh アーカイブ展開（zip 配布版を使う場合は不要）
