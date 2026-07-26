@@ -121,8 +121,13 @@ def _tri_nll(r, coef):
     return -np.log(max(p, 1e-12))
 
 
-def fit_coef(train, signals, grid=np.arange(-0.3, 0.31, 0.05), passes=3):
+_COEF_GRID = np.arange(-0.3, 0.31, 0.05)
+
+
+def fit_coef(train, signals, grid=None, passes=3):
     """train の trifecta NLL 最小の係数を座標降下で fit（任意個の signal 対応）。"""
+    if grid is None:
+        grid = _COEF_GRID
     coef = {s: 0.0 for s in signals}
     for _ in range(passes):
         for f in signals:
