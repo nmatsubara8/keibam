@@ -1,6 +1,7 @@
 """ヘルスチェック（doctor）の純粋ロジック。
 
-データ/モデル/DB/ディスク/featured メタの健全性を点検し、OK/WARN/ERROR を集約する。
+データ/モデル/DB/ディスク/featured メタ/raw 主キー重複の健全性を点検し、
+OK/WARN/ERROR を集約する。
 CLI（run_pipeline doctor）と dashboard 鮮度バッジ（app/_data_loader）から再利用する。
 
 レイヤ規約: pipeline（最上位）。constants/storage を import 可、app は import 不可。
@@ -200,6 +201,37 @@ def check_featured_meta(db_path: Optional[str] = None) -> CheckResult:
     )
 
 
+def check_raw_duplicates(
+    *,
+    path_overrides: Optional[dict[str, str]] = None,
+) -> list[CheckResult]:
+    """raw pickle の主キー重複を点検する（1 alias = 1 CheckResult）。
+
+    重複あり → ERROR、主キー列不足など検査不能 → WARN、空/未配置 → OK（スキップ）。
+    """
+    from src.pipeline._duplicate_audit import audit_all_raw
+
+    out: list[CheckResult] = []
+    for rep in audit_all_raw(path_overrides=path_overrides):
+        name = f"dup.{rep.alias}"
+        if rep.skipped:
+            # ファイルなし・空は未取得扱い（ERROR にしない）。主キー不足は検査不能で WARN。
+            if rep.skip_reason in ("ファイルなし", "空"):
+                out.append(CheckResult(name, OK, f"スキップ（{rep.skip_reason}）"))
+            else:
+                out.append(CheckResult(name, WARN, f"検査不能: {rep.skip_reason}"))
+            continue
+        if rep.has_duplicates:
+            sample = ", ".join(rep.sample_keys[:3]) or "(no sample)"
+            out.append(CheckResult(
+                name, ERROR,
+                f"主キー重複 {rep.n_extra} 行 / {rep.n_rows} 行（例: {sample}）",
+            ))
+        else:
+            out.append(CheckResult(name, OK, f"{rep.n_rows:,} 行・重複なし"))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 集約
 # ---------------------------------------------------------------------------
@@ -222,10 +254,13 @@ def run_doctor(
     data_warn_age_h: float = 48.0,
     model_warn_age_h: float = 24.0 * 14,  # 2 週間
     warn_free_gb: float = 5.0,
+    check_duplicates: bool = True,
+    duplicate_path_overrides: Optional[dict[str, str]] = None,
 ) -> tuple[list[CheckResult], str]:
     """全チェックを実行し、(結果リスト, 総合レベル) を返す。
 
     data_paths を省略すると LocalPaths から既定の重要ファイル群を点検する。
+    check_duplicates=True（既定）で raw pickle の主キー重複も点検する。
     """
     now = now or dt.datetime.now()
 
@@ -246,5 +281,7 @@ def run_doctor(
     results.append(check_db_connection(db_path))
     results.append(check_featured_meta(db_path))
     results.append(check_disk_space(models_dir if os.path.isdir(models_dir) else ".", warn_free_gb=warn_free_gb))
+    if check_duplicates:
+        results.extend(check_raw_duplicates(path_overrides=duplicate_path_overrides))
 
     return results, overall_level(results)

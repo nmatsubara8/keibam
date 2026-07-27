@@ -177,6 +177,7 @@ class TestOverallAndRun:
         results, level = doc.run_doctor(
             now=_NOW, data_paths=data, models_dir=md,
             db_path=str(tmp_path / "test.db"),
+            check_duplicates=False,
         )
         names = {r.name for r in results}
         assert {"results.pkl", "models", "db", "featured_meta", "disk"}.issubset(names)
@@ -188,5 +189,24 @@ class TestOverallAndRun:
         results, level = doc.run_doctor(
             now=_NOW, data_paths=data, models_dir=str(tmp_path / "models"),
             db_path=str(tmp_path / "test.db"),
+            check_duplicates=False,
         )
         assert level == doc.ERROR
+
+    def test_run_doctor_duplicate_raw_is_error(self, tmp_path):
+        import pandas as pd
+
+        data = {"results.pkl": str(tmp_path / "r.pkl")}
+        _touch(data["results.pkl"], hours_ago=1)
+        md = str(tmp_path / "models")
+        _touch(os.path.join(md, "20260612", "m.pickle"), hours_ago=1)
+        race_info = tmp_path / "race_info.pkl"
+        pd.DataFrame({"race_id": ["r1", "r1"], "x": [1, 2]}).to_pickle(race_info)
+        results, level = doc.run_doctor(
+            now=_NOW, data_paths=data, models_dir=md,
+            db_path=str(tmp_path / "test.db"),
+            check_duplicates=True,
+            duplicate_path_overrides={"raw_race_info": str(race_info)},
+        )
+        assert level == doc.ERROR
+        assert any(r.name == "dup.raw_race_info" and r.level == doc.ERROR for r in results)

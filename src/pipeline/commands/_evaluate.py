@@ -507,7 +507,7 @@ def _doctor(args: argparse.Namespace) -> None:
         logger.info("[doctor] prune-models keep=%d 削除 %d 世代: %s",
                     args.prune_models, len(deleted), deleted)
 
-    results, level = run_doctor()
+    results, level = run_doctor(check_duplicates=not getattr(args, "skip_duplicates", False))
     if args.json:
         print(json.dumps(
             {"level": level, "checks": [r.__dict__ for r in results]},

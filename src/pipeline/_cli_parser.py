@@ -420,9 +420,17 @@ def _add_backtest(sub: argparse._SubParsersAction) -> None:
 
 def _add_doctor(sub: argparse._SubParsersAction) -> None:
     """doctor サブコマンドを登録する。"""
-    doctor_p = sub.add_parser("doctor", help="データ/モデル/DB/ディスクの健全性を点検")
+    doctor_p = sub.add_parser(
+        "doctor",
+        help="データ/モデル/DB/ディスク/raw重複の健全性を点検",
+    )
     doctor_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
     doctor_p.add_argument("--strict", action="store_true", help="WARN でも非0終了する")
+    doctor_p.add_argument(
+        "--skip-duplicates",
+        action="store_true",
+        help="raw pickle の主キー重複点検をスキップする",
+    )
     doctor_p.add_argument(
         "--prune-models",
         type=int,
