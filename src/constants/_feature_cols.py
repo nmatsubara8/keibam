@@ -110,6 +110,96 @@ ELO_FEATURE_COLS: list = [
     "elo_win_prob",    # Elo 強度比のレース内正規化勝率（スタンドアロン勝率）
 ]
 
+# ══════════════════════════════════════════════════════════════════════════
+# レーティング Phase 2-5（TrueSkill/条件別/Kalman/階層ベイズ）— 検証用（隔離）
+# ------------------------------------------------------------------------
+# これらは confident-hypatia ブランチ由来の Phase 2-5 レーティング拡張の定数。
+# Phase 1（Elo）は main 統合済みで実データ A/B の結果「冗長（±0.001）」と判明済み。
+# Phase 2-5 は production の core（data_merger/feature_engineering/retrain）には
+# 未配線で、scripts/rating_ab_check.py（自己完結 A/B ハーネス）からのみ参照する。
+# エッジ（Elo 冗長を超える改善）が確認できた場合に本配線を検討する。
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── §2l: TrueSkill（多頭順位対応 μ/σ）— Phase 2 ──
+TS_MU: float = 25.0              # 初期スキル平均 μ0
+TS_SIGMA: float = 25.0 / 3.0     # 初期スキル標準偏差 σ0（≈8.333）
+TS_BETA: float = 25.0 / 6.0      # パフォーマンスノイズ β（= σ0/2、スキルクラス幅）
+TS_TAU: float = 25.0 / 300.0     # 動的変動 τ（= σ0/100、出走ごとに σ² へ加算）
+TS_DRAW_MARGIN: float = 0.0      # 引分マージン ε（同着の更新用、既定 0）
+TS_CONSERVATIVE_K: float = 3.0   # 保守的スキル μ - k·σ の k
+
+# 列順は compute_trueskill_history の出力配列と一致させること。
+TS_FEATURE_COLS: list = [
+    "ts_mu",            # スキル平均 μ
+    "ts_sigma",         # スキル不確かさ σ
+    "ts_conservative",  # 保守的スキル μ - 3σ
+    "ts_n_races",       # それまでの出走数
+    "ts_field_mean",    # 当該レース保守的スキルの平均（フィールド強度）
+    "ts_vs_field",      # ts_conservative - ts_field_mean（レース内相対強さ）
+]
+
+# ── §2m: 条件別 TrueSkill（芝/ダ・距離・回り）— Phase 3 ──
+# 条件次元と参照列（merged_data の生値列。dummify 前に結合するため生値で参照可能）。
+COND_DIMENSIONS: list = ["surface", "distance", "around"]
+COND_DIMENSION_COLUMN: dict = {
+    "surface": "race_type",   # 芝 / ダート / 障害
+    "distance": "course_len",  # 100m 単位（meters // 100）
+    "around": "around",        # 右 / 左 / 直線
+}
+# 距離バケット境界（course_len = 100m 単位）。<14:短距離 / 14-17:マイル /
+# 18-21:中距離 / >=22:長距離。
+COND_DISTANCE_BIN_UNITS: list = [14, 18, 22]
+COND_DISTANCE_LABELS: list = ["sprint", "mile", "middle", "long"]
+# 各次元の特徴量列（保守的スキル / 当該条件の出走数 / フィールド相対）。
+# 列順は compute_conditional_trueskill_history の出力配列と一致させること。
+COND_TS_FEATURE_COLS: list = [
+    f"ts_{d}_{suffix}"
+    for d in COND_DIMENSIONS
+    for suffix in ("conservative", "n_races", "vs_field")
+]
+
+# ── §2n: 能力 Kalman（局所線形トレンド・成長/疲労）— Phase 4 ──
+KF_INIT_LEVEL: float = 0.0        # 初期能力（TS 保守的スキルの prior と同じ 0 起点）
+KF_INIT_TREND: float = 0.0        # 初期成長率
+KF_INIT_VAR_LEVEL: float = 1.0    # 初期 level 分散（事前不確実性）
+KF_INIT_VAR_TREND: float = 0.1    # 初期 trend 分散
+KF_Q_LEVEL: float = 0.05          # level プロセスノイズ
+KF_Q_TREND: float = 0.005         # trend プロセスノイズ
+KF_R_OBS: float = 1.0             # 観測ノイズ
+KF_TREND_DECAY: float = 0.9       # 成長率の平均回帰係数 ρ（<1）
+KF_PERF_SCALE: float = 1.0        # 観測 y における着順正規スコアのスケール
+KF_INTERVAL_REF_DAYS: float = 180.0  # 間隔→プロセスノイズ変調の基準日数（休養=不確実性増）
+KF_WORKLOAD_HALFLIFE_DAYS: float = 60.0  # 疲労 workload の半減期（連戦指標の減衰）
+KF_WINPROB_SCALE: float = 2.0     # Rating Lab の能力式勝率 softmax スケール
+
+# 列順は compute_ability_kalman_history の出力配列と一致させること。
+KF_FEATURE_COLS: list = [
+    "kf_level",          # 出走前の予測能力（1 ステップ先予測）
+    "kf_trend",          # 成長率（正=上昇期 / 負=下降期）
+    "kf_level_vs_field",  # kf_level - レース内平均（相対能力）
+    "kf_sigma",          # 能力推定の不確実性（状態標準偏差）
+    "kf_workload",       # 疲労指標（直近の連戦度・減衰加重出走数）
+]
+
+# ── §2o: 階層ベイズ TrueSkill（市場オッズ事前分布・3段）— Phase 5 ──
+HB_TAU_MARKET: float = 4.0     # 市場事前のスキル標準偏差（小さいほど市場を強く信頼）
+HB_TAU_GROUP: float = 6.0      # 群（種牡馬産駒）事前の標準偏差
+HB_MARKET_SCALE: float = 3.0   # logit(implied 勝率) → μ スケールへの換算係数
+HB_SIGMA_FLOOR: float = 0.5    # 個体精度 1/σ² の発散防止（ts_sigma の下限）
+
+# 列順は compute_hier_bayes_history の出力配列と一致させること。
+HB_FEATURE_COLS: list = [
+    "hb_skill",       # 3段階層ベイズ事後平均（個体⊕市場⊕種牡馬群の精度加重）
+    "hb_vs_market",   # ts_mu - 市場推定スキル（＝エッジ: 我々が市場より高評価する度合い）
+    "hb_vs_field",    # hb_skill のレース内相対
+    "hb_shrinkage",   # 事前（市場+群）への依存度 ∈[0,1]（コールドスタート指標）
+]
+
+# Phase 2-5 の全列（ELO は production 済み・A/B で冗長判明のため含めない）。A/B ハーネス用。
+PHASE25_RATING_FEATURE_COLS: list = (
+    TS_FEATURE_COLS + COND_TS_FEATURE_COLS + KF_FEATURE_COLS + HB_FEATURE_COLS
+)
+
 # 予想印コンセンサス（DataMerger._merge_yoso_marks）。発走前確定・リーク無し。
 YOSO_FEATURE_COLS: list = [
     "yoso_n_marks",            # 印を付けた予想家数（注目度）
