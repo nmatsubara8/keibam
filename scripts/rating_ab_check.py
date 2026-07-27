@@ -58,6 +58,37 @@ def _load_featured(path: str):
     raise FileNotFoundError(f"featured が見つかりません: {path}")
 
 
+def recover_condition_columns(featured):
+    """dummify で失われた条件生列（race_type / around）をダミー列から復元する。
+
+    feature_engineering は race_type / around を get_dummies（列名 `race_type__芝`
+    等の二重アンダースコア）へ変換し生列を drop する。条件別 TrueSkill（Phase 3）は
+    生の race_type / around / course_len を要求するため、featured のダミー列から
+    生カテゴリ値を復元する（course_len は数値で残存しているのでそのまま使える）。
+
+    Returns
+    -------
+    {raw_col: np.ndarray}（位置対応・featured と同じ行順）。復元不能な列は含めない。
+    """
+    import numpy as np
+
+    recovered = {}
+    for raw, prefix in (("race_type", "race_type__"), ("around", "around__")):
+        if raw in featured.columns:
+            continue  # 既に生列がある
+        dummies = [c for c in featured.columns if c.startswith(prefix)]
+        if not dummies:
+            continue
+        mat = featured[dummies].to_numpy(dtype=float)
+        idx = mat.argmax(axis=1)
+        has_any = mat.sum(axis=1) > 0
+        labels = np.array([c[len(prefix):] for c in dummies], dtype=object)
+        vals = labels[idx].astype(object)
+        vals[~has_any] = None  # どのダミーも立っていない → 欠損（当該次元は prior）
+        recovered[raw] = vals
+    return recovered
+
+
 def build_phase25_features(featured):
     """featured から Phase 2-5 の as-of レーティング特徴量を生成する（純粋・リーク無し）。
 
@@ -78,8 +109,19 @@ def build_phase25_features(featured):
 
     # Phase 2: TrueSkill（他ファミリの前提 = ts_mu/ts_sigma/ts_field_mean を供給）
     ts, _ = compute_trueskill_history(featured)
-    # Phase 3: 条件別 TrueSkill（条件列が無い次元は prior に退化）
-    cond, _ = compute_conditional_trueskill_history(featured)
+    # Phase 3: 条件別 TrueSkill（surface=race_type / around はダミーから生列を復元して供給。
+    # course_len は数値で残存。復元できない次元のみ prior に退化する）。
+    cond_input = featured.copy()
+    recovered = recover_condition_columns(featured)
+    for col, arr in recovered.items():
+        cond_input[col] = arr  # 位置対応で付与
+    logger.info(
+        "[cond] 条件列: race_type=%s around=%s course_len=%s",
+        "復元" if "race_type" in recovered else ("生" if "race_type" in featured.columns else "無"),
+        "復元" if "around" in recovered else ("生" if "around" in featured.columns else "無"),
+        "有" if "course_len" in featured.columns else "無",
+    )
+    cond, _ = compute_conditional_trueskill_history(cond_input)
     # Phase 4: 能力 Kalman（ts_field_mean があれば観測水準に使う）
     kf_input = featured.copy()
     kf_input["ts_field_mean"] = ts["ts_field_mean"].to_numpy()
@@ -102,7 +144,9 @@ def build_phase25_features(featured):
 
     coverage = {
         "trueskill (ts_n_races>0)": _frac("ts_n_races"),
-        "conditional (ts_surface_n_races>0)": _frac("ts_surface_n_races"),
+        "cond-surface (ts_surface_n_races>0)": _frac("ts_surface_n_races"),
+        "cond-distance (ts_distance_n_races>0)": _frac("ts_distance_n_races"),
+        "cond-around (ts_around_n_races>0)": _frac("ts_around_n_races"),
         "kalman (kf_workload>0)": _frac("kf_workload"),
         "hier_bayes (hb_shrinkage<1)": (
             float(np.mean(pd.to_numeric(feats.get("hb_shrinkage", 1.0), errors="coerce").fillna(1.0) < 1.0))
