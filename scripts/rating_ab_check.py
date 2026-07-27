@@ -31,6 +31,11 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from pathlib import Path
+
+# スクリプト直接実行時（python scripts/rating_ab_check.py）にリポジトリルートを
+# import パスへ追加する（既存 scripts の慣習）。これが無いと `src` が解決できない。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 logger = logging.getLogger("rating_ab_check")
 
