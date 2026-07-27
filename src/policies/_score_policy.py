@@ -5,6 +5,7 @@ from typing import Callable
 import pandas as pd
 
 from src.constants._horse_results_cols import HorseResultsCols
+from src.constants._results_cols import TARGET_LEAK_COLS
 from src.constants._results_cols import ResultsCols
 
 # const
@@ -18,8 +19,9 @@ CURRENT_ODDS = "current_odds"
 # horse_id を除外し損ねると特徴量が 1 列多くなり LightGBM が
 # "number of features ... is not the same as ... training data" で失敗する。
 # CORNER('通過') は post-race のコーナー通過順（リーク列）。_DROP_FOR_TRAIN と対で除外する。
+# rank_win 等の目的変数リーク列は TARGET_LEAK_COLS（_results_cols）を単一定義元として参照。
 _DROP_FOR_PREDICT = [
-    "horse_id", ResultsCols.TANSHO_ODDS, "rank", "rank_win", "date",
+    "horse_id", ResultsCols.TANSHO_ODDS, "rank", *TARGET_LEAK_COLS, "date",
     ResultsCols.RANK, HorseResultsCols.CORNER,
 ]
 

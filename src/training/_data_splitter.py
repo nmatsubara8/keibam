@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 
 from src.constants._horse_results_cols import HorseResultsCols
+from src.constants._results_cols import TARGET_LEAK_COLS
 from src.constants._results_cols import ResultsCols
 
 logger = logging.getLogger(__name__)
@@ -19,14 +20,15 @@ logger = logging.getLogger(__name__)
 #   数値変換で落ちる。ResultsProcessor は過去走の脚質(first_corner)復元のために
 #   選択・保持するが、学習入力からは必ず除外する（§10 で results に追加された）。
 # rank(top3) と rank_win(1着) は二値目的変数。どちらを学習しても**両方**を入力から除外し
-# 相互リーク（top3 に win が含まれる等）を防ぐ。
+# 相互リーク（top3 に win が含まれる等）を防ぐ。rank_win 等の目的変数リーク列は
+# TARGET_LEAK_COLS（_results_cols）に一元化した単一定義元を参照する。
 _DROP_FOR_TRAIN = [
-    "rank", "rank_win", "date", "horse_id",
+    "rank", *TARGET_LEAK_COLS, "date", "horse_id",
     ResultsCols.TANSHO_ODDS, ResultsCols.RANK, HorseResultsCols.CORNER,
 ]
 
 # テスト入力用: EV 計算のため TANSHO_ODDS('単勝') は残し、実着順 RANK は除外する。
-_DROP_FOR_TEST = ["rank", "rank_win", "date", "horse_id", ResultsCols.RANK, HorseResultsCols.CORNER]
+_DROP_FOR_TEST = ["rank", *TARGET_LEAK_COLS, "date", "horse_id", ResultsCols.RANK, HorseResultsCols.CORNER]
 
 
 class DataSplitter:
