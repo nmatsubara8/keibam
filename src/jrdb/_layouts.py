@@ -124,4 +124,32 @@ TYB = {
     "chokuzen_mark": (97, 1), # 直前総合印
 }
 
-RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128}
+# CYB 調教分析データ（第2版e・2019.05.17）。レコード長96（CRLF含む）。金土 19:00 更新。
+# 中間の調教過程を分析。追切指数/仕上指数/調教量評価/調教評価が市場と直交しうる調教シグナル。
+CYB = {
+    "race_key": (1, 8),
+    "umaban": (9, 2),
+    "chokyo_type": (11, 2),              # 調教タイプ（コード）
+    "chokyo_course_shubetsu": (13, 1),   # 調教コース種別（コード）
+    "course_saka": (14, 2),              # 坂路 01:有/00:無
+    "course_wood": (16, 2),              # ウッドコース
+    "course_dirt": (18, 2),              # ダートコース
+    "course_shiba": (20, 2),             # 芝コース
+    "course_pool": (22, 2),              # プール調教
+    "course_shou": (24, 2),              # 障害練習
+    "course_poly": (26, 2),              # ポリトラック
+    "chokyo_kyori": (28, 1),             # 調教距離 1長め/2普通/3短め/4:2本/0他
+    "chokyo_juten": (29, 1),             # 調教重点 1テン/2中間/3終い/4平均/0他
+    "oikiri_idx": (30, 3),               # 追切指数（ZZ9・調教時計の指数。左詰め既知バグ→strip で吸収）
+    "shiage_idx": (33, 3),               # 仕上指数（仕上り状態の指数）
+    "chokyo_ryo_hyoka": (36, 1),         # 調教量評価 A/B/C/D
+    "shiage_idx_change": (37, 1),        # 仕上指数変化
+    "chokyo_comment": (38, 40),          # 調教コメント（全角）
+    "comment_ymd": (78, 8),              # コメント対象の調教日
+    "chokyo_hyoka": (86, 1),             # 調教評価 3段階 1:◎/2:○/3:△
+    "isshumae_oikiri_idx": (87, 3),      # 一週前追切指数
+    "isshumae_oikiri_course": (90, 2),   # 一週前追切コース
+    # 予備(92,3) / 改行(95,2) は取り込まない
+}
+
+RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128, "CYB": 96}

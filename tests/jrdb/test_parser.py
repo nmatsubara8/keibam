@@ -50,6 +50,36 @@ def _skb_record() -> bytes:
     return bytes(r) + b"\r\n"
 
 
+def _cyb_record() -> bytes:
+    r = bytearray(b" " * 94)   # データ 94 + CRLF 2 = レコード長 96
+    _put(r, 1, "02152201")     # race_key -> 201502020201
+    _put(r, 9, "03")           # 馬番
+    _put(r, 14, "01")          # 坂路 有
+    _put(r, 20, "01")          # 芝 有
+    _put(r, 30, "58 ")         # 追切指数（ZZ9・左詰め既知バグを模擬）
+    _put(r, 33, " 62")         # 仕上指数
+    _put(r, 36, "A")           # 調教量評価
+    _put(r, 86, "1")           # 調教評価 ◎
+    _put(r, 87, "55 ")         # 一週前追切指数
+    return bytes(r) + b"\r\n"
+
+
+def test_parse_cyb(tmp_path):
+    p = tmp_path / "CYB080913.txt"
+    p.write_bytes(_cyb_record())
+    df = parse(str(p), "CYB")
+    assert df.loc[0, "race_id"] == "201502020201"
+    assert df.loc[0, "umaban"] == 3
+    # 主要な調教シグナル（数値化・左詰めバグは strip で吸収）
+    assert df.loc[0, "oikiri_idx"] == 58
+    assert df.loc[0, "shiage_idx"] == 62
+    assert df.loc[0, "isshumae_oikiri_idx"] == 55
+    # コード系（文字列のまま）
+    assert df.loc[0, "chokyo_ryo_hyoka"] == "A"
+    assert df.loc[0, "chokyo_hyoka"] == "1"
+    assert df.loc[0, "course_saka"] == 1 and df.loc[0, "course_shiba"] == 1
+
+
 def test_parse_kyi(tmp_path):
     p = tmp_path / "KYI150712.txt"
     p.write_bytes(_kyi_record())

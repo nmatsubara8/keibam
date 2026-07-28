@@ -49,7 +49,7 @@ def main(argv=None) -> int:
 
     print("\n[JRDB 取込サマリ]（file=新規取込 / skip=台帳一致 / badlen=版差スキップ / rows=書込行数）")
     total_files = total_skip = total_bad = total_rows = 0
-    for rt in ("KYI", "SED", "SKB", "TYB"):
+    for rt in ("KYI", "SED", "SKB", "TYB", "CYB"):
         s = summary.get(rt, {"files": 0, "skipped": 0, "badlen": 0, "rows": 0})
         print(f"  {rt}: file={s['files']:>4}  skip={s['skipped']:>4}  "
               f"badlen={s.get('badlen', 0):>3}  rows={s['rows']:>8,}")
@@ -64,7 +64,7 @@ def main(argv=None) -> int:
     if total_files == 0 and total_skip == 0 and total_bad == 0:
         print("  JRDB ファイルが見つかりません（KYI/SED/SKB/TYB の .txt/.zip/.lzh）。")
         return 1
-    print("\n蓄積先テーブル: raw_jrdb_kyi / raw_jrdb_sed / raw_jrdb_skb / raw_jrdb_tyb"
+    print("\n蓄積先テーブル: raw_jrdb_kyi / raw_jrdb_sed / raw_jrdb_skb / raw_jrdb_tyb / raw_jrdb_cyb"
           "（台帳: jrdb_ingested_files）。再実行しても同一ファイルは skip され重複しません。")
     return 0
 

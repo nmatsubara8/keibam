@@ -150,6 +150,22 @@ def test_is_ingested_and_ledger(store, tmp_path):
     assert ledger.iloc[0]["filename"] == "KYI150712.txt"
 
 
+def test_cyb_ingest_roundtrip(store, tmp_path):
+    """CYB（調教分析）が RECORD_TYPES に含まれ raw_jrdb_cyb に取り込まれる。"""
+    r = bytearray(b" " * 94)   # 96 - CRLF
+    _put(r, 1, "02152201")
+    _put(r, 9, "03")
+    _put(r, 30, "58 ")         # 追切指数
+    _put(r, 86, "1")           # 調教評価
+    p = tmp_path / "CYB080913.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    s = store.ingest_files({"CYB": [str(p)]})
+    assert s["CYB"]["files"] == 1 and s["CYB"]["rows"] == 1
+    out = store.read("CYB")
+    assert len(out) == 1
+    assert out.iloc[0]["race_id"] == "201502020201" and out.iloc[0]["oikiri_idx"] == "58"
+
+
 def test_ingest_skips_bad_record_length(store, tmp_path):
     """レコード長が仕様(128)と乖離する TYB は既定でスキップ（版差ガード）。"""
     p = tmp_path / "TYB100101.txt"

@@ -65,7 +65,7 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
     共通列: race_id（変換済）, umaban（int）, ketto。加えて record_type 別の項目。
     """
     rt = record_type.upper()
-    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB}[rt]
+    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB}[rt]
     recs = _records(path)
     # フォーマット版差の検知: レコード長が仕様と大きく乖離したら警告（オフセットずれで
     # 値が壊れ得る）。取込側（JrdbStore）は既定でこのファイルをスキップする。
@@ -119,6 +119,9 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         "TYB": ["idm", "kishu_idx", "joho_idx", "odds_idx", "paddock_idx",
                 "sougou_idx", "bagu_change", "ashimoto_info", "torikeshi",
                 "tansho_odds", "fukusho_odds", "bataijuu"],
+        "CYB": ["oikiri_idx", "shiage_idx", "isshumae_oikiri_idx", "isshumae_oikiri_course",
+                "course_saka", "course_wood", "course_dirt", "course_shiba",
+                "course_pool", "course_shou", "course_poly"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])
