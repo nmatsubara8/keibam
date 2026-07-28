@@ -63,18 +63,17 @@ def test_abnormal_and_blanks():
     assert pd.isna(r1["単勝"])               # 空オッズ
 
 
-def test_crosswalk_ids_attached():
-    horse = pd.DataFrame({"ketto": ["18103588"], "horse_id": ["2018103588"]})
+def test_ids_attached():
     jockey = pd.DataFrame({"kishu_code": ["01001"], "jockey_id": ["j641"]})
     trainer = pd.DataFrame({"chokyo_code": ["05001"], "trainer_id": ["t362"]})
-    out = build_raw_results(_sed_rows(), horse_xwalk=horse, jockey_xwalk=jockey,
-                            trainer_xwalk=trainer)
+    out = build_raw_results(_sed_rows(), jockey_xwalk=jockey, trainer_xwalk=trainer)
     r0 = out.iloc[0]
-    assert r0["horse_id"] == "2018103588"    # crosswalk 付与
+    assert r0["horse_id"] == "2018103588"    # ketto→ketto_to_horse_id（canonical id）
+    assert out.iloc[1]["horse_id"] == "2018103599"
     assert r0["jockey_id"] == "j641"
     assert r0["trainer_id"] == "t362"
-    # 対応の無いコードは欠損
-    assert pd.isna(out.iloc[1]["horse_id"])  # 18103599 は未対応
+    # crosswalk に無い騎手/調教師コードは欠損
+    assert pd.isna(out.iloc[1]["jockey_id"])  # 01002 は未対応
 
 
 def test_raw_horse_results_mapping():
@@ -88,10 +87,9 @@ def test_raw_horse_results_mapping():
          "bataijuu": "498", "bataijuu_zougen": "-10", "chaku1_bamei": "マイネルチケット",
          "honshokin": "0"},
     ])
-    hz = pd.DataFrame({"ketto": ["18103588"], "horse_id": ["2018103588"]})
-    out = build_raw_horse_results(sed, horse_xwalk=hz)
+    out = build_raw_horse_results(sed)
     r = out.iloc[0]
-    assert r["horse_id"] == "2018103588"
+    assert r["horse_id"] == "2018103588"   # ketto 18103588 → ketto_to_horse_id
     assert r["日付"] == "2022/06/14"
     assert r["開催"] == "東京"          # 場05
     assert r["天気"] == "曇"

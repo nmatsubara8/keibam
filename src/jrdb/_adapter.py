@@ -15,6 +15,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from src.jrdb._keys import ketto_to_horse_id
+
 # netkeiba は非完走（異常区分 1取消/2除外/3中止/4失格/5降着…）の着順を NaN で持つ
 # （2018 実突合で 419/419 が netkeiba NaN と確認）。マーカーは付けず None にする。
 
@@ -191,23 +193,21 @@ def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     return out.set_index("race_id")
 
 
-def build_raw_horse_results(
-    sed: pd.DataFrame, *, horse_xwalk: Optional[pd.DataFrame] = None,
-) -> pd.DataFrame:
+def build_raw_horse_results(sed: pd.DataFrame) -> pd.DataFrame:
     """JRDB SED → netkeiba raw_horse_results 相当（馬ごとの過去走履歴。index なし）。
 
     raw_results と同じ SED 由来だが horse_id×日付キーの馬履歴。2021-2022 の走りを各馬の
-    履歴に足すと、その後（2023+）のレースの過去走特徴量も正しくなる。horse_id は crosswalk
-    必須（付かない行は後段でフィルタ）。日付='YYYY/MM/DD'・距離='芝1400'・馬場体重='498(-10)'
-    ・着差=秒(数値) 等、netkeiba horse_results の実表記に合わせる。
+    履歴に足すと、その後（2023+）のレースの過去走特徴量も正しくなる。horse_id は
+    **ketto_to_horse_id（血統登録番号→生年+下6桁）= netkeiba canonical id**。raw_horse_results
+    と直近スクレイプ年の horse_id はこの方式（crosswalk の seed代理 9… ではない）。
+    日付='YYYY/MM/DD'・距離='芝1400'・馬場体重='498(-10)'・着差=秒(数値) 等に合わせる。
     """
     if sed is None or sed.empty:
         return pd.DataFrame()
     d = sed.copy()
-    hz = _xwalk_map(horse_xwalk, "ketto", "horse_id")
     rid = d["race_id"].astype(str)
     out = pd.DataFrame(index=range(len(d)))
-    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).astype(str).map(lambda k: hz.get(k))
+    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).map(ketto_to_horse_id)
     out["日付"] = [_ymd_slash(v) for v in _col(d, "ymd")]
     out["開催"] = rid.str[4:6].map(
         lambda c: PLACE_BY_CODE.get(int(c)) if c.isdigit() else None).to_numpy()
@@ -243,20 +243,19 @@ def build_raw_horse_results(
 def build_raw_results(
     sed: pd.DataFrame,
     *,
-    horse_xwalk: Optional[pd.DataFrame] = None,
     jockey_xwalk: Optional[pd.DataFrame] = None,
     trainer_xwalk: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """JRDB SED → netkeiba raw_results 相当の DataFrame（index=race_id）。
 
-    SED から構造的に埋まる列を生成し、horse_id/jockey_id/trainer_id は crosswalk で付与。
-    SED に無い列（枠番/性齢/馬主/ﾀｲﾑ指数/着差[マージン]/調教ﾀｲﾑ/厩舎ｺﾒﾝﾄ）は欠損のまま
-    （後段で KYI 枠番・UKC 性別/馬主 を結合して補う）。値はアダプタ側で netkeiba 形式へ整形。
+    SED から構造的に埋まる列を生成。**horse_id は ketto_to_horse_id（canonical id・
+    horse_results と直近スクレイプ年に一致）**。jockey_id/trainer_id は crosswalk で付与
+    （式が無いため）。SED に無い列（枠番/性齢/馬主/ﾀｲﾑ指数/着差[マージン]/調教ﾀｲﾑ/厩舎ｺﾒﾝﾄ）
+    は欠損のまま（後段で KYI 枠番・UKC 性別/馬主 を結合して補う）。
     """
     if sed is None or sed.empty:
         return pd.DataFrame()
     d = sed.copy()
-    hz = _xwalk_map(horse_xwalk, "ketto", "horse_id")
     jz = _xwalk_map(jockey_xwalk, "kishu_code", "jockey_id")
     tz = _xwalk_map(trainer_xwalk, "chokyo_code", "trainer_id")
 
@@ -278,7 +277,7 @@ def build_raw_results(
     out["調教師"] = d.get("chokyoshi_name", pd.Series(dtype=object)).astype(str).str.strip().to_numpy()
     out["賞金(万円)"] = _num(d.get("honshokin")).to_numpy()
     # 同一性（crosswalk）。対応が無いコードは欠損（境界外＝JRDB専有馬など）。
-    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).astype(str).map(lambda k: hz.get(k))
+    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).map(ketto_to_horse_id)
     out["jockey_id"] = d.get("kishu_code", pd.Series(dtype=object)).astype(str).map(lambda k: jz.get(k))
     out["trainer_id"] = d.get("chokyo_code", pd.Series(dtype=object)).astype(str).map(lambda k: tz.get(k))
     # SED に無い列は欠損で確保（featured 側の列存在前提を壊さない）
