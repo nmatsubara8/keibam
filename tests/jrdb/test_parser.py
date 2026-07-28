@@ -121,6 +121,26 @@ def test_parse_hjc(tmp_path):
     assert "fukusho_pay5" in df.columns and "wide_pay7" in df.columns
 
 
+def test_parse_srb(tmp_path):
+    r = bytearray(b" " * 850)   # 852 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "124")           # ハロンタイム1 = 12.4s（0.1秒単位）
+    _put(r, 12, "118")          # ハロンタイム2
+    _put(r, 63, "3,7,1")        # 1コーナー位置取り
+    _put(r, 319, "2")           # ペースアップ位置
+    _put(r, 343, "好時計")       # レースコメント
+    p = tmp_path / "SRB150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "SRB")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"     # レース単位（umaban なし）
+    assert "umaban" not in df.columns
+    assert row["harontime1"] == 124 and row["harontime2"] == 118
+    assert row["pace_up_pos"] == 2
+    assert row["corner1_pos"].strip() == "3,7,1"
+    assert row["race_comment"].strip() == "好時計"
+
+
 def test_parse_kka(tmp_path):
     r = bytearray(b" " * 322)   # 324 - CRLF
     _put(r, 1, "02152201")      # race_key -> 201502020201

@@ -49,7 +49,7 @@ def main(argv=None) -> int:
 
     print("\n[JRDB 取込サマリ]（file=新規取込 / skip=台帳一致 / badlen=版差スキップ / rows=書込行数）")
     total_files = total_skip = total_bad = total_rows = 0
-    for rt in ("KYI", "SED", "SKB", "TYB", "CYB", "CHA", "HJC", "KKA", "UKC"):
+    for rt in ("KYI", "SED", "SKB", "TYB", "CYB", "CHA", "HJC", "KKA", "UKC", "SRB"):
         s = summary.get(rt, {"files": 0, "skipped": 0, "badlen": 0, "rows": 0})
         print(f"  {rt}: file={s['files']:>4}  skip={s['skipped']:>4}  "
               f"badlen={s.get('badlen', 0):>3}  rows={s['rows']:>8,}")

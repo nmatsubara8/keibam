@@ -104,8 +104,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
     if rt == "HJC":
         return _parse_hjc(recs)  # レース単位・券種繰り返しの専用経路
 
-    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB,
-              "CYB": L.CYB, "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC}[rt]
+    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB,
+              "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -163,6 +163,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         "UKC": ["sex_code", "keiro_code", "umakigou_code", "sire_birth_year",
                 "dam_birth_year", "bms_birth_year", "owner_kai_code", "massho_flag",
                 "sire_keito_code", "bms_keito_code"],
+        # SRB: ハロンタイム18 + ペースアップ位置を数値化（位置取り/バイアス/コメントは文字列）。
+        "SRB": [k for k in L.SRB if k.startswith("harontime")] + ["pace_up_pos"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])
