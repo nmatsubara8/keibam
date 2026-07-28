@@ -127,6 +127,9 @@ def main(argv=None) -> int:
             continue
         p = Path(_PATHS[name])
         ex = existing[name]
+        # 既存 pickle の index 構造に合わせる（例: horse_results は index=horse_id）。
+        if ex is not None and ex.index.name and ex.index.name in new_df.columns:
+            new_df = new_df.set_index(ex.index.name)
         if p.exists():
             shutil.copy2(p, str(p) + ".bak")   # 元をバックアップ
         merged = pd.concat([ex, new_df]) if ex is not None else new_df
