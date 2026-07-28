@@ -195,22 +195,36 @@ class JrdbStore:
     # オーケストレーション
     # ------------------------------------------------------------------
 
-    def ingest_files(self, files_by_type: dict[str, list[str]], *, force: bool = False) -> dict:
+    def ingest_files(self, files_by_type: dict[str, list[str]], *, force: bool = False,
+                     allow_length_mismatch: bool = False) -> dict:
         """種別→パス群を受け、未取込（sha1 未登録）のファイルだけパース→keep-last upsert する。
 
         force=True で台帳を無視して全て再取込する（訂正の強制反映・再構築用）。
-        Returns: {record_type: {"files": 取込数, "skipped": 台帳一致でスキップ数, "rows": 書込行数}}。
+        allow_length_mismatch=False（既定）は、レコード長が仕様と乖離するファイル
+        （フォーマット版差の疑い）を**スキップ**して誤取込を防ぐ。True で強制取込。
+        Returns: {record_type: {"files": 取込数, "skipped": 台帳一致 skip 数,
+                  "badlen": 版差 skip 数, "rows": 書込行数}}。
         """
+        from src.jrdb._parser import check_record_length  # noqa: PLC0415
         from src.jrdb._parser import parse  # noqa: PLC0415
 
         summary: dict[str, dict] = {}
         for rt in RECORD_TYPES:
             paths = files_by_type.get(rt, [])
-            s = {"files": 0, "skipped": 0, "rows": 0}
+            s = {"files": 0, "skipped": 0, "badlen": 0, "rows": 0}
             for path in paths:
                 sha1 = file_sha1(path)
                 if not force and self.is_ingested(sha1):
                     s["skipped"] += 1
+                    continue
+                ok, dom, exp = check_record_length(path, rt)
+                if not ok and not allow_length_mismatch:
+                    logger.warning(
+                        "[JrdbStore] %s: レコード長 %d≠仕様 %d のためスキップ（フォーマット版差の疑い。"
+                        "取り込むなら allow_length_mismatch=True / CLI --allow-length-mismatch）。",
+                        Path(path).name, dom, exp,
+                    )
+                    s["badlen"] += 1
                     continue
                 df = parse(path, rt)
                 written = self.upsert(rt, df)
@@ -221,9 +235,9 @@ class JrdbStore:
         return summary
 
     def ingest_dir(self, src_dir: str, extract_to: str = "data/jrdb_txt",
-                   *, force: bool = False) -> dict:
+                   *, force: bool = False, allow_length_mismatch: bool = False) -> dict:
         """ディレクトリ内の .txt/.zip/.lzh を展開・分類し、未取込分を冪等取込する。"""
         from src.jrdb._extract import extract_dir  # noqa: PLC0415
 
         by_type = extract_dir(src_dir, extract_to)
-        return self.ingest_files(by_type, force=force)
+        return self.ingest_files(by_type, force=force, allow_length_mismatch=allow_length_mismatch)

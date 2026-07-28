@@ -43,6 +43,8 @@ def _parse_args(argv):
     ap.add_argument("--db", default=None, help="SQLite パス（既定 LocalPaths.DB_PATH）")
     ap.add_argument("--dry-run", action="store_true", help="DL せず対象一覧のみ表示")
     ap.add_argument("--refresh", action="store_true", help="取得台帳を無視して再取得")
+    ap.add_argument("--allow-length-mismatch", action="store_true",
+                    help="レコード長が仕様と乖離するファイル（版差の疑い）も取り込む")
     return ap.parse_args(argv)
 
 
@@ -101,17 +103,26 @@ def main(argv=None) -> int:
             continue
 
         r = fetcher.fetch_and_ingest(tdir, store=store, since_year=since, kinds=kinds,
-                                     latest=latest, refresh=args.refresh)
+                                     latest=latest, refresh=args.refresh,
+                                     allow_length_mismatch=args.allow_length_mismatch)
         ing_rows = sum(v["rows"] for v in r["ingest"].values())
+        ing_bad = sum(v.get("badlen", 0) for v in r["ingest"].values())
+        badmsg = f" / 版差skip{ing_bad}" if ing_bad else ""
         print(f"  {name}: 一覧{r['listed']} / DL{r['downloaded']} / skip{r['skipped_download']} "
-              f"/ 取込{ing_rows}行")
+              f"/ 取込{ing_rows}行{badmsg}")
         grand["downloaded"] += r["downloaded"]
         grand["skipped"] += r["skipped_download"]
         grand["ingested"] += ing_rows
+        grand["badlen"] = grand.get("badlen", 0) + ing_bad
 
     if not args.dry_run:
+        bad = grand.get("badlen", 0)
+        badmsg = f" / 版差skip {bad}" if bad else ""
         print(f"[jrdb-fetch] 計: DL {grand['downloaded']} / skip {grand['skipped']} "
-              f"/ 取込 {grand['ingested']} 行。再実行しても取得済みは skip され重複しません。")
+              f"/ 取込 {grand['ingested']} 行{badmsg}。再実行しても取得済みは skip され重複しません。")
+        if bad:
+            print("  ⚠️ レコード長不一致で取込を見送ったファイルがあります"
+                  "（古い年度パック等。取り込むなら --allow-length-mismatch）。")
     return 0
 
 

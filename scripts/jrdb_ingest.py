@@ -34,6 +34,8 @@ def _parse_args(argv):
     ap.add_argument("--db", default=None, help="SQLite パス（既定 LocalPaths.DB_PATH）")
     ap.add_argument("--force", action="store_true",
                     help="処理済みファイル台帳を無視して全ファイルを再取込（訂正の強制反映）")
+    ap.add_argument("--allow-length-mismatch", action="store_true",
+                    help="レコード長が仕様と乖離するファイル（フォーマット版差の疑い）も取り込む")
     return ap.parse_args(argv)
 
 
@@ -42,18 +44,24 @@ def main(argv=None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     store = JrdbStore(db_path=args.db)
-    summary = store.ingest_dir(args.jrdb_dir, extract_to=args.extract_to, force=args.force)
+    summary = store.ingest_dir(args.jrdb_dir, extract_to=args.extract_to, force=args.force,
+                               allow_length_mismatch=args.allow_length_mismatch)
 
-    print("\n[JRDB 取込サマリ]（file=新規取込 / skip=台帳一致でスキップ / rows=書込行数）")
-    total_files = total_skip = total_rows = 0
+    print("\n[JRDB 取込サマリ]（file=新規取込 / skip=台帳一致 / badlen=版差スキップ / rows=書込行数）")
+    total_files = total_skip = total_bad = total_rows = 0
     for rt in ("KYI", "SED", "SKB", "TYB"):
-        s = summary.get(rt, {"files": 0, "skipped": 0, "rows": 0})
-        print(f"  {rt}: file={s['files']:>4}  skip={s['skipped']:>4}  rows={s['rows']:>8,}")
+        s = summary.get(rt, {"files": 0, "skipped": 0, "badlen": 0, "rows": 0})
+        print(f"  {rt}: file={s['files']:>4}  skip={s['skipped']:>4}  "
+              f"badlen={s.get('badlen', 0):>3}  rows={s['rows']:>8,}")
         total_files += s["files"]
         total_skip += s["skipped"]
+        total_bad += s.get("badlen", 0)
         total_rows += s["rows"]
-    print(f"  ---\n  計: file={total_files}  skip={total_skip}  rows={total_rows:,}")
-    if total_files == 0 and total_skip == 0:
+    print(f"  ---\n  計: file={total_files}  skip={total_skip}  badlen={total_bad}  rows={total_rows:,}")
+    if total_bad:
+        print(f"  ⚠️ {total_bad} ファイルがレコード長不一致でスキップされました"
+              "（古い年度パック等。取り込むなら --allow-length-mismatch）。")
+    if total_files == 0 and total_skip == 0 and total_bad == 0:
         print("  JRDB ファイルが見つかりません（KYI/SED/SKB/TYB の .txt/.zip/.lzh）。")
         return 1
     print("\n蓄積先テーブル: raw_jrdb_kyi / raw_jrdb_sed / raw_jrdb_skb / raw_jrdb_tyb"

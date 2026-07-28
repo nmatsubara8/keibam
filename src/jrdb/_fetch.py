@@ -90,6 +90,7 @@ def select_files(
     since_year: Optional[int] = None,
     kinds: tuple[str, ...] = ("year", "single"),
     latest: Optional[int] = None,
+    singles_without_pack_only: bool = True,
 ) -> list[RemoteFile]:
     """設定に従って取得対象を選別する。
 
@@ -97,6 +98,9 @@ def select_files(
       （lzh は開発中止・zip 推奨）。
     - `kinds`: "year"（年度パック）/"single"（単体日次）のどちらを対象にするか。
     - `since_year`: 指定年以降のみ（year/single とも year 属性で判定）。
+    - `singles_without_pack_only`: True（既定）なら、年度パックが存在する年の single は
+      除外する（同一内容の重複 DL を避ける）。→ 年度パック（完了年）＋パック未作成の
+      当年 single、という無駄のない取得になり毎年自動で追随する。
     - `latest`: single を新しい順に N 件だけ（日次運用用）。
     """
     # prefer で重複拡張子を解消
@@ -115,6 +119,9 @@ def select_files(
     years = sorted((f for f in picked if f.kind == "year"), key=lambda f: f.name)
     singles = sorted((f for f in picked if f.kind == "single"), key=lambda f: f.name, reverse=True)
     others = sorted((f for f in picked if f.kind not in ("year", "single")), key=lambda f: f.name)
+    if singles_without_pack_only:
+        pack_years = {f.year for f in years}
+        singles = [f for f in singles if f.year not in pack_years]
     if latest is not None:
         singles = singles[:latest]
     return years + singles + others
@@ -235,17 +242,20 @@ class JrdbFetcher:
         kinds: tuple[str, ...] = ("year", "single"),
         latest: Optional[int] = None,
         refresh: bool = False,
+        allow_length_mismatch: bool = False,
     ) -> dict:
         """1 データ型を: index 取得 → 選別 → DL（未取得のみ） → 冪等取込 する。
 
         store: `JrdbStore`（ingest_dir を持つ）。
+        allow_length_mismatch: レコード長が仕様と乖離するファイル（版差の疑い）も取り込むか。
         Returns: 取得サマリ + ingest サマリ。
         """
         files = select_files(
             self.list_type(type_dir), since_year=since_year, kinds=kinds, latest=latest
         )
         fetched = self.fetch(files, refresh=refresh)
-        ingest = store.ingest_dir(str(self._cache), extract_to=str(self._cache / "txt"))
+        ingest = store.ingest_dir(str(self._cache), extract_to=str(self._cache / "txt"),
+                                  allow_length_mismatch=allow_length_mismatch)
         return {
             "type_dir": type_dir,
             "listed": len(files),

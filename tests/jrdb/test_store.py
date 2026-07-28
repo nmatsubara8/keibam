@@ -150,6 +150,30 @@ def test_is_ingested_and_ledger(store, tmp_path):
     assert ledger.iloc[0]["filename"] == "KYI150712.txt"
 
 
+def test_ingest_skips_bad_record_length(store, tmp_path):
+    """レコード長が仕様(128)と乖離する TYB は既定でスキップ（版差ガード）。"""
+    p = tmp_path / "TYB100101.txt"
+    # 118 バイト（正しくは 128）＝ 古いフォーマット版を模擬（content 有りで _records に残す）
+    r = bytearray(b" " * 118)
+    _put(r, 1, "02152201")
+    _put(r, 9, "01")
+    p.write_bytes(bytes(r) + b"\r\n")
+    s = store.ingest_files({"TYB": [str(p)]})
+    assert s["TYB"]["files"] == 0 and s["TYB"]["badlen"] == 1 and s["TYB"]["rows"] == 0
+    assert len(store.read("TYB")) == 0
+
+
+def test_allow_length_mismatch_forces_ingest(store, tmp_path):
+    """--allow-length-mismatch 相当で版差ファイルも取り込む。"""
+    r = bytearray(b" " * 118)
+    _put(r, 1, "02152201")   # race_key
+    _put(r, 9, "01")         # umaban
+    p = tmp_path / "TYB100101.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    s = store.ingest_files({"TYB": [str(p)]}, allow_length_mismatch=True)
+    assert s["TYB"]["files"] == 1 and s["TYB"]["badlen"] == 0 and s["TYB"]["rows"] == 1
+
+
 def test_persistence_across_store_instances(tmp_path):
     """別インスタンスでも台帳・データが残り、再取込されない（永続化）。"""
     db = str(tmp_path / "jrdb.db")

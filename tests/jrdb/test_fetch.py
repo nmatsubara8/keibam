@@ -97,8 +97,24 @@ def test_select_since_year_and_latest():
     files = parse_index(_INDEX, "https://x/Tyb/index.html")
     years = select_files(files, since_year=2015, kinds=("year",))
     assert {f.name for f in years} == {"TYB_2025.zip", "TYB_2024.zip"}  # 2013 は除外
-    latest = select_files(files, kinds=("single",), latest=1)
+    latest = select_files(files, kinds=("single",), latest=1, singles_without_pack_only=False)
     assert [f.name for f in latest] == ["TYB250712.zip"]  # 新しい順に 1 件
+
+
+def test_singles_without_pack_only_drops_covered_years():
+    """年度パックのある年（2025）の single は除外し、パック未作成の当年 single だけ残す。"""
+    idx = (
+        '<a href="TYB_2025.zip">y25</a>'          # 2025 年度パックあり
+        '<a href="2025/TYB250712.zip">d</a>'      # 2025 の日別 → 除外されるべき
+        '<a href="2026/TYB260726.zip">e</a>'      # 2026（パック無し）→ 残す
+        '<a href="2026/TYB260725.zip">f</a>'
+    )
+    files = parse_index(idx, "https://x/Tyb/index.html")
+    picked = select_files(files, since_year=2015, kinds=("year", "single"))
+    names = {f.name for f in picked}
+    assert "TYB_2025.zip" in names
+    assert "TYB250712.zip" not in names           # 2025 パックが覆うので single 除外
+    assert {"TYB260726.zip", "TYB260725.zip"} <= names  # 2026 は single を残す
 
 
 # ======================================================================
