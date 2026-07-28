@@ -90,10 +90,9 @@ RACE_TYPE = {"1": "芝", "2": "ダート", "3": "障害"}
 AROUND = {"1": "右", "2": "左", "3": "直線", "9": ""}
 # 天候コード（JRDBデータコード表・標準）。重複年で要検証。
 WEATHER = {"1": "晴", "2": "曇", "3": "小雨", "4": "雨", "5": "小雪", "6": "雪"}
-# 馬場状態コード → going。JRDB 標準の候補（芝10番台/ダ20番台、1桁版も）。重複年で要検証。
-GROUND_STATE = {"10": "良", "11": "稍重", "12": "重", "13": "不良",
-                "20": "良", "21": "稍重", "22": "重", "23": "不良",
-                "1": "良", "2": "稍重", "3": "重", "4": "不良", "0": "良"}
+# 馬場状態コード → going。2018 実突合のクロス集計で確定: **十の位**が going
+# （1x:良 / 2x:稍重 / 3x:重 / 4x:不良。一の位は程度のサブレベル）。
+GROUND_BY_TENS = {"1": "良", "2": "稍重", "3": "重", "4": "不良"}
 
 
 def _col(d: pd.DataFrame, name: str) -> pd.Series:
@@ -143,11 +142,11 @@ def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     out["days"] = rid.str[8:10].map(lambda c: str(int(c)) if c.isdigit() else None).to_numpy()
     out["date"] = [_ymd_to_jp(v) for v in _col(d, "ymd")]
     out["time"] = [_hhmm_colon(v) for v in _col(d, "hassou_time")]
-    out["course_len"] = pd.to_numeric(d.get("kyori"), errors="coerce").to_numpy()
+    out["course_len"] = pd.to_numeric(_col(d, "kyori"), errors="coerce").to_numpy()
     out["race_type"] = _col(d, "shiba_dirt").map(RACE_TYPE).to_numpy()
     out["around"] = _col(d, "migi_hidari").map(AROUND).to_numpy()
     out["weather"] = _col(d, "tenko_code").map(WEATHER).to_numpy()
-    gs = _col(d, "baba_state").map(GROUND_STATE)
+    gs = _col(d, "baba_state").str[0].map(GROUND_BY_TENS)  # 十の位が going
     out["ground_state1"] = gs.to_numpy()
     out["ground_state2"] = gs.to_numpy()
     return out.set_index("race_id")

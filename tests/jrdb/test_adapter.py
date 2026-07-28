@@ -89,7 +89,7 @@ def test_raw_race_info_mapping():
          "baba_state": "10"},
         {"race_id": "201805020202", "umaban": "1", "ymd": "20180712", "hassou_time": "1035",
          "kyori": "1200", "shiba_dirt": "2", "migi_hidari": "1", "tenko_code": "2",
-         "baba_state": "12"},
+         "baba_state": "30"},
     ])
     ri = build_raw_race_info(sed)
     assert len(ri) == 2                       # レース単位に畳まれる
@@ -105,3 +105,11 @@ def test_raw_race_info_mapping():
     assert r["ground_state1"] == "良" and r["ground_state2"] == "良"  # 10→良
     r2 = ri.loc["201805020202"]
     assert r2["race_type"] == "ダート" and r2["weather"] == "曇" and r2["ground_state1"] == "重"
+    # 馬場状態は十の位で going（21→稍重, 40→不良）
+    from src.jrdb._adapter import build_raw_race_info as _b
+    g = _b(pd.DataFrame([
+        {"race_id": "201805020203", "umaban": "1", "baba_state": "21"},
+        {"race_id": "201805020204", "umaban": "1", "baba_state": "40"},
+    ]))
+    assert g.loc["201805020203", "ground_state1"] == "稍重"
+    assert g.loc["201805020204", "ground_state1"] == "不良"
