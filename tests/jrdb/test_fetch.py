@@ -8,10 +8,22 @@ from __future__ import annotations
 import io
 import zipfile
 
+import importlib.util
+from pathlib import Path
+
 from src.jrdb import JrdbStore
 from src.jrdb._fetch import JrdbFetcher
 from src.jrdb._fetch import parse_index
 from src.jrdb._fetch import select_files
+
+
+def _load_cli():
+    """scripts/jrdb_fetch.py を単体ロード（CLI ヘルパの回帰テスト用）。"""
+    path = Path(__file__).resolve().parents[2] / "scripts" / "jrdb_fetch.py"
+    spec = importlib.util.spec_from_file_location("jrdb_fetch_cli", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ── 合成 TYB レコード & zip ──
@@ -204,6 +216,27 @@ def test_ksa_master_index_and_ingest(tmp_path):
     assert r["ingest"]["KSA"]["rows"] == 1
     out = store.read("KSA")
     assert len(out) == 1 and out.iloc[0]["kishu_code"] == "01234"
+
+
+def test_cli_type_filter_multiple():
+    """--type は複数指定可（KSA/CSA 同時）。1件だけ処理される回帰を防ぐ。"""
+    cli = _load_cli()
+    cfg = [
+        {"name": "KSA", "enabled": True},
+        {"name": "CSA", "enabled": True},
+        {"name": "KYI", "enabled": True},
+        {"name": "UKC", "enabled": False},
+    ]
+    # 複数指定 → 両方
+    got = {t["name"] for t in cli._select_types(cfg, ["KSA", "CSA"])}
+    assert got == {"KSA", "CSA"}
+    # 大小無視
+    assert {t["name"] for t in cli._select_types(cfg, ["ksa"])} == {"KSA"}
+    # 未指定 → enabled な全型（disabled は除外）
+    assert {t["name"] for t in cli._select_types(cfg, None)} == {"KSA", "CSA", "KYI"}
+    # argparse: --type 反復で list になる
+    args = cli._parse_args(["--config", "x.json", "--type", "KSA", "--type", "CSA"])
+    assert args.type == ["KSA", "CSA"]
 
 
 def test_ledger_persists_across_instances(tmp_path):

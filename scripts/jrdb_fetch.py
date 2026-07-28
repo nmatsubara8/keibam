@@ -37,7 +37,8 @@ from src.jrdb._fetch import select_files  # noqa: E402
 def _parse_args(argv):
     ap = argparse.ArgumentParser(description="JRDB 会員エリアから取得→冪等取込（設定JSON）")
     ap.add_argument("--config", required=True, help="取得設定 JSON（configs/jrdb_fetch.example.json 参照）")
-    ap.add_argument("--type", default=None, help="この型だけ処理（設定の name と一致）")
+    ap.add_argument("--type", action="append", default=None, metavar="NAME",
+                    help="この型だけ処理（設定の name と一致）。複数指定可: --type KSA --type CSA")
     ap.add_argument("--since-year", type=int, default=None, help="設定を上書きして年下限を指定")
     ap.add_argument("--latest", type=int, default=None, help="single を新しい順 N 件（日次用）")
     ap.add_argument("--db", default=None, help="SQLite パス（既定 LocalPaths.DB_PATH）")
@@ -46,6 +47,18 @@ def _parse_args(argv):
     ap.add_argument("--allow-length-mismatch", action="store_true",
                     help="レコード長が仕様と乖離するファイル（版差の疑い）も取り込む")
     return ap.parse_args(argv)
+
+
+def _select_types(data_types, names):
+    """enabled な型のうち、names（--type の複数指定, 大小無視）に一致するものへ絞る。
+
+    names が空/None なら enabled な全型。name 照合は大文字化して比較する。
+    """
+    types = [t for t in data_types if t.get("enabled", True)]
+    if names:
+        want = {str(x).upper() for x in names}
+        types = [t for t in types if str(t.get("name", "")).upper() in want]
+    return types
 
 
 def _build_session():
@@ -67,9 +80,7 @@ def main(argv=None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     cfg = json.loads(Path(args.config).read_text(encoding="utf-8"))
-    types = [t for t in cfg.get("data_types", []) if t.get("enabled", True)]
-    if args.type:
-        types = [t for t in types if t.get("name") == args.type]
+    types = _select_types(cfg.get("data_types", []), args.type)
     if not types:
         print("対象データ型がありません（enabled / --type を確認）。", file=sys.stderr)
         return 1
