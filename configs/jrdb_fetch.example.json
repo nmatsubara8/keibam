@@ -15,6 +15,7 @@
     {"name": "UKC", "dir": "Ukc", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "KSA", "dir": "Ks", "kinds": ["single"], "since_year": 2015, "latest": 1, "enabled": true},
     {"name": "CSA", "dir": "Cs", "kinds": ["single"], "since_year": 2015, "latest": 1, "enabled": true},
-    {"name": "KTA", "dir": "Kta", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": false}
+    {"name": "KTA", "dir": "Kta", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": false},
+    {"name": "BAC", "dir": "Bac", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true}
   ]
 }

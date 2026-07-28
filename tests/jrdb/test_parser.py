@@ -271,6 +271,35 @@ def test_parse_kta(tmp_path):
     assert row["data_kubun"] == "2"
 
 
+def test_parse_bac(tmp_path):
+    r = bytearray(b" " * 182)   # 184 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "20150712")      # 年月日
+    _put(r, 17, "1540")         # 発走時間
+    _put(r, 21, "1800")         # 距離
+    _put(r, 25, "1")            # 芝ダ障害 芝
+    _put(r, 26, "1")            # 右左 右
+    _put(r, 37, "テストステークス")  # レース名
+    _put(r, 95, "16")           # 頭数
+    _put(r, 126, " 4800")       # 1着賞金
+    _put(r, 161, "1111111100000000")  # 馬券発売フラグ（単複枠馬連馬単ワイド3複3単=発売）
+    _put(r, 177, "3")           # WIN5フラグ
+    p = tmp_path / "BAC150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "BAC")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"     # レース単位（馬番なし）
+    assert "umaban" not in df.columns
+    assert row["ymd"] == "20150712"
+    assert row["kyori"] == 1800
+    assert row["shiba_dirt"] == 1
+    assert row["toushuu"] == 16
+    assert row["shokin1"] == 4800
+    assert row["race_name"].strip() == "テストステークス"
+    assert row["baken_hatsubai_flag"] == "1111111100000000"  # byte列は文字列保持
+    assert row["win5_flag"] == 3
+
+
 def test_parse_cyb(tmp_path):
     p = tmp_path / "CYB080913.txt"
     p.write_bytes(_cyb_record())

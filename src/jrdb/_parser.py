@@ -106,7 +106,7 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
 
     layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB,
               "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB,
-              "KSA": L.KSA, "CSA": L.CSA, "KTA": L.KTA}[rt]
+              "KSA": L.KSA, "CSA": L.CSA, "KTA": L.KTA, "BAC": L.BAC}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -196,6 +196,12 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
             "zenso2_race_key", "zenso3_race_key", "zenso4_race_key",
             "zenso5_race_key", "kishu_code", "chokyo_code", "taikei",
             "sankou_zenso_kishu_code", "data_kubun", "shusso_juni")],
+        # BAC: 距離/コード/頭数/賞金を数値化。レース名・時刻・条件(英字)・発売フラグ
+        # (byte列)・日付・区分は文字列のまま。
+        "BAC": ["kyori", "shiba_dirt", "migi_hidari", "uchi_soto", "shubetsu",
+                "kigou", "juryo", "grade", "toushuu", "shokin1", "shokin2",
+                "shokin3", "shokin4", "shokin5", "sannyu_shokin1",
+                "sannyu_shokin2", "win5_flag"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])
