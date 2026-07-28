@@ -57,12 +57,15 @@ def _passing(row: pd.Series) -> Optional[str]:
 
 
 def _bataijuu_str(w: object, z: object) -> Optional[str]:
-    """馬体重 + 増減 → netkeiba '480(+4)'。増減が空なら '480'。両方空なら None。"""
+    """馬体重 + 増減 → netkeiba '498(-10)'/'508(0)'。増減が空なら '508'。体重空は None。
+
+    netkeiba は増減0でも '(0)' を残すため、増減が非空なら常に括弧を付ける。
+    """
     ws = "" if w is None else str(w).strip()
     zs = "" if z is None else str(z).strip().replace(" ", "")
     if not ws or ws == "0":
         return None
-    return f"{ws}({zs})" if zs and zs not in ("0", "+0", "-0") else ws
+    return f"{ws}({zs})" if zs else ws
 
 
 def _chakujun_str(chaku: object, ijo: object) -> Optional[str]:
@@ -130,12 +133,38 @@ def _place_id(code2: str) -> Optional[str]:
     return str(int(code2)) if code2.isdigit() else None
 
 
+# raw_horse_results の距離表記は短縮（芝/ダ/障）。raw_race_info の race_type(芝/ダート)とは別。
+RACE_TYPE_SHORT = {"1": "芝", "2": "ダ", "3": "障"}
+
+
+def _ymd_slash(v: object) -> Optional[str]:
+    """YYYYMMDD → 'YYYY/MM/DD'（netkeiba horse_results 日付形式）。"""
+    s = "" if v is None else str(v).strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    return f"{s[0:4]}/{s[4:6]}/{s[6:8]}"
+
+
+def _kyori_str(shiba_dirt: object, kyori: object) -> Optional[str]:
+    """芝ダ障コード + 距離 → netkeiba '芝1400'。"""
+    st = RACE_TYPE_SHORT.get(str(shiba_dirt).strip())
+    k = str(kyori).strip()
+    if not st or not k.isdigit():
+        return None
+    return f"{st}{int(k)}"
+
+
 def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     """JRDB SED（レース条件を含む）→ netkeiba raw_race_info 相当（index=race_id）。
 
     SED は出走馬単位だが、レース条件はレース内で同一なので race_id で畳む。距離/芝ダ/
-    回り/馬場/天候/発走時刻＋場コードからレースメタを生成。code→文字列は標準 JRDB 対応
-    （重複年で要検証）。age/sex/race_class 等の条件系フラグは別途（コード表要）。
+    回り/馬場/天候/発走時刻＋場コードからレースメタを生成。code→文字列は JRDBデータ
+    コード表で確定済み。
+
+    ⚠️ fill 方針: netkeiba は place/around/time/age/race_class を **2023 以降のみ**充填
+    （1986-2022 は空）。2021-2022 補完でこれらを埋めると 2023 前後で分布が不連続になる
+    ため、fill 時は全年充填される列（race_type/weather/ground_state1/2/course_len/date）
+    だけを使い、recent-only 列は NaN に落とすこと（`fill_columns_for_year` 参照）。
     """
     if sed is None or sed.empty:
         return pd.DataFrame()
@@ -160,6 +189,55 @@ def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     out["age"] = _col(d, "shubetsu").map(SHUBETSU_TO_AGE).to_numpy()
     out["race_class"] = _col(d, "joken").map(JOKEN_TO_CLASS).to_numpy()
     return out.set_index("race_id")
+
+
+def build_raw_horse_results(
+    sed: pd.DataFrame, *, horse_xwalk: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """JRDB SED → netkeiba raw_horse_results 相当（馬ごとの過去走履歴。index なし）。
+
+    raw_results と同じ SED 由来だが horse_id×日付キーの馬履歴。2021-2022 の走りを各馬の
+    履歴に足すと、その後（2023+）のレースの過去走特徴量も正しくなる。horse_id は crosswalk
+    必須（付かない行は後段でフィルタ）。日付='YYYY/MM/DD'・距離='芝1400'・馬場体重='498(-10)'
+    ・着差=秒(数値) 等、netkeiba horse_results の実表記に合わせる。
+    """
+    if sed is None or sed.empty:
+        return pd.DataFrame()
+    d = sed.copy()
+    hz = _xwalk_map(horse_xwalk, "ketto", "horse_id")
+    rid = d["race_id"].astype(str)
+    out = pd.DataFrame(index=range(len(d)))
+    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).astype(str).map(lambda k: hz.get(k))
+    out["日付"] = [_ymd_slash(v) for v in _col(d, "ymd")]
+    out["開催"] = rid.str[4:6].map(
+        lambda c: PLACE_BY_CODE.get(int(c)) if c.isdigit() else None).to_numpy()
+    out["天気"] = _col(d, "tenko_code").map(WEATHER).to_numpy()
+    out["R"] = pd.to_numeric(rid.str[10:12], errors="coerce").to_numpy()
+    out["レース名"] = _col(d, "race_name").to_numpy()
+    out["頭数"] = _num(d.get("toushuu")).to_numpy()
+    out["馬番"] = _num(d["umaban"]).to_numpy()
+    out["オッズ"] = _num(d.get("kakutei_tansho")).to_numpy()
+    out["人気"] = _num(d.get("kakutei_ninki")).to_numpy()
+    out["着順"] = [_chakujun_str(c, i) for c, i in
+                 zip(d.get("chakujun"), d.get("ijo_kubun"), strict=False)]
+    out["騎手"] = _col(d, "kishu_name").to_numpy()
+    out["斤量"] = (_num(d.get("futan_juryo")) / 10).to_numpy()
+    out["距離"] = [_kyori_str(s, k) for s, k in
+                 zip(_col(d, "shiba_dirt"), _col(d, "kyori"), strict=False)]
+    out["馬場"] = _col(d, "baba_state").str[0].map(GROUND_BY_TENS).to_numpy()
+    out["タイム"] = [_time_str(v) for v in _col(d, "time")]
+    out["着差"] = [_tenths_to_sec(v) for v in _col(d, "chaku1_time_sa")]  # 秒(数値)
+    out["通過"] = [_passing(r) for _, r in d.iterrows()]
+    out["上り"] = [_tenths_to_sec(v) for v in _col(d, "ato3f_time")]
+    out["馬体重"] = [_bataijuu_str(w, z) for w, z in
+                   zip(d.get("bataijuu"), d.get("bataijuu_zougen"), strict=False)]
+    out["勝ち馬(2着馬)"] = _col(d, "chaku1_bamei").to_numpy()
+    hon = _num(d.get("honshokin"))
+    out["賞金"] = hon.where(hon > 0).to_numpy()      # 0/無し は NaN（netkeiba 同様）
+    # netkeiba 固有・SED に無い列は欠損で確保
+    for c in ("枠番", "水分量", "馬場指数", "ﾀｲﾑ指数", "ペース", "映像", "厩舎ｺﾒﾝﾄ", "備考"):
+        out[c] = np.nan
+    return out
 
 
 def build_raw_results(

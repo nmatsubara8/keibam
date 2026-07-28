@@ -3,7 +3,11 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.jrdb._adapter import build_raw_race_info, build_raw_results
+from src.jrdb._adapter import (
+    build_raw_horse_results,
+    build_raw_race_info,
+    build_raw_results,
+)
 
 
 def _sed_rows():
@@ -73,9 +77,41 @@ def test_crosswalk_ids_attached():
     assert pd.isna(out.iloc[1]["horse_id"])  # 18103599 は未対応
 
 
+def test_raw_horse_results_mapping():
+    sed = pd.DataFrame([
+        {"race_id": "202205020611", "umaban": "9", "ketto": "18103588", "ymd": "20220614",
+         "tenko_code": "2", "race_name": "テストS", "toushuu": "13", "kyori": "1400",
+         "shiba_dirt": "1", "baba_state": "10", "chakujun": "11", "ijo_kubun": "0",
+         "kishu_name": "テスト騎手", "futan_juryo": "560", "kakutei_tansho": " 51.1",
+         "kakutei_ninki": "12", "time": "1218", "chaku1_time_sa": "015",
+         "corner1": "0", "corner2": "0", "corner3": "7", "corner4": "8", "ato3f_time": "345",
+         "bataijuu": "498", "bataijuu_zougen": "-10", "chaku1_bamei": "マイネルチケット",
+         "honshokin": "0"},
+    ])
+    hz = pd.DataFrame({"ketto": ["18103588"], "horse_id": ["2018103588"]})
+    out = build_raw_horse_results(sed, horse_xwalk=hz)
+    r = out.iloc[0]
+    assert r["horse_id"] == "2018103588"
+    assert r["日付"] == "2022/06/14"
+    assert r["開催"] == "東京"          # 場05
+    assert r["天気"] == "曇"
+    assert r["R"] == 11
+    assert r["距離"] == "芝1400"        # 芝(短縮)+距離
+    assert r["馬場"] == "良"
+    assert r["タイム"] == "1:21.8"
+    assert r["着差"] == 1.5            # 0.1秒→秒（数値）
+    assert r["通過"] == "7-8"
+    assert r["上り"] == 34.5
+    assert r["馬体重"] == "498(-10)"
+    assert r["勝ち馬(2着馬)"] == "マイネルチケット"
+    assert pd.isna(r["賞金"])          # 0→NaN
+    assert pd.isna(r["枠番"])          # SED に無い
+
+
 def test_empty_input():
     assert build_raw_results(pd.DataFrame()).empty
     assert build_raw_race_info(pd.DataFrame()).empty
+    assert build_raw_horse_results(pd.DataFrame()).empty
 
 
 def test_raw_race_info_mapping():
