@@ -15,8 +15,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-# JRDB 異常区分コード → netkeiba 着順マーカー（非完走）。標準コード表準拠、重複年で要検証。
-IJO_TO_CHAKUJUN = {"1": "取", "2": "除", "3": "中", "4": "失", "5": "降", "6": "再"}
+# netkeiba は非完走（異常区分 1取消/2除外/3中止/4失格/5降着…）の着順を NaN で持つ
+# （2018 実突合で 419/419 が netkeiba NaN と確認）。マーカーは付けず None にする。
 
 
 def _num(s: pd.Series) -> pd.Series:
@@ -66,10 +66,10 @@ def _bataijuu_str(w: object, z: object) -> Optional[str]:
 
 
 def _chakujun_str(chaku: object, ijo: object) -> Optional[str]:
-    """異常区分があれば netkeiba マーカー、無ければ着順数字。"""
+    """非完走（異常区分あり）は None（netkeiba は着順 NaN）。完走は着順数字。"""
     ijs = "" if ijo is None else str(ijo).strip()
-    if ijs in IJO_TO_CHAKUJUN:
-        return IJO_TO_CHAKUJUN[ijs]
+    if ijs and ijs != "0":            # 取消/除外/中止/失格/降着 = 非完走
+        return None
     n = pd.to_numeric(chaku, errors="coerce")
     return str(int(n)) if pd.notna(n) and n > 0 else None
 

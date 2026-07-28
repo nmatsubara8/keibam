@@ -49,7 +49,7 @@ def test_structural_mapping():
 def test_abnormal_and_blanks():
     out = build_raw_results(_sed_rows())
     r1 = out.iloc[1]
-    assert r1["着順"] == "除"                # 異常区分2→除外マーカー
+    assert pd.isna(r1["着順"])               # 異常区分2(除外)=非完走→None（netkeiba NaN）
     assert pd.isna(r1["タイム"])             # 空タイム
     # 非完走の time='0000' も None（netkeiba NaN に一致）
     from src.jrdb._adapter import _time_str
