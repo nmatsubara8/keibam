@@ -208,9 +208,11 @@ class FeatureEngineering:
         new_target = self.__data[[target_col]][
             ~self.__data[target_col].isin(target_master[target_col])
         ].drop_duplicates(subset=[target_col])
-        # 新しい情報を登録
+        # 新しい情報を登録（max はループ不変なので1回だけ計算＝O(N)。ループ内で毎回
+        # max を取ると新規IDが多い時に O(N^2) で事実上終わらない）。
         if len(target_master) > 0:
-            new_target["encoded_id"] = [i + max(target_master["encoded_id"]) for i in range(1, len(new_target) + 1)]
+            base = int(target_master["encoded_id"].max())
+            new_target["encoded_id"] = [i + base for i in range(1, len(new_target) + 1)]
             # 整数に変換
             new_target["encoded_id"] = new_target["encoded_id"].astype(int)
         else:  # まだ1行も登録されていない場合の処理
