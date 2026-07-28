@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 
 from src.jrdb import _layouts as L
+from src.jrdb._keys import kaisai_key_to_kaisai_id
 from src.jrdb._keys import race_key_to_race_id
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
 
     layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB,
               "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB,
-              "KSA": L.KSA, "CSA": L.CSA, "KTA": L.KTA, "BAC": L.BAC}[rt]
+              "KSA": L.KSA, "CSA": L.CSA, "KTA": L.KTA, "BAC": L.BAC,
+              "KAB": L.KAB}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -134,6 +136,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         df["umaban"] = _num(df["umaban"]).astype("Int64")
     if "ketto" in df.columns:  # TYB 等は血統登録番号を持たない
         df["ketto"] = df["ketto"].str.strip()
+    if "kaisai_key" in df.columns:  # KAB 開催データ（レース単位でなく開催単位）
+        df["kaisai_id"] = df["kaisai_key"].map(kaisai_key_to_kaisai_id)
     for _code in ("kishu_code", "chokyoshi_code"):  # KSA/CSA マスタの主キー
         if _code in df.columns:
             df[_code] = df[_code].str.strip()
@@ -202,6 +206,15 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
                 "kigou", "juryo", "grade", "toushuu", "shokin1", "shokin2",
                 "shokin3", "shokin4", "shokin5", "sannyu_shokin1",
                 "sannyu_shokin2", "win5_flag"],
+        # KAB: 天候/馬場状態/馬場差/草丈/降水量を数値化。開催キー・場名・曜日・
+        # 芝種類/転圧/凍結防止剤(X)は文字列のまま。
+        "KAB": ["kaisai_kubun", "tenko_code", "shiba_baba_code", "shiba_baba_uchi",
+                "shiba_baba_naka", "shiba_baba_soto", "shiba_baba_sa",
+                "chokusen_sa_saiuchi", "chokusen_sa_uchi", "chokusen_sa_naka",
+                "chokusen_sa_soto", "chokusen_sa_oosoto", "dirt_baba_code",
+                "dirt_baba_uchi", "dirt_baba_naka", "dirt_baba_soto",
+                "dirt_baba_sa", "data_kubun", "renzoku_nichi", "kusatake",
+                "chukan_kousuiryo"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])

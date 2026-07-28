@@ -300,6 +300,32 @@ def test_parse_bac(tmp_path):
     assert row["win5_flag"] == 3
 
 
+def test_parse_kab(tmp_path):
+    r = bytearray(b" " * 70)   # 72 - CRLF
+    _put(r, 1, "021522")       # 開催キー 場02 年15 回2 日2 → kaisai_id 2015020202
+    _put(r, 7, "20150712")     # 年月日
+    _put(r, 16, "日")           # 曜日
+    _put(r, 18, "函館")         # 場名
+    _put(r, 22, "1")           # 天候コード
+    _put(r, 23, "10")          # 芝馬場状態コード
+    _put(r, 25, "2")           # 芝馬場状態内（良）
+    _put(r, 41, "20")          # ダ馬場状態コード
+    _put(r, 52, "2")           # 芝種類（洋芝）
+    p = tmp_path / "KAB150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KAB")
+    row = df.iloc[0]
+    assert row["kaisai_id"] == "2015020202"     # race_id[:10] と突合できる開催ID
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+    assert row["ymd"] == "20150712"
+    assert row["tenko_code"] == 1
+    assert row["shiba_baba_code"] == 10
+    assert row["shiba_baba_uchi"] == 2
+    assert row["dirt_baba_code"] == 20
+    assert row["shiba_shurui"] == "2"           # コード(X)は文字列保持
+    assert row["basho_name"].strip() == "函館"
+
+
 def test_parse_cyb(tmp_path):
     p = tmp_path / "CYB080913.txt"
     p.write_bytes(_cyb_record())

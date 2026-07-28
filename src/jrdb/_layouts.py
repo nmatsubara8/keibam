@@ -521,6 +521,40 @@ BAC = {
     "win5_flag": (177, 1),        # WIN5フラグ 1〜5
 }
 
+# KAB 開催データ（第3版c・2015.09.18）。レコード長72。**開催（競馬場×日）単位**。
+# 天候・芝/ダ馬場状態・馬場差＝netkeiba raw_race_info の weather/ground_state 供給源。
+# 開催キー(6=場2+年2+回1+日1)を kaisai_id(10=race_id の R 抜き)に変換して race_id[:10] で突合。
+KAB = {
+    "kaisai_key": (1, 6),          # 開催キー（場2+年2+回1+日1hex）
+    "ymd": (7, 8),                 # 年月日 YYYYMMDD
+    "kaisai_kubun": (15, 1),       # 開催区分 1関東/2関西/3ローカル
+    "youbi": (16, 2),              # 曜日（日〜土）
+    "basho_name": (18, 4),         # 場名（競馬場名・全角2文字）
+    "tenko_code": (22, 1),         # 天候コード（→コード表）
+    "shiba_baba_code": (23, 2),    # 芝馬場状態コード（→コード表）
+    "shiba_baba_uchi": (25, 1),    # 芝馬場状態内 1絶好/2良/3稍荒/4荒
+    "shiba_baba_naka": (26, 1),    # 芝馬場状態中
+    "shiba_baba_soto": (27, 1),    # 芝馬場状態外
+    "shiba_baba_sa": (28, 3),      # 芝馬場差
+    "chokusen_sa_saiuchi": (31, 2),  # 直線馬場差 最内
+    "chokusen_sa_uchi": (33, 2),   # 直線馬場差 内
+    "chokusen_sa_naka": (35, 2),   # 直線馬場差 中
+    "chokusen_sa_soto": (37, 2),   # 直線馬場差 外
+    "chokusen_sa_oosoto": (39, 2),  # 直線馬場差 大外
+    "dirt_baba_code": (41, 2),     # ダ馬場状態コード（→コード表）
+    "dirt_baba_uchi": (43, 1),     # ダ馬場状態内 1絶好/2良/3稍荒/4荒
+    "dirt_baba_naka": (44, 1),     # ダ馬場状態中
+    "dirt_baba_soto": (45, 1),     # ダ馬場状態外
+    "dirt_baba_sa": (46, 3),       # ダ馬場差
+    "data_kubun": (49, 1),         # データ区分 1特別登録/2想定確定/3枠確定/4前日
+    "renzoku_nichi": (50, 2),      # 連続何日目
+    "shiba_shurui": (52, 1),       # 芝種類 1野芝/2洋芝/3混生
+    "kusatake": (53, 4),           # 草丈（cm・Z9.9）
+    "tenatsu": (57, 1),            # 転圧 1転圧/0無し
+    "touketsu_boushi": (58, 1),    # 凍結防止剤 1散布/0無し
+    "chukan_kousuiryo": (59, 5),   # 中間降水量（mm・ZZ9.9）
+}
+
 RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128, "CYB": 96,
               "CHA": 64, "HJC": 444, "KKA": 324, "UKC": 292, "SRB": 852,
-              "KSA": 272, "CSA": 272, "KTA": 388, "BAC": 184}
+              "KSA": 272, "CSA": 272, "KTA": 388, "BAC": 184, "KAB": 72}

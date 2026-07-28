@@ -35,6 +35,21 @@ def race_key_to_race_id(key: str, *, pivot: int = 86) -> str | None:
     return f"{year:04d}{place}{kai_i:02d}{day:02d}{r}"
 
 
+def kaisai_key_to_kaisai_id(key: str, *, pivot: int = 86) -> str | None:
+    """JRDB 開催キー(先頭6=場2+年2+回1+日1) → 開催ID(10=race_id の R 抜き先頭10桁)。
+
+    KAB 開催データはレース単位でなく開催（競馬場×日）単位。race_id[:10] と一致する
+    ID を作り、レースメタ（going/天候）を race_id の先頭10桁で突合できるようにする。
+    """
+    if key is None:
+        return None
+    k = str(key).strip()
+    if len(k) < 6:
+        return None
+    rid = race_key_to_race_id(k[:6] + "00", pivot=pivot)  # ダミー R=00 を足して既存変換を再利用
+    return rid[:10] if rid else None
+
+
 def ketto_to_horse_id(ketto: str, *, pivot: int = 86) -> str | None:
     """JRDB 血統登録番号(8) → netkeiba horse_id(10)。失敗時 None。"""
     if ketto is None:
