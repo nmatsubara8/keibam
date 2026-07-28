@@ -147,6 +147,15 @@ def _ymd_slash(v: object) -> Optional[str]:
     return f"{s[0:4]}/{s[4:6]}/{s[6:8]}"
 
 
+def _chakusa(sa_raw: object, chakujun: object) -> Optional[float]:
+    """1(2)着タイム差(0.1秒) → 着差(秒)。netkeiba は勝ち馬(着順1)の着差を負で持つ。"""
+    s = _tenths_to_sec(sa_raw)
+    if s is None:
+        return None
+    c = pd.to_numeric(chakujun, errors="coerce")
+    return -s if (pd.notna(c) and c == 1) else s
+
+
 def _kyori_str(shiba_dirt: object, kyori: object) -> Optional[str]:
     """芝ダ障コード + 距離 → netkeiba '芝1400'。"""
     st = RACE_TYPE_SHORT.get(str(shiba_dirt).strip())
@@ -226,7 +235,8 @@ def build_raw_horse_results(sed: pd.DataFrame) -> pd.DataFrame:
                  zip(_col(d, "shiba_dirt"), _col(d, "kyori"), strict=False)]
     out["馬場"] = _col(d, "baba_state").str[0].map(GROUND_BY_TENS).to_numpy()
     out["タイム"] = [_time_str(v) for v in _col(d, "time")]
-    out["着差"] = [_tenths_to_sec(v) for v in _col(d, "chaku1_time_sa")]  # 秒(数値)
+    out["着差"] = [_chakusa(v, c) for v, c in
+                 zip(_col(d, "chaku1_time_sa"), _col(d, "chakujun"), strict=False)]  # 秒・勝ち馬は負
     out["通過"] = [_passing(r) for _, r in d.iterrows()]
     out["上り"] = [_tenths_to_sec(v) for v in _col(d, "ato3f_time")]
     out["馬体重"] = [_bataijuu_str(w, z) for w, z in
