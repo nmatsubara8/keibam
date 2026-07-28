@@ -216,21 +216,21 @@ def build_raw_horse_results(sed: pd.DataFrame) -> pd.DataFrame:
     d = sed.copy()
     rid = d["race_id"].astype(str)
     out = pd.DataFrame(index=range(len(d)))
-    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).map(ketto_to_horse_id)
+    out["horse_id"] = _col(d, "ketto").map(ketto_to_horse_id).to_numpy()
     out["日付"] = [_ymd_slash(v) for v in _col(d, "ymd")]
     out["開催"] = rid.str[4:6].map(
         lambda c: PLACE_BY_CODE.get(int(c)) if c.isdigit() else None).to_numpy()
     out["天気"] = _col(d, "tenko_code").map(WEATHER).to_numpy()
     out["R"] = pd.to_numeric(rid.str[10:12], errors="coerce").to_numpy()
     out["レース名"] = _col(d, "race_name").to_numpy()
-    out["頭数"] = _num(d.get("toushuu")).to_numpy()
-    out["馬番"] = _num(d["umaban"]).to_numpy()
-    out["オッズ"] = _num(d.get("kakutei_tansho")).to_numpy()
-    out["人気"] = _num(d.get("kakutei_ninki")).to_numpy()
+    out["頭数"] = _num(_col(d, "toushuu")).to_numpy()
+    out["馬番"] = _num(_col(d, "umaban")).to_numpy()
+    out["オッズ"] = _num(_col(d, "kakutei_tansho")).to_numpy()
+    out["人気"] = _num(_col(d, "kakutei_ninki")).to_numpy()
     out["着順"] = [_chakujun_str(c, i) for c, i in
-                 zip(d.get("chakujun"), d.get("ijo_kubun"), strict=False)]
+                 zip(_col(d, "chakujun"), _col(d, "ijo_kubun"), strict=False)]
     out["騎手"] = _col(d, "kishu_name").to_numpy()
-    out["斤量"] = (_num(d.get("futan_juryo")) / 10).to_numpy()
+    out["斤量"] = (_num(_col(d, "futan_juryo")) / 10).to_numpy()
     out["距離"] = [_kyori_str(s, k) for s, k in
                  zip(_col(d, "shiba_dirt"), _col(d, "kyori"), strict=False)]
     out["馬場"] = _col(d, "baba_state").str[0].map(GROUND_BY_TENS).to_numpy()
@@ -240,9 +240,9 @@ def build_raw_horse_results(sed: pd.DataFrame) -> pd.DataFrame:
     out["通過"] = [_passing(r) for _, r in d.iterrows()]
     out["上り"] = [_tenths_to_sec(v) for v in _col(d, "ato3f_time")]
     out["馬体重"] = [_bataijuu_str(w, z) for w, z in
-                   zip(d.get("bataijuu"), d.get("bataijuu_zougen"), strict=False)]
+                   zip(_col(d, "bataijuu"), _col(d, "bataijuu_zougen"), strict=False)]
     out["勝ち馬(2着馬)"] = _col(d, "chaku1_bamei").to_numpy()
-    hon = _num(d.get("honshokin"))
+    hon = _num(_col(d, "honshokin"))
     out["賞金"] = hon.where(hon > 0).to_numpy()      # 0/無し は NaN（netkeiba 同様）
     # netkeiba 固有・SED に無い列は欠損で確保
     for c in ("枠番", "水分量", "馬場指数", "ﾀｲﾑ指数", "ペース", "映像", "厩舎ｺﾒﾝﾄ", "備考"):
@@ -271,25 +271,26 @@ def build_raw_results(
 
     out = pd.DataFrame(index=range(len(d)))
     out["race_id"] = d["race_id"].astype(str).to_numpy()
-    out["馬番"] = _num(d["umaban"]).to_numpy()
-    out["着順"] = [_chakujun_str(c, i) for c, i in zip(d.get("chakujun"), d.get("ijo_kubun"), strict=False)]
-    out["馬名"] = d.get("bamei", pd.Series(index=d.index, dtype=object)).astype(str).str.strip().to_numpy()
-    out["斤量"] = (_num(d.get("futan_juryo")) / 10).to_numpy()          # 0.1kg → kg
-    out["騎手"] = d.get("kishu_name", pd.Series(dtype=object)).astype(str).str.strip().to_numpy()
-    out["タイム"] = [_time_str(v) for v in d.get("time", pd.Series(index=d.index))]
+    out["馬番"] = _num(_col(d, "umaban")).to_numpy()
+    out["着順"] = [_chakujun_str(c, i) for c, i in
+                 zip(_col(d, "chakujun"), _col(d, "ijo_kubun"), strict=False)]
+    out["馬名"] = _col(d, "bamei").to_numpy()
+    out["斤量"] = (_num(_col(d, "futan_juryo")) / 10).to_numpy()          # 0.1kg → kg
+    out["騎手"] = _col(d, "kishu_name").to_numpy()
+    out["タイム"] = [_time_str(v) for v in _col(d, "time")]
     out["通過"] = [_passing(r) for _, r in d.iterrows()]
-    out["上り"] = [_tenths_to_sec(v) for v in d.get("ato3f_time", pd.Series(index=d.index))]
-    out["単勝"] = _num(d.get("kakutei_tansho")).to_numpy()
-    out["人気"] = _num(d.get("kakutei_ninki")).to_numpy()
+    out["上り"] = [_tenths_to_sec(v) for v in _col(d, "ato3f_time")]
+    out["単勝"] = _num(_col(d, "kakutei_tansho")).to_numpy()
+    out["人気"] = _num(_col(d, "kakutei_ninki")).to_numpy()
     out["馬体重"] = [_bataijuu_str(w, z) for w, z in
-                   zip(d.get("bataijuu"), d.get("bataijuu_zougen"), strict=False)]
-    out["備考"] = d.get("biko", pd.Series(index=d.index, dtype=object)).astype(str).str.strip().to_numpy()
-    out["調教師"] = d.get("chokyoshi_name", pd.Series(dtype=object)).astype(str).str.strip().to_numpy()
-    out["賞金(万円)"] = _num(d.get("honshokin")).to_numpy()
-    # 同一性（crosswalk）。対応が無いコードは欠損（境界外＝JRDB専有馬など）。
-    out["horse_id"] = d.get("ketto", pd.Series(dtype=object)).map(ketto_to_horse_id)
-    out["jockey_id"] = d.get("kishu_code", pd.Series(dtype=object)).astype(str).map(lambda k: jz.get(k))
-    out["trainer_id"] = d.get("chokyo_code", pd.Series(dtype=object)).astype(str).map(lambda k: tz.get(k))
+                   zip(_col(d, "bataijuu"), _col(d, "bataijuu_zougen"), strict=False)]
+    out["備考"] = _col(d, "biko").to_numpy()
+    out["調教師"] = _col(d, "chokyoshi_name").to_numpy()
+    out["賞金(万円)"] = _num(_col(d, "honshokin")).to_numpy()
+    # horse_id は canonical（ketto_to_horse_id）。騎手/調教師は crosswalk（式が無いため）。
+    out["horse_id"] = _col(d, "ketto").map(ketto_to_horse_id).to_numpy()
+    out["jockey_id"] = _col(d, "kishu_code").map(lambda k: jz.get(k)).to_numpy()
+    out["trainer_id"] = _col(d, "chokyo_code").map(lambda k: tz.get(k)).to_numpy()
     # SED に無い列は欠損で確保（featured 側の列存在前提を壊さない）
     for c in ("枠番", "性齢", "着差", "ﾀｲﾑ指数", "調教ﾀｲﾑ", "厩舎ｺﾒﾝﾄ", "馬主", "owner_id"):
         out[c] = np.nan
