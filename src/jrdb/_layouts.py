@@ -10,7 +10,6 @@ from __future__ import annotations
 KYI = {
     "race_key": (1, 8),
     "umaban": (9, 2),
-    "wakuban": (324, 1),     # 枠番（1-8・枠連用。JRA分割規則と一致を確認済み）
     "ketto": (11, 8),
     "bamei": (19, 36),       # 全角18文字
     # ── 各種指数（JRDB 独自・市場から導けない直交情報）──
@@ -26,6 +25,19 @@ KYI = {
     "kijun_odds": (96, 5),   # ZZ9.9 基準オッズ（Benter核その2＝JRDBフェアバリュー）
     "kijun_ninki": (101, 2),
     "kijun_fukuodds": (103, 5),   # 基準複勝オッズ
+    "kijun_fuku_ninki": (108, 2),  # 基準複勝人気順位
+    # ── 特定情報印数（◎本命/○対抗/▲単穴/△連下/×消 の専門紙印集計）──
+    "tokutei_honmei": (110, 3),
+    "tokutei_taikou": (113, 3),
+    "tokutei_tanana": (116, 3),
+    "tokutei_renka": (119, 3),
+    "tokutei_kesi": (122, 3),
+    # ── 総合情報印数 ──
+    "sougou_honmei": (125, 3),
+    "sougou_taikou": (128, 3),
+    "sougou_tanana": (131, 3),
+    "sougou_renka": (134, 3),
+    "sougou_kesi": (137, 3),
     # ── 指数群（続き）──
     "ninki_idx": (140, 5),   # 人気指数（ZZZZ9）
     "chokyo_idx": (145, 5),  # 調教指数
@@ -34,7 +46,44 @@ KYI = {
     "kyusha_hyoka": (156, 1),      # 厩舎評価コード
     "kishu_kitai_rentai": (157, 4),  # 騎手期待連対率 Z9.9
     "gekiso_idx": (161, 3),  # 激走指数
+    "hitsume_code": (164, 2),      # 蹄コード
+    "omoteki_code": (166, 1),      # 重適正コード（重馬場適性）
     "class_code": (167, 2),
+    "blinker": (171, 1),           # ブリンカー
+    "kishu_name": (172, 12),       # 騎手名（全角6文字）
+    "futan_juryo": (184, 3),       # 負担重量（0.1kg単位）
+    "minarai_kubun": (187, 1),     # 見習い区分（減量）
+    "chokyoshi_name": (188, 12),   # 調教師名（全角6文字）
+    "chokyoshi_shozoku": (200, 4), # 調教師所属
+    # ── 前走1-5 競走成績キー / レースキー（過去走リンク）──
+    "zenso1_seiseki_key": (204, 16),
+    "zenso2_seiseki_key": (220, 16),
+    "zenso3_seiseki_key": (236, 16),
+    "zenso4_seiseki_key": (252, 16),
+    "zenso5_seiseki_key": (268, 16),
+    "zenso1_race_key": (284, 8),
+    "zenso2_race_key": (292, 8),
+    "zenso3_race_key": (300, 8),
+    "zenso4_race_key": (308, 8),
+    "zenso5_race_key": (316, 8),
+    "wakuban": (324, 1),     # 枠番（1-8・枠連用。JRA分割規則と一致を確認済み）
+    # ── JRDB 予想印コード（総合/IDM/情報/騎手/厩舎/調教/激走）──
+    "mark_sougou": (327, 1),
+    "mark_idm": (328, 1),
+    "mark_joho": (329, 1),
+    "mark_kishu": (330, 1),
+    "mark_kyusha": (331, 1),
+    "mark_chokyo": (332, 1),
+    "mark_gekiso": (333, 1),
+    "shiba_tekisei": (334, 1),     # 芝適性コード
+    "dirt_tekisei": (335, 1),      # ダ適性コード
+    # ── リンク用 ID ──
+    "kishu_code": (336, 5),
+    "chokyo_code": (341, 5),
+    # ── 賞金・条件 ──
+    "kakutoku_shokin": (346, 6),   # 獲得賞金（単位:百円）
+    "shutoku_shokin": (352, 6),    # 収得賞金
+    "joken_class": (358, 1),       # 条件クラス
     # ── 展開予想データ（第6版・JRDB が z=ペースを直接予測＝P(z) の外部教師）──
     "ten_idx": (359, 5),     # 予想テン指数 ZZZ.9
     "pace_idx": (364, 5),    # 予想ペース指数
@@ -42,23 +91,61 @@ KYI = {
     "ichi_idx": (374, 5),    # 予想位置指数
     "pace_yosou": (379, 1),  # ペース予想 H/M/S（＝潜在状態 z の JRDB 版）
     "dochu_juni": (380, 2),  # 道中順位
+    "dochu_sa": (382, 2),          # 道中差
+    "dochu_uchisoto": (384, 1),    # 道中内外
     "go3f_juni": (385, 2),   # 後3F順位
+    "go3f_sa": (387, 2),           # 後3F差
+    "go3f_uchisoto": (389, 1),     # 後3F内外
     "goal_juni": (390, 2),   # ゴール順位
+    "goal_sa": (392, 2),           # ゴール差
+    "goal_uchisoto": (394, 1),     # ゴール内外
+    "tenkai_kigou": (395, 1),      # 展開記号
+    "kyori_tekisei2": (396, 1),    # 距離適性2
     # ── コンディション/休養（第6a/10/11版・AbilityFilter の調子項に効く）──
     "kakutei_bataijuu": (397, 3),  # 枠確定馬体重
-    "kokyu_flag": (539, 1),  # 降級フラグ（1降級 2二段階 0通常）
-    # ── スタート予測（第9版・前走ではなく今走の出遅れ予測）──
-    "start_idx": (520, 4),   # 馬スタート指数 Z9.9
-    "deokure_rate": (524, 4),  # 馬出遅率 Z9.9
-    "manken_idx": (535, 3),  # 万券指数
+    "kakutei_bataijuu_zougen": (400, 3),  # 枠確定馬体重増減
+    "torikeshi_flag": (403, 1),    # 取消フラグ
+    "sex_code": (404, 1),          # 性別コード
+    "owner_name": (405, 40),       # 馬主名
+    "owner_kai_code": (445, 2),    # 馬主会コード
+    "umakigou_code": (447, 2),     # 馬記号コード
+    # ── 各種指数順位（レース内相対順位）──
+    "gekiso_juni": (449, 2),
+    "ls_juni": (451, 2),
+    "ten_juni": (453, 2),
+    "pace_juni": (455, 2),
+    "agari_juni": (457, 2),
+    "ichi_juni": (459, 2),
     # ── 騎手期待（第8版）──
     "kishu_tansho": (461, 4),  # 騎手期待単勝率 Z9.9
     "kishu_3nai": (465, 4),    # 騎手期待3着内率 Z9.9
+    "yusou_kubun": (469, 1),       # 輸送区分
+    "souhou": (470, 8),            # 走法
+    "taikei": (478, 24),           # 体型（3桁×8部位）
+    "taikei_sougou1": (502, 3),
+    "taikei_sougou2": (505, 3),
+    "taikei_sougou3": (508, 3),
+    "uma_tokki1": (511, 3),        # 馬特記
+    "uma_tokki2": (514, 3),
+    "uma_tokki3": (517, 3),
+    # ── スタート予測（第9版・前走ではなく今走の出遅れ予測）──
+    "start_idx": (520, 4),   # 馬スタート指数 Z9.9
+    "deokure_rate": (524, 4),  # 馬出遅率 Z9.9
+    "sankou_zenso": (528, 2),      # 参考前走
+    "sankou_zenso_kishu_code": (530, 5),  # 参考前走騎手コード
+    "manken_idx": (535, 3),  # 万券指数
+    "manken_mark": (538, 1),       # 万券印
+    "kokyu_flag": (539, 1),  # 降級フラグ（1降級 2二段階 0通常）
+    "gekiso_type": (540, 2),       # 激走タイプ
+    "kyuyou_riyu": (542, 2),       # 休養理由分類コード
+    "flag": (544, 16),             # フラグ（各種2値フラグ列）
     # ── 休養明け（第11版）──
+    "nyukyu_nsoume": (560, 2),     # 入厩何走目
+    "nyukyu_ymd": (562, 8),        # 入厩年月日 YYYYMMDD
     "nyukyu_days": (570, 3),   # 入厩何日前（レース日から遡っての入厩日数）
-    # ── リンク用 ID（特徴量ではない）──
-    "kishu_code": (336, 5),
-    "chokyo_code": (341, 5),
+    "houboku_saki": (573, 50),     # 放牧先
+    "houboku_rank": (623, 1),      # 放牧先ランク
+    "kyusha_rank": (624, 1),       # 厩舎ランク
 }
 
 SED = {

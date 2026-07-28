@@ -20,10 +20,17 @@ def _kyi_record() -> bytes:
     _put(r, 55, " 45.0")       # IDM
     _put(r, 96, " 12.3")       # 基準オッズ
     _put(r, 101, " 3")         # 基準人気
+    _put(r, 172, "テスト騎手")   # 騎手名（全角）
+    _put(r, 184, "550")        # 負担重量（55.0kg）
+    _put(r, 188, "テスト師")     # 調教師名
+    _put(r, 324, "3")          # 枠番
+    _put(r, 327, "1")          # 総合印
+    _put(r, 346, "  1000")     # 獲得賞金
     # 第11版で追加した指数群（展開予想・休養明け等）— spec 位置での照合用
     _put(r, 359, "120.5")      # テン指数
     _put(r, 364, "118.0")      # ペース指数
     _put(r, 379, "H")          # ペース予想 H/M/S
+    _put(r, 453, " 4")         # テン指数順位
     _put(r, 570, " 21")        # 入厩何日前
     return bytes(r) + b"\r\n"
 
@@ -211,6 +218,14 @@ def test_parse_kyi(tmp_path):
     assert df.loc[0, "pace_idx"] == 118.0
     assert df.loc[0, "pace_yosou"] == "H"
     assert df.loc[0, "nyukyu_days"] == 21
+    # 第11版レイアウト拡充で追加した項目（人/賞金/枠/印/順位）
+    assert df.loc[0, "kishu_name"].strip() == "テスト騎手"
+    assert df.loc[0, "chokyoshi_name"].strip() == "テスト師"
+    assert df.loc[0, "futan_juryo"] == 550
+    assert df.loc[0, "wakuban"] == "3"
+    assert df.loc[0, "mark_sougou"] == "1"
+    assert df.loc[0, "kakutoku_shokin"] == 1000
+    assert df.loc[0, "ten_juni"] == 4
 
 
 def test_build_kyi_feature_columns(tmp_path):
