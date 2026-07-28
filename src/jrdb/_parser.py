@@ -105,7 +105,8 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         return _parse_hjc(recs)  # レース単位・券種繰り返しの専用経路
 
     layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB,
-              "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB}[rt]
+              "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB,
+              "KSA": L.KSA, "CSA": L.CSA}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -133,6 +134,9 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         df["umaban"] = _num(df["umaban"]).astype("Int64")
     if "ketto" in df.columns:  # TYB 等は血統登録番号を持たない
         df["ketto"] = df["ketto"].str.strip()
+    for _code in ("kishu_code", "chokyoshi_code"):  # KSA/CSA マスタの主キー
+        if _code in df.columns:
+            df[_code] = df[_code].str.strip()
 
     # 数値項目（pace_yosou=H/M/S は文字なので除外・後段でコード化）
     numeric = {
@@ -172,6 +176,16 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
                 "sire_keito_code", "bms_keito_code"],
         # SRB: ハロンタイム18 + ペースアップ位置を数値化（位置取り/バイアス/コメントは文字列）。
         "SRB": [k for k in L.SRB if k.startswith("harontime")] + ["pace_up_pos"],
+        # KSA/CSA: フラグ/所属/年/成績(1-2-3-着外)/リーディング/勝数を数値化。
+        # 名称・カナ・略称・地域名・コメント・各種日付・リンクコードは文字列のまま。
+        "KSA": [k for k in L.KSA if k not in (
+            "kishu_code", "massho_ymd", "kishu_name", "kishu_kana", "kishu_ryaku",
+            "shozoku_chiiki", "birth_ymd", "shozoku_chokyoshi_code", "comment",
+            "comment_ymd", "data_ymd")],
+        "CSA": [k for k in L.CSA if k not in (
+            "chokyoshi_code", "massho_ymd", "chokyoshi_name", "chokyoshi_kana",
+            "chokyoshi_ryaku", "shozoku_chiiki", "birth_ymd", "comment",
+            "comment_ymd", "data_ymd")],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])

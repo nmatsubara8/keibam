@@ -187,6 +187,59 @@ def test_parse_ukc(tmp_path):
     assert "race_id" not in df.columns and "umaban" not in df.columns
 
 
+def test_parse_ksa(tmp_path):
+    r = bytearray(b" " * 270)   # 272 - CRLF
+    _put(r, 1, "01234")         # 騎手コード
+    _put(r, 6, "0")             # 登録抹消フラグ（現役）
+    _put(r, 15, "テスト騎手")    # 騎手名
+    _put(r, 63, "2")            # 所属コード（関西）
+    _put(r, 68, "19800101")     # 生年月日
+    _put(r, 80, "1")            # 見習い区分
+    _put(r, 81, "05678")        # 所属厩舎（調教師コード）
+    _put(r, 134, " 12")         # 本年リーディング
+    _put(r, 137, "100")         # 本年平地1着数
+    _put(r, 200, "1234")        # 通算平地1着数（5桁 ZZZZ9）
+    p = tmp_path / "KSA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KSA")
+    row = df.iloc[0]
+    assert row["kishu_code"] == "01234"          # マスタ主キー（文字列・ゼロ保持）
+    assert row["kishu_name"].strip() == "テスト騎手"
+    assert row["shozoku_code"] == 2
+    assert row["birth_ymd"] == "19800101"        # 日付は文字列
+    assert row["minarai_kubun"] == 1
+    assert row["shozoku_chokyoshi_code"] == "05678"  # リンクコードは文字列
+    assert row["honnen_leading"] == 12
+    assert row["honnen_heichi_1chaku"] == 100
+    assert row["tsusan_heichi_1chaku"] == 1234
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+
+
+def test_parse_csa(tmp_path):
+    r = bytearray(b" " * 270)   # 272 - CRLF
+    _put(r, 1, "05678")         # 調教師コード
+    _put(r, 6, "0")             # 現役
+    _put(r, 15, "テスト師")      # 調教師名
+    _put(r, 63, "1")            # 所属（関東）
+    _put(r, 68, "19700202")     # 生年月日
+    _put(r, 128, "  8")         # 本年リーディング（CSA は 6byte 前詰め）
+    _put(r, 131, " 50")         # 本年平地1着数
+    _put(r, 194, "  987")       # 通算平地1着数
+    p = tmp_path / "CSA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "CSA")
+    row = df.iloc[0]
+    assert row["chokyoshi_code"] == "05678"
+    assert row["chokyoshi_name"].strip() == "テスト師"
+    assert row["shozoku_code"] == 1
+    assert row["birth_ymd"] == "19700202"
+    assert row["honnen_leading"] == 8
+    assert row["honnen_heichi_1chaku"] == 50
+    assert row["tsusan_heichi_1chaku"] == 987
+    assert "minarai_kubun" not in df.columns      # CSA に見習い区分は無い
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+
+
 def test_parse_cyb(tmp_path):
     p = tmp_path / "CYB080913.txt"
     p.write_bytes(_cyb_record())

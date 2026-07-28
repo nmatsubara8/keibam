@@ -352,5 +352,76 @@ SRB.update({
     "race_comment": (343, 500),   # レースコメント
 })
 
+def _chaku4(prefix: str, start: int, width: int) -> dict:
+    """成績「1-2-3-着外」の4分割（width=3 本年/昨年 ZZ9, 5 通算 ZZZZ9）。"""
+    suffixes = ("1chaku", "2chaku", "3chaku", "chakugai")
+    return {f"{prefix}_{s}": (start + i * width, width) for i, s in enumerate(suffixes)}
+
+
+# KSA 騎手データ（第1版b・2016.10.01）。レコード長272。**マスタ**（騎手コード単位）。
+# 木曜 19:00 更新。KYI/SED の騎手コード@336 とリンク。年別/通算の平地・障害成績＝
+# 騎手の実力・近況の外部指標（市場オッズと部分的に直交しうる）。KZA=全騎手/KSA=今週分。
+KSA = {
+    "kishu_code": (1, 5),
+    "massho_flag": (6, 1),             # 登録抹消フラグ 1抹消/0現役
+    "massho_ymd": (7, 8),              # 登録抹消年月日 YYYYMMDD
+    "kishu_name": (15, 12),            # 騎手名（全角6文字）
+    "kishu_kana": (27, 30),            # 騎手カナ（全角15文字）
+    "kishu_ryaku": (57, 6),            # 騎手名略称（全角3文字）
+    "shozoku_code": (63, 1),           # 所属コード 1関東/2関西/3他
+    "shozoku_chiiki": (64, 4),         # 所属地域名（地方の場合・全角2文字）
+    "birth_ymd": (68, 8),              # 生年月日 YYYYMMDD
+    "shomen_year": (76, 4),            # 初免許年 YYYY
+    "minarai_kubun": (80, 1),          # 見習い区分 1☆(1K)/2△(2K)/3▲(3K)
+    "shozoku_chokyoshi_code": (81, 5),  # 所属厩舎（調教師コード）
+    "comment": (86, 40),               # 騎手コメント（JRDBスタッフ評価）
+    "comment_ymd": (126, 8),           # コメント入力年月日
+    "honnen_leading": (134, 3),        # 本年リーディング
+    **_chaku4("honnen_heichi", 137, 3),   # 本年平地 1-2-3-着外
+    **_chaku4("honnen_shogai", 149, 3),   # 本年障害 1-2-3-着外
+    "honnen_tokubetsu": (161, 3),      # 本年特別勝数
+    "honnen_juushou": (164, 3),        # 本年重賞勝数
+    "sakunen_leading": (167, 3),       # 昨年リーディング
+    **_chaku4("sakunen_heichi", 170, 3),
+    **_chaku4("sakunen_shogai", 182, 3),
+    "sakunen_tokubetsu": (194, 3),
+    "sakunen_juushou": (197, 3),
+    **_chaku4("tsusan_heichi", 200, 5),   # 通算平地 1-2-3-着外（5桁）
+    **_chaku4("tsusan_shogai", 220, 5),   # 通算障害
+    "data_ymd": (240, 8),              # データ年月日
+}
+
+# CSA 調教師データ（第1版・2001.05.16）。レコード長272。**マスタ**（調教師コード単位）。
+# KSA と同型だが「見習い区分・所属厩舎」が無く、コメント以降が 6byte 前詰めになる。
+# KYI/SED の調教師コード@341 とリンク。CZA=全調教師/CSA=今週分。
+CSA = {
+    "chokyoshi_code": (1, 5),
+    "massho_flag": (6, 1),
+    "massho_ymd": (7, 8),
+    "chokyoshi_name": (15, 12),        # 調教師名（全角6文字）
+    "chokyoshi_kana": (27, 30),        # 調教師カナ（全角15文字）
+    "chokyoshi_ryaku": (57, 6),        # 調教師名略称（全角3文字）
+    "shozoku_code": (63, 1),
+    "shozoku_chiiki": (64, 4),
+    "birth_ymd": (68, 8),
+    "shomen_year": (76, 4),
+    "comment": (80, 40),               # 調教師コメント（JRDBスタッフの厩舎見解）
+    "comment_ymd": (120, 8),
+    "honnen_leading": (128, 3),
+    **_chaku4("honnen_heichi", 131, 3),
+    **_chaku4("honnen_shogai", 143, 3),
+    "honnen_tokubetsu": (155, 3),
+    "honnen_juushou": (158, 3),
+    "sakunen_leading": (161, 3),
+    **_chaku4("sakunen_heichi", 164, 3),
+    **_chaku4("sakunen_shogai", 176, 3),
+    "sakunen_tokubetsu": (188, 3),
+    "sakunen_juushou": (191, 3),
+    **_chaku4("tsusan_heichi", 194, 5),
+    **_chaku4("tsusan_shogai", 214, 5),
+    "data_ymd": (234, 8),              # データ年月日 YYYYMMDD
+}
+
 RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128, "CYB": 96,
-              "CHA": 64, "HJC": 444, "KKA": 324, "UKC": 292, "SRB": 852}
+              "CHA": 64, "HJC": 444, "KKA": 324, "UKC": 292, "SRB": 852,
+              "KSA": 272, "CSA": 272}

@@ -1,5 +1,5 @@
 {
-  "_comment": "JRDB 会員エリア取得設定。scripts/jrdb_fetch.py が読む。認証は環境変数 JRDB_USER / JRDB_PASS（Basic 認証）。data_types の dir はデータ型別 index のサブディレクトリ名（例 /member/datazip/Tyb/index.html）。dir が未確認の型は enabled:false。kinds=year（年度パック=完了年）/ single（単体日次。年サブディレクトリ配下も自動解決）。year+single 併用時は『年度パックがある年の single は自動除外』され、パック未作成の当年 single だけ取る（重複DLなし・毎年自動追随）。since_year は学習ウィンドウ（標準 2015〜）。latest は single を新しい順 N 件（日次 cron 用: --latest 8 等）。",
+  "_comment": "JRDB 会員エリア取得設定。scripts/jrdb_fetch.py が読む。認証は環境変数 JRDB_USER / JRDB_PASS（Basic 認証）。data_types の dir はデータ型別 index のサブディレクトリ名（例 /member/datazip/Tyb/index.html）。dir が未確認の型は enabled:false。kinds=year（年度パック=完了年）/ single（単体日次。年サブディレクトリ配下も自動解決）。year+single 併用時は『年度パックがある年の single は自動除外』され、パック未作成の当年 single だけ取る（重複DLなし・毎年自動追随）。since_year は学習ウィンドウ（標準 2015〜）。latest は single を新しい順 N 件（日次 cron 用: --latest 8 等）。KSA/CSA（騎手/調教師マスタ）は木曜週次スナップショットのため kinds=single・latest=1（最新1件を keep-last upsert で蓄積）。dir 名 Ksa/Csa は未確認のため enabled:false（確認後 true に）。KZA/CZA=全件版も同レイアウト。",
   "base_url": "https://jrdb.com/member/datazip",
   "cache_dir": "data/jrdb_dl",
   "prefer": "zip",
@@ -12,6 +12,8 @@
     {"name": "SKB", "dir": "Skb", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "KYI", "dir": "Kyi", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "KKA", "dir": "Kka", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
-    {"name": "UKC", "dir": "Ukc", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true}
+    {"name": "UKC", "dir": "Ukc", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "KSA", "dir": "Ksa", "kinds": ["single"], "since_year": 2015, "latest": 1, "enabled": false},
+    {"name": "CSA", "dir": "Csa", "kinds": ["single"], "since_year": 2015, "latest": 1, "enabled": false}
   ]
 }

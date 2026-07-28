@@ -176,6 +176,27 @@ def test_ukc_master_keep_last(store):
     assert "race_id" not in out.columns
 
 
+def test_ksa_master_keep_last(store):
+    """KSA（騎手）はマスタ PK=(kishu_code,)。週次更新の後着を keep-last で反映。"""
+    import pandas as pd
+    store.upsert("KSA", pd.DataFrame({"kishu_code": ["01234"], "honnen_leading": [10]}))
+    store.upsert("KSA", pd.DataFrame({"kishu_code": ["01234"], "honnen_leading": [12]}))
+    out = store.read("KSA")
+    assert len(out) == 1 and out.iloc[0]["honnen_leading"] == "12"
+    assert "race_id" not in out.columns and "umaban" not in out.columns
+
+
+def test_csa_master_keep_last(store):
+    """CSA（調教師）はマスタ PK=(chokyoshi_code,)。KSA と別テーブルで衝突しない。"""
+    import pandas as pd
+    store.upsert("CSA", pd.DataFrame({"chokyoshi_code": ["05678"], "honnen_leading": [5]}))
+    store.upsert("KSA", pd.DataFrame({"kishu_code": ["05678"], "honnen_leading": [9]}))
+    csa = store.read("CSA")
+    ksa = store.read("KSA")
+    assert len(csa) == 1 and csa.iloc[0]["chokyoshi_code"] == "05678"
+    assert len(ksa) == 1 and ksa.iloc[0]["honnen_leading"] == "9"
+
+
 def test_hjc_race_level_ingest(store, tmp_path):
     """HJC（払戻）はレース単位 PK=(race_id,) で raw_jrdb_hjc に取り込まれる。"""
     r = bytearray(b" " * 442)   # 444 - CRLF
