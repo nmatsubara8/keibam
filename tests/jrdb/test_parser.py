@@ -41,9 +41,22 @@ def _sed_record() -> bytes:
     _put(r, 9, "07")           # 馬番
     _put(r, 11, "06102843")
     _put(r, 19, "20080913")    # 年月日
+    _put(r, 27, "テスト馬")     # 馬名
+    _put(r, 63, "1800")        # 距離
+    _put(r, 67, "2")           # 芝ダ障害（ダート）
+    _put(r, 131, "16")         # 頭数
     _put(r, 141, " 3")         # 着順
+    _put(r, 148, "550")        # 斤量 55.0kg
+    _put(r, 151, "テスト騎手")   # 騎手名
+    _put(r, 181, " 2")         # 確定単勝人気
     _put(r, 195, "  5")        # 出遅
     _put(r, 201, "  8")        # 不利
+    _put(r, 309, " 4")         # コーナー順位1
+    _put(r, 323, "01234")      # 騎手コード
+    _put(r, 333, "480")        # 馬体重
+    _put(r, 342, "0000350")    # 単勝払戻
+    _put(r, 356, " 4800")      # 本賞金
+    _put(r, 371, "1540")       # 発走時間
     return bytes(r) + b"\r\n"
 
 
@@ -392,6 +405,20 @@ def test_parse_sed_trouble_fields(tmp_path):
     assert df.loc[0, "chakujun"] == 3
     assert df.loc[0, "deokure"] == 5     # 出遅
     assert df.loc[0, "furi"] == 8        # 不利
+    # 第4版a 拡充フィールド（raw_results 供給）
+    assert df.loc[0, "bamei"] == "テスト馬"
+    assert df.loc[0, "kyori"] == 1800
+    assert df.loc[0, "shiba_dirt"] == "2"    # 芝ダ障害コードは文字列保持（アダプタで芝/ダに）
+    assert df.loc[0, "toushuu"] == 16
+    assert df.loc[0, "futan_juryo"] == 550
+    assert df.loc[0, "kishu_name"].strip() == "テスト騎手"
+    assert df.loc[0, "kakutei_ninki"] == 2
+    assert df.loc[0, "corner1"] == 4
+    assert df.loc[0, "kishu_code"] == "01234"     # コードは文字列
+    assert df.loc[0, "bataijuu"] == 480
+    assert df.loc[0, "tansho_payoff"] == 350
+    assert df.loc[0, "honshokin"] == 4800
+    assert df.loc[0, "hassou_time"] == 1540
 
 
 def test_parse_skb_tokki(tmp_path):
