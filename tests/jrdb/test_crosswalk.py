@@ -61,8 +61,9 @@ def test_majority_resolves_conflict():
     assert row["ketto"] == "K" and row["horse_id"] == "HORSE_A"  # 2票 > 1票
     assert row["support"] == 2 and row["total"] == 3
     assert abs(row["confidence"] - 2 / 3) < 1e-9
-    rep = coverage(out)
-    assert rep["horse"]["mapped"] == 1 and rep["horse"]["ambiguous"] == 1
+    rep = coverage(out)                       # 2/3=0.667 < 0.8 → low_conf
+    assert rep["horse"]["mapped"] == 1 and rep["horse"]["low_conf"] == 1
+    assert abs(rep["horse"]["mean_confidence"] - 2 / 3) < 1e-3
 
 
 def test_no_overlap_returns_empty():

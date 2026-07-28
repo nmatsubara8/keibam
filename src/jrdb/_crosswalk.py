@@ -92,16 +92,24 @@ def build_crosswalk(
     return out
 
 
-def coverage(out: dict[str, pd.DataFrame]) -> dict[str, dict]:
-    """各対応表の件数と、多数決で曖昧だった（confidence<1）割合を要約する。"""
+def coverage(out: dict[str, pd.DataFrame], *, low_conf_threshold: float = 0.8) -> dict[str, dict]:
+    """各対応表の件数・平均 confidence・本当に低信頼な割合を要約する。
+
+    騎手/調教師は 1 コードが多数の行に出るため confidence<1 は「数票のノイズ」でも立つ。
+    実害のある曖昧さは `confidence < low_conf_threshold`（既定 0.8）で数える方が実態に合う。
+    """
     rep: dict[str, dict] = {}
     for name, df in out.items():
         if df is None or df.empty:
-            rep[name] = {"mapped": 0, "ambiguous": 0, "ambiguous_rate": 0.0}
+            rep[name] = {"mapped": 0, "mean_confidence": 0.0,
+                         "low_conf": 0, "low_conf_rate": 0.0}
             continue
-        amb = int((df["confidence"] < 1.0).sum())
-        rep[name] = {"mapped": len(df), "ambiguous": amb,
-                     "ambiguous_rate": amb / len(df)}
+        conf = df["confidence"].astype(float)
+        low = int((conf < low_conf_threshold).sum())
+        rep[name] = {"mapped": len(df),
+                     "mean_confidence": round(float(conf.mean()), 4),
+                     "low_conf": low,
+                     "low_conf_rate": round(low / len(df), 4)}
     return rep
 
 
