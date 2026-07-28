@@ -9,6 +9,7 @@ from src.jrdb._fill import (
     filter_years,
     new_by_race_id,
     new_horse_results,
+    to_raw_shape,
 )
 
 
@@ -54,6 +55,29 @@ def test_new_horse_results_dedup_by_key():
     existing = {("2018103588", "2022/06/14")}
     n = new_horse_results(hr, existing)
     assert len(n) == 1 and n.iloc[0]["horse_id"] == "2018103599"
+
+
+def test_to_raw_shape_and_concat_alignment():
+    """netkeiba raw(RangeIndex+race_id列) と生成(index=race_id) を正しく結合できる。"""
+    sed = pd.DataFrame([_sed("202205020201")])
+    res = build_fill_tables(sed)["results"]           # index=race_id
+    assert res.index.name == "race_id"
+    shaped = to_raw_shape(res)                          # race_id を列へ
+    assert shaped.index.name is None and "race_id" in shaped.columns
+    # 既存 netkeiba 風（RangeIndex＋race_id列）と concat
+    ex = pd.DataFrame({"race_id": ["201801010101"], "着順": ["1"], "馬番": [1]})
+    merged = pd.concat([ex, shaped], ignore_index=True)
+    assert merged.index.name is None                    # RangeIndex 維持
+    assert (merged["race_id"] == "202205020201").any()  # 新規行の race_id が列に入る
+    assert not merged["race_id"].isna().any()           # race_id 欠損なし（構造健全）
+
+
+def test_horse_results_shape_unchanged():
+    """horse_results は既に RangeIndex＋horse_id列 なので to_raw_shape で不変。"""
+    sed = pd.DataFrame([_sed("202205020201")])
+    hr = build_fill_tables(sed)["horse_results"]
+    assert hr.index.name is None and "horse_id" in hr.columns
+    assert to_raw_shape(hr) is hr or to_raw_shape(hr).equals(hr)
 
 
 def test_minimal_false_keeps_all():

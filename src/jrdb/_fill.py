@@ -67,6 +67,17 @@ def new_by_race_id(df: pd.DataFrame, existing_race_ids: Iterable) -> pd.DataFram
     return df[~df.index.astype(str).isin(ex)]
 
 
+def to_raw_shape(df: pd.DataFrame) -> pd.DataFrame:
+    """名前付き index（race_id 等）を列へ戻す。
+
+    netkeiba raw pickle は **RangeIndex＋キー列**（race_id/horse_id を列で持つ）構造。
+    adapters は index=race_id で返すため、concat 前にこれで列へ戻して構造を揃える。
+    """
+    if df is None or df.empty:
+        return df
+    return df.reset_index() if df.index.name is not None else df
+
+
 def new_horse_results(hr: pd.DataFrame, existing_keys: Iterable) -> pd.DataFrame:
     """horse_results を既存 (horse_id, 日付) に無い行だけへ絞る。horse_id 欠損行も落とす。"""
     if hr is None or hr.empty:

@@ -29,6 +29,7 @@ from src.jrdb._fill import (  # noqa: E402
     filter_years,
     new_by_race_id,
     new_horse_results,
+    to_raw_shape,
 )
 from src.storage._db import get_engine  # noqa: E402
 
@@ -127,12 +128,12 @@ def main(argv=None) -> int:
             continue
         p = Path(_PATHS[name])
         ex = existing[name]
-        # 既存 pickle の index 構造に合わせる（例: horse_results は index=horse_id）。
-        if ex is not None and ex.index.name and ex.index.name in new_df.columns:
-            new_df = new_df.set_index(ex.index.name)
+        # netkeiba raw は RangeIndex＋キー列。生成側の index=race_id を列へ戻して揃える。
+        new_df = to_raw_shape(new_df)
         if p.exists():
             shutil.copy2(p, str(p) + ".bak")   # 元をバックアップ
-        merged = pd.concat([ex, new_df]) if ex is not None else new_df
+        merged = (pd.concat([ex, new_df], ignore_index=True) if ex is not None
+                  else new_df.reset_index(drop=True))
         p.parent.mkdir(parents=True, exist_ok=True)
         merged.to_pickle(p)
         print(f"[fill] {name}: +{len(new_df):,} → {len(merged):,} 行 保存（{p.name}, 元は .bak）")
