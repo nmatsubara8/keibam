@@ -218,6 +218,23 @@ def test_ksa_master_index_and_ingest(tmp_path):
     assert len(out) == 1 and out.iloc[0]["kishu_code"] == "01234"
 
 
+def test_fetch_rejects_non_archive_response(tmp_path):
+    """認証失敗等で HTML が返ったら 保存も台帳記録もせず失敗として数える。"""
+    sess = _FakeSession(_INDEX, {"TYB_2025.zip": b"<html>login required</html>"})
+    db = str(tmp_path / "t.db")
+    fetcher = JrdbFetcher(sess, base_url="https://x/member/datazip",
+                          cache_dir=str(tmp_path / "dl"), db_path=db, sleep=lambda: None)
+    files = select_files(fetcher.list_type("Tyb"), since_year=2025, kinds=("year",))
+    r = fetcher.fetch(files)
+    assert r["failed"] == 1 and len(r["downloaded"]) == 0
+    assert not (tmp_path / "dl" / "TYB_2025.zip").exists()   # 保存しない
+    # 台帳に載らない → 原因解消後の再実行で取り直せる（今度は正常 zip を返す）
+    zipb = _make_zip({"TYB250712.txt": _tyb_record()})
+    sess.files["TYB_2025.zip"] = zipb
+    r2 = fetcher.fetch(files)
+    assert len(r2["downloaded"]) == 1 and r2["failed"] == 0
+
+
 def test_cli_type_filter_multiple():
     """--type は複数指定可（KSA/CSA 同時）。1件だけ処理される回帰を防ぐ。"""
     cli = _load_cli()

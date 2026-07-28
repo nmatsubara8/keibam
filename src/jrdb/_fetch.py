@@ -57,6 +57,25 @@ def _yy_to_year(yy: int) -> int:
     return 2000 + yy if yy < 80 else 1900 + yy
 
 
+def _looks_like_archive(ext: str, data: bytes) -> bool:
+    """DL バイト列が期待アーカイブ署名かを判定（HTML エラーページ等を弾く）。"""
+    if not data:
+        return False
+    if ext == "lzh":
+        return data[2:5] == b"-lh"          # LZH ヘッダ（-lh0-/-lh5- 等）
+    return data[:4] in (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")  # zip（空 zip 含む）
+
+
+def _describe_payload(data: bytes) -> str:
+    """失敗時の中身を短く説明（HTML=認証/URL 誤りの典型）。"""
+    head = data[:512].lstrip()
+    if head[:1] == b"<" or b"<html" in head.lower() or b"<!doctype" in head.lower():
+        return "本文が HTML（認証失敗/URL 誤りの可能性）"
+    if not data:
+        return "本文が空（0 byte）"
+    return f"先頭 {data[:4]!r}（アーカイブ署名でない）"
+
+
 def parse_index(html: str, index_url: str) -> list[RemoteFile]:
     """index HTML から .zip/.lzh リンクを抽出して RemoteFile のリストにする。"""
     out: list[RemoteFile] = []
@@ -207,11 +226,16 @@ class JrdbFetcher:
     def fetch(self, files: list[RemoteFile], *, refresh: bool = False) -> dict:
         """未取得（or サイズ変化）のファイルだけ DL してキャッシュに保存する。
 
-        Returns: {"downloaded": [Path...], "skipped": int, "bytes": int}
+        DL 内容がアーカイブ署名（zip=PK / lzh=-lh）でない場合（認証失敗の HTML
+        エラーページ等）は **保存も台帳記録もせず** 失敗として数える。台帳に載せない
+        ことで、原因（認証/URL）解消後の再実行で自動的に取り直せる。
+
+        Returns: {"downloaded": [Path...], "skipped": int, "bytes": int, "failed": int}
         """
         self._cache.mkdir(parents=True, exist_ok=True)
         downloaded: list[Path] = []
         skipped = 0
+        failed = 0
         total_bytes = 0
         for f in files:
             recorded = self._ledger.recorded_size(f.url)
@@ -224,14 +248,24 @@ class JrdbFetcher:
             self._sleep()  # ポライトネス
             resp = self._s.get(f.url)
             data = resp.content
+            status = getattr(resp, "status_code", 200)
+            if status >= 400 or not _looks_like_archive(f.ext, data):
+                logger.warning(
+                    "[jrdb-fetch] %s の取得に失敗（HTTP %s・%s）→ 台帳に記録せずスキップ"
+                    "（認証 JRDB_USER/JRDB_PASS や URL を確認。解消後の再実行で取り直します）。",
+                    f.name, status, _describe_payload(data),
+                )
+                failed += 1
+                continue
             dest.write_bytes(data)
             sha1 = hashlib.sha1(data).hexdigest()  # noqa: S324 — 内容一致判定のみ
             self._ledger.record(f.url, f.name, len(data), sha1)
             downloaded.append(dest)
             total_bytes += len(data)
-        logger.info("[jrdb-fetch] DL %d 件 / skip %d 件 / %d bytes",
-                    len(downloaded), skipped, total_bytes)
-        return {"downloaded": downloaded, "skipped": skipped, "bytes": total_bytes}
+        logger.info("[jrdb-fetch] DL %d 件 / skip %d 件 / 失敗 %d 件 / %d bytes",
+                    len(downloaded), skipped, failed, total_bytes)
+        return {"downloaded": downloaded, "skipped": skipped, "bytes": total_bytes,
+                "failed": failed}
 
     def fetch_and_ingest(
         self,
@@ -261,6 +295,7 @@ class JrdbFetcher:
             "listed": len(files),
             "downloaded": len(fetched["downloaded"]),
             "skipped_download": fetched["skipped"],
+            "failed_download": fetched.get("failed", 0),
             "bytes": fetched["bytes"],
             "ingest": ingest,
         }

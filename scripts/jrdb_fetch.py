@@ -119,8 +119,10 @@ def main(argv=None) -> int:
         ing_rows = sum(v["rows"] for v in r["ingest"].values())
         ing_bad = sum(v.get("badlen", 0) for v in r["ingest"].values())
         badmsg = f" / 版差skip{ing_bad}" if ing_bad else ""
-        print(f"  {name}: 一覧{r['listed']} / DL{r['downloaded']} / skip{r['skipped_download']} "
-              f"/ 取込{ing_rows}行{badmsg}")
+        dl_fail = r.get("failed_download", 0)
+        failmsg = f" / DL失敗{dl_fail}" if dl_fail else ""
+        print(f"  {name}: 一覧{r['listed']} / DL{r['downloaded']} / skip{r['skipped_download']}"
+              f"{failmsg} / 取込{ing_rows}行{badmsg}")
         grand["downloaded"] += r["downloaded"]
         grand["skipped"] += r["skipped_download"]
         grand["ingested"] += ing_rows

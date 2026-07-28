@@ -25,6 +25,25 @@ def test_read_zip(tmp_path):
     assert got == [("KYI250712.txt", b"xyz\r\n")]
 
 
+def test_read_bad_zip_is_skipped_not_raised(tmp_path):
+    """壊れた zip（HTML エラーページ等）は例外で落ちず空リストを返す。"""
+    bad = tmp_path / "KSA260726.zip"
+    bad.write_bytes(b"<html><body>Not Found</body></html>")
+    assert read_jrdb_bytes(str(bad)) == []      # 例外を投げない
+
+
+def test_extract_dir_skips_bad_zip_and_keeps_good(tmp_path):
+    """1 つ壊れた zip があっても、他の正常ファイルの分類・展開は継続する。"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "KSA260726.zip").write_bytes(b"<html>auth error</html>")  # 壊れ
+    with zipfile.ZipFile(src / "CSA260726.zip", "w") as zf:          # 正常
+        zf.writestr("CSA260726.txt", b"c\r\n")
+    by_type = extract_dir(str(src), str(tmp_path / "out"))
+    assert "CSA" in by_type and "KSA" not in by_type   # 壊れた KSA は分類されない
+    assert (tmp_path / "out" / "CSA260726.txt").exists()
+
+
 def test_extract_dir_classifies_by_prefix(tmp_path):
     src = tmp_path / "src"
     src.mkdir()
