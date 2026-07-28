@@ -197,6 +197,22 @@ def test_csa_master_keep_last(store):
     assert len(ksa) == 1 and ksa.iloc[0]["honnen_leading"] == "9"
 
 
+def test_kta_registration_keep_last(store):
+    """KTA（登録馬）は PK=(race_id, ketto)。同一レース×同一馬は keep-last で 1 行。"""
+    import pandas as pd
+    base = {"race_id": ["201502020201"], "ketto": ["13103588"]}
+    store.upsert("KTA", pd.DataFrame({**base, "idm": [45.5], "data_kubun": ["1"]}))
+    store.upsert("KTA", pd.DataFrame({**base, "idm": [46.5], "data_kubun": ["2"]}))  # 想定確定で更新
+    # 別馬は別行
+    store.upsert("KTA", pd.DataFrame({"race_id": ["201502020201"], "ketto": ["99999999"],
+                                      "idm": [40.5]}))
+    out = store.read("KTA")
+    assert len(out) == 2
+    row = out[out["ketto"] == "13103588"].iloc[0]
+    assert row["idm"] == "46.5" and row["data_kubun"] == "2"
+    assert "umaban" not in out.columns
+
+
 def test_hjc_race_level_ingest(store, tmp_path):
     """HJC（払戻）はレース単位 PK=(race_id,) で raw_jrdb_hjc に取り込まれる。"""
     r = bytearray(b" " * 442)   # 444 - CRLF

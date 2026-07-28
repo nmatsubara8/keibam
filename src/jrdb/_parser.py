@@ -106,7 +106,7 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
 
     layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB,
               "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB,
-              "KSA": L.KSA, "CSA": L.CSA}[rt]
+              "KSA": L.KSA, "CSA": L.CSA, "KTA": L.KTA}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -186,6 +186,16 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
             "chokyoshi_code", "massho_ymd", "chokyoshi_name", "chokyoshi_kana",
             "chokyoshi_ryaku", "shozoku_chiiki", "birth_ymd", "comment",
             "comment_ymd", "data_ymd")],
+        # KTA: 指数/コード/賞金/展開指数を数値化。キー・名称・リンクコード・体型
+        # コード列・区分・出走順位（スペース）は文字列のまま。
+        "KTA": [k for k in L.KTA if k not in (
+            "race_key", "bamei_key", "ketto", "bamei", "blinker", "kishu_name",
+            "chokyoshi_name", "chokyoshi_shozoku", "shiba_tekisei", "dirt_tekisei",
+            "zenso1_seiseki_key", "zenso2_seiseki_key", "zenso3_seiseki_key",
+            "zenso4_seiseki_key", "zenso5_seiseki_key", "zenso1_race_key",
+            "zenso2_race_key", "zenso3_race_key", "zenso4_race_key",
+            "zenso5_race_key", "kishu_code", "chokyo_code", "taikei",
+            "sankou_zenso_kishu_code", "data_kubun", "shusso_juni")],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])

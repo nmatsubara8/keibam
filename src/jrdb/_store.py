@@ -40,16 +40,17 @@ logger = logging.getLogger(__name__)
 # 馬マスタ (ketto,)。
 RECORD_TYPES: tuple[str, ...] = (
     "KYI", "SED", "SKB", "TYB", "CYB", "CHA", "HJC", "KKA", "UKC", "SRB",
-    "KSA", "CSA",
+    "KSA", "CSA", "KTA",
 )
 _TABLE = {rt: f"raw_jrdb_{rt.lower()}" for rt in RECORD_TYPES}
-# 形式別の主キー。既定は出走馬単位。レース単位・マスタは個別に上書きする。
+# 形式別の主キー。既定は出走馬単位。レース単位・マスタ・登録馬は個別に上書きする。
 _PK_BY_TYPE: dict[str, tuple[str, ...]] = {rt: ("race_id", "umaban") for rt in RECORD_TYPES}
-_PK_BY_TYPE["HJC"] = ("race_id",)          # 払戻はレース単位（1レース1レコード）
-_PK_BY_TYPE["SRB"] = ("race_id",)          # 成績レースもレース単位（SED 同梱）
-_PK_BY_TYPE["UKC"] = ("ketto",)            # 馬基本はマスタ（血統登録番号単位）
-_PK_BY_TYPE["KSA"] = ("kishu_code",)       # 騎手マスタ（騎手コード単位）
-_PK_BY_TYPE["CSA"] = ("chokyoshi_code",)   # 調教師マスタ（調教師コード単位）
+_PK_BY_TYPE["HJC"] = ("race_id",)             # 払戻はレース単位（1レース1レコード）
+_PK_BY_TYPE["SRB"] = ("race_id",)             # 成績レースもレース単位（SED 同梱）
+_PK_BY_TYPE["UKC"] = ("ketto",)               # 馬基本はマスタ（血統登録番号単位）
+_PK_BY_TYPE["KSA"] = ("kishu_code",)          # 騎手マスタ（騎手コード単位）
+_PK_BY_TYPE["CSA"] = ("chokyoshi_code",)      # 調教師マスタ（調教師コード単位）
+_PK_BY_TYPE["KTA"] = ("race_id", "ketto")     # 登録馬（馬番確定前）＝レース×血統登録番号
 
 LEDGER_TABLE = "jrdb_ingested_files"
 

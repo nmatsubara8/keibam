@@ -422,6 +422,69 @@ CSA = {
     "data_ymd": (234, 8),              # データ年月日 YYYYMMDD
 }
 
+# KTA 登録馬データ（第2版・2013.12.14）。レコード長388。**レース×登録馬単位**（馬番確定前）。
+# 月19:00 特別登録ハンデ確定 / 木20:00 出走馬確定。馬番を持たないため PK=(race_id, 血統登録番号)。
+# KYI（前日・馬番あり）の前段。IDM/脚質/距離適性/展開指数/前走リンク＋データ区分を持つ。
+KTA = {
+    "race_key": (1, 8),
+    "bamei_key": (9, 40),            # 馬名キー（馬名ベースの連携キー）
+    "ketto": (49, 8),                # 血統登録番号
+    "bamei": (57, 36),               # 馬名（全角18文字）
+    "sex_code": (93, 1),             # 性別 1牡/2牝/3セン
+    "umakigou_code": (94, 2),        # 馬記号コード
+    "blinker": (96, 1),              # ブリンカー 1初装着/2再装着/3装着
+    "kishu_name": (97, 12),          # 騎手名（全角6文字）
+    "futan_juryo": (109, 3),         # 負担重量（0.1kg単位）
+    "minarai_kubun": (112, 1),       # 見習い区分
+    "chokyoshi_name": (113, 12),     # 調教師名
+    "chokyoshi_shozoku": (125, 4),   # 調教師所属
+    "idm": (129, 5),                 # IDM（ZZ9.9）
+    "joushoudo": (134, 1),           # 上昇度
+    "rotation": (135, 3),            # ローテーション（初出走はスペース）
+    "kyakushitsu": (138, 1),         # 脚質
+    "kyori_tekisei": (139, 1),       # 距離適性
+    "kyori_tekisei2": (140, 1),      # 距離適性2
+    "shiba_tekisei": (141, 1),       # 芝適性コード
+    "dirt_tekisei": (142, 1),        # ダ適性コード
+    "omoteki_code": (143, 1),        # 重適性コード
+    "hitsume_code": (144, 2),        # 蹄コード
+    "class_code": (146, 2),          # クラスコード
+    "keiro_code": (148, 2),          # 毛色コード
+    "zenso1_seiseki_key": (150, 16),
+    "zenso2_seiseki_key": (166, 16),
+    "zenso3_seiseki_key": (182, 16),
+    "zenso4_seiseki_key": (198, 16),
+    "zenso5_seiseki_key": (214, 16),
+    "zenso1_race_key": (230, 8),
+    "zenso2_race_key": (238, 8),
+    "zenso3_race_key": (246, 8),
+    "zenso4_race_key": (254, 8),
+    "zenso5_race_key": (262, 8),
+    "kishu_code": (270, 5),          # 騎手マスタ(KSA)リンク
+    "chokyo_code": (275, 5),         # 調教師マスタ(CSA)リンク
+    "kakutoku_shokin": (280, 6),     # 獲得賞金（万円・付加賞含む）
+    "shutoku_shokin": (286, 5),      # 収得賞金（万円）※KYIと桁が異なる(5byte)
+    "joken_class": (291, 1),         # 条件クラス（収得賞金から出走できるクラス）
+    "souhou": (292, 8),              # 走法
+    "taikei": (300, 24),             # 体型（3桁×8部位）
+    "taikei_sougou1": (324, 3),
+    "taikei_sougou2": (327, 3),
+    "taikei_sougou3": (330, 3),
+    "uma_tokki1": (333, 3),
+    "uma_tokki2": (336, 3),
+    "uma_tokki3": (339, 3),
+    "ten_idx": (342, 5),             # 予想テン指数
+    "pace_idx": (347, 5),            # 予想ペース指数
+    "agari_idx": (352, 5),           # 予想上がり指数
+    "ichi_idx": (357, 5),            # 予想位置指数
+    "start_idx": (362, 4),           # 馬スタート指数
+    "deokure_rate": (366, 4),        # 馬出遅率
+    "sankou_zenso": (370, 2),        # 参考前走（2走分格納）
+    "sankou_zenso_kishu_code": (372, 5),  # 参考前走騎手コード
+    "data_kubun": (377, 1),          # データ区分 1特別登録/2想定確定
+    "shusso_juni": (378, 3),         # 出走順位（2006〜スペース・参考）
+}
+
 RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128, "CYB": 96,
               "CHA": 64, "HJC": 444, "KKA": 324, "UKC": 292, "SRB": 852,
-              "KSA": 272, "CSA": 272}
+              "KSA": 272, "CSA": 272, "KTA": 388}

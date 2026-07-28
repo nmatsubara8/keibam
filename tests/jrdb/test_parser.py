@@ -240,6 +240,37 @@ def test_parse_csa(tmp_path):
     assert "race_id" not in df.columns and "umaban" not in df.columns
 
 
+def test_parse_kta(tmp_path):
+    r = bytearray(b" " * 386)   # 388 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 49, "13103588")     # 血統登録番号（PK の一部）
+    _put(r, 57, "テスト馬")      # 馬名
+    _put(r, 93, "1")            # 性別 牡
+    _put(r, 97, "テスト騎手")    # 騎手名
+    _put(r, 109, "550")         # 負担重量 55.0kg
+    _put(r, 129, " 45.0")       # IDM
+    _put(r, 270, "01234")       # 騎手コード（KSA リンク）
+    _put(r, 280, "  1500")      # 獲得賞金
+    _put(r, 342, "120.5")       # テン指数
+    _put(r, 377, "2")           # データ区分（想定確定）
+    p = tmp_path / "KTA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KTA")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"     # レースキー変換
+    assert row["ketto"] == "13103588"           # 馬番でなく血統登録番号が PK
+    assert "umaban" not in df.columns
+    assert row["bamei"] == "テスト馬"
+    assert row["sex_code"] == 1
+    assert row["kishu_name"].strip() == "テスト騎手"
+    assert row["futan_juryo"] == 550
+    assert row["idm"] == 45.0
+    assert row["kishu_code"] == "01234"         # リンクコードは文字列
+    assert row["kakutoku_shokin"] == 1500
+    assert row["ten_idx"] == 120.5
+    assert row["data_kubun"] == "2"
+
+
 def test_parse_cyb(tmp_path):
     p = tmp_path / "CYB080913.txt"
     p.write_bytes(_cyb_record())
