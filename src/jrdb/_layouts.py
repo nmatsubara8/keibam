@@ -179,4 +179,70 @@ CHA = {
     # 予備(56,7) / 改行(63,2) は取り込まない
 }
 
-RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128, "CYB": 96, "CHA": 64}
+# HJC 払戻情報データ（第4a版・2024.09.29）。レコード長444。**レース単位**（1レース1レコード）。
+# 券種ごとに OCC 回の (組合せ, 払戻金) を繰り返す。連系(馬連/ワイド/馬単/三連複/三連単)の
+# 払戻を持ち、exotic payoff での ROI 検証に必須。
+# グループ: (prefix, 開始相対位置, OCC回数, 組合せ長, 払戻金長)
+HJC_GROUPS = [
+    ("tansho", 9, 3, 2, 7),        # 単勝  馬番2 + 払戻7
+    ("fukusho", 36, 5, 2, 7),      # 複勝  馬番2 + 払戻7
+    ("wakuren", 81, 3, 2, 7),      # 枠連  枠組合せ2 + 払戻7
+    ("umaren", 108, 3, 4, 8),      # 馬連  馬番組合せ4 + 払戻8
+    ("wide", 144, 7, 4, 8),        # ワイド 馬番組合せ4 + 払戻8
+    ("umatan", 228, 6, 4, 8),      # 馬単  馬番組合せ4 + 払戻8
+    ("sanrenpuku", 300, 3, 6, 8),  # 三連複 馬番組合せ6 + 払戻8
+    ("sanrentan", 342, 6, 6, 9),   # 三連単 馬番組合せ6 + 払戻9
+]
+
+# KKA 競走馬拡張データ（第2版・2007.10.22）。レコード長324。出走馬単位 (race_id, 馬番)。
+# 各「着度数」は 12byte = 4×3(ZZ9) の (1着数,2着数,3着数,着外数)。条件別の勝率/連対率の材料。
+_KKA_CHAKU_GROUPS = [
+    ("jra", 11), ("kouryu", 23), ("hoka", 35),               # JRA/交流/他
+    ("shibada", 47), ("shibada_dist", 59), ("track_dist", 71),  # 芝ダ障害別/距離別/トラック距離
+    ("rote", 83), ("mawari", 95), ("kishu", 107),            # ローテ/回り/騎手
+    ("baba_ryo", 119), ("baba_yaya", 131), ("baba_omo", 143),  # 良/稍/重
+    ("pace_s", 155), ("pace_m", 167), ("pace_h", 179),       # S/M/H ペース
+    ("season", 191), ("waku", 203),                          # 季節/枠
+    ("kishu_dist", 215), ("kishu_track_dist", 227), ("kishu_chokyoshi", 239),
+    ("kishu_banushi", 251), ("kishu_blinker", 263), ("chokyoshi_banushi", 275),
+]
+KKA = {"race_key": (1, 8), "umaban": (9, 2)}
+for _nm, _st in _KKA_CHAKU_GROUPS:
+    for _j, _suf in enumerate(("1chaku", "2chaku", "3chaku", "chakugai")):
+        KKA[f"{_nm}_{_suf}"] = (_st + _j * 3, 3)
+KKA.update({
+    "sire_shiba_rentai": (287, 3),      # 父馬産駒芝連対率 %
+    "sire_dirt_rentai": (290, 3),       # 父馬産駒ダ連対率 %
+    "sire_rentai_avg_dist": (293, 4),   # 父馬産駒連対平均距離
+    "bms_shiba_rentai": (297, 3),       # 母父産駒芝連対率 %
+    "bms_dirt_rentai": (300, 3),        # 母父産駒ダ連対率 %
+    "bms_rentai_avg_dist": (303, 4),    # 母父産駒連対平均距離
+})
+
+# UKC 馬基本データ（第3版・2002.08.20）。レコード長292。**馬マスタ**（血統登録番号単位）。
+# 血統/毛色/生年月日/父母/馬主/生産者/系統コード。netkeiba 血統と同種だが JRDB 系統コード付き。
+UKC = {
+    "ketto": (1, 8),                    # 血統登録番号
+    "bamei": (9, 36),                   # 馬名
+    "sex_code": (45, 1),                # 性別 1牡/2牝/3セン
+    "keiro_code": (46, 2),              # 毛色コード
+    "umakigou_code": (48, 2),           # 馬記号コード
+    "sire_name": (50, 36),              # 父馬名
+    "dam_name": (86, 36),               # 母馬名
+    "bms_name": (122, 36),              # 母父馬名
+    "birth_ymd": (158, 8),              # 生年月日 YYYYMMDD
+    "sire_birth_year": (166, 4),        # 父馬生年
+    "dam_birth_year": (170, 4),         # 母馬生年
+    "bms_birth_year": (174, 4),         # 母父馬生年
+    "owner_name": (178, 40),            # 馬主名
+    "owner_kai_code": (218, 2),         # 馬主会コード
+    "breeder_name": (220, 40),          # 生産者名
+    "sanchi_name": (260, 8),            # 産地名
+    "massho_flag": (268, 1),            # 登録抹消フラグ 0現役/1抹消
+    "data_ymd": (269, 8),              # データ年月日
+    "sire_keito_code": (277, 4),        # 父系統コード
+    "bms_keito_code": (281, 4),         # 母父系統コード
+}
+
+RECORD_LEN = {"KYI": 1024, "SED": 376, "SKB": 304, "TYB": 128,
+              "CYB": 96, "CHA": 64, "HJC": 444, "KKA": 324, "UKC": 292}

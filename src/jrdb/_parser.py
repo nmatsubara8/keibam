@@ -59,14 +59,37 @@ def _num(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series.str.strip().replace("", np.nan), errors="coerce")
 
 
+def _parse_hjc(recs: list[bytes]) -> pd.DataFrame:
+    """HJC 払戻（レース単位・券種繰り返し）を DataFrame にする。
+
+    列: race_id, および券種ごとに {prefix}_combo{i} / {prefix}_pay{i}
+    （例 tansho_combo1/tansho_pay1 … sanrentan_combo6/sanrentan_pay6）。
+    組合せ（馬番/枠番の連結）はゼロ埋めを保つため文字列、払戻金は数値化する。
+    """
+    rows: list[dict] = []
+    for r in recs:
+        row: dict[str, object] = {"race_id": race_key_to_race_id(_slice(r, 1, 8))}
+        for prefix, start, occ, clen, plen in L.HJC_GROUPS:
+            unit = clen + plen
+            for i in range(occ):
+                base = start + i * unit
+                row[f"{prefix}_combo{i + 1}"] = _slice(r, base, clen).strip()
+                row[f"{prefix}_pay{i + 1}"] = _slice(r, base + clen, plen).strip()
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    # 払戻金列を数値化（組合せ列はゼロ埋め保持のため文字列のまま）。
+    pay_cols = [c for c in df.columns if "_pay" in c]
+    for c in pay_cols:
+        df[c] = pd.to_numeric(df[c].replace("", np.nan), errors="coerce")
+    return df
+
+
 def parse(path: str, record_type: str) -> pd.DataFrame:
     """JRDBファイルを DataFrame にする。record_type ∈ {'KYI','SED','SKB'}。
 
     共通列: race_id（変換済）, umaban（int）, ketto。加えて record_type 別の項目。
     """
     rt = record_type.upper()
-    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB,
-              "CYB": L.CYB, "CHA": L.CHA}[rt]
     recs = _records(path)
     # フォーマット版差の検知: レコード長が仕様と大きく乖離したら警告（オフセットずれで
     # 値が壊れ得る）。取込側（JrdbStore）は既定でこのファイルをスキップする。
@@ -78,6 +101,11 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         )
     if not recs:
         return pd.DataFrame()  # 空ファイル/有効レコード無し → 空（store.upsert は空を no-op 扱い）
+    if rt == "HJC":
+        return _parse_hjc(recs)  # レース単位・券種繰り返しの専用経路
+
+    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB,
+              "CYB": L.CYB, "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -98,8 +126,11 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
             rep_cols[name].append(_slice(r, s, ln).strip())
 
     df = pd.DataFrame({**cols, **rep_cols})
-    df["race_id"] = df["race_key"].map(race_key_to_race_id)
-    df["umaban"] = _num(df["umaban"]).astype("Int64")
+    # race_key / umaban は形式により無い（UKC 等のマスタは 血統登録番号 単位）→ 条件分岐。
+    if "race_key" in df.columns:
+        df["race_id"] = df["race_key"].map(race_key_to_race_id)
+    if "umaban" in df.columns:
+        df["umaban"] = _num(df["umaban"]).astype("Int64")
     if "ketto" in df.columns:  # TYB 等は血統登録番号を持たない
         df["ketto"] = df["ketto"].str.strip()
 
@@ -126,6 +157,12 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
         "CHA": ["kaisuu", "oikiri_shurui", "oi_jotai", "noriyaku", "chokyo_f",
                 "ten_f", "naka_f", "shimai_f", "ten_f_idx", "naka_f_idx",
                 "shimai_f_idx", "oikiri_idx", "awase_oikiri_shurui", "awase_nenrei"],
+        # KKA: 着度数（4値×23群）+ その他（連対率/平均距離）を全て数値化。
+        "KKA": [k for k in L.KKA if k not in ("race_key", "umaban")],
+        # UKC: コード・生年・フラグを数値化（名称・YYYYMMDD 日付は文字列のまま）。
+        "UKC": ["sex_code", "keiro_code", "umakigou_code", "sire_birth_year",
+                "dam_birth_year", "bms_birth_year", "owner_kai_code", "massho_flag",
+                "sire_keito_code", "bms_keito_code"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])

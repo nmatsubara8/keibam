@@ -36,11 +36,14 @@ from src.storage._db import get_engine
 
 logger = logging.getLogger(__name__)
 
-# 対応形式 → 物理テーブル名。全て (race_id, umaban) を主キーとする horse-in-race 記録。
-RECORD_TYPES: tuple[str, ...] = ("KYI", "SED", "SKB", "TYB", "CYB", "CHA")
+# 対応形式 → 物理テーブル名。粒度は3種: 出走馬単位 (race_id,umaban) / レース単位 (race_id,) /
+# 馬マスタ (ketto,)。
+RECORD_TYPES: tuple[str, ...] = ("KYI", "SED", "SKB", "TYB", "CYB", "CHA", "HJC", "KKA", "UKC")
 _TABLE = {rt: f"raw_jrdb_{rt.lower()}" for rt in RECORD_TYPES}
-# 形式別の主キー。将来レース単位形式を足すときはここに ("race_id",) 等を追加する。
+# 形式別の主キー。既定は出走馬単位。レース単位・マスタは個別に上書きする。
 _PK_BY_TYPE: dict[str, tuple[str, ...]] = {rt: ("race_id", "umaban") for rt in RECORD_TYPES}
+_PK_BY_TYPE["HJC"] = ("race_id",)   # 払戻はレース単位（1レース1レコード）
+_PK_BY_TYPE["UKC"] = ("ketto",)     # 馬基本はマスタ（血統登録番号単位）
 
 LEDGER_TABLE = "jrdb_ingested_files"
 

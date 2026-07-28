@@ -7,8 +7,11 @@
     {"name": "TYB", "dir": "Tyb", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "CYB", "dir": "Cyb", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "CHA", "dir": "Cha", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
-    {"name": "SED", "dir": "Sed", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": false},
-    {"name": "SKB", "dir": "Skb", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": false},
-    {"name": "KYI", "dir": "Kyi", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": false}
+    {"name": "HJC", "dir": "Hjc", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "SED", "dir": "Sed", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "SKB", "dir": "Skb", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "KYI", "dir": "Kyi", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "KKA", "dir": "Kka", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "UKC", "dir": "Ukc", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true}
   ]
 }

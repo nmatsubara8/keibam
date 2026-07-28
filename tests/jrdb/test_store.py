@@ -166,6 +166,42 @@ def test_cyb_ingest_roundtrip(store, tmp_path):
     assert out.iloc[0]["race_id"] == "201502020201" and out.iloc[0]["oikiri_idx"] == "58"
 
 
+def test_ukc_master_keep_last(store):
+    """UKC（馬基本）はマスタ PK=(ketto,)。同一 ketto は keep-last で 1 行。"""
+    import pandas as pd
+    store.upsert("UKC", pd.DataFrame({"ketto": ["13103588"], "massho_flag": [0]}))
+    store.upsert("UKC", pd.DataFrame({"ketto": ["13103588"], "massho_flag": [1]}))  # 抹消に更新
+    out = store.read("UKC")
+    assert len(out) == 1 and out.iloc[0]["massho_flag"] == "1"
+    assert "race_id" not in out.columns
+
+
+def test_hjc_race_level_ingest(store, tmp_path):
+    """HJC（払戻）はレース単位 PK=(race_id,) で raw_jrdb_hjc に取り込まれる。"""
+    r = bytearray(b" " * 442)   # 444 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "07")            # 単勝1 馬番
+    _put(r, 11, "0000350")      # 単勝1 払戻
+    p = tmp_path / "HJC150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    s = store.ingest_files({"HJC": [str(p)]})
+    assert s["HJC"]["files"] == 1 and s["HJC"]["rows"] == 1
+    out = store.read("HJC")
+    assert len(out) == 1
+    assert out.iloc[0]["race_id"] == "201502020201"
+    assert "umaban" not in out.columns          # レース単位（馬番キーなし）
+    assert out.iloc[0]["tansho_pay1"] == "350"   # TEXT 保存
+
+
+def test_hjc_keep_last_by_race(store, tmp_path):
+    """同一 race_id の HJC を再取込 → 1 行（keep-last・レース単位 dedup）。"""
+    import pandas as pd
+    store.upsert("HJC", pd.DataFrame({"race_id": ["R1"], "tansho_pay1": [100]}))
+    store.upsert("HJC", pd.DataFrame({"race_id": ["R1"], "tansho_pay1": [200]}))
+    out = store.read("HJC")
+    assert len(out) == 1 and out.iloc[0]["tansho_pay1"] == "200"
+
+
 def test_ingest_skips_bad_record_length(store, tmp_path):
     """レコード長が仕様(128)と乖離する TYB は既定でスキップ（版差ガード）。"""
     p = tmp_path / "TYB100101.txt"

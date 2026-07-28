@@ -94,6 +94,72 @@ def test_parse_cha(tmp_path):
     assert df.loc[0, "awase_kekka"] == "1"
 
 
+def _hjc_record() -> bytes:
+    r = bytearray(b" " * 442)   # データ 442 + CRLF 2 = レコード長 444
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "07")            # 単勝1 馬番
+    _put(r, 11, "0000350")      # 単勝1 払戻
+    _put(r, 108, "0107")        # 馬連1 組合せ 1-7
+    _put(r, 112, "00001230")    # 馬連1 払戻
+    _put(r, 342, "010203")      # 三連単1 組合せ
+    _put(r, 348, "000123450")   # 三連単1 払戻
+    return bytes(r) + b"\r\n"
+
+
+def test_parse_hjc(tmp_path):
+    p = tmp_path / "HJC150712.txt"
+    p.write_bytes(_hjc_record())
+    df = parse(str(p), "HJC")
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"
+    # 組合せはゼロ埋め文字列、払戻は数値
+    assert row["tansho_combo1"] == "07" and row["tansho_pay1"] == 350
+    assert row["umaren_combo1"] == "0107" and row["umaren_pay1"] == 1230
+    assert row["sanrentan_combo1"] == "010203" and row["sanrentan_pay1"] == 123450
+    # 券種ごとの列数（OCC）が揃っている
+    assert "fukusho_pay5" in df.columns and "wide_pay7" in df.columns
+
+
+def test_parse_kka(tmp_path):
+    r = bytearray(b" " * 322)   # 324 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "04")            # 馬番
+    _put(r, 11, "  5")          # JRA 1着数
+    _put(r, 14, "  3")          # JRA 2着数
+    _put(r, 17, "  2")          # JRA 3着数
+    _put(r, 20, " 10")          # JRA 着外数
+    _put(r, 287, "55")          # 父馬産駒芝連対率
+    p = tmp_path / "KKA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KKA")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201" and row["umaban"] == 4
+    assert row["jra_1chaku"] == 5 and row["jra_2chaku"] == 3
+    assert row["jra_3chaku"] == 2 and row["jra_chakugai"] == 10
+    assert row["sire_shiba_rentai"] == 55
+
+
+def test_parse_ukc(tmp_path):
+    r = bytearray(b" " * 290)   # 292 - CRLF
+    _put(r, 1, "13103588")      # 血統登録番号
+    _put(r, 9, "テスト馬")
+    _put(r, 45, "1")            # 性別 牡
+    _put(r, 50, "父馬テスト")
+    _put(r, 158, "20120315")    # 生年月日
+    _put(r, 277, "1101")        # 父系統コード
+    p = tmp_path / "UKC150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "UKC")
+    row = df.iloc[0]
+    assert row["ketto"] == "13103588"       # マスタ（馬キー）
+    assert row["bamei"] == "テスト馬"
+    assert row["sex_code"] == 1
+    assert row["birth_ymd"] == "20120315"   # 日付は文字列のまま
+    assert row["sire_keito_code"] == 1101
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+
+
 def test_parse_cyb(tmp_path):
     p = tmp_path / "CYB080913.txt"
     p.write_bytes(_cyb_record())
