@@ -64,6 +64,36 @@ def _cyb_record() -> bytes:
     return bytes(r) + b"\r\n"
 
 
+def _cha_record() -> bytes:
+    r = bytearray(b" " * 62)   # データ 62 + CRLF 2 = レコード長 64
+    _put(r, 1, "02152201")     # race_key -> 201502020201
+    _put(r, 9, "05")           # 馬番
+    _put(r, 11, "水")          # 曜日
+    _put(r, 13, "20150710")    # 調教年月日
+    _put(r, 24, "1")           # 追切種類 一杯
+    _put(r, 29, "135")         # テンＦ
+    _put(r, 35, "118")         # 終いＦ
+    _put(r, 47, " 62")         # 追切指数
+    _put(r, 50, "1")           # 併せ結果 先着
+    return bytes(r) + b"\r\n"
+
+
+def test_parse_cha(tmp_path):
+    p = tmp_path / "CHA080913.txt"
+    p.write_bytes(_cha_record())
+    df = parse(str(p), "CHA")
+    assert df.loc[0, "race_id"] == "201502020201"
+    assert df.loc[0, "umaban"] == 5
+    assert df.loc[0, "youbi"] == "水"
+    assert df.loc[0, "chokyo_ymd"] == "20150710"
+    # 部分別ハロンタイム・指数（数値化）
+    assert df.loc[0, "ten_f"] == 135
+    assert df.loc[0, "shimai_f"] == 118
+    assert df.loc[0, "oikiri_idx"] == 62
+    assert df.loc[0, "oikiri_shurui"] == 1
+    assert df.loc[0, "awase_kekka"] == "1"
+
+
 def test_parse_cyb(tmp_path):
     p = tmp_path / "CYB080913.txt"
     p.write_bytes(_cyb_record())

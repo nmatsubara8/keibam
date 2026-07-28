@@ -37,7 +37,7 @@ from src.storage._db import get_engine
 logger = logging.getLogger(__name__)
 
 # 対応形式 → 物理テーブル名。全て (race_id, umaban) を主キーとする horse-in-race 記録。
-RECORD_TYPES: tuple[str, ...] = ("KYI", "SED", "SKB", "TYB", "CYB")
+RECORD_TYPES: tuple[str, ...] = ("KYI", "SED", "SKB", "TYB", "CYB", "CHA")
 _TABLE = {rt: f"raw_jrdb_{rt.lower()}" for rt in RECORD_TYPES}
 # 形式別の主キー。将来レース単位形式を足すときはここに ("race_id",) 等を追加する。
 _PK_BY_TYPE: dict[str, tuple[str, ...]] = {rt: ("race_id", "umaban") for rt in RECORD_TYPES}
