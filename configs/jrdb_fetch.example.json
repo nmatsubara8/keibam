@@ -1,0 +1,12 @@
+{
+  "_comment": "JRDB 会員エリア取得設定。scripts/jrdb_fetch.py が読む。認証は環境変数 JRDB_USER / JRDB_PASS（Basic 認証）。data_types の dir はデータ型別 index のサブディレクトリ名（例 /member/datazip/Tyb/index.html）。dir が未確認の型は enabled:false にしてある。kinds は year=年度パック / single=単体日次。since_year は学習ウィンドウ（プロジェクト標準 2015〜）に合わせる。latest は single を新しい順 N 件（日次運用用）。",
+  "base_url": "https://jrdb.com/member/datazip",
+  "cache_dir": "data/jrdb_dl",
+  "prefer": "zip",
+  "data_types": [
+    {"name": "TYB", "dir": "Tyb", "kinds": ["year"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "SED", "dir": "Sed", "kinds": ["year"], "since_year": 2015, "latest": null, "enabled": false},
+    {"name": "SKB", "dir": "Skb", "kinds": ["year"], "since_year": 2015, "latest": null, "enabled": false},
+    {"name": "KYI", "dir": "Kyi", "kinds": ["year"], "since_year": 2015, "latest": null, "enabled": false}
+  ]
+}
