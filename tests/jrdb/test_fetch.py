@@ -170,6 +170,42 @@ def test_fetch_and_ingest_end_to_end(tmp_path):
     assert len(store.read("TYB")) == 2  # 重複せず
 
 
+def _ksa_record(code="01234", leading=" 12"):
+    r = bytearray(b" " * 270)   # 272 - CRLF
+    _put(r, 1, code)            # 騎手コード
+    _put(r, 15, "テスト騎手")    # 騎手名
+    _put(r, 134, leading)       # 本年リーディング
+    return bytes(r) + b"\r\n"
+
+
+_KSA_INDEX = (
+    '<a href="KSA_2025.zip">y25</a>'
+    '<a href="KSA_2015.zip">y15</a>'
+    '<a href="KSA260726.zip">d</a>'    # 2026 単体（パック未作成年）
+)
+
+
+def test_ksa_master_index_and_ingest(tmp_path):
+    """KSA（騎手マスタ・dir=Ks）を year+single で index パース→取込まで通す。"""
+    files = parse_index(_KSA_INDEX, "https://x/member/datazip/Ks/index.html")
+    by = {f.name: f for f in files}
+    assert by["KSA_2025.zip"].kind == "year" and by["KSA_2025.zip"].year == 2025
+    assert by["KSA260726.zip"].kind == "single" and by["KSA260726.zip"].year == 2026
+    assert by["KSA_2025.zip"].url == "https://x/member/datazip/Ks/KSA_2025.zip"
+
+    zipb = _make_zip({"KSA260726.txt": _ksa_record()})
+    sess = _FakeSession(_KSA_INDEX, {"KSA260726.zip": zipb})
+    db = str(tmp_path / "t.db")
+    store = JrdbStore(db_path=db)
+    fetcher = JrdbFetcher(sess, base_url="https://x/member/datazip",
+                          cache_dir=str(tmp_path / "dl"), db_path=db, sleep=lambda: None)
+    r = fetcher.fetch_and_ingest("Ks", store=store, since_year=2026, kinds=("single",))
+    assert r["downloaded"] == 1
+    assert r["ingest"]["KSA"]["rows"] == 1
+    out = store.read("KSA")
+    assert len(out) == 1 and out.iloc[0]["kishu_code"] == "01234"
+
+
 def test_ledger_persists_across_instances(tmp_path):
     zipb = _make_zip({"TYB250712.txt": _tyb_record()})
     sess = _FakeSession(_INDEX, {"TYB_2025.zip": zipb})
