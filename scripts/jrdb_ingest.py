@@ -34,6 +34,9 @@ def _parse_args(argv):
     ap.add_argument("--db", default=None, help="SQLite パス（既定 LocalPaths.DB_PATH）")
     ap.add_argument("--force", action="store_true",
                     help="処理済みファイル台帳を無視して全ファイルを再取込（訂正の強制反映）")
+    ap.add_argument("--type", action="append", default=None, metavar="RT",
+                    help="この形式だけ取込（例 --type SED）。複数指定可。省略で全形式。"
+                         "レイアウト変更後に特定形式だけ --force 再パースする用途に便利")
     ap.add_argument("--allow-length-mismatch", action="store_true",
                     help="レコード長が仕様と乖離するファイル（フォーマット版差の疑い）も取り込む")
     return ap.parse_args(argv)
@@ -44,8 +47,17 @@ def main(argv=None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
     store = JrdbStore(db_path=args.db)
-    summary = store.ingest_dir(args.jrdb_dir, extract_to=args.extract_to, force=args.force,
-                               allow_length_mismatch=args.allow_length_mismatch)
+    if args.type:
+        # 特定形式だけ: 展開して by_type を絞ってから取込（全形式の再パースを避ける）
+        from src.jrdb._extract import extract_dir  # noqa: PLC0415
+        want = {t.upper() for t in args.type}
+        by_type = extract_dir(args.jrdb_dir, args.extract_to)
+        by_type = {k: v for k, v in by_type.items() if k in want}
+        summary = store.ingest_files(by_type, force=args.force,
+                                     allow_length_mismatch=args.allow_length_mismatch)
+    else:
+        summary = store.ingest_dir(args.jrdb_dir, extract_to=args.extract_to, force=args.force,
+                                   allow_length_mismatch=args.allow_length_mismatch)
 
     print("\n[JRDB 取込サマリ]（file=新規取込 / skip=台帳一致 / badlen=版差スキップ / rows=書込行数）")
     total_files = total_skip = total_bad = total_rows = 0
