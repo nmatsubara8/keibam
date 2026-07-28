@@ -32,6 +32,8 @@ def _time_str(v: object) -> Optional[str]:
         return None
     minutes = int(s[0])
     tenths = int(s[1:4])          # 0.1 秒単位（0〜999）
+    if minutes == 0 and tenths == 0:
+        return None               # 全ゼロ＝タイム無し（非完走。netkeiba は NaN）
     return f"{minutes}:{tenths / 10:04.1f}"
 
 

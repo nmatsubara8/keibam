@@ -51,6 +51,9 @@ def test_abnormal_and_blanks():
     r1 = out.iloc[1]
     assert r1["着順"] == "除"                # 異常区分2→除外マーカー
     assert pd.isna(r1["タイム"])             # 空タイム
+    # 非完走の time='0000' も None（netkeiba NaN に一致）
+    from src.jrdb._adapter import _time_str
+    assert _time_str("0000") is None and _time_str("1234") == "1:23.4"
     assert pd.isna(r1["通過"])               # 全コーナー0
     assert r1["馬体重"] == "500"             # 増減空→体重のみ
     assert pd.isna(r1["単勝"])               # 空オッズ
