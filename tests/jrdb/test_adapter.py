@@ -83,7 +83,7 @@ def test_raw_race_info_mapping():
         # 同一レースの2頭（レース条件は同じ→畳んで1行に）
         {"race_id": "201805020201", "umaban": "1", "ymd": "20180712", "hassou_time": "1005",
          "kyori": "1800", "shiba_dirt": "1", "migi_hidari": "2", "tenko_code": "1",
-         "baba_state": "10"},
+         "baba_state": "10", "shubetsu": "13", "joken": "A3"},
         {"race_id": "201805020201", "umaban": "2", "ymd": "20180712", "hassou_time": "1005",
          "kyori": "1800", "shiba_dirt": "1", "migi_hidari": "2", "tenko_code": "1",
          "baba_state": "10"},
@@ -103,6 +103,7 @@ def test_raw_race_info_mapping():
     assert r["around"] == "左"                # 2→左
     assert r["weather"] == "晴"               # 1→晴
     assert r["ground_state1"] == "良" and r["ground_state2"] == "良"  # 10→良
+    assert r["age"] == "3" and r["race_class"] == "未勝利"  # 種別13→3歳以上, 条件A3→未勝利
     r2 = ri.loc["201805020202"]
     assert r2["race_type"] == "ダート" and r2["weather"] == "曇" and r2["ground_state1"] == "重"
     # 馬場状態は十の位で going（21→稍重, 40→不良）

@@ -90,9 +90,17 @@ RACE_TYPE = {"1": "芝", "2": "ダート", "3": "障害"}
 AROUND = {"1": "右", "2": "左", "3": "直線"}   # 9(他)は未マップ→None
 # 天候コード（JRDBデータコード表・標準）。重複年で要検証。
 WEATHER = {"1": "晴", "2": "曇", "3": "小雨", "4": "雨", "5": "小雪", "6": "雪"}
-# 馬場状態コード → going。2018 実突合のクロス集計で確定: **十の位**が going
-# （1x:良 / 2x:稍重 / 3x:重 / 4x:不良。一の位は程度のサブレベル）。
+# 馬場状態コード → going。2018 実突合＋コード表で確定: **十の位**が going
+# （1x:良 / 2x:稍重 / 3x:重 / 4x:不良。一の位は 速/遅 のサブレベル）。
 GROUND_BY_TENS = {"1": "良", "2": "稍重", "3": "重", "4": "不良"}
+# 種別コード → 対象最低年齢（netkeiba age は数値。要 netkeiba 実値検証）。
+SHUBETSU_TO_AGE = {"11": "2", "12": "3", "13": "3", "14": "4"}
+# 条件コード → race_class（netkeiba 表記。2019 改称 500万下→1勝クラス。要検証）。
+JOKEN_TO_CLASS = {
+    "04": "1勝クラス", "05": "1勝クラス", "08": "2勝クラス", "09": "2勝クラス",
+    "10": "2勝クラス", "15": "3勝クラス", "16": "3勝クラス",
+    "A1": "新馬", "A2": "未勝利", "A3": "未勝利", "OP": "オープン",
+}
 
 
 def _col(d: pd.DataFrame, name: str) -> pd.Series:
@@ -149,6 +157,8 @@ def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     gs = _col(d, "baba_state").str[0].map(GROUND_BY_TENS)  # 十の位が going
     out["ground_state1"] = gs.to_numpy()
     out["ground_state2"] = gs.to_numpy()
+    out["age"] = _col(d, "shubetsu").map(SHUBETSU_TO_AGE).to_numpy()
+    out["race_class"] = _col(d, "joken").map(JOKEN_TO_CLASS).to_numpy()
     return out.set_index("race_id")
 
 
