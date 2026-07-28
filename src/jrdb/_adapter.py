@@ -82,6 +82,77 @@ def _xwalk_map(xw: Optional[pd.DataFrame], code_col: str, id_col: str) -> dict:
     return dict(zip(d[code_col].astype(str), d[id_col].astype(str), strict=False))
 
 
+# ── raw_race_info 用のコード→netkeiba 文字列マップ ──
+# 場コード(2桁)→競馬場名（中央01-10。netkeiba と同名）。
+PLACE_BY_CODE = {1: "札幌", 2: "函館", 3: "福島", 4: "新潟", 5: "東京",
+                 6: "中山", 7: "中京", 8: "京都", 9: "阪神", 10: "小倉"}
+RACE_TYPE = {"1": "芝", "2": "ダート", "3": "障害"}
+AROUND = {"1": "右", "2": "左", "3": "直線", "9": ""}
+# 天候コード（JRDBデータコード表・標準）。重複年で要検証。
+WEATHER = {"1": "晴", "2": "曇", "3": "小雨", "4": "雨", "5": "小雪", "6": "雪"}
+# 馬場状態コード → going。JRDB 標準の候補（芝10番台/ダ20番台、1桁版も）。重複年で要検証。
+GROUND_STATE = {"10": "良", "11": "稍重", "12": "重", "13": "不良",
+                "20": "良", "21": "稍重", "22": "重", "23": "不良",
+                "1": "良", "2": "稍重", "3": "重", "4": "不良", "0": "良"}
+
+
+def _col(d: pd.DataFrame, name: str) -> pd.Series:
+    """列があれば str 化 strip した Series、無ければ全 NA の Series。"""
+    if name in d.columns:
+        return d[name].astype(str).str.strip()
+    return pd.Series([pd.NA] * len(d), index=d.index, dtype=object)
+
+
+def _ymd_to_jp(v: object) -> Optional[str]:
+    """YYYYMMDD → 'YYYY年MM月DD日'（netkeiba date 形式）。"""
+    s = "" if v is None else str(v).strip()
+    if len(s) != 8 or not s.isdigit():
+        return None
+    return f"{s[0:4]}年{s[4:6]}月{s[6:8]}日"
+
+
+def _hhmm_colon(v: object) -> Optional[str]:
+    """HHMM → 'HH:MM'。空/不正は None。"""
+    s = "" if v is None else str(v).strip()
+    if len(s) < 4 or not s[:4].isdigit():
+        return None
+    return f"{s[0:2]}:{s[2:4]}"
+
+
+def _place_id(code2: str) -> Optional[str]:
+    return str(int(code2)) if code2.isdigit() else None
+
+
+def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
+    """JRDB SED（レース条件を含む）→ netkeiba raw_race_info 相当（index=race_id）。
+
+    SED は出走馬単位だが、レース条件はレース内で同一なので race_id で畳む。距離/芝ダ/
+    回り/馬場/天候/発走時刻＋場コードからレースメタを生成。code→文字列は標準 JRDB 対応
+    （重複年で要検証）。age/sex/race_class 等の条件系フラグは別途（コード表要）。
+    """
+    if sed is None or sed.empty:
+        return pd.DataFrame()
+    d = sed.drop_duplicates("race_id", keep="first").reset_index(drop=True)
+    rid = d["race_id"].astype(str)
+    code2 = rid.str[4:6]
+    out = pd.DataFrame(index=range(len(d)))
+    out["race_id"] = rid.to_numpy()
+    out["place_id"] = code2.map(_place_id).to_numpy()
+    out["place"] = code2.map(lambda c: PLACE_BY_CODE.get(int(c)) if c.isdigit() else None).to_numpy()
+    out["times"] = rid.str[6:8].map(lambda c: str(int(c)) if c.isdigit() else None).to_numpy()
+    out["days"] = rid.str[8:10].map(lambda c: str(int(c)) if c.isdigit() else None).to_numpy()
+    out["date"] = [_ymd_to_jp(v) for v in _col(d, "ymd")]
+    out["time"] = [_hhmm_colon(v) for v in _col(d, "hassou_time")]
+    out["course_len"] = pd.to_numeric(d.get("kyori"), errors="coerce").to_numpy()
+    out["race_type"] = _col(d, "shiba_dirt").map(RACE_TYPE).to_numpy()
+    out["around"] = _col(d, "migi_hidari").map(AROUND).to_numpy()
+    out["weather"] = _col(d, "tenko_code").map(WEATHER).to_numpy()
+    gs = _col(d, "baba_state").map(GROUND_STATE)
+    out["ground_state1"] = gs.to_numpy()
+    out["ground_state2"] = gs.to_numpy()
+    return out.set_index("race_id")
+
+
 def build_raw_results(
     sed: pd.DataFrame,
     *,

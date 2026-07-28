@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from src.jrdb._adapter import build_raw_results
+from src.jrdb._adapter import build_raw_race_info, build_raw_results
 
 
 def _sed_rows():
@@ -75,3 +75,33 @@ def test_crosswalk_ids_attached():
 
 def test_empty_input():
     assert build_raw_results(pd.DataFrame()).empty
+    assert build_raw_race_info(pd.DataFrame()).empty
+
+
+def test_raw_race_info_mapping():
+    sed = pd.DataFrame([
+        # 同一レースの2頭（レース条件は同じ→畳んで1行に）
+        {"race_id": "201805020201", "umaban": "1", "ymd": "20180712", "hassou_time": "1005",
+         "kyori": "1800", "shiba_dirt": "1", "migi_hidari": "2", "tenko_code": "1",
+         "baba_state": "10"},
+        {"race_id": "201805020201", "umaban": "2", "ymd": "20180712", "hassou_time": "1005",
+         "kyori": "1800", "shiba_dirt": "1", "migi_hidari": "2", "tenko_code": "1",
+         "baba_state": "10"},
+        {"race_id": "201805020202", "umaban": "1", "ymd": "20180712", "hassou_time": "1035",
+         "kyori": "1200", "shiba_dirt": "2", "migi_hidari": "1", "tenko_code": "2",
+         "baba_state": "12"},
+    ])
+    ri = build_raw_race_info(sed)
+    assert len(ri) == 2                       # レース単位に畳まれる
+    r = ri.loc["201805020201"]
+    assert r["place_id"] == "5" and r["place"] == "東京"   # 場05
+    assert r["times"] == "2" and r["days"] == "2"          # 回02 日02
+    assert r["date"] == "2018年07月12日"
+    assert r["time"] == "10:05"
+    assert r["course_len"] == 1800
+    assert r["race_type"] == "芝"
+    assert r["around"] == "左"                # 2→左
+    assert r["weather"] == "晴"               # 1→晴
+    assert r["ground_state1"] == "良" and r["ground_state2"] == "良"  # 10→良
+    r2 = ri.loc["201805020202"]
+    assert r2["race_type"] == "ダート" and r2["weather"] == "曇" and r2["ground_state1"] == "重"
