@@ -106,6 +106,19 @@ def live_netkeiba_base_for_race_id(race_id) -> str:
     return live_netkeiba_base(organizer_of_race_id(race_id))
 
 
+def central_index_mask(index):
+    """race_id の Index/Series に対し中央(JRA・場コード01-10)を True とする numpy bool 配列。
+
+    `--jra-only` で featured_data（index=race_id）を中央だけへ絞る用。float 由来の ".0"
+    は除去してから 5〜6 桁目（場コード）を判定する。桁不足は False（＝地方扱い）。
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    s = pd.Series(pd.Index(index).astype(str)).str.replace(r"\.0$", "", regex=True)
+    place = s.str[4:6]
+    return (place.isin(CENTRAL_PLACE_CODES) & (s.str.len() >= 6)).to_numpy()
+
+
 def race_type_to_slug(race_type_value) -> str | None:
     """race_type の正準値（"芝"/"ダート"/"障害"）を slug に変換する。
 

@@ -160,6 +160,18 @@ def _retrain(args: argparse.Namespace) -> None:
             logger.error("[retrain] --since-year 後の学習データが空です（年が新しすぎ/race_id 形式不一致）")
             return
 
+    # --jra-only: 中央（JRA・場コード01-10）だけで学習。地方(NAR)の netkeiba データが壊れている
+    # 場合に除外する（1レース数頭しか無いと race 文脈が無意味＝学習に有害）。
+    if getattr(args, "jra_only", False):
+        from src.constants._model_category import central_index_mask
+
+        before = len(featured_data)
+        featured_data = featured_data[central_index_mask(featured_data.index)]
+        logger.info("[retrain] --jra-only: 中央(JRA)のみ %d→%d 行", before, len(featured_data))
+        if featured_data.empty:
+            logger.error("[retrain] --jra-only 後の学習データが空です（race_id 形式不一致の可能性）")
+            return
+
     # --no-odds-features: オッズ由来の派生特徴（単勝_log・市場歪み overlay 等）を学習から
     # 除外する。マーケット・エコー検証（r̂ が市場の写しでないかの A/B）用。Place/Win 両ヘッドに
     # 適用される（この時点では DataFrame なので prepared_from_gbdt 変換の前に落とす）。
