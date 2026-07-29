@@ -1,5 +1,5 @@
 {
-  "_comment": "JRDB 会員エリア取得設定。scripts/jrdb_fetch.py が読む。認証は環境変数 JRDB_USER / JRDB_PASS（Basic 認証）。data_types の dir はデータ型別 index のサブディレクトリ名（例 /member/datazip/Tyb/index.html）。dir が未確認の型は enabled:false。kinds=year（年度パック=完了年）/ single（単体日次。年サブディレクトリ配下も自動解決）。year+single 併用時は『年度パックがある年の single は自動除外』され、パック未作成の当年 single だけ取る（重複DLなし・毎年自動追随）。since_year は学習ウィンドウ（標準 2015〜）。latest は single を新しい順 N 件（日次 cron 用: --latest 8 等）。KSA/CSA（騎手/調教師マスタ）は dir=Ks/Cs（index 実物で確認）。**マスタは PK=コード単位の keep-last のため、最新スナップショット1件のみ取得（kinds=single・latest=1）**。年度パック(KSA_YYYY.zip)も配布されるが、束ねられた各週スナップショットが同一コードを keep-last で上書きし合い順序依存で stale 化するため取得しない（毎週 latest=1 を積めば常に最新へ更新）。全roster を一括で欲しい場合は KZA/CZA=全件版（同レイアウト）を dir=Ks/Cs の該当ファイルで。時点別（過去走時点の騎手成績）を特徴量化したい場合はファイル日付を主キーに含める別設計が必要。KTA（登録馬）/KAB（開催=going・天候）は dir=Kta/Kab を第一候補に enabled:true（BAC=Bac に倣う）。dir が違えば dry-run で 0件になるので、その場合は実 index で確認して dir を修正。BAC は raw_race_info、KAB は going/天候の供給源。",
+  "_comment": "JRDB 会員エリア取得設定。scripts/jrdb_fetch.py が読む。認証は環境変数 JRDB_USER / JRDB_PASS（Basic 認証）。data_types の dir はデータ型別 index のサブディレクトリ名（例 /member/datazip/Tyb/index.html）。dir が未確認の型は enabled:false。kinds=year（年度パック=完了年）/ single（単体日次。年サブディレクトリ配下も自動解決）。year+single 併用時は『年度パックがある年の single は自動除外』され、パック未作成の当年 single だけ取る（重複DLなし・毎年自動追随）。since_year は学習ウィンドウ（標準 2015〜）。latest は single を新しい順 N 件（日次 cron 用: --latest 8 等）。KSA/CSA（騎手/調教師マスタ）は dir=Ks/Cs（index 実物で確認）。**マスタは PK=コード単位の keep-last のため、最新スナップショット1件のみ取得（kinds=single・latest=1）**。年度パック(KSA_YYYY.zip)も配布されるが、束ねられた各週スナップショットが同一コードを keep-last で上書きし合い順序依存で stale 化するため取得しない（毎週 latest=1 を積めば常に最新へ更新）。全roster を一括で欲しい場合は KZA/CZA=全件版（同レイアウト）を dir=Ks/Cs の該当ファイルで。時点別（過去走時点の騎手成績）を特徴量化したい場合はファイル日付を主キーに含める別設計が必要。BAC（番組=raw_race_info）dir=Bac・KAB（開催=going/天候）dir=Kab は dry-run で実在確認済み（各75件）。KTA（登録馬）は dir=Kta が index 0件＝単体zip配布なし（前日パック同梱のみ）と見られ enabled:false。BAC は raw_race_info、KAB は going/天候の供給源（開催キー→kaisai_id で race_id[:10] 突合）。",
   "base_url": "https://jrdb.com/member/datazip",
   "cache_dir": "data/jrdb_dl",
   "prefer": "zip",
@@ -15,7 +15,7 @@
     {"name": "UKC", "dir": "Ukc", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "KSA", "dir": "Ks", "kinds": ["single"], "since_year": 2015, "latest": 1, "enabled": true},
     {"name": "CSA", "dir": "Cs", "kinds": ["single"], "since_year": 2015, "latest": 1, "enabled": true},
-    {"name": "KTA", "dir": "Kta", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
+    {"name": "KTA", "dir": "Kta", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": false},
     {"name": "BAC", "dir": "Bac", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true},
     {"name": "KAB", "dir": "Kab", "kinds": ["year", "single"], "since_year": 2015, "latest": null, "enabled": true}
   ]
