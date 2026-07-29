@@ -55,12 +55,14 @@ def count_br(df, column):
 
 
 def convert_to_int(s):
-    """カンマ区切りの数字文字列を整数化する。"""
+    """カンマ区切りの数字文字列を整数化する。非数値（特払いの '特' 等）は 0（該当なし）。"""
     if isinstance(s, str):
         s = s.replace(",", "").strip()
         # スペース区切りで複数値が混入している場合は最初の値を使う
         if " " in s:
             s = s.split()[0]
+        # 特払い（レース不成立の払戻表記 '特' 等）は馬番でない → 0（どの馬番にも一致しない）
+        return int(s) if s.isdigit() else 0
     return int(s) if s else 0
 
 
@@ -73,8 +75,13 @@ def _str_to_int_list(s: str, sep: str) -> list:
     for p in parts:
         # トークン内にスペースが残る場合（"4 4" 等）はさらにスペースで分割
         for sub in p.split():
-            if sub:
-                result.append(int(sub))
+            if not sub:
+                continue
+            # 特払い（レース不成立）の '特' 等、非数値トークンを含む組合せは有効な馬番でない。
+            # 途中まで int 化すると壊れた部分組合せになるため、組合せ全体を「該当なし」＝[] とする。
+            if not sub.isdigit():
+                return []
+            result.append(int(sub))
     return result
 
 

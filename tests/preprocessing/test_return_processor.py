@@ -9,7 +9,6 @@ from __future__ import annotations
 import unittest.mock
 
 import pandas as pd
-import pytest
 
 from src.constants._bet_types import BetType
 from src.preprocessing._return_processor import (
@@ -96,6 +95,23 @@ def test_split_arrow_to_int_two_horses():
 
 def test_split_arrow_to_int_three_horses():
     assert split_arrow_to_int("5→2→8") == [5, 2, 8]
+
+
+def test_split_arrow_to_int_tokubarai_is_empty():
+    # 特払い（レース不成立）の '特' は馬番でない → 組合せ全体を該当なし([])にして落とさない
+    assert split_arrow_to_int("特") == []
+    assert split_arrow_to_int("1→特→3") == []
+
+
+def test_split_bar_to_int_tokubarai_is_empty():
+    assert split_bar_to_int("特") == []
+    assert split_bar_to_int("3 - 特") == []
+
+
+def test_convert_to_int_tokubarai_is_zero():
+    # 特払い等の非数値は 0（どの馬番にも一致しない＝該当なし）で落とさない
+    assert convert_to_int("特") == 0
+    assert convert_to_int("") == 0
 
 
 def test_count_br_zero_no_separator():
