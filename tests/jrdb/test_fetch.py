@@ -251,6 +251,8 @@ def test_cli_type_filter_multiple():
     assert {t["name"] for t in cli._select_types(cfg, ["ksa"])} == {"KSA"}
     # 未指定 → enabled な全型（disabled は除外）
     assert {t["name"] for t in cli._select_types(cfg, None)} == {"KSA", "CSA", "KYI"}
+    # --type 明示は enabled を上書き（disabled な UKC も単発取得できる）
+    assert {t["name"] for t in cli._select_types(cfg, ["UKC"])} == {"UKC"}
     # argparse: --type 反復で list になる
     args = cli._parse_args(["--config", "x.json", "--type", "KSA", "--type", "CSA"])
     assert args.type == ["KSA", "CSA"]

@@ -50,15 +50,16 @@ def _parse_args(argv):
 
 
 def _select_types(data_types, names):
-    """enabled な型のうち、names（--type の複数指定, 大小無視）に一致するものへ絞る。
+    """処理対象の型を選ぶ。
 
-    names が空/None なら enabled な全型。name 照合は大文字化して比較する。
+    - `--type` 指定あり（names）: **enabled を無視**して名前一致で選ぶ（明示指定が優先。
+      enabled:false の型を単発で取りたい時に config を編集せず済む）。大小無視。
+    - 指定なし: enabled な全型（既定運用）。
     """
-    types = [t for t in data_types if t.get("enabled", True)]
     if names:
         want = {str(x).upper() for x in names}
-        types = [t for t in types if str(t.get("name", "")).upper() in want]
-    return types
+        return [t for t in data_types if str(t.get("name", "")).upper() in want]
+    return [t for t in data_types if t.get("enabled", True)]
 
 
 def _build_session():
