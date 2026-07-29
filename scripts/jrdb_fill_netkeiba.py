@@ -89,12 +89,26 @@ def _load_existing(name):
 
 
 def _load_kyi(engine):
-    """raw_jrdb_kyi から 枠番・性齢 補完に必要な列だけ読む（テーブルが無ければ None）。"""
+    """raw_jrdb_kyi から 枠番・性齢 補完用の列を読む（無い列はスキップ・失敗時 None）。
+
+    以前は固定 SELECT が 1 列でも欠けると例外→握り潰しで無言スキップしていた
+    （sex_code 未取込の DB で 枠番まで補完されない事故）。存在する列だけを選び、
+    race_id/umaban/wakuban が揃えば 枠番を補完する。sex_code が無ければ 性齢だけスキップ。
+    """
     try:
-        return pd.read_sql(text("SELECT race_id, umaban, wakuban, sex_code FROM raw_jrdb_kyi"),
-                           engine)
-    except Exception:  # noqa: BLE001 — 未取込なら補完なしで続行
+        have = pd.read_sql(text("SELECT * FROM raw_jrdb_kyi LIMIT 0"), engine).columns.tolist()
+    except Exception as e:  # noqa: BLE001 — 未取込なら補完なしで続行
+        print(f"[fill] raw_jrdb_kyi を読めません（{e}）→ 枠番/性齢は欠損のまま", file=sys.stderr)
         return None
+    cols = [c for c in ("race_id", "umaban", "wakuban", "sex_code") if c in have]
+    if not {"race_id", "umaban", "wakuban"} <= set(cols):
+        print(f"[fill] raw_jrdb_kyi に必要列が不足（有: {cols}）→ 枠番/性齢は欠損のまま",
+              file=sys.stderr)
+        return None
+    if "sex_code" not in cols:
+        print("[fill] ⚠ raw_jrdb_kyi に sex_code 列が無く 性齢 は補完できません（枠番のみ補完）。"
+              "KYI を再取込すると sex_code が入ります。", file=sys.stderr)
+    return pd.read_sql(text(f"SELECT {','.join(cols)} FROM raw_jrdb_kyi"), engine)
 
 
 def _existing_race_ids(df):
