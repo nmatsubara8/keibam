@@ -6,9 +6,11 @@ import pandas as pd
 from src.jrdb._fill import (
     FILL_RACE_INFO_KEEP,
     build_fill_tables,
+    drop_race_ids,
     filter_years,
     new_by_race_id,
     new_horse_results,
+    race_ids_of,
     to_raw_shape,
 )
 
@@ -44,6 +46,29 @@ def test_filter_years_and_new_by_race_id():
     # 既存に 2022 の race_id があれば除外される
     n = new_by_race_id(y, existing_race_ids=["202205020201"])
     assert "202205020201" not in set(n.index) and "202105020202" in set(n.index)
+
+
+def test_race_ids_of_index_or_column():
+    # index=race_id
+    a = pd.DataFrame({"x": [1, 2]}, index=pd.Index(["R1", "R2"], name="race_id"))
+    assert race_ids_of(a).tolist() == ["R1", "R2"]
+    # race_id 列（RangeIndex）
+    b = pd.DataFrame({"race_id": ["R3", "R4"], "x": [1, 2]})
+    assert race_ids_of(b).tolist() == ["R3", "R4"]
+    # どちらも無ければ空
+    assert race_ids_of(pd.DataFrame({"x": [1]})).empty
+
+
+def test_drop_race_ids_removes_targets_protects_others():
+    # overwrite の前段: 対象 race_id を消し、対象外（NAR 相当 R_NAR）は残す。
+    ex = pd.DataFrame({"race_id": ["JRA1", "JRA1", "JRA2", "R_NAR"], "馬番": [1, 2, 1, 1]})
+    kept = drop_race_ids(ex, {"JRA1", "JRA2"})
+    assert kept["race_id"].tolist() == ["R_NAR"]          # NAR は保護
+    # 空集合なら無改変
+    assert len(drop_race_ids(ex, set())) == len(ex)
+    # index=race_id 構造でも動く
+    exi = pd.DataFrame({"馬番": [1, 1]}, index=pd.Index(["JRA1", "R_NAR"], name="race_id"))
+    assert drop_race_ids(exi, {"JRA1"}).index.tolist() == ["R_NAR"]
 
 
 def test_new_horse_results_dedup_by_key():

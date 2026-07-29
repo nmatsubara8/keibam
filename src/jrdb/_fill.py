@@ -67,6 +67,32 @@ def new_by_race_id(df: pd.DataFrame, existing_race_ids: Iterable) -> pd.DataFram
     return df[~df.index.astype(str).isin(ex)]
 
 
+def race_ids_of(df: pd.DataFrame) -> pd.Series:
+    """race_id を index / 列どちらに持っていても Series で返す（空なら空 Series）。"""
+    if df is None or len(df) == 0:
+        return pd.Series([], dtype=str)
+    if df.index.name == "race_id":
+        return df.index.to_series().astype(str)
+    if "race_id" in df.columns:
+        return df["race_id"].astype(str)
+    return pd.Series([], dtype=str)
+
+
+def drop_race_ids(existing: pd.DataFrame, race_ids: Iterable) -> pd.DataFrame:
+    """existing から指定 race_id 群の行を除去する（overwrite の前段）。
+
+    JRDB が持つ JRA race_id だけを消して JRDB 行で差し替えるため。JRDB に無い race_id
+    （NAR や JRDB 未収録レース）は race_ids に含まれないので保持される＝NAR 保護。
+    """
+    if existing is None or len(existing) == 0:
+        return existing
+    ids = {str(x) for x in race_ids}
+    if not ids:
+        return existing
+    keep = ~race_ids_of(existing).isin(ids).to_numpy()
+    return existing[keep]
+
+
 def to_raw_shape(df: pd.DataFrame) -> pd.DataFrame:
     """名前付き index（race_id 等）を列へ戻す。
 
