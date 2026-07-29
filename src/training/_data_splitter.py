@@ -101,27 +101,38 @@ class DataSplitter:
 
     @classmethod
     def __coerce_object_features(cls, df):
-        """object dtype の特徴量列を数値へ強制変換する（予測側 _coerce_for_predict と対称）。
+        """非数値・nullable 拡張dtype の特徴量列を数値へ強制変換する（予測側 _coerce_for_predict と対称）。
 
         featured_data は全特徴量が数値であることを前提に LightGBM へ ``.values`` で渡す。
-        脚質集計の best_class_won 等、race_class_level が None を返し object dtype に
-        なった列が混じると "pandas dtypes must be int, float or bool" で学習が落ちる。
-        非特徴量（date/horse_id）を除く object 列を to_numeric（非数値→NaN）で数値化する。
-        featured 再ビルド不要で既存 parquet をそのまま学習可能にするセーフティネット。
+        (1) 脚質集計の best_class_won 等が None を返し object dtype になった列、
+        (2) JRDB 由来の欠損（fill/overwrite が pd.NA で埋めた条件フラグ等）が pandas の
+            nullable 拡張dtype（Int64/Float64/boolean）で残った列——が混じると、前者は
+            "pandas dtypes must be int, float or bool"、後者は
+            "float() argument must be ... not 'NAType'" で学習が落ちる。
+        非特徴量（date/horse_id）と category（LightGBM がネイティブに扱う）を除き、object /
+        文字列 / nullable 拡張dtype の列を to_numeric（非数値→NaN）→float32 に統一する。
+        欠損は np.nan（pd.NA ではなく）へ寄せる。featured 再ビルド不要のセーフティネット。
         """
-        # object / 文字列 dtype のみ対象（category は LightGBM がネイティブに扱うため触らない）。
         # pandas 3 の select_dtypes(["object"]) は str も巻き込み警告を出すので dtype を直接判定。
-        obj_cols = [
-            c for c in df.columns
-            if c not in cls.__PROTECTED_NON_NUMERIC
-            and (df[c].dtype == object or pd.api.types.is_string_dtype(df[c]))
-        ]
+        # category は拡張dtype だが LightGBM がネイティブに扱うため除外する（先に判定）。
+        def _needs_coerce(c):
+            if c in cls.__PROTECTED_NON_NUMERIC:
+                return False
+            dt = df[c].dtype
+            if isinstance(dt, pd.CategoricalDtype):
+                return False
+            return (pd.api.types.is_object_dtype(df[c])
+                    or pd.api.types.is_string_dtype(df[c])
+                    or pd.api.types.is_extension_array_dtype(dt))
+
+        obj_cols = [c for c in df.columns if _needs_coerce(c)]
         if not obj_cols:
             return df
         df = df.copy()
         for c in obj_cols:
             df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32")
-        logger.info("coerced %d object feature column(s) to numeric: %s", len(obj_cols), obj_cols)
+        logger.info("coerced %d non-numeric/nullable feature column(s) to float32: %s",
+                    len(obj_cols), obj_cols)
         return df
 
     @staticmethod
