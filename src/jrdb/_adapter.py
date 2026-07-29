@@ -79,6 +79,51 @@ def _chakujun_str(chaku: object, ijo: object) -> Optional[str]:
     return str(int(n)) if pd.notna(n) and n > 0 else None
 
 
+# 性別コード（KYI/UKC sex_code）→ netkeiba 性齢の先頭文字。
+_SEX_BY_CODE = {"1": "牡", "2": "牝", "3": "セ"}
+
+
+def _seirei(sex_code: object, race_id: object, horse_id: object) -> Optional[str]:
+    """性別コード + (race_id, horse_id) → netkeiba 性齢 '牡3'。
+
+    馬齢は数え歳＝レース年 − 生年。生年は horse_id 先頭4桁（= ketto_to_horse_id が
+    血統登録番号から復元した生年）。性別/年齢が取れなければ None。
+    """
+    sei = _SEX_BY_CODE.get(str(sex_code).strip()) if sex_code is not None else None
+    if sei is None or horse_id is None:
+        return None
+    try:
+        age = int(str(race_id)[:4]) - int(str(horse_id)[:4])
+    except (ValueError, TypeError):
+        return None
+    return f"{sei}{age}" if 1 <= age <= 30 else None
+
+
+def _kyi_waku_sex(kyi: Optional[pd.DataFrame]) -> tuple[dict, dict]:
+    """KYI（出馬表・race_id×馬番）→ {(race_id,馬番): 枠番}, {(race_id,馬番): 性別コード}。
+
+    SED に無い 枠番・性別を (race_id, 馬番) で結合するためのルックアップ。馬番は int で正準化。
+    """
+    if kyi is None or kyi.empty or "umaban" not in kyi.columns or "race_id" not in kyi.columns:
+        return {}, {}
+    rid = kyi["race_id"].astype(str)
+    um = pd.to_numeric(kyi["umaban"], errors="coerce")
+    waku = pd.to_numeric(kyi["wakuban"], errors="coerce") if "wakuban" in kyi.columns else None
+    sexc = kyi["sex_code"].astype(str).str.strip() if "sex_code" in kyi.columns else None
+    waku_map: dict = {}
+    sex_map: dict = {}
+    for i in range(len(kyi)):
+        u = um.iat[i]
+        if pd.isna(u):
+            continue
+        key = (rid.iat[i], int(u))
+        if waku is not None and pd.notna(waku.iat[i]) and waku.iat[i] > 0:
+            waku_map[key] = int(waku.iat[i])
+        if sexc is not None:
+            sex_map[key] = sexc.iat[i]
+    return waku_map, sex_map
+
+
 def _xwalk_map(xw: Optional[pd.DataFrame], code_col: str, id_col: str) -> dict:
     """crosswalk DataFrame → {jrdb_code: netkeiba_id} 辞書。None/空なら空辞書。"""
     if xw is None or xw.empty or code_col not in xw.columns or id_col not in xw.columns:
@@ -255,13 +300,15 @@ def build_raw_results(
     *,
     jockey_xwalk: Optional[pd.DataFrame] = None,
     trainer_xwalk: Optional[pd.DataFrame] = None,
+    kyi: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """JRDB SED → netkeiba raw_results 相当の DataFrame（index=race_id）。
 
     SED から構造的に埋まる列を生成。**horse_id は ketto_to_horse_id（canonical id・
     horse_results と直近スクレイプ年に一致）**。jockey_id/trainer_id は crosswalk で付与
-    （式が無いため）。SED に無い列（枠番/性齢/馬主/ﾀｲﾑ指数/着差[マージン]/調教ﾀｲﾑ/厩舎ｺﾒﾝﾄ）
-    は欠損のまま（後段で KYI 枠番・UKC 性別/馬主 を結合して補う）。
+    （式が無いため）。**kyi を渡すと 枠番・性齢 を KYI（出馬表・race_id×馬番）から補う**
+    （枠番=KYI.wakuban、性齢=KYI.sex_code + 数え歳[レース年−生年]）。kyi 無しなら従来どおり欠損。
+    残る SED/KYI に無い列（馬主/ﾀｲﾑ指数/着差[マージン]/調教ﾀｲﾑ/厩舎ｺﾒﾝﾄ）は欠損のまま。
     """
     if sed is None or sed.empty:
         return pd.DataFrame()
@@ -291,8 +338,21 @@ def build_raw_results(
     out["horse_id"] = _col(d, "ketto").map(ketto_to_horse_id).to_numpy()
     out["jockey_id"] = _col(d, "kishu_code").map(lambda k: jz.get(k)).to_numpy()
     out["trainer_id"] = _col(d, "chokyo_code").map(lambda k: tz.get(k)).to_numpy()
-    # SED に無い列は欠損で確保（featured 側の列存在前提を壊さない）
-    for c in ("枠番", "性齢", "着差", "ﾀｲﾑ指数", "調教ﾀｲﾑ", "厩舎ｺﾒﾝﾄ", "馬主", "owner_id"):
+    # 枠番・性齢は KYI（出馬表）から (race_id,馬番) で補う。KYI 無しなら欠損（従来挙動）。
+    waku_map, sex_map = _kyi_waku_sex(kyi)
+    if waku_map or sex_map:
+        rid_s = out["race_id"].astype(str)
+        um_i = pd.to_numeric(out["馬番"], errors="coerce")
+        keys = [(r, int(u)) if pd.notna(u) else None
+                for r, u in zip(rid_s, um_i, strict=False)]
+        out["枠番"] = [waku_map.get(k) if k else None for k in keys]
+        out["性齢"] = [_seirei(sex_map.get(k), r, h) if k else None
+                     for k, r, h in zip(keys, rid_s, out["horse_id"], strict=False)]
+    else:
+        out["枠番"] = np.nan
+        out["性齢"] = np.nan
+    # 残る SED/KYI に無い列は欠損で確保（featured 側の列存在前提を壊さない）
+    for c in ("着差", "ﾀｲﾑ指数", "調教ﾀｲﾑ", "厩舎ｺﾒﾝﾄ", "馬主", "owner_id"):
         out[c] = np.nan
     out = out.set_index("race_id")
     return out

@@ -32,13 +32,16 @@ def build_fill_tables(
     *,
     jockey_xwalk: Optional[pd.DataFrame] = None,
     trainer_xwalk: Optional[pd.DataFrame] = None,
+    kyi: Optional[pd.DataFrame] = None,
     minimal_race_info: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """SED から results / race_info / horse_results の fill 用 DataFrame を作る。
 
+    kyi を渡すと results の 枠番・性齢 を KYI から補う（`build_raw_results` 参照）。
     minimal_race_info=True で fill 方針を適用（FILL_RACE_INFO_KEEP 以外を NaN 化）。
     """
-    results = build_raw_results(sed, jockey_xwalk=jockey_xwalk, trainer_xwalk=trainer_xwalk)
+    results = build_raw_results(sed, jockey_xwalk=jockey_xwalk, trainer_xwalk=trainer_xwalk,
+                               kyi=kyi)
     race_info = build_raw_race_info(sed)
     if minimal_race_info and not race_info.empty:
         for c in [c for c in race_info.columns if c not in FILL_RACE_INFO_KEEP]:

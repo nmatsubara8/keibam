@@ -50,6 +50,32 @@ def test_structural_mapping():
     assert "枠番" in out.columns and pd.isna(r0["枠番"])
 
 
+def test_kyi_join_populates_waku_and_seirei():
+    # KYI（出馬表）を渡すと 枠番/性齢 が (race_id,馬番) で補われる。
+    # 性齢: 数え歳 = レース年(2021) − 生年(ketto 18…→2018) = 3。sex 1=牡 / 2=牝。
+    kyi = pd.DataFrame([
+        {"race_id": "202102010101", "umaban": "1", "wakuban": "1", "sex_code": "1"},
+        {"race_id": "202102010101", "umaban": "2", "wakuban": "2", "sex_code": "2"},
+    ])
+    out = build_raw_results(_sed_rows(), kyi=kyi)
+    assert out.iloc[0]["枠番"] == 1 and out.iloc[0]["性齢"] == "牡3"
+    assert out.iloc[1]["枠番"] == 2 and out.iloc[1]["性齢"] == "牝3"
+
+
+def test_kyi_absent_leaves_waku_seirei_nan():
+    out = build_raw_results(_sed_rows())            # kyi 無し＝従来挙動
+    assert pd.isna(out.iloc[0]["枠番"]) and pd.isna(out.iloc[0]["性齢"])
+
+
+def test_kyi_partial_match_only_fills_present_keys():
+    # KYI に無い (race_id,馬番) は欠損のまま（部分一致でも壊れない）。
+    kyi = pd.DataFrame([{"race_id": "202102010101", "umaban": "1",
+                         "wakuban": "3", "sex_code": "1"}])
+    out = build_raw_results(_sed_rows(), kyi=kyi)
+    assert out.iloc[0]["枠番"] == 3
+    assert pd.isna(out.iloc[1]["枠番"]) and pd.isna(out.iloc[1]["性齢"])
+
+
 def test_abnormal_and_blanks():
     out = build_raw_results(_sed_rows())
     r1 = out.iloc[1]

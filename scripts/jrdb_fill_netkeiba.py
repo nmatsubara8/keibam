@@ -88,6 +88,15 @@ def _load_existing(name):
     return pd.read_pickle(p)
 
 
+def _load_kyi(engine):
+    """raw_jrdb_kyi から 枠番・性齢 補完に必要な列だけ読む（テーブルが無ければ None）。"""
+    try:
+        return pd.read_sql(text("SELECT race_id, umaban, wakuban, sex_code FROM raw_jrdb_kyi"),
+                           engine)
+    except Exception:  # noqa: BLE001 — 未取込なら補完なしで続行
+        return None
+
+
 def _existing_race_ids(df):
     if df is None:
         return set()
@@ -115,8 +124,12 @@ def main(argv=None) -> int:
     print(f"[fill] 対象年 {years}（{'APPLY' if args.apply else 'DRY-RUN'}）")
     sed = pd.read_sql(text("SELECT * FROM raw_jrdb_sed"), engine)
     print(f"[fill] raw_jrdb_sed 読込 {len(sed):,} 行")
+    # KYI（出馬表）から 枠番・性別 を補う（race_id×馬番）。無くても動く（枠番/性齢は欠損のまま）。
+    kyi = _load_kyi(engine)
+    if kyi is not None:
+        print(f"[fill] raw_jrdb_kyi 読込 {len(kyi):,} 行（枠番・性齢の補完に使用）")
     built = build_fill_tables(sed, jockey_xwalk=read_crosswalk("jockey", db_path=args.db),
-                              trainer_xwalk=read_crosswalk("trainer", db_path=args.db))
+                              trainer_xwalk=read_crosswalk("trainer", db_path=args.db), kyi=kyi)
 
     existing = {n: _load_existing(n) for n in _PATHS}
     ex_hr_keys = _existing_hr_keys(existing["horse_results"])
