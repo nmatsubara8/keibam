@@ -100,14 +100,21 @@ def _load_kyi(engine):
     except Exception as e:  # noqa: BLE001 — 未取込なら補完なしで続行
         print(f"[fill] raw_jrdb_kyi を読めません（{e}）→ 枠番/性齢は欠損のまま", file=sys.stderr)
         return None
-    cols = [c for c in ("race_id", "umaban", "wakuban", "sex_code") if c in have]
-    if not {"race_id", "umaban", "wakuban"} <= set(cols):
-        print(f"[fill] raw_jrdb_kyi に必要列が不足（有: {cols}）→ 枠番/性齢は欠損のまま",
-              file=sys.stderr)
+    want = ("race_id", "umaban", "wakuban", "sex_code",
+            "idm", "kijun_odds", "kyakushitsu", "joho_idx", "kishu_idx")
+    cols = [c for c in want if c in have]
+    if not {"race_id", "umaban"} <= set(cols):
+        print(f"[fill] raw_jrdb_kyi に race_id/umaban が無く補完不可（有: {cols}）", file=sys.stderr)
         return None
+    if "wakuban" not in cols:
+        print("[fill] ⚠ raw_jrdb_kyi に wakuban が無く 枠番 は補完できません。", file=sys.stderr)
     if "sex_code" not in cols:
-        print("[fill] ⚠ raw_jrdb_kyi に sex_code 列が無く 性齢 は補完できません（枠番のみ補完）。"
-              "KYI を再取込すると sex_code が入ります。", file=sys.stderr)
+        print("[fill] ⚠ raw_jrdb_kyi に sex_code 列が無く 性齢 は補完できません。"
+              "KYI を再取込すると入ります。", file=sys.stderr)
+    missing_idx = [c for c in ("idm", "kijun_odds", "kyakushitsu") if c not in cols]
+    if missing_idx:
+        print(f"[fill] ⚠ raw_jrdb_kyi に JRDB 指数列が不足: {missing_idx}"
+              "（KYI 再取込で入ります）", file=sys.stderr)
     return pd.read_sql(text(f"SELECT {','.join(cols)} FROM raw_jrdb_kyi"), engine)
 
 

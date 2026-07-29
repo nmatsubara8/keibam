@@ -62,9 +62,34 @@ def test_kyi_join_populates_waku_and_seirei():
     assert out.iloc[1]["枠番"] == 2 and out.iloc[1]["性齢"] == "牝3"
 
 
+def test_kyi_join_populates_jrdb_indices():
+    # KYI の IDM/基準オッズ/脚質/情報/騎手指数 が jrdb_ 列として付与される。
+    kyi = pd.DataFrame([
+        {"race_id": "202102010101", "umaban": "1", "wakuban": "1", "sex_code": "1",
+         "idm": " 55.5", "kijun_odds": "  3.2", "kyakushitsu": "2",
+         "joho_idx": " 48.0", "kishu_idx": " 50.1"},
+    ])
+    out = build_raw_results(_sed_rows(), kyi=kyi)
+    r0 = out.iloc[0]
+    assert r0["jrdb_idm"] == 55.5 and r0["jrdb_kijun_odds"] == 3.2
+    assert r0["jrdb_kyakushitsu"] == 2 and r0["jrdb_joho_idx"] == 48.0
+    # KYI に無い 2番は指数も欠損
+    assert pd.isna(out.iloc[1]["jrdb_idm"])
+
+
 def test_kyi_absent_leaves_waku_seirei_nan():
     out = build_raw_results(_sed_rows())            # kyi 無し＝従来挙動
     assert pd.isna(out.iloc[0]["枠番"]) and pd.isna(out.iloc[0]["性齢"])
+    assert pd.isna(out.iloc[0]["jrdb_idm"])         # 指数列も欠損で存在
+
+
+def test_kyi_indices_absent_columns_are_nan():
+    # KYI に指数列が無くても（枠番/性齢のみ）落ちず、指数列は欠損で確保。
+    kyi = pd.DataFrame([{"race_id": "202102010101", "umaban": "1",
+                         "wakuban": "1", "sex_code": "1"}])
+    out = build_raw_results(_sed_rows(), kyi=kyi)
+    assert out.iloc[0]["枠番"] == 1
+    assert "jrdb_idm" in out.columns and pd.isna(out.iloc[0]["jrdb_idm"])
 
 
 def test_kyi_partial_match_only_fills_present_keys():

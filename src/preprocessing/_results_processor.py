@@ -114,6 +114,10 @@ class ResultsProcessor(AbstractDataProcessor):
         # 旧スクレイプ data に無い場合もあるため、存在するときだけ保持する（欠落で KeyError しない）。
         if "通過" in df.columns:
             cols.append("通過")
+        # JRDB 独自・市場直交指数（KYI 由来。IDM/基準オッズ/脚質/情報/騎手指数）。overwrite で
+        # results に付与された場合のみ保持し featured へ通す（無ければスキップ＝後方互換）。
+        cols += [c for c in ("jrdb_idm", "jrdb_kijun_odds", "jrdb_kyakushitsu",
+                             "jrdb_joho_idx", "jrdb_kishu_idx") if c in df.columns]
         df = df[cols]
         df.set_index("race_id", inplace=True)
         return df
