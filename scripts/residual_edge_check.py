@@ -66,11 +66,13 @@ def _load_kyi_orth(engine) -> pd.DataFrame:
         print(f"[resid] raw_jrdb_kyi に無い候補列（除外）: {miss}", file=sys.stderr)
     sel = ["race_id", "umaban", *have]
     df = pd.read_sql(text(f"SELECT {', '.join(sel)} FROM raw_jrdb_kyi"), engine)
-    df["race_id"] = df["race_id"].astype(str).str.split(".").str[0]
-    df["umaban"] = pd.to_numeric(df["umaban"], errors="coerce")
+    df["rid"] = df["race_id"].astype(str).str.split(".").str[0]
+    df["uma"] = pd.to_numeric(df["umaban"], errors="coerce")
     for c in have:
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    return df.dropna(subset=["umaban"]), have
+    df = df.dropna(subset=["uma"]).copy()
+    df["uma"] = df["uma"].astype(int)
+    return df[["rid", "uma", *have]], have
 
 
 def main(argv=None) -> int:
