@@ -50,6 +50,25 @@ def test_valid_pair_filters_zero_and_invalid():
     assert h._valid_pair("0505") is None      # 同一馬（無効）
 
 
+def test_pair_id_unique_and_blend_race():
+    assert h._pair_id(1, 2) == 102 and h._pair_id(3, 12) == 312
+    p_harv = {(1, 2): 0.5, (1, 3): 0.3, (2, 3): 0.2}
+    p_mkt = {(1, 2): 0.6, (1, 3): 0.25, (2, 3): 0.15}
+    br = h.blend_race_from_probs(p_harv, p_mkt, (1, 2))
+    assert br is not None
+    hf, mf, win = br
+    assert win == 102
+    assert abs(sum(hf.values()) - 1.0) < 1e-9 and abs(sum(mf.values()) - 1.0) < 1e-9
+    # 勝ちペアが市場に無ければ None
+    assert h.blend_race_from_probs(p_harv, {(1, 3): 1.0}, (1, 2)) is None
+
+
+def test_oz_period_from_filename():
+    assert h._oz_period("data/x/OZ230105.txt") == "H1"   # 01月
+    assert h._oz_period("data/x/OZ230815.txt") == "H2"   # 08月
+    assert h._oz_period("OZ231231.txt") == "H2"
+
+
 def test_logloss_and_argmax():
     pp = {(1, 2): 0.6, (1, 3): 0.3, (2, 3): 0.1}
     assert h._argmax_pair(pp) == (1, 2)

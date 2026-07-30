@@ -31,6 +31,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.jrdb._odds import normalize_combo, parse_odds  # noqa: E402
+from src.policies._blend import blend_diagnostic, fit_blend  # noqa: E402
 from src.policies._harville import prob_quinella  # noqa: E402
 from src.storage._db import get_engine  # noqa: E402
 
@@ -67,6 +68,36 @@ def harville_pair_probs(win_probs: dict[int, float]) -> dict[tuple[int, int], fl
             out[(i, j)] = prob_quinella(win_probs, i, j)
     s = sum(out.values())
     return {k: v / s for k, v in out.items()} if s > 0 else out
+
+
+def _pair_id(i: int, j: int) -> int:
+    """(i,j) ペア → 一意 int（blend の int キー用）。"""
+    return i * 100 + j
+
+
+def blend_race_from_probs(p_harv: dict, p_mkt: dict, win_pair: tuple[int, int]):
+    """(p_fund=単勝Harville, p_public=馬連市場, winner) の BlendRace（共通ペアで再正規化）を作る。
+
+    combining ΔR² 用。市場が値付けした組合せ（＝賭けられる母集団）に揃え、pair を id 化する。
+    勝ちペアが共通集合に無い/2ペア未満は None。
+    """
+    common = [k for k in p_harv if k in p_mkt]
+    if win_pair not in p_harv or win_pair not in p_mkt or len(common) < 2:
+        return None
+    sh = sum(p_harv[k] for k in common)
+    sm = sum(p_mkt[k] for k in common)
+    if sh <= 0 or sm <= 0:
+        return None
+    hf = {_pair_id(*k): p_harv[k] / sh for k in common}
+    mf = {_pair_id(*k): p_mkt[k] / sm for k in common}
+    return (hf, mf, _pair_id(*win_pair))
+
+
+def _oz_period(fp: str) -> str:
+    """OZ{YYMMDD}.txt のファイル名から半期 'H1'(1-6月)/'H2'(7-12月) を返す（期間OOS用）。"""
+    name = Path(fp).stem.upper().replace("OZ", "")
+    mm = name[2:4] if len(name) >= 4 and name[:6].isdigit() else ""
+    return "H1" if (mm.isdigit() and int(mm) <= 6) else "H2"
 
 
 def _logloss(pair_probs: dict[tuple[int, int], float], win_pair: tuple[int, int]) -> float:
@@ -140,12 +171,14 @@ def main(argv=None) -> int:
     n = 0
     ll_harv = ll_mkt = ll_unif = 0.0
     hit_harv = hit_mkt = 0
+    blend_races: list[tuple[str, tuple]] = []   # (period, BlendRace) for combining ΔR²
     for fp in files:
         long_df = parse_odds(fp, "OZ")
         if long_df.empty:
             continue
         if args.since_year:
             long_df = long_df[long_df["race_id"].str[:4].astype(int) >= args.since_year]
+        period = _oz_period(fp)
         for rid, (tan, um) in _race_odds_from_oz(long_df).items():
             win_pair = winners.get(rid)
             if win_pair is None or not tan or not um:
@@ -161,6 +194,9 @@ def main(argv=None) -> int:
             ll_unif += math.log(len(p_mkt))
             hit_harv += int(_argmax_pair(p_harv) == win_pair)
             hit_mkt += int(_argmax_pair(p_mkt) == win_pair)
+            br = blend_race_from_probs(p_harv, p_mkt, win_pair)
+            if br is not None:
+                blend_races.append((period, br))
             if args.max_races and n >= args.max_races:
                 break
         if args.max_races and n >= args.max_races:
@@ -177,9 +213,35 @@ def main(argv=None) -> int:
     print(f"  Δ(Harville − Market) = {d:+.4f}  "
           f"（+なら市場が上＝相関情報を価格化／≈0なら馬連は単勝の写し）")
     print(f"  argmax 的中率  Harville = {hit_harv / n:.2%} / Market = {hit_mkt / n:.2%}")
-    print("\n[testA] 読み: Δ が有意に正 → joint(相関)構造が実在し市場が価格化＝連系エッジを追う"
-          "価値あり（次は p_mkt−p_harv を JRDB 展開/脚質で予測できるか＝Test B）。"
-          "Δ≈0 → 馬連も単勝の写しで連系路線も終了。")
+
+    # ── combining ΔR²（本命）: 単勝Harville×馬連市場 の合成が、賭ける相手=馬連市場を超えるか ──
+    print("\n[testA'] combining ΔR²（単勝Harville を馬連市場に足すと ΔR²>0 か＝賭ける価値）")
+    all_r = [b for _, b in blend_races]
+    if len(all_r) < 200:
+        print("  合成レースが少なく測定不能（OZ を増やしてください）。")
+        return 0
+    w = fit_blend(all_r)
+    din = blend_diagnostic(all_r, w)
+    print(f"  in-sample: R²(馬連市場)={din['r2_public']:.4f} R²(合成)={din['r2_combined']:.4f} "
+          f"ΔR²={din['delta_r2']:+.4f} (α={w.alpha:.2f}β={w.beta:.2f}, n={din['n']:,})")
+    h1 = [b for p, b in blend_races if p == "H1"]
+    h2 = [b for p, b in blend_races if p == "H2"]
+    if len(h1) >= 200 and len(h2) >= 200:
+        d12 = blend_diagnostic(h2, fit_blend(h1))["delta_r2"]   # H1 で fit → H2 で評価
+        d21 = blend_diagnostic(h1, fit_blend(h2))["delta_r2"]   # 逆
+        print(f"  OOS(期間): H1→H2 ΔR²={d12:+.4f} / H2→H1 ΔR²={d21:+.4f}"
+              f"（両方向+で初めて本物・過学習でない）")
+        oos_ok = d12 > 0 and d21 > 0
+    else:
+        print("  OOS: H1/H2 いずれか薄く期間分割不可（OZ の期間を広げてください）。")
+        oos_ok = False
+    print("\n[testA'] 読み: **ΔR²(合成−馬連市場) が OOS 両方向で有意に正** なら、単勝Harville に"
+          " 馬連市場が織り込めていない情報があり連系で賭ける価値。ただし magnitude が控除"
+          "（馬連~22.5%）を超えるかは別途 EV で要確認。")
+    if oos_ok:
+        print("  → OOS 両方向+。**唯一の生存候補**。magnitude と EV（前売りで賭け→最終払戻）を次に検証。")
+    else:
+        print("  → OOS で消失 or 測定不能。連系の合成にも独立エッジ無し。")
     return 0
 
 
