@@ -120,6 +120,8 @@ def main(argv=None) -> int:
                     help="LightGBM残差モデル＋脚質(kyakushitsu)で交互作用(出遅れ×脚質等)を拾う")
     ap.add_argument("--placebo", action="store_true",
                     help="直交特徴をレース内シャッフルしテール過学習/リークを排除")
+    ap.add_argument("--pace", action="store_true",
+                    help="脚質構成の相互作用特徴(nige_count等×自馬pace_median)を追加＝ABM de-risk")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     from sklearn.metrics import log_loss, roc_auc_score
@@ -133,11 +135,23 @@ def main(argv=None) -> int:
     if args.jra_only:
         featured = featured[central_index_mask(featured.index)]
     rank = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce")
-    base = pd.DataFrame({
-        "rid": featured.index.astype(str).str.split(".").str[0],
-        "uma": pd.to_numeric(featured[ResultsCols.UMABAN], errors="coerce"),
-        "won": (rank <= 3).astype(float),
-    }).dropna(subset=["uma"])
+    cols = {
+        "rid": featured.index.astype(str).str.split(".").str[0].to_numpy(),
+        "uma": pd.to_numeric(featured[ResultsCols.UMABAN], errors="coerce").to_numpy(),
+        "won": (rank <= 3).astype(float).to_numpy(),
+    }
+    # ABM de-risk: 脚質構成の相互作用特徴（自馬 pace_median × 場の nige_count/front_ratio 等）
+    pace_cols = []
+    if args.pace:
+        cand = ["pace_median", "front_ratio", "nige_count", "senko_count",
+                "mean_pace_median", "min_pace_median", "std_pace_median"]
+        pace_cols = [c for c in cand if c in featured.columns]
+        miss = [c for c in cand if c not in featured.columns]
+        if miss:
+            print(f"[place] featured に無いペース列（除外）: {miss}", file=sys.stderr)
+        for c in pace_cols:
+            cols[c] = pd.to_numeric(featured[c], errors="coerce").to_numpy()
+    base = pd.DataFrame(cols).dropna(subset=["uma"])
     base["uma"] = base["uma"].astype(int)
     base["year"] = base["rid"].str[:4]
 
@@ -150,6 +164,8 @@ def main(argv=None) -> int:
     df = (base.merge(fuku_odds, on=["rid", "uma"], how="inner")
               .merge(fuku_pay, on=["rid", "uma"], how="inner")
               .merge(kyi, on=["rid", "uma"], how="inner"))
+    if pace_cols:
+        have = [*have, *pace_cols]     # 相互作用特徴を GBM の特徴集合へ
     df = df[df["fo"] > 0].copy()
     # 複勝オッズのスケール自己校正（ZZZ9.9 暗黙小数。的中馬の払戻÷100 と整合させる）
     plc = df[df["won"] == 1]
