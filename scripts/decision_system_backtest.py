@@ -109,6 +109,8 @@ def main(argv=None) -> int:
     ap.add_argument("--jra-only", action="store_true")
     ap.add_argument("--db", default=None)
     ap.add_argument("--test-size", type=float, default=0.2)
+    ap.add_argument("--eval-since-year", type=int, default=None,
+                    help="この年以降のみ評価（モデル学習年のリーク排除・真OOS検証用）")
     ap.add_argument("--lam", type=float, default=0.2)
     ap.add_argument("--c", type=float, default=50.0)
     ap.add_argument("--kappa", type=float, default=0.25)
@@ -157,6 +159,9 @@ def main(argv=None) -> int:
     df["o_tyb"] = [tyb_raw.get((r, u), np.nan) * scale for r, u in zip(df["rid"], df["uma"], strict=False)]
     df = df[(df["o_tyb"] > 0) & (df["o_final"] > 0)].copy()
     df["year"] = df["rid"].str[:4]
+    if args.eval_since_year is not None:
+        df = df[df["year"].astype(int) >= args.eval_since_year].copy()
+        print(f"[dsys] 真OOS制限: {args.eval_since_year}年以降のみ（学習年リーク排除）")
     print(f"[dsys] holdout×TYB {len(df):,} 頭 / {df['rid'].nunique():,} レース（TYBスケール×{scale}）")
     print(f"[dsys] params: λ={args.lam} c={args.c} κ={args.kappa} τ_edge={args.tau_edge} "
           f"f_max={args.f_max} F_race={args.f_race}\n")
