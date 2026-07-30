@@ -27,7 +27,7 @@ def _score_table(rows):
     """rows: (race_id, umaban, score[, wakuban, wakuban_flag])"""
     data = []
     for r in rows:
-        race_id, umaban, score = r[0], r[1], r[2]
+        umaban, score = r[1], r[2]
         d = {"score": score, ResultsCols.UMABAN: umaban}
         if len(r) > 3:
             d[ResultsCols.WAKUBAN] = r[3]
@@ -111,3 +111,25 @@ class TestWakurenBox:
         table = _score_table([("r1", 1, 0.9, 2, 1), ("r1", 2, 0.9, 4, 1)])
         result = BetPolicyWakurenBox().judge(table, 0.5)
         assert "wakuren" in result["r1"]
+
+
+class TestFukushoHonmei:
+    """複勝本命(損失最小)ポリシー: レース内 score 上位 top_n のみ複勝、min_score で見送り。"""
+
+    def test_top1_per_race_default(self):
+        from src.policies._bet_policy import BetPolicyFukushoHonmei
+        table = _score_table([("r1", 3, 0.9), ("r1", 5, 0.6), ("r2", 1, 0.7), ("r2", 2, 0.8)])
+        result = BetPolicyFukushoHonmei.judge(table)
+        assert result == {"r1": {"fukusho": [3]}, "r2": {"fukusho": [2]}}  # 各レース最上位1頭
+
+    def test_top_n_and_min_score_abstains(self):
+        from src.policies._bet_policy import BetPolicyFukushoHonmei
+        # r2 は最上位でも 0.3<min_score(0.5) → 見送り。r1 は top_n=2。
+        table = _score_table([("r1", 3, 0.9), ("r1", 5, 0.6), ("r1", 7, 0.4), ("r2", 1, 0.3)])
+        result = BetPolicyFukushoHonmei.judge(table, 0.5, top_n=2)
+        assert set(result["r1"]["fukusho"]) == {3, 5}
+        assert "r2" not in result
+
+    def test_empty_when_all_below_min_score(self):
+        from src.policies._bet_policy import BetPolicyFukushoHonmei
+        assert BetPolicyFukushoHonmei.judge(_score_table([("r1", 3, 0.1)]), 0.5) == {}
