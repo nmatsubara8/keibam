@@ -28,7 +28,6 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.constants._model_category import central_index_mask  # noqa: E402
-from src.constants._results_cols import ResultsCols  # noqa: E402
 
 
 # ── 純ロジック（テスト対象） ─────────────────────────────────────────
@@ -100,15 +99,20 @@ def main(argv=None) -> int:
     ap.add_argument("--valid-size", type=float, default=0.2)
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
-    from app._data_loader import load_model_from_path
+    from app._data_loader import load_model_from_path, load_win_head_for
     from app._model_eval import _get_splits
     from src.constants._local_paths import LocalPaths
     from src.pipeline._ingestion import load_raw
     from src.pipeline.commands._evaluate import _resolve_backtest_model_path
+    from src.policies._score_policy import CURRENT_ODDS, PROB, ExpectedValueScorePolicy
 
     path = _resolve_backtest_model_path(args.version)
-    model = load_model_from_path(path)
-    print(f"[op] モデル {Path(path).name}")
+    place_ai = load_model_from_path(path)
+    win_ai = load_win_head_for(path)
+    # 単勝 EV/回収率は「勝率」で測る → Win ヘッド優先（無ければ Place で代用）
+    model = win_ai or place_ai
+    eff = getattr(model, "effective_model", model)
+    print(f"[op] モデル {Path(path).name}（Win ヘッド={'あり' if win_ai else 'なし(Place代用)'}）")
 
     featured = load_raw(args.featured_path or LocalPaths.FEATURED_DATA_PATH)
     if args.jra_only:
@@ -119,13 +123,13 @@ def main(argv=None) -> int:
 
     splits = _get_splits(featured, args.test_size, args.valid_size)
     X_test = splits["X_test"]
-    X_test_model = splits["X_test_model"]
     y_test = np.asarray(splits["y_test"])
-    eff = getattr(model, "effective_model", model)
-    prob_win = np.asarray(eff.predict_proba(X_test_model.values))[:, 1]
-    odds = np.asarray(X_test[ResultsCols.TANSHO_ODDS], dtype=float)
+    # 実際の推論経路（_coerce_for_predict 内包）で 勝率 と 単勝オッズ を得る
+    table = ExpectedValueScorePolicy.calc(eff, X_test)
+    prob_win = np.asarray(table[PROB], dtype=float)
+    odds = np.asarray(table[CURRENT_ODDS], dtype=float)
     wins = (y_test == 1).astype(float)
-    rids = X_test.index.to_numpy()
+    rids = table.index.to_numpy()
     print(f"[op] holdout(test) {len(prob_win):,} 頭 / {len(np.unique(rids)):,} レース  JRA={args.jra_only}")
 
     rows = [top_pick_operating_point(prob_win, odds, wins, rids)]
