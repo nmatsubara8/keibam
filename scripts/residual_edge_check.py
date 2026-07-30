@@ -46,14 +46,23 @@ def logit(p: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 
 
 def residual_bin_stats(delta: np.ndarray, won: np.ndarray, q: np.ndarray,
-                       n_bins: int = 10) -> pd.DataFrame:
-    """予測 Δ の decile ごとに realized 勝率・平均 q・E[Δ]=realized−q を出す。"""
-    df = pd.DataFrame({"delta": delta, "won": won, "q": q})
+                       n_bins: int = 10, odds: np.ndarray | None = None) -> pd.DataFrame:
+    """予測 Δ の decile ごとに realized 勝率・平均 q・E[Δ]=realized−q（＋odds があれば ROI）を出す。
+
+    ROI = レース確定オッズで各ビンを全張りした回収率 = mean(odds·won)。控除の壁を明示する。
+    """
+    data = {"delta": delta, "won": won, "q": q}
+    if odds is not None:
+        data["odds"] = odds
+    df = pd.DataFrame(data)
     df["bin"] = pd.qcut(df["delta"].rank(method="first"), n_bins, labels=False)
     g = df.groupby("bin")
-    out = g.agg(n=("won", "size"), pred_delta=("delta", "mean"),
-                realized=("won", "mean"), mean_q=("q", "mean")).reset_index()
+    agg = {"n": ("won", "size"), "pred_delta": ("delta", "mean"),
+           "realized": ("won", "mean"), "mean_q": ("q", "mean")}
+    out = g.agg(**agg).reset_index()
     out["E_delta"] = out["realized"] - out["mean_q"]
+    if odds is not None:
+        out["ROI"] = (df.assign(pay=df["odds"] * df["won"]).groupby("bin")["pay"].mean().to_numpy())
     return out
 
 
@@ -144,21 +153,27 @@ def main(argv=None) -> int:
     coef = dict(zip(have, mf.coef_[0][1:], strict=False))
     print("  係数(標準化):", {k: round(v, 4) for k, v in sorted(coef.items(), key=lambda x: -abs(x[1]))})
 
-    # Test2: 予測 Δ=pf−q の decile ごとに realized 勝率 vs 平均 q（E[Δ]の符号）
-    delta = pf - qte
-    stats = residual_bin_stats(delta, yte, qte, args.n_bins)
-    print("\n[resid] Test2 OOS 残差 binning（E[Δ]=realized−q が上位ビンで正か）")
-    print(f"  {'bin':>4}{'n':>8}{'pred_Δ':>10}{'realized':>10}{'mean_q':>10}{'E[Δ]':>10}")
+    # Test2: 予測 Δ の decile ごとに realized 勝率 vs 平均 q（E[Δ]）＋ 確定オッズ ROI（控除の壁）
+    odds_te = te["odds"].to_numpy()
+    stats = residual_bin_stats(pf - qte, yte, qte, args.n_bins, odds=odds_te)
+    base_stats = residual_bin_stats(pb - qte, yte, qte, args.n_bins, odds=odds_te)  # 帰属用（q再較正のみ）
+    print("\n[resid] Test2 OOS 残差 binning（full=logit(q)+直交／ROI=確定オッズ全張り回収率）")
+    print(f"  {'bin':>4}{'n':>8}{'pred_Δ':>10}{'realized':>10}{'mean_q':>10}{'E[Δ]':>10}{'ROI':>9}")
     for _, r in stats.iterrows():
         print(f"  {int(r['bin']):>4}{int(r['n']):>8}{r['pred_delta']:>+10.4f}"
-              f"{r['realized']:>10.4f}{r['mean_q']:>10.4f}{r['E_delta']:>+10.4f}")
-    top = stats.iloc[-1]
-    print(f"\n[resid] 判定: ΔlogLoss={ll_f-ll_b:+.5f} / 最上位ビン E[Δ]={top['E_delta']:+.4f}")
-    if ll_f - ll_b < -0.0005 and top["E_delta"] > 0:
-        print("  → 直交指数が市場に上乗せの候補。次: TYB(realizable) で再検証＋年またぎ二重確認。")
+              f"{r['realized']:>10.4f}{r['mean_q']:>10.4f}{r['E_delta']:>+10.4f}{r['ROI']:>9.4f}")
+    top, top_b = stats.iloc[-1], base_stats.iloc[-1]
+    print("\n[resid] 帰属（最上位ビン E[Δ]）:")
+    print(f"  full(q+直交) = {top['E_delta']:+.4f} (ROI {top['ROI']:.4f}) / "
+          f"baseline(q再較正のみ) = {top_b['E_delta']:+.4f} (ROI {top_b['ROI']:.4f})")
+    orth_add = top["E_delta"] - top_b["E_delta"]
+    print(f"  直交寄与 = {orth_add:+.4f}（≈0 なら E[Δ] は市場の自己miscalibration＝直交指数は無寄与）")
+    print(f"\n[resid] 判定: ΔlogLoss={ll_f-ll_b:+.5f} / 最上位ROI={top['ROI']:.4f}（控除の壁 1.0 未満なら不成立）")
+    if top["ROI"] > 1.0 and orth_add > 0.003:
+        print("  → 直交指数由来で控除超えの候補。次: TYB(realizable)＋年またぎ二重確認。")
     else:
-        print("  → 上乗せ無し＝これら JRDB 指数も市場に価格化済み（半公開エコー）。真の直交源は"
-              "映像由来の前走不利/出遅れ事象のみ。")
+        print("  → 残差は実在するが控除未満（ROI<1）＝tradeable でない。直交指数の寄与も僅少＝"
+              "半公開エコー。エッジ源は映像由来の前走不利/出遅れ事象、または低効率券種のみ。")
     return 0
 
 
