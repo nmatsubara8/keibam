@@ -93,7 +93,13 @@ def _calc(model, X: pd.DataFrame) -> pd.DataFrame:
 
 
 def _apply_scaler(score: pd.Series, scaler: Callable[[pd.Series], pd.Series]) -> pd.Series:
-    return score.groupby(level=0, group_keys=False).apply(scaler)
+    """race_id(index level0)ごとに scaler を適用。transform で**入力の並び順を保持**する。
+
+    apply(group_keys=False) は group キー順に並べ替えるため、重複ラベル index(=同一レースの
+    複数馬)へ列代入すると reindex 不能でクラッシュする。transform は元の位置に整列した Series を
+    返すので、呼び出し側は .to_numpy() で位置代入でき、重複 index でも安全。
+    """
+    return score.groupby(level=0, group_keys=False).transform(scaler)
 
 
 # scalers
@@ -131,8 +137,8 @@ class StdScorePolicy(AbstractScorePolicy):
     @staticmethod
     def calc(model, X: pd.DataFrame) -> pd.DataFrame:
         score_table = _calc(model, X)
-        # レース内でスコアを標準化
-        score_table[_SCORE] = _apply_scaler(score_table[_SCORE], _scaler_standard)
+        # レース内でスコアを標準化（重複 index 安全のため位置代入）
+        score_table[_SCORE] = _apply_scaler(score_table[_SCORE], _scaler_standard).to_numpy()
         return score_table
 
 
@@ -146,9 +152,9 @@ class MinMaxScorePolicy(AbstractScorePolicy):
         score_table = _calc(model, X)
         # レース内でスコアを標準化
         score = _apply_scaler(score_table[_SCORE], _scaler_standard)
-        # データ全体で0~1にスケーリング
+        # データ全体で0~1にスケーリング（重複 index 安全のため位置代入）
         min_ = score.min()
-        score_table[_SCORE] = (score - min_) / (score.max() - min_)
+        score_table[_SCORE] = ((score - min_) / (score.max() - min_)).to_numpy()
         return score_table
 
 
@@ -160,8 +166,8 @@ class RelativeProbaScorePolicy(AbstractScorePolicy):
     @staticmethod
     def calc(model, X: pd.DataFrame) -> pd.DataFrame:
         score_table = _calc(model, X)
-        # レース内でスコアを相対確率化
-        score_table[_SCORE] = _apply_scaler(score_table[_SCORE], _scaler_relative_proba)
+        # レース内でスコアを相対確率化（重複 index 安全のため位置代入）
+        score_table[_SCORE] = _apply_scaler(score_table[_SCORE], _scaler_relative_proba).to_numpy()
         return score_table
 
 

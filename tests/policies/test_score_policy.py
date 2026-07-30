@@ -212,3 +212,21 @@ def test_ev_score_policy_odds_matches_input():
     X = _make_X([(1, 1, 8.5)])
     result = ExpectedValueScorePolicy.calc(_FixedModel([0.5]), X)
     assert result[CURRENT_ODDS].iloc[0] == pytest.approx(8.5)
+
+
+def test_apply_scaler_handles_duplicate_race_index():
+    """同一 race_id(重複ラベル index) でも列代入がクラッシュしない回帰テスト。
+
+    _apply_scaler は transform で入力順を保持し、呼び出し側は .to_numpy() で位置代入する。
+    apply(group_keys=False) の並べ替え + 重複ラベル reindex 不能クラッシュのガード。
+    """
+    from src.policies._score_policy import _apply_scaler, _scaler_standard
+
+    s = pd.Series([1.0, 2.0, 3.0, 10.0, 20.0], index=["r1", "r1", "r1", "r2", "r2"])
+    out = _apply_scaler(s, _scaler_standard)
+    assert list(out.index) == list(s.index)            # 並び順保持
+    assert np.allclose(out.to_numpy()[:3], [-1.224745, 0.0, 1.224745], atol=1e-5)  # r1 内標準化
+    # 重複 index の列へ位置代入が通る
+    df = pd.DataFrame({"x": s})
+    df["x"] = _apply_scaler(df["x"], _scaler_standard).to_numpy()
+    assert df["x"].notna().all()
