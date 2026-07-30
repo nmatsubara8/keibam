@@ -43,6 +43,34 @@ def logit(p: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return np.log(p / (1 - p))
 
 
+def shuffle_within_race(X: np.ndarray, rids: np.ndarray, seed: int) -> np.ndarray:
+    """行(特徴ベクトル)をレース内でシャッフル（プラセボ: 特徴の位置情報を破壊）。"""
+    rng = np.random.default_rng(seed)
+    out = X.copy()
+    order = np.argsort(rids, kind="stable")
+    srt = rids[order]
+    start = 0
+    for i in range(1, len(srt) + 1):
+        if i == len(srt) or srt[i] != srt[start]:
+            block = order[start:i]
+            out[block] = X[block][rng.permutation(len(block))]
+            start = i
+    return out
+
+
+def _fit_predict(Xtr, ytr, Xte, nonlinear: bool):
+    """線形(Logistic)か非線形(LightGBM・交互作用を自動学習)で fit→test 確率を返す。"""
+    if nonlinear:
+        from lightgbm import LGBMClassifier
+        m = LGBMClassifier(n_estimators=300, num_leaves=31, learning_rate=0.05,
+                           min_child_samples=200, subsample=0.8, colsample_bytree=0.8,
+                           verbose=-1).fit(Xtr, ytr)
+    else:
+        from sklearn.linear_model import LogisticRegression
+        m = LogisticRegression(max_iter=1000).fit(Xtr, ytr)
+    return m.predict_proba(Xte)[:, 1], m
+
+
 def place_bin_stats(delta: np.ndarray, won: np.ndarray, q: np.ndarray,
                     payoff_mult: np.ndarray, n_bins: int = 10) -> pd.DataFrame:
     """予測Δの decile ごとに realized 入着率・平均q・E[Δ]・複勝ROI(=payoff_mult·won の平均)。"""
@@ -55,10 +83,10 @@ def place_bin_stats(delta: np.ndarray, won: np.ndarray, q: np.ndarray,
     return out
 
 
-def _load_kyi_orth(engine):
+def _load_kyi_orth(engine, extra=()):
     from sqlalchemy import text
     cols0 = pd.read_sql(text("SELECT * FROM raw_jrdb_kyi LIMIT 0"), engine).columns.tolist()
-    have = [c for c in _ORTH if c in cols0]
+    have = [c for c in [*_ORTH, *extra] if c in cols0]
     df = pd.read_sql(text(f"SELECT race_id, umaban, {', '.join(have)} FROM raw_jrdb_kyi"), engine)
     df["rid"] = df["race_id"].astype(str).str.split(".").str[0]
     df["uma"] = pd.to_numeric(df["umaban"], errors="coerce")
@@ -88,9 +116,12 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=None)
     ap.add_argument("--cutoff-year", type=int, default=2024)
     ap.add_argument("--n-bins", type=int, default=10)
+    ap.add_argument("--nonlinear", action="store_true",
+                    help="LightGBM残差モデル＋脚質(kyakushitsu)で交互作用(出遅れ×脚質等)を拾う")
+    ap.add_argument("--placebo", action="store_true",
+                    help="直交特徴をレース内シャッフルしテール過学習/リークを排除")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
-    from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import log_loss, roc_auc_score
 
     from src.constants._local_paths import LocalPaths
@@ -113,7 +144,8 @@ def main(argv=None) -> int:
     eng = get_engine(args.db)
     fuku_odds = _load_col(eng, "raw_jrdb_tyb", "fukusho_odds").rename(columns={"fukusho_odds": "fo"})
     fuku_pay = _load_col(eng, "raw_jrdb_sed", "fukusho_payoff").rename(columns={"fukusho_payoff": "fp"})
-    kyi, have = _load_kyi_orth(eng)
+    # 非線形モードは脚質(kyakushitsu)も入れて 出遅れ×脚質 等の交互作用を GBM に拾わせる
+    kyi, have = _load_kyi_orth(eng, extra=("kyakushitsu",) if args.nonlinear else ())
 
     df = (base.merge(fuku_odds, on=["rid", "uma"], how="inner")
               .merge(fuku_pay, on=["rid", "uma"], how="inner")
@@ -147,19 +179,23 @@ def main(argv=None) -> int:
     Xo_te = ((te[have].fillna(med) - med) / std).to_numpy()
     ytr, yte, qte = tr["won"].to_numpy(), te["won"].to_numpy(), te["q"].to_numpy()
     pay_te = te["pay_mult"].to_numpy()
+    mode = "非線形GBM＋脚質交互作用" if args.nonlinear else "線形"
+    print(f"[place] モデル: {mode}{'（プラセボ:特徴レース内シャッフル）' if args.placebo else ''}")
 
     Xb_tr, Xb_te = tr[["logit_q"]].to_numpy(), te[["logit_q"]].to_numpy()
-    mb = LogisticRegression(max_iter=1000).fit(Xb_tr, ytr)
-    mf = LogisticRegression(max_iter=1000).fit(np.hstack([Xb_tr, Xo_tr]), ytr)
-    pb = mb.predict_proba(Xb_te)[:, 1]
-    pf = mf.predict_proba(np.hstack([Xb_te, Xo_te]))[:, 1]
+    if args.placebo:
+        Xo_te = shuffle_within_race(Xo_te, te["rid"].to_numpy(), seed=0)
+    pb, _ = _fit_predict(Xb_tr, ytr, Xb_te, args.nonlinear)
+    pf, mf = _fit_predict(np.hstack([Xb_tr, Xo_tr]), ytr, np.hstack([Xb_te, Xo_te]), args.nonlinear)
     print("[place] Test1 OOS 上乗せ（複勝市場に直交指数を足して改善するか）")
     print(f"  logloss base={log_loss(yte, pb):.5f} +直交={log_loss(yte, pf):.5f} "
           f"Δ={log_loss(yte, pf)-log_loss(yte, pb):+.5f}")
     print(f"  AUC     base={roc_auc_score(yte, pb):.5f} +直交={roc_auc_score(yte, pf):.5f} "
           f"Δ={roc_auc_score(yte, pf)-roc_auc_score(yte, pb):+.5f}")
-    coef = dict(zip(have, mf.coef_[0][1:], strict=False))
-    print("  係数:", {k: round(v, 4) for k, v in sorted(coef.items(), key=lambda x: -abs(x[1]))})
+    imp = mf.feature_importances_[1:] if args.nonlinear else mf.coef_[0][1:]
+    scores = dict(zip(have, imp, strict=False))
+    label = "重要度" if args.nonlinear else "係数"
+    print(f"  {label}:", {k: round(float(v), 4) for k, v in sorted(scores.items(), key=lambda x: -abs(x[1]))})
 
     stats = place_bin_stats(pf - qte, yte, qte, pay_te, args.n_bins)
     print("\n[place] Test2 OOS 残差 binning（複勝ROI=確定複勝払戻の全張り回収率）")
@@ -191,6 +227,16 @@ def main(argv=None) -> int:
         roi = float(pay_te[m].mean())
         print(f"  {thr:>8.2f}{n:>9}{float(yte[m].mean()):>9.4f}{roi:>10.4f}"
               f"{float(fo_te[m].mean()):>10.2f}")
+
+    # 年別再現（Step5安全策）: 上位5%複勝ROI を 2024/2025/2026 個別に
+    yr_te = te["year"].to_numpy()
+    print("\n[place] 年別再現（予測Δ上位5%の複勝ROI・偶然/過学習排除）")
+    k5 = max(1, int(len(d) * 0.05))
+    top5 = set(order[:k5].tolist())
+    for y in sorted(set(yr_te.tolist())):
+        idx = np.array([i for i in range(len(d)) if i in top5 and yr_te[i] == y])
+        if len(idx) > 20:
+            print(f"  {y}: n={len(idx):>5}  複勝ROI={float(pay_te[idx].mean()):.4f}")
 
     best = stats["ROI"].max()
     best_ev = max((float(pay_te[(pf * fo_te) > t].mean())
