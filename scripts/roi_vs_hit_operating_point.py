@@ -84,6 +84,63 @@ def ev_operating_point(
     }
 
 
+def _odds_band(o: float) -> str:
+    """単勝オッズ帯（favorite-longshot bias 分解用）。"""
+    if o < 3.0:
+        return "本命<3"
+    if o < 7.0:
+        return "対抗3-7"
+    if o < 20.0:
+        return "中穴7-20"
+    return "大穴≥20"
+
+
+def ev_band_breakdown(
+    prob_win: np.ndarray, odds: np.ndarray, wins: np.ndarray, ev_thr: float,
+) -> list[dict]:
+    """EV>閾値 で選んだ賭けをオッズ帯別に return_rate/n_bets/profit 分解する。
+
+    利益が「本命<3」帯に集中していれば、それはモデルのエッジではなく
+    favorite-longshot bias（市場構造）を拾っているだけの疑いが濃い。
+    """
+    ev = prob_win * odds
+    mask = ev > ev_thr
+    band = np.array([_odds_band(o) for o in odds])
+    rows = []
+    order = ["本命<3", "対抗3-7", "中穴7-20", "大穴≥20"]
+    for b in order:
+        m = mask & (band == b)
+        n = int(m.sum())
+        if n == 0:
+            continue
+        payouts = odds[m] * wins[m]
+        rows.append({"帯": b, "return_rate": float(payouts.sum()) / n,
+                     "hit_rate": float(wins[m].mean()), "n_bets": n,
+                     "profit": float((payouts - 1.0).sum())})
+    return rows
+
+
+def shuffle_within_race(values: np.ndarray, race_ids: np.ndarray, seed: int) -> np.ndarray:
+    """race_id ごとに values をシャッフル（プラセボ：モデル信号を破壊しオッズ構造は温存）。
+
+    シャッフル後の p̂ で EV>閾値 選択して return_rate が >1 のままなら、その ROI は
+    モデルの情報ではなく **オッズ側の構造（FL-bias／オッズ先読み）** に由来する。
+    """
+    rng = np.random.default_rng(seed)
+    out = values.copy()
+    order = np.argsort(race_ids, kind="stable")
+    # 連続化した race_id ブロックごとに局所シャッフル
+    sorted_rids = race_ids[order]
+    start = 0
+    for i in range(1, len(sorted_rids) + 1):
+        if i == len(sorted_rids) or sorted_rids[i] != sorted_rids[start]:
+            block = order[start:i]
+            perm = rng.permutation(len(block))
+            out[block] = values[block][perm]
+            start = i
+    return out
+
+
 def _f(v: float) -> str:
     return "—" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{v:.4f}"
 
@@ -97,6 +154,9 @@ def main(argv=None) -> int:
                     default=[1.0, 1.1, 1.2, 1.3, 1.5], help="回収率側の EV 閾値")
     ap.add_argument("--test-size", type=float, default=0.2)
     ap.add_argument("--valid-size", type=float, default=0.2)
+    ap.add_argument("--verify", action="store_true",
+                    help="return_rate>1 の正体を検証（オッズ帯分解＋p̂プラセボ）")
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     from app._data_loader import load_model_from_path, load_win_head_for
@@ -143,7 +203,31 @@ def main(argv=None) -> int:
               f"{r['n_bets']:>9}{_f(r['profit']):>12}")
     print("\n  的中率重視＝本命を機械的に買う → 高 hit_rate だが return_rate は控除に一様に負ける。")
     print("  回収率重視＝EV>閾値の妙味だけ買い見送りを許す → hit_rate は落ちるが賭け母集団を絞る。")
-    print("  ※ post-takeout エッジ≈0 の下ではどの運用点も return_rate≈1−控除 を超えない（帰無が正しく働く）。")
+
+    if args.verify:
+        thr = min(args.ev_thresholds)
+        print(f"\n[verify] return_rate>1 の正体検証（EV>{thr:.2f}）")
+        print("  (A) オッズ帯分解 — 利益が本命帯に集中＝FL-bias（市場構造、モデルのエッジではない）疑い")
+        print(f"    {'帯':<10}{'return_rate':>12}{'hit_rate':>10}{'n_bets':>9}{'profit':>12}")
+        for r in ev_band_breakdown(prob_win, odds, wins, thr):
+            print(f"    {r['帯']:<10}{r['return_rate']:>12.4f}{r['hit_rate']:>10.4f}"
+                  f"{r['n_bets']:>9}{r['profit']:>12.1f}")
+        print("\n  (B) p̂プラセボ — レース内で p̂ をシャッフルし EV 選択。>1 が残れば ROI は")
+        print("      モデル情報ではなくオッズ側構造（FL-bias/オッズ先読み）由来＝棄却。")
+        p_shuf = shuffle_within_race(prob_win, rids, args.seed)
+        print(f"    {'運用点':<20}{'return_rate':>12}{'hit_rate':>10}{'n_bets':>9}")
+        for t in args.ev_thresholds:
+            real = ev_operating_point(prob_win, odds, wins, rids, t)
+            plac = ev_operating_point(p_shuf, odds, wins, rids, t)
+            print(f"    EV>{t:.2f} 実測          {real['return_rate']:>12.4f}"
+                  f"{real['hit_rate']:>10.4f}{real['n_bets']:>9}")
+            print(f"    EV>{t:.2f} プラセボ(p̂乱)  {_f(plac['return_rate']):>12}"
+                  f"{_f(plac['hit_rate']):>10}{plac['n_bets']:>9}")
+        print("\n  判定指針: プラセボでも >1 → オッズ構造由来（モデル非依存）。実測>1・プラセボ<1")
+        print("  → モデル依存だが、次に必ず (1) 年またぎ OOS 両方向 (2) bet時オッズ≠最終オッズの")
+        print("     先読み補正 で再検証（本セッションの NAR / 連系ΔR² と同じ規律）。")
+    else:
+        print("  ※ return_rate>1 が出たら --verify でオッズ帯分解＋プラセボ検証を必ず通すこと。")
     return 0
 
 

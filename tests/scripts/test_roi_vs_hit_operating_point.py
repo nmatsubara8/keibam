@@ -43,6 +43,31 @@ def test_ev_operating_point_filters_and_settles():
     assert abs(r["hit_rate"] - 1.0) < 1e-9
 
 
+def test_odds_band_boundaries():
+    assert op._odds_band(2.9) == "本命<3" and op._odds_band(3.0) == "対抗3-7"
+    assert op._odds_band(6.9) == "対抗3-7" and op._odds_band(7.0) == "中穴7-20"
+    assert op._odds_band(19.9) == "中穴7-20" and op._odds_band(20.0) == "大穴≥20"
+
+
+def test_ev_band_breakdown_splits_by_odds():
+    prob = np.array([0.6, 0.2, 0.1])
+    odds = np.array([2.0, 5.0, 30.0])       # EV 1.2, 1.0, 3.0 → EV>1: 馬1,馬3
+    wins = np.array([1.0, 0.0, 0.0])
+    rows = op.ev_band_breakdown(prob, odds, wins, ev_thr=1.0)
+    bands = {r["帯"]: r for r in rows}
+    assert set(bands) == {"本命<3", "大穴≥20"}   # EV>1 の2頭のみ、別帯
+    assert bands["本命<3"]["n_bets"] == 1
+
+
+def test_shuffle_within_race_is_permutation_per_race():
+    vals = np.array([0.1, 0.2, 0.3, 0.9, 0.8])
+    rids = np.array(["A", "A", "A", "B", "B"])
+    out = op.shuffle_within_race(vals, rids, seed=3)
+    # レース内は同じ多重集合（並べ替えのみ）／レース跨ぎで値は混ざらない
+    assert sorted(out[:3]) == [0.1, 0.2, 0.3]
+    assert sorted(out[3:]) == [0.8, 0.9]
+
+
 def test_ev_operating_point_no_bet_when_null():
     # 全馬 EV<=1（＝市場に何も足せない）→ 見送り＝0点
     prob = np.array([0.3, 0.2])
