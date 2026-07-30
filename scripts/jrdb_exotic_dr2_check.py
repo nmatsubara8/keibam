@@ -31,7 +31,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.jrdb._odds import normalize_combo, parse_odds  # noqa: E402
-from src.policies._blend import blend_diagnostic, fit_blend  # noqa: E402
+from src.policies._blend import blend_diagnostic, combine_logpool, fit_blend  # noqa: E402
 from src.policies._harville import prob_quinella  # noqa: E402
 from src.storage._db import get_engine  # noqa: E402
 
@@ -139,6 +139,50 @@ def _load_hjc_umaren_winners(engine) -> dict[str, tuple[int, int]]:
     return winners
 
 
+def _load_hjc_umaren_payoffs(engine) -> dict[str, tuple[int, float]]:
+    """raw_jrdb_hjc → {race_id: (当選馬連ペア id, 払戻/100円)}。EV バックテストの精算に使う。"""
+    have = pd.read_sql(text("SELECT * FROM raw_jrdb_hjc LIMIT 1"), engine).columns
+    if "umaren_combo1" not in have or "umaren_pay1" not in have or "race_id" not in have:
+        return {}
+    df = pd.read_sql(text('SELECT "race_id","umaren_combo1","umaren_pay1" FROM raw_jrdb_hjc'),
+                     engine)
+    out: dict[str, tuple[int, float]] = {}
+    for _, row in df.iterrows():
+        pair = _valid_pair(row.get("umaren_combo1"))
+        pay = pd.to_numeric(row.get("umaren_pay1"), errors="coerce")
+        if pair is not None and pd.notna(pay) and pay > 0:
+            out[str(row["race_id"])] = (_pair_id(*pair), float(pay))
+    return out
+
+
+def _ev_backtest(recs: list, train_p: str, test_p: str, ev_thr: float, top: int):
+    """train_p で blend fit → test_p で +EV 馬連を前売りオッズ選定 → HJC 確定払戻で精算。
+
+    recs: [(period, p_harv_ids, p_mkt_ids, odds_by_id, winner_id, pay)]。
+    戻り: (roi, n_bet, n_hit, staked, payoff)。
+    """
+    train = [(r[1], r[2], r[4]) for r in recs if r[0] == train_p and r[5] is not None]
+    if len(train) < 200:
+        return None
+    w = fit_blend(train)
+    staked = payoff = 0.0
+    n_bet = n_hit = 0
+    for period, ph, pm, odds, win, pay in recs:
+        if period != test_p or pay is None:
+            continue
+        comb = combine_logpool(ph, pm, w.alpha, w.beta)
+        cand = [(pid, comb[pid] * odds[pid]) for pid in comb if pid in odds]  # EV=確率×前売り倍率
+        cand = sorted([c for c in cand if c[1] > ev_thr], key=lambda x: -x[1])[:top]
+        for pid, _ev in cand:
+            staked += 100.0
+            n_bet += 1
+            if pid == win:
+                payoff += pay
+                n_hit += 1
+    roi = (payoff / staked - 1) if staked else float("nan")
+    return roi, n_bet, n_hit, staked, payoff
+
+
 def _race_odds_from_oz(long_df: pd.DataFrame):
     """OZ の long → {race_id: (tansho{馬番:倍率}, umaren{(i,j):倍率})}。"""
     out: dict[str, tuple[dict, dict]] = {}
@@ -156,11 +200,14 @@ def main(argv=None) -> int:
     ap.add_argument("--db", default=None, help="SQLite（HJC 読込）")
     ap.add_argument("--since-year", type=int, default=None)
     ap.add_argument("--max-races", type=int, default=None, help="評価レース数の上限（動作確認用）")
+    ap.add_argument("--ev-thr", type=float, default=1.0, help="+EV 選定の閾値（確率×前売り倍率>閾値）")
+    ap.add_argument("--ev-top", type=int, default=3, help="1レースで賭ける +EV 上位 N 組")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     engine = get_engine(args.db)
     winners = _load_hjc_umaren_winners(engine)
-    print(f"[testA] HJC 馬連当選表 {len(winners):,} レース")
+    payoffs = _load_hjc_umaren_payoffs(engine)
+    print(f"[testA] HJC 馬連当選表 {len(winners):,} レース / 払戻表 {len(payoffs):,} レース")
 
     files = sorted(glob.glob(f"{args.odds_dir}/OZ*.txt") + glob.glob(f"{args.odds_dir}/oz*.txt"))
     if not files:
@@ -172,6 +219,7 @@ def main(argv=None) -> int:
     ll_harv = ll_mkt = ll_unif = 0.0
     hit_harv = hit_mkt = 0
     blend_races: list[tuple[str, tuple]] = []   # (period, BlendRace) for combining ΔR²
+    ev_recs: list[tuple] = []                    # (period, hf, mf, odds_by_id, win_id, pay) for EV
     for fp in files:
         long_df = parse_odds(fp, "OZ")
         if long_df.empty:
@@ -197,6 +245,10 @@ def main(argv=None) -> int:
             br = blend_race_from_probs(p_harv, p_mkt, win_pair)
             if br is not None:
                 blend_races.append((period, br))
+                hf, mf, win_id = br
+                odds_by_id = {_pair_id(*k): um[k] for k in um if _pair_id(*k) in hf}
+                pay = payoffs.get(rid, (None, None))[1]
+                ev_recs.append((period, hf, mf, odds_by_id, win_id, pay))
             if args.max_races and n >= args.max_races:
                 break
         if args.max_races and n >= args.max_races:
@@ -239,9 +291,37 @@ def main(argv=None) -> int:
           " 馬連市場が織り込めていない情報があり連系で賭ける価値。ただし magnitude が控除"
           "（馬連~22.5%）を超えるかは別途 EV で要確認。")
     if oos_ok:
-        print("  → OOS 両方向+。**唯一の生存候補**。magnitude と EV（前売りで賭け→最終払戻）を次に検証。")
+        print("  → OOS 両方向+。合成に独立情報あり。次の EV で控除を超えるか＝賭けて勝てるかを判定。")
     else:
         print("  → OOS で消失 or 測定不能。連系の合成にも独立エッジ無し。")
+
+    # ── EV バックテスト（本命の money test）: pari-mutuel の最終払戻(HJC)で精算 ──
+    print("\n[testA''] EV バックテスト（合成 +EV 馬連を前売り選定→HJC 確定払戻で精算・OOS）")
+    if len(payoffs) == 0:
+        print("  HJC に umaren_pay1 が無く精算不能。")
+        return 0
+    tot_stk = tot_pay = 0.0
+    tot_bet = tot_hit = 0
+    for tr, te in (("H1", "H2"), ("H2", "H1")):
+        res = _ev_backtest(ev_recs, tr, te, args.ev_thr, args.ev_top)
+        if res is None:
+            print(f"  {tr}→{te}: 学習/評価が薄く測定不能。")
+            continue
+        roi, nb, nh, stk, pay = res
+        tot_stk += stk
+        tot_pay += pay
+        tot_bet += nb
+        tot_hit += nh
+        print(f"  {tr}→{te}: 賭け {nb:,} / 的中 {nh:,}（{(nh/nb if nb else 0):.2%}）"
+              f"/ ROI {roi:+.1%}")
+    if tot_stk:
+        roi_all = tot_pay / tot_stk - 1
+        print(f"  合算: 賭け {tot_bet:,} / 的中 {tot_hit:,} / 投資 {tot_stk:,.0f} / 払戻 {tot_pay:,.0f}"
+              f" / **ROI {roi_all:+.1%}**")
+        print(f"  控除後帰無 ROI≈−22.5%（馬連控除）。**ROI が有意に 0% 超なら賭けて勝てる連系エッジ**。"
+              f"{' ★+EV' if roi_all > 0 else ''}")
+    print("  ※ 前売りオッズで EV 選定→最終払戻で精算＝pari-mutuel の実運用に近い後付け検証。"
+          "前売りと最終のドリフトは HJC 精算で吸収される。")
     return 0
 
 
