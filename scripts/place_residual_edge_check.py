@@ -176,13 +176,31 @@ def main(argv=None) -> int:
         k = max(1, int(len(d) * pct / 100))
         idx = order[:k]
         print(f"  {pct:>6.1f}%{k:>8}{float(yte[idx].mean()):>10.4f}{float(pay_te[idx].mean()):>10.4f}")
+    # EV選択（realizable）: 予測入着率 pf × 複勝オッズ(直前 fo) > 閾値 → 確定複勝払戻で精算。
+    # Δ選択は本命に偏る。EV選択は市場が過小評価する「中穴の入着(value)」を拾う真の money-test。
+    fo_te = te["fo"].to_numpy()
+    ev = pf * fo_te
+    print("\n[place] EV選択（複勝 value: pf×複勝オッズ>閾値・realizable選定→確定払戻精算）")
+    print(f"  {'EV閾値':>8}{'n':>9}{'hit':>9}{'複勝ROI':>10}{'平均配当':>10}")
+    for thr in (1.0, 1.05, 1.1, 1.2, 1.3):
+        m = ev > thr
+        n = int(m.sum())
+        if n == 0:
+            print(f"  {thr:>8.2f}{0:>9}{'—':>9}{'—':>10}{'—':>10}")
+            continue
+        roi = float(pay_te[m].mean())
+        print(f"  {thr:>8.2f}{n:>9}{float(yte[m].mean()):>9.4f}{roi:>10.4f}"
+              f"{float(fo_te[m].mean()):>10.2f}")
+
     best = stats["ROI"].max()
-    print(f"\n[place] 判定: 最良ビン複勝ROI={best:.4f}")
-    if best > 1.0:
-        print("  → 複勝で控除超えの候補。次: TYB realizable 選定＋プラセボ＋年またぎで厳格二重検証。")
+    best_ev = max((float(pay_te[(pf * fo_te) > t].mean())
+                   for t in (1.0, 1.05, 1.1, 1.2, 1.3) if ((pf * fo_te) > t).sum() > 50), default=0.0)
+    print(f"\n[place] 判定: 最良ビン複勝ROI={best:.4f} / 最良EV選択ROI={best_ev:.4f}")
+    if best > 1.0 or best_ev > 1.0:
+        print("  → 複勝で控除超えの候補。次: プラセボ＋年またぎ＋TYB realizable で厳格二重検証。")
     else:
-        print("  → 複勝でも全ビン<1＝控除の壁を越えず。低効率券種でも実在アルファは takeout 未満"
-              "＝公開+半公開データの探索は完全終了。残るは映像由来の proprietary 情報のみ。")
+        print("  → 複勝でも全選択<1＝控除の壁を越えず。直交アルファは複勝で単勝の14倍強いが"
+              " takeout 未満＝公開+半公開データの探索は完全終了。残るは映像由来 proprietary のみ。")
     return 0
 
 
