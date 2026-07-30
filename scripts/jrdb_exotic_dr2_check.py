@@ -78,26 +78,33 @@ def _argmax_pair(pair_probs: dict[tuple[int, int], float]):
     return max(pair_probs, key=pair_probs.get) if pair_probs else None
 
 
+def _valid_pair(combo: object):
+    """HJC の馬連 combo 文字列 → 有効な (i,j)（昇順・1..18・相異）なら返す。無効は None。
+
+    '0000'/'00'/空/桁不足 は無効（未使用スロットの 0 埋め等）。
+    """
+    if combo is None or not str(combo).strip():
+        return None
+    try:
+        i, j = _combo_to_pair(normalize_combo(combo, ordered=False))
+    except (ValueError, IndexError):
+        return None
+    if 1 <= i <= 18 and 1 <= j <= 18 and i != j:
+        return (i, j)
+    return None
+
+
 def _load_hjc_umaren_winners(engine) -> dict[str, tuple[int, int]]:
-    """raw_jrdb_hjc → {race_id: 当選馬連ペア}（同着はスキップ。combo1 のみ採用）。"""
+    """raw_jrdb_hjc → {race_id: 当選馬連ペア}。combo1 の有効ペアを採用（同着は稀＝combo1 で近似）。"""
     have = pd.read_sql(text("SELECT * FROM raw_jrdb_hjc LIMIT 1"), engine).columns
-    cols = [c for c in ("race_id", "umaren_combo1", "umaren_combo2") if c in have]
-    if "umaren_combo1" not in cols:
+    if "umaren_combo1" not in have or "race_id" not in have:
         return {}
-    df = pd.read_sql(text(f'SELECT {",".join(chr(34)+c+chr(34) for c in cols)} '
-                          "FROM raw_jrdb_hjc"), engine)
+    df = pd.read_sql(text('SELECT "race_id","umaren_combo1" FROM raw_jrdb_hjc'), engine)
     winners: dict[str, tuple[int, int]] = {}
     for _, row in df.iterrows():
-        c1 = row.get("umaren_combo1")
-        c2 = row.get("umaren_combo2") if "umaren_combo2" in cols else None
-        if not c1 or not str(c1).strip():
-            continue
-        if c2 and str(c2).strip():        # 同着（複数当選）は logloss が曖昧なので除外
-            continue
-        try:
-            winners[str(row["race_id"])] = _combo_to_pair(normalize_combo(c1, ordered=False))
-        except (ValueError, IndexError):
-            continue
+        pair = _valid_pair(row.get("umaren_combo1"))
+        if pair is not None:
+            winners[str(row["race_id"])] = pair
     return winners
 
 

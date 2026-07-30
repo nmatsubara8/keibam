@@ -40,6 +40,16 @@ def test_harville_pair_probs_sum_to_one_and_ordering():
     assert pp[(1, 2)] == max(pp.values())
 
 
+def test_valid_pair_filters_zero_and_invalid():
+    assert h._valid_pair("0102") == (1, 2)
+    assert h._valid_pair("01-02") == (1, 2)
+    assert h._valid_pair("1807") == (7, 18)
+    assert h._valid_pair("0000") is None     # 未使用スロットの 0 埋め
+    assert h._valid_pair("") is None
+    assert h._valid_pair(None) is None
+    assert h._valid_pair("0505") is None      # 同一馬（無効）
+
+
 def test_logloss_and_argmax():
     pp = {(1, 2): 0.6, (1, 3): 0.3, (2, 3): 0.1}
     assert h._argmax_pair(pp) == (1, 2)
