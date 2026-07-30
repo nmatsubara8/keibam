@@ -100,8 +100,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     from app._data_loader import load_model_from_path, load_win_head_for
-    from app._model_eval import _get_splits
+    from app._model_eval import _split_by_date
     from src.constants._local_paths import LocalPaths
+    from src.constants._results_cols import ResultsCols
     from src.pipeline._ingestion import load_raw
     from src.pipeline.commands._evaluate import _resolve_backtest_model_path
     from src.policies._score_policy import CURRENT_ODDS, PROB, ExpectedValueScorePolicy
@@ -121,14 +122,14 @@ def main(argv=None) -> int:
         print("対象 featured が空。", file=sys.stderr)
         return 1
 
-    splits = _get_splits(featured, args.test_size, args.valid_size)
-    X_test = splits["X_test"]
-    y_test = np.asarray(splits["y_test"])
+    # 学習時と同一の時系列分割の test スライス（直近 test_size）。
+    _, test = _split_by_date(featured, args.test_size)
     # 実際の推論経路（_coerce_for_predict 内包）で 勝率 と 単勝オッズ を得る
-    table = ExpectedValueScorePolicy.calc(eff, X_test)
+    table = ExpectedValueScorePolicy.calc(eff, test)
     prob_win = np.asarray(table[PROB], dtype=float)
     odds = np.asarray(table[CURRENT_ODDS], dtype=float)
-    wins = (y_test == 1).astype(float)
+    # 決済は真の 1着（着順==1）。"rank" 列は top3 二値目的変数なので使わない。
+    wins = (pd.to_numeric(test[ResultsCols.RANK], errors="coerce").to_numpy() == 1).astype(float)
     rids = table.index.to_numpy()
     print(f"[op] holdout(test) {len(prob_win):,} 頭 / {len(np.unique(rids)):,} レース  JRA={args.jra_only}")
 
