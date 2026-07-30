@@ -41,6 +41,26 @@ def test_place_bin_stats_roi_uses_payoff():
     assert stats.iloc[0]["ROI"] == 0.0       # 最下位は非入着→払戻0
 
 
+def test_field_interactions_capture_composition():
+    # R1: 逃げ2頭(pm .1/.15, ten高)＝競合。R2: 逃げ0頭(pm .6/.7)＝平穏。
+    df = pd.DataFrame([
+        {"rid": "R1", "pace_median": 0.10, "ten_idx": 60},
+        {"rid": "R1", "pace_median": 0.15, "ten_idx": 58},
+        {"rid": "R1", "pace_median": 0.60, "ten_idx": 40},
+        {"rid": "R2", "pace_median": 0.60, "ten_idx": 50},
+        {"rid": "R2", "pace_median": 0.70, "ten_idx": 48},
+    ])
+    out, feats = p.add_field_interactions(df)
+    r1 = out[out["rid"] == "R1"]
+    r2 = out[out["rid"] == "R2"]
+    assert set(feats) == {"nige_cnt", "front_ratio", "pace_med_var", "ten_var",
+                          "escape_pressure", "front_conflict"}
+    assert r1["nige_cnt"].iloc[0] == 2 and r2["nige_cnt"].iloc[0] == 0  # 逃げ頭数
+    assert r1["front_conflict"].iloc[0] >= 1                            # 速い逃げ競合あり
+    assert r2["front_conflict"].iloc[0] == 0                            # 平穏
+    assert not any(c.startswith("_") for c in out.columns)             # 一時列は掃除
+
+
 def test_logit_endpoints():
     assert p.logit(np.array([0.5]))[0] == 0.0
     assert np.isfinite(p.logit(np.array([0.0, 1.0]))).all()

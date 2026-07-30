@@ -43,6 +43,36 @@ def logit(p: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     return np.log(p / (1 - p))
 
 
+def add_field_interactions(df: pd.DataFrame) -> tuple[pd.DataFrame, list]:
+    """自馬 pace_median/ten_idx と**場の全馬**から相互作用特徴を計算（レース単位→broadcast）。
+
+    ユーザ設計の (1)逃げ圧力 (2)逃げ競合 (3)ペース分散 (4)脚質ミスマッチ を実装。
+    pace_median: 位置取り（小=前・<0.2逃げ,<0.5先行）。ten_idx: テン指数（大=前半速い）。
+    自馬 pace_median × 場の nige_cnt/front_ratio 等の交互作用は GBM が自動学習する。
+    """
+    d = df.copy()
+    d["_pm"] = pd.to_numeric(d["pace_median"], errors="coerce")
+    d["_ti"] = pd.to_numeric(d["ten_idx"], errors="coerce")
+    g = d.groupby("rid")
+    ti_mean, ti_std = g["_ti"].transform("mean"), g["_ti"].transform("std").replace(0, 1)
+    d["_ti_z"] = (d["_ti"] - ti_mean) / ti_std            # レース内の相対速さ
+    ti_med = g["_ti"].transform("median")
+    d["_is_nige"] = (d["_pm"] < 0.2).astype(float)        # 逃げ候補
+    d["_is_front"] = (d["_pm"] < 0.35).astype(float)      # 前に行く
+    d["_strong_nige"] = ((d["_pm"] < 0.2) & (d["_ti"] > ti_med)).astype(float)  # 速い逃げ
+    d["_ep_part"] = np.where(d["_is_front"] > 0, d["_ti_z"], 0.0)
+    g2 = d.groupby("rid")
+    d["nige_cnt"] = g2["_is_nige"].transform("sum")                 # 逃げ頭数
+    d["front_ratio"] = g2["_is_front"].transform("mean")           # 前に行く比率
+    d["pace_med_var"] = g2["_pm"].transform("var")                 # 位置取りの分散
+    d["ten_var"] = g2["_ti"].transform("var")                      # (3)ペース分散
+    d["escape_pressure"] = g2["_ep_part"].transform("sum")         # (1)逃げ圧力
+    d["front_conflict"] = g2["_strong_nige"].transform("sum")      # (2)逃げ競合
+    feats = ["nige_cnt", "front_ratio", "pace_med_var", "ten_var",
+             "escape_pressure", "front_conflict"]
+    return d.drop(columns=[c for c in d.columns if c.startswith("_")]), feats
+
+
 def shuffle_within_race(X: np.ndarray, rids: np.ndarray, seed: int) -> np.ndarray:
     """行(特徴ベクトル)をレース内でシャッフル（プラセボ: 特徴の位置情報を破壊）。"""
     rng = np.random.default_rng(seed)
@@ -165,7 +195,15 @@ def main(argv=None) -> int:
               .merge(fuku_pay, on=["rid", "uma"], how="inner")
               .merge(kyi, on=["rid", "uma"], how="inner"))
     if pace_cols:
-        have = [*have, *pace_cols]     # 相互作用特徴を GBM の特徴集合へ
+        have = [*have, *pace_cols]     # 自馬 pace_median（相互作用の材料）
+    # 逃げ競合→ペース崩壊→複勝残差: 場の相互作用特徴を計算し GBM 特徴集合へ
+    if args.pace and "pace_median" in df.columns and "ten_idx" in df.columns:
+        df, inter_feats = add_field_interactions(df)
+        # ペース崩壊確率の proxy（速い逃げ競合×前圧力×ばらつき）。GBM が自馬脚質と交互作用させる。
+        df["pace_collapse"] = (df["front_conflict"].clip(lower=0)
+                               * df["escape_pressure"].clip(lower=0)).fillna(0.0)
+        have = [*have, *inter_feats, "pace_collapse"]
+        print(f"[place] 相互作用特徴 追加: {[*inter_feats, 'pace_collapse']}")
     df = df[df["fo"] > 0].copy()
     # 複勝オッズのスケール自己校正（ZZZ9.9 暗黙小数。的中馬の払戻÷100 と整合させる）
     plc = df[df["won"] == 1]
