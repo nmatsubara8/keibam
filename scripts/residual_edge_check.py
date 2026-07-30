@@ -162,6 +162,18 @@ def main(argv=None) -> int:
     for _, r in stats.iterrows():
         print(f"  {int(r['bin']):>4}{int(r['n']):>8}{r['pred_delta']:>+10.4f}"
               f"{r['realized']:>10.4f}{r['mean_q']:>10.4f}{r['E_delta']:>+10.4f}{r['ROI']:>9.4f}")
+    # 極端テール: 予測Δ 上位 q% を全張りした ROI（実在信号を集中させて控除を越えるか）
+    delta_f = pf - qte
+    order = np.argsort(-delta_f)
+    print("\n[resid] 極端テール（予測Δ上位 x% を確定オッズ全張り）")
+    print(f"  {'上位':>7}{'n':>8}{'realized':>10}{'mean_q':>10}{'realized/q':>11}{'ROI':>9}")
+    for pct in (10.0, 5.0, 2.0, 1.0, 0.5):
+        k = max(1, int(len(delta_f) * pct / 100))
+        idx = order[:k]
+        rz, mq = float(yte[idx].mean()), float(qte[idx].mean())
+        roi = float((odds_te[idx] * yte[idx]).mean())
+        print(f"  {pct:>6.1f}%{k:>8}{rz:>10.4f}{mq:>10.4f}{rz/mq if mq else float('nan'):>11.4f}{roi:>9.4f}")
+
     top, top_b = stats.iloc[-1], base_stats.iloc[-1]
     print("\n[resid] 帰属（最上位ビン E[Δ]）:")
     print(f"  full(q+直交) = {top['E_delta']:+.4f} (ROI {top['ROI']:.4f}) / "
