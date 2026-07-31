@@ -179,6 +179,37 @@ def _load_oz_win_odds(oz_dir, race_set):
     return out
 
 
+def _load_tyb_win_odds(engine, race_set):
+    """raw_jrdb_tyb → {race_id:{馬番:直前単勝オッズ}}。TYB は発走15分前頃(≈T-15)更新＝購入時点・リーク無。
+
+    JRDB TYB(直前情報)の tansho_odds(ZZZ9.9・直前単勝)を市場1番人気決定に使う。年度パック 1999-2025 で
+    全レースをカバー＝カバレッジ問題(raw_odds_snapshots 3.9%)を解消。決済は HJC 確定払戻(後決済)のまま。
+    """
+    import pandas as pd
+    from sqlalchemy import text
+    try:
+        cols = pd.read_sql(text("SELECT * FROM raw_jrdb_tyb LIMIT 1"), engine).columns
+    except Exception as e:  # noqa: BLE001
+        print(f"  [warn] raw_jrdb_tyb を読めません（TYB 取込済みか確認）: {e}", file=sys.stderr)
+        return {}
+    if not {"race_id", "umaban", "tansho_odds"}.issubset(set(cols)):
+        print(f"  [warn] raw_jrdb_tyb に race_id/umaban/tansho_odds が無い: {list(cols)}",
+              file=sys.stderr)
+        return {}
+    df = pd.read_sql(text("SELECT race_id, umaban, tansho_odds FROM raw_jrdb_tyb"), engine)
+    df["race_id"] = df["race_id"].astype(str).str.split(".").str[0]
+    df = df[df["race_id"].isin(race_set)]
+    df["umaban"] = pd.to_numeric(df["umaban"], errors="coerce")
+    df["tansho_odds"] = pd.to_numeric(df["tansho_odds"], errors="coerce")
+    df = df.dropna(subset=["umaban", "tansho_odds"])
+    df = df[(df["tansho_odds"] > 0) & (df["umaban"] > 0)]
+    out: dict = {}
+    for rid, g in df.groupby("race_id"):
+        out[str(rid)] = {int(u): float(o) for u, o in zip(g["umaban"], g["tansho_odds"],
+                                                          strict=False)}
+    return out
+
+
 def _load_db_win_odds(engine, race_set, *, table="raw_odds_snapshots", target_mtp=15):
     """raw_odds_snapshots → {race_id: {馬番: 購入時点単勝}}。締切 target_mtp 分前に最も近いスナップを採る。
 
@@ -545,11 +576,15 @@ def main() -> int:
     ap.add_argument("--ability-sigma", type=float, default=0.35)
     ap.add_argument("--rank-gain", type=float, default=0.0, help="rank_bonus の加減点強さ(leak注意)")
     ap.add_argument("--walk-forward", action="store_true", help="過去年で戦略選択→翌年で評価")
+    ap.add_argument("--tyb", action="store_true",
+                    help="JRDB TYB(直前情報)の直前単勝オッズ(≈T-15)で市場対照を有効化。年度パック"
+                         "1999-2025で全レースをカバー＝カバレッジ問題を解消。最優先の市場源。")
     ap.add_argument("--oz-dir", default=None,
                     help="JRDB OZ 前売りオッズの .txt フォルダ。市場1番人気対照(購入時点)を有効化。")
     ap.add_argument("--odds-db", action="store_true",
-                    help="DB の購入時点オッズ(raw_odds_snapshots)で市場対照を有効化（--oz-dir 優先）。"
-                         "無指定なら市場対照は測定不能（確定オッズでの代用は方針違反なので行わない）")
+                    help="DB の購入時点オッズ(raw_odds_snapshots)で市場対照を有効化。"
+                         "優先順位は --tyb > --oz-dir > --odds-db。いずれも無指定なら市場対照は測定不能"
+                         "（確定オッズでの代用は方針違反なので行わない）")
     ap.add_argument("--odds-table", default="raw_odds_snapshots", help="購入時点オッズのDBテーブル名")
     ap.add_argument("--target-mtp", type=int, default=15, help="採用する締切前分数(T-N)。既定15")
     ap.add_argument("--seed", type=int, default=0)
@@ -603,7 +638,9 @@ def main() -> int:
         _print_calibration(calib)
         # [市場対照] 購入時点オッズ(OZ前売り or DB snapshot)で市場1番人気を決め、Sim1位と対照
         race_set = set(map(str, order))
-        if args.oz_dir:
+        if args.tyb:
+            win_odds, src_lbl = _load_tyb_win_odds(engine, race_set), "TYB直前(≈T-15)"
+        elif args.oz_dir:
             win_odds, src_lbl = _load_oz_win_odds(args.oz_dir, race_set), "OZ前売り"
         elif args.odds_db:
             win_odds = _load_db_win_odds(engine, race_set, table=args.odds_table,
