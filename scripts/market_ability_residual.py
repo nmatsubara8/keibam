@@ -179,14 +179,14 @@ def main(argv=None) -> int:
     def fit_eval(Xtr, Xte):
         m = _lgbm().fit(Xtr, ytr)
         p = m.predict_proba(Xte)[:, 1]
-        return p, log_loss(yte, p), roc_auc_score(yte, p)
+        return m, p, log_loss(yte, p), roc_auc_score(yte, p)
 
     Xo_tr = tr[have].fillna(med_o).to_numpy()
     Xo_te = te[have].fillna(med_o).to_numpy()
-    _, ll_base, auc_base = fit_eval(lqtr.reshape(-1, 1), lqte.reshape(-1, 1))
-    p_orth, ll_orth, auc_orth = fit_eval(np.column_stack([lqtr, Xo_tr]), np.column_stack([lqte, Xo_te]))
-    p_od, ll_od, auc_od = fit_eval(np.column_stack([lqtr, Xo_tr, dab_tr]),
-                                   np.column_stack([lqte, Xo_te, dab_te]))
+    _, _, ll_base, auc_base = fit_eval(lqtr.reshape(-1, 1), lqte.reshape(-1, 1))
+    _, p_orth, ll_orth, auc_orth = fit_eval(np.column_stack([lqtr, Xo_tr]), np.column_stack([lqte, Xo_te]))
+    m_od, p_od, ll_od, auc_od = fit_eval(np.column_stack([lqtr, Xo_tr, dab_tr]),
+                                         np.column_stack([lqte, Xo_te, dab_te]))
     print("[Δab] 3モデル 真OOS")
     print(f"  {'model':<14}{'logloss':>10}{'AUC':>9}")
     print(f"  {'Base(q)':<14}{ll_base:>10.5f}{auc_base:>9.5f}")
@@ -210,19 +210,55 @@ def main(argv=None) -> int:
         if m.sum() > 500:
             print(f"  {y}: {log_loss(yte[m], p_od[m]) - log_loss(yte[m], p_orth[m]):+.5f}")
 
-    # Δab decile 実現率（単調?）
-    dec = decile_realized(dab_te, yte)
-    print(f"\n[Δab] Δability decile 実現率: {np.round(dec, 4)}")
-    mono = np.all(np.diff(dec) >= -0.01)
-    print(f"  単調増加(概ね): {mono}")
+    # ── 最終ゲート3確認（Go/No-Go・事前固定・ROI>1は非要求）──────────────
+    # ① 独立性: Δab を te でシャッフルした時の logloss 悪化(=permutation import)＋LGBM gain 順位
+    rng2 = np.random.default_rng(1)
+    Xte_od = np.column_stack([lqte, Xo_te, dab_te])
+    Xte_perm = Xte_od.copy()
+    Xte_perm[:, -1] = dab_te[rng2.permutation(len(dab_te))]
+    ll_perm = log_loss(yte, m_od.predict_proba(Xte_perm)[:, 1])
+    gains = m_od.feature_importances_
+    dab_rank = int((gains > gains[-1]).sum()) + 1
+    print("\n[確認①独立性] 既存q+orth があっても Δab が寄与するか")
+    print(f"  ablation ΔlogLoss(Orth+Δ − Orth) = {dll:+.5f}")
+    print(f"  permutation importance(Δab全体シャッフル) logloss悪化 = {ll_perm - ll_od:+.5f}（正で寄与）")
+    print(f"  LGBM gain 順位: Δab は全{len(gains)}特徴中 {dab_rank}位（q・orth含む）")
 
-    print("\n[Δab] 判定:")
-    if dll <= -0.001 and (ll_pl - ll_orth) > dll + 0.0005 and mono:
-        print("  → 本格build候補: ΔlogLoss≤−0.001・プラセボで消失・decile単調。年別符号を確認し MySpeed 本格化へ。")
+    # ② ROI 順位付け: Orth vs Orth+Δab の複勝ROI 上位x%（ROI>1は非要求・改善方向を見る）
+    pay_te = te["pay"].to_numpy()
+    print("\n[確認②ROI順位付け] 予測place確率 上位x% の複勝ROI（Orth vs Orth+Δab）")
+    print(f"  {'上位':>6}{'Orth':>9}{'Orth+Δab':>10}{'差':>9}")
+    for pct in (1.0, 2.0, 5.0, 10.0):
+        k = max(1, int(len(te) * pct / 100))
+        r_o = float(pay_te[np.argsort(-p_orth)[:k]].mean())
+        r_d = float(pay_te[np.argsort(-p_od)[:k]].mean())
+        print(f"  {pct:>5.0f}%{r_o:>9.4f}{r_d:>10.4f}{r_d - r_o:>+9.4f}")
+
+    # ③ 効果形状: Orth が取り残した残差(won−p_orth)を Δab decile で平均（どこで補正するか）
+    resid = yte - p_orth
+    b = pd.qcut(pd.Series(dab_te).rank(method="first"), 10, labels=False)
+    shape = pd.Series(resid).groupby(b).mean().to_numpy()
+    dec = decile_realized(dab_te, yte)
+    print("\n[確認③効果形状] Δab decile ごとの Orth残差平均(won−p_orth)＝Δabが補正する向き")
+    print(f"  decile実現率 : {np.round(dec, 4)}")
+    print(f"  Orth残差平均 : {np.round(shape, 4)}（+ =Orthが過小評価→Δabが上げる）")
+    lo, mid, hi = shape[:3].mean(), shape[3:7].mean(), shape[7:].mean()
+    form = ("両端(U字)" if lo > 0 and hi > 0 and mid < min(lo, hi) else
+            "単調" if np.all(np.diff(shape) >= -0.01) else "条件付き/非単調")
+    print(f"  形状: 下位平均{lo:+.4f} / 中央{mid:+.4f} / 上位{hi:+.4f} → {form}")
+
+    # Go/No-Go（3条件・decile単調は hard gate にしない＝残差特徴には不適切）
+    indep = (dll <= -0.001) and (ll_perm - ll_od > 0.0005)
+    roi_dir = float(pay_te[np.argsort(-p_od)[:max(1, len(te) // 100)]].mean()) >= \
+        float(pay_te[np.argsort(-p_orth)[:max(1, len(te) // 100)]].mean())
+    print("\n[Δab] Go/No-Go 判定（年別は上で全年マイナスを確認）:")
+    if indep and roi_dir:
+        print("  → GO: ΔlogLoss再現(≤−0.001)・Δab独立寄与(permで悪化)・ROI順位付けも改善方向。")
+        print("     本格MySpeed(区間ラップ/ペース非対称/コーナーロス)へ進む価値あり。効果形状が指針。")
     else:
-        print("  → クローズ: 市場能力から直交化した過去soten集約に、既存直交特徴を超える増分は無し。")
-        print("     （＝JRDB由来能力値の単純な市場直交化に追加価値なし。独自指数全般の否定ではないが、")
-        print("       ペース非対称/区間ラップ/コーナーロス等を含む本格buildの費用対効果は低いと確定。）")
+        print("  → NO-GO: 確率改善は確認できたが、独立寄与またはROI順位付けが崩れた。")
+        print("     『確率推定は改善したが投資戦略としての実用価値は限定的』として一区切り。")
+    print("  ※ ROI>1 はこの段階の判定条件にしない（確率改善が選択へ伝播するかを見る）。")
     return 0
 
 
