@@ -17,7 +17,9 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +28,11 @@ from src.jrdb._extract import read_jrdb_bytes
 from src.jrdb._keys import ketto_to_horse_id, race_key_to_race_id
 
 _ZEN_SPACE = "　"  # 全角スペース（コメントの区切り）
+
+# 外厩名の欠損を表すセンチネル（正規化で NA 化。生値は gaikyu_name_raw に保持）。
+# 実サンプルで確認: 情報無し(年次4件)・全角数値 ９９．９(年次3件)。docs 台帳 §3.1。
+_NAME_SENTINELS = {"情報無し"}
+_NUMERIC_SENTINEL_RE = re.compile(r"^\d+(?:\.\d+)?$")  # 例 99.9（NFKC 後）
 
 # 馬印系（固定長 [ketto][コード]）の仕様。reclen=総バイト長、code_col=出力列名。
 MARK_SPECS = {
@@ -113,9 +120,12 @@ def _split_fixed(data: bytes, reclen: int) -> list[bytes]:
 
 
 def parse_gaikyu_comment(data: bytes) -> pd.DataFrame:
-    """外厩コメント CSV を [race_id, umaban, gaikyu_name, kikyu_date, interval_weeks] へ。
+    """外厩コメント CSV を [race_id, umaban, gaikyu_name, gaikyu_name_raw, kikyu_date,
+    interval_weeks, interval_raw] へ。
 
     行 = `場年回日R馬番(10),外厩名␣帰厩日␣中N週`。キー先頭 8=レースキー、[8:10]=馬番。
+    生値（gaikyu_name_raw・interval_raw・kikyu_date）と正規化値を両方残す。
+    帰厩日の年補完・days_since_return は出走暦日が要るため merge 時に complete_return_date で付与。
     """
     rows = []
     for ln in _splitlines(data, "cp932"):
@@ -125,24 +135,68 @@ def parse_gaikyu_comment(data: bytes) -> pd.DataFrame:
             continue
         race_id = race_key_to_race_id(key[:8])
         umaban = _to_int(key[8:10])
-        name, kikyu, interval = _split_comment(rest)
+        name_raw, kikyu, interval = _split_comment(rest)
         rows.append({
-            "race_id": race_id, "umaban": umaban, "gaikyu_name": name,
+            "race_id": race_id, "umaban": umaban,
+            "gaikyu_name": _normalize_gaikyu_name(name_raw),
+            "gaikyu_name_raw": name_raw,
             "kikyu_date": kikyu, "interval_weeks": _weeks(interval), "interval_raw": interval,
         })
     return pd.DataFrame(
         rows,
-        columns=["race_id", "umaban", "gaikyu_name", "kikyu_date", "interval_weeks", "interval_raw"],
+        columns=["race_id", "umaban", "gaikyu_name", "gaikyu_name_raw",
+                 "kikyu_date", "interval_weeks", "interval_raw"],
     )
 
 
 def _split_comment(rest: str) -> tuple[str, str, str]:
-    """`外厩名␣帰厩日␣間隔` を分解（全角空白区切り・欠落に頑健）。"""
+    """`外厩名␣帰厩日␣間隔` を分解（全角空白区切り・欠落に頑健）。
+
+    帰厩日が欠損の行は `外厩名␣/␣中N週`（スラッシュのみ）＝実サンプルで確認。"/" は空扱い。
+    """
     parts = [p for p in rest.split(_ZEN_SPACE) if p != ""]
     name = parts[0].strip() if parts else ""
     kikyu = parts[1].strip() if len(parts) > 1 else ""
+    if kikyu == "/":            # 帰厩日欠損（スラッシュのみ）
+        kikyu = ""
     interval = parts[2].strip() if len(parts) > 2 else ""
     return name, kikyu, interval
+
+
+def _normalize_gaikyu_name(raw: str):
+    """外厩名を NFKC 正規化。センチネル（情報無し・数値のみ）は NA。
+
+    表記揺れ（ノーザンＦ↔ノーザンF）は NFKC の全角→半角化に留め、Ｆ↔ファーム 等の
+    辞書変換は将来の正規化テーブルに委ねる（元値は gaikyu_name_raw に保持済）。
+    """
+    if not raw:
+        return pd.NA
+    s = unicodedata.normalize("NFKC", raw).strip()
+    if not s or s in _NAME_SENTINELS or _NUMERIC_SENTINEL_RE.match(s):
+        return pd.NA
+    return s
+
+
+def kikyu_month_day(kikyu_date) -> tuple[int | None, int | None]:
+    """'MM/DD' → (month, day)。欠損/不正は (None, None)。"""
+    m = re.fullmatch(r"(\d{2})/(\d{2})", str(kikyu_date).strip())
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def complete_return_date(kikyu_date, race_date: _dt.date) -> _dt.date | None:
+    """帰厩日(MM/DD, 無年) を出走日基準で年補完する。帰厩月>出走月なら前年（年跨ぎ）。
+
+    merge 側で featured の出走暦日を渡して return_date / days_since_return を得るための primitive。
+    実サンプルで年跨ぎを確認（年次の帰厩月に Dec/Nov＝前年12月帰厩→年初出走）。docs 台帳 §3.1。
+    """
+    month, day = kikyu_month_day(kikyu_date)
+    if month is None:
+        return None
+    year = race_date.year - 1 if month > race_date.month else race_date.year
+    try:
+        return _dt.date(year, month, day)
+    except ValueError:
+        return None  # 2/30 等の異常日付は None
 
 
 def parse_seiseki_idm(data: bytes) -> pd.DataFrame:
@@ -223,6 +277,110 @@ def parse_target_bytes(zip_type: str, entries: list[tuple]) -> pd.DataFrame:
         raise ValueError(f"未知の TARGET 種別: {zip_type}")
     frames = [f for f in frames if not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def attach_gaikyu_raw(
+    featured: pd.DataFrame,
+    gaikyu_df: pd.DataFrame,
+    *,
+    umaban_col: str = "馬番",
+    date_col: str = "date",
+    prefix: str = "jrdb_gaikyu_",
+) -> pd.DataFrame:
+    """featured に外厩 raw 特徴（G1）を付与して返す（元は非改変・コピー）。
+
+    付与列（prefix 付き）:
+      {prefix}has    外厩利用の有無（このコメントに存在すれば 1・非利用 0＝ファイルは利用馬のみ収録）
+      {prefix}days   帰厩日→今走の日数（帰厩日 MM/DD を出走日基準で年補完・年跨ぎ対応）
+      {prefix}weeks  中N週（前走からの競走間隔・空欄 NaN）
+      {prefix}name   外厩名（正規化済・カテゴリ。LightGBM の native categorical 用）
+
+    リーク安全: すべて当日配布される外厩情報のみ（履歴集約・target encoding は含めない）。
+    featured の index が race_id（列に無い場合）。結合キー (race_id, umaban)。
+    """
+    import numpy as np
+
+    f = featured.copy()
+    rid = (f["race_id"] if "race_id" in f.columns else pd.Series(f.index, index=f.index)).astype(str)
+    uma = pd.to_numeric(f[umaban_col], errors="coerce").astype("Int64")
+    left = pd.DataFrame({"_rid": rid.to_numpy(), "_uma": uma.to_numpy()})
+
+    g = gaikyu_df.drop_duplicates(["race_id", "umaban"]).copy()
+    g["_rid"] = g["race_id"].astype(str)
+    g["_uma"] = pd.to_numeric(g["umaban"], errors="coerce").astype("Int64")
+    g["_matched"] = 1
+    cols = ["_rid", "_uma", "gaikyu_name", "kikyu_date", "interval_weeks", "_matched"]
+    m = left.merge(g[cols], on=["_rid", "_uma"], how="left")  # g は dedup 済＝左の行数・順序保存
+
+    race_date = pd.to_datetime(f[date_col].to_numpy(), errors="coerce")
+    md = m["kikyu_date"].astype("string").str.extract(r"(\d{2})/(\d{2})")
+    month = pd.to_numeric(md[0], errors="coerce").to_numpy()
+    day = pd.to_numeric(md[1], errors="coerce").to_numpy()
+    ry = pd.Series(race_date).dt.year.to_numpy()
+    rm = pd.Series(race_date).dt.month.to_numpy()
+    with np.errstate(invalid="ignore"):
+        year = np.where(month > rm, ry - 1.0, ry)   # 帰厩月>出走月 → 前年（年跨ぎ）
+    ret = pd.to_datetime(
+        pd.DataFrame({"year": year, "month": month, "day": day}), errors="coerce"
+    )
+    days = (pd.Series(race_date) - ret).dt.days
+
+    out = f.copy()
+    out[prefix + "has"] = m["_matched"].fillna(0).astype(int).to_numpy()
+    out[prefix + "days"] = days.to_numpy()
+    out[prefix + "weeks"] = pd.to_numeric(m["interval_weeks"], errors="coerce").to_numpy()
+    out[prefix + "name"] = pd.Categorical(m["gaikyu_name"].astype("object").to_numpy())
+    return out
+
+
+def compare_seiseki_vs_sed(
+    sed_df: pd.DataFrame,
+    idmse_df: pd.DataFrame,
+    *,
+    sed_idm_col: str = "idm",
+) -> dict:
+    """配布「成績IDM」(idmse) と 既存 `SED[idm]` を (race_id, umaban) で照合する。
+
+    「成績IDM は既に SED から取込済みか、独立系列か」を値で判定するための集計を返す。
+    sed_df は parse(path,"SED") 由来（race_id, umaban, idm 列）、idmse_df は parse_seiseki_idm
+    由来（race_id, umaban, seiseki_idm 列）を想定。両者を内部結合し一致率・最大絶対差・
+    相関・スケール比・欠測差・件数差を返す（実データは呼び出し側＝ユーザー環境で流す）。
+    """
+    def _norm(df, val_col):
+        d = df[["race_id", "umaban", val_col]].copy()
+        d["race_id"] = d["race_id"].astype("string")
+        d["umaban"] = pd.to_numeric(d["umaban"], errors="coerce").astype("Int64")
+        d[val_col] = pd.to_numeric(d[val_col], errors="coerce")
+        return d.dropna(subset=["race_id", "umaban"])
+
+    s = _norm(sed_df, sed_idm_col).rename(columns={sed_idm_col: "sed_idm"})
+    i = _norm(idmse_df, "seiseki_idm")
+    s = s.drop_duplicates(["race_id", "umaban"])
+    i = i.drop_duplicates(["race_id", "umaban"])
+    m = s.merge(i, on=["race_id", "umaban"], how="inner")
+    both = m.dropna(subset=["sed_idm", "seiseki_idm"])
+    diff = (both["sed_idm"] - both["seiseki_idm"]).abs()
+    ratio = (both["sed_idm"] / both["seiseki_idm"]).replace([float("inf"), float("-inf")], pd.NA)
+    exact = int((diff == 0).sum())
+    return {
+        "n_sed": int(len(s)),
+        "n_idmse": int(len(i)),
+        "n_overlap_keys": int(len(m)),
+        "n_both_present": int(len(both)),
+        "exact_match_rate": (exact / len(both)) if len(both) else None,
+        "max_abs_diff": float(diff.max()) if len(both) else None,
+        "mean_abs_diff": float(diff.mean()) if len(both) else None,
+        "corr": float(both["sed_idm"].corr(both["seiseki_idm"])) if len(both) > 1 else None,
+        "scale_ratio_median": float(ratio.median()) if ratio.notna().any() else None,
+        "n_sed_only": int(len(s) - len(m)),
+        "n_idmse_only": int(len(i) - len(m)),
+        "sed_range": [float(s["sed_idm"].min()), float(s["sed_idm"].max())] if len(s) else None,
+        "idmse_range": [float(i["seiseki_idm"].min()), float(i["seiseki_idm"].max())] if len(i) else None,
+        "diff_examples": (
+            both[diff > 0].head(10)[["race_id", "umaban", "sed_idm", "seiseki_idm"]]
+            .to_dict("records")
+        ),
+    }
 
 
 def parse_target_archive(path: str) -> tuple[str | None, pd.DataFrame]:

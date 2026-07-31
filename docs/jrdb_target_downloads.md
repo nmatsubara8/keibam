@@ -103,11 +103,12 @@
 | IDM馬印 | ketto | jrdb_idm の派生 | なし |
 | 厩舎ランク | 調教師コード | trainer 集計と重複気味 | 低〜中 |
 | 騎手ランク | 騎手コード | jockey 集計と重複気味 | 低〜中 |
-| 成績IDM | (date+race+馬番) | **レース後IDM＝MySpeed 同族**・SED.idm と重複疑い | **低（No-Go 族）** |
+| 成績IDM | (date+race+馬番) | **レース後IDM＝MySpeed 同族**・**SED.idm と完全一致(実測確定)** | **なし（取込済＝冗長）** |
 
 **結論（8データ全解読）**: 馬印系(展開/番手/IDM)は既存特徴の焼き直し。ランクは jockey/trainer 集計と重複。
 **成績IDM はレース後の到達 IDM 履歴＝raw MySpeed と同じ「過去パフォーマンス指標」族で、既に No-Go 確定の族**
-（かつ `raw_jrdb_sed.idm` と同値の疑い＝取込済データの再パッケージ）。
+（**`raw_jrdb_sed.idm` と完全一致を実測確定＝488,161件で一致率1.0/最大差0/相関1.0**・取込済データの再パッケージ。
+`scripts/jrdb_seiseki_vs_sed.py`）。
 → **市場と直交しうる真に新規なモダリティは「外厩(放牧先の質・帰厩鮮度)」ただ一つに絞られた。**
 最初の CI-下限検証対象は **外厩コメント**（(race_id,umaban) 直結・放牧先名＋帰厩日＋ローテ）。
 
@@ -121,12 +122,15 @@
   race_id/horse_id は `_keys`（レースキー16進日・世紀補完）で標準形へ変換済。
 
 ### 次アクション（優先順）
-1. **成績IDM の冗長チェック（安価・先に潰す）**: SEI_IDM の値を `raw_jrdb_sed.idm`（同 date+race+馬番）と
-   突合。一致すれば取込済＝新規性ゼロで確定。差があれば残差 IDM の可能性のみ再検討。
-2. **外厩コメント PoC**: `gaikyucomment` を parse→(race_id,umaban)→featured 結合→特徴量化
-   （放牧先カテゴリ / 帰厩→今走日数 / 中N週）→ `myspeed_adoption_check` 系の CI-下限ハーネスで
-   「本番モデルへ純増分＋市場直交」を検証。年次パック(2016-2026)で履歴も作れる。
-3. （2 で純増分が出た場合のみ）本番 featured pipeline へ配線（#22 の轍を踏まないよう本番準拠 baseline で判定）。
+1. ~~成績IDM の冗長チェック~~ **完了**: `raw_jrdb_sed.idm` と完全一致＝取込不要を実測確定（上記）。
+2. **外厩コメント G1 採用検証（実装済・実行待ち）**: `scripts/gaikyu_adoption_check.py`。
+   `gaikyucomment` pkl を featured へ (race_id,umaban) 結合し **raw 4 特徴**
+   （`jrdb_gaikyu_has/days/weeks/name`＝`src.jrdb._target.attach_gaikyu_raw`・履歴集約/target encoding なし）を足し、
+   `myspeed_adoption_check` と同方式で OOS ΔlogLoss/ΔAUC/ECE を①〜⑦診断。
+   実行: `python scripts/gaikyu_adoption_check.py --featured data/featured_jrdb.pkl \
+   --gaikyu-pkl data/jrdb_target/jrdb_target_gaikyucomment.pkl --cutoff-year 2024`
+3. **（G1 通過時のみ）外厩履歴集約 → 本番配線**: 外厩別複勝率/外厩×厩舎 等（fold 前のみ）。
+   通らなければ外厩の高度化に進まず終了（#22 の轍を踏まないよう本番準拠 baseline で判定）。
 
 ### 未取得
 - 展開/番手/IDM 馬印・ランクの**年次パック**（履歴が要る場合）。仕様は確定済で probe 不要。

@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import pandas as pd
 
+import datetime as dt
+
 from src.jrdb._target import (
     NATURAL_KEYS,
     classify,
+    complete_return_date,
     dedup_by_keys,
+    kikyu_month_day,
     parse_gaikyu_comment,
     parse_mark_file,
     parse_rank,
@@ -53,10 +57,44 @@ def test_parse_gaikyu_comment_key_and_fields():
     r0 = df.iloc[0]
     assert r0["race_id"] == "202604020201"                  # 場04 回02 日02 R01
     assert r0["umaban"] == 4
-    assert r0["gaikyu_name"] == "ノーザンＦしがらき"
+    assert r0["gaikyu_name"] == "ノーザンFしがらき"          # NFKC 正規化（Ｆ→F）
+    assert r0["gaikyu_name_raw"] == "ノーザンＦしがらき"      # 生値は保持
     assert r0["kikyu_date"] == "07/07"
     assert r0["interval_weeks"] == 4
     assert df.iloc[1]["interval_weeks"] == 0                 # 連闘=0週
+
+
+def test_gaikyu_comment_empty_weeks_is_na():
+    # 中週（週数空欄・年次で 12.9%）→ interval_weeks NA。前走なし=初出走等。
+    df = parse_gaikyu_comment("0126120303,チャンピオンヒルズ　05/30　中週\r\n".encode("cp932"))
+    assert pd.isna(df.iloc[0]["interval_weeks"])
+    assert df.iloc[0]["gaikyu_name"] == "チャンピオンヒルズ"
+
+
+def test_gaikyu_comment_missing_date_slash():
+    # 帰厩日欠損 `外厩名␣/␣中N週`（年次6件）→ kikyu_date 空。
+    df = parse_gaikyu_comment("0826140302,ノルマンディ小野町　/　中3週\r\n".encode("cp932"))
+    assert df.iloc[0]["kikyu_date"] == ""
+    assert df.iloc[0]["interval_weeks"] == 3
+
+
+def test_gaikyu_comment_sentinel_names_to_na():
+    # 情報無し(年次4件) / 全角数値 ９９．９(年次3件) → gaikyu_name NA だが生値は保持。
+    data = ("0826110301,情報無し　/　中1週\r\n"
+            "0226120506,９９．９　05/29　中週\r\n").encode("cp932")
+    df = parse_gaikyu_comment(data)
+    assert pd.isna(df.iloc[0]["gaikyu_name"]) and df.iloc[0]["gaikyu_name_raw"] == "情報無し"
+    assert pd.isna(df.iloc[1]["gaikyu_name"]) and df.iloc[1]["gaikyu_name_raw"] == "９９．９"
+
+
+def test_complete_return_date_year_crossing():
+    # 出走1月・帰厩12月 → 前年（年跨ぎ）。通常は当年。
+    assert complete_return_date("12/20", dt.date(2026, 1, 10)) == dt.date(2025, 12, 20)
+    assert complete_return_date("07/01", dt.date(2026, 7, 26)) == dt.date(2026, 7, 1)
+    assert complete_return_date("", dt.date(2026, 7, 26)) is None       # 欠損
+    assert complete_return_date("02/30", dt.date(2026, 3, 1)) is None   # 異常日付
+    assert kikyu_month_day("07/15") == (7, 15)
+    assert kikyu_month_day("/") == (None, None)
 
 
 def test_parse_seiseki_idm_signed_and_key():
@@ -127,3 +165,99 @@ def test_dedup_by_keys_noop_when_keys_missing_or_empty():
 def test_classify_ignores_redownload_copy_suffix():
     # 「gaikyu_20260726 (1).zip」も接頭辞 gaikyu に分類される（内容重複は CLI の sha1 で排除）。
     assert classify("gaikyu_20260726 (1).zip") == "gaikyu"
+
+
+def _sed_record_with_idm(race_key: str, umaban: str, ketto: str, ymd: str, idm: str) -> bytes:
+    """idm@183 を設定した合成 SED レコード（成績IDM×SED 照合テスト用）。"""
+    r = bytearray(b" " * 376)
+
+    def put(start1, s):
+        b = s.encode("cp932")
+        r[start1 - 1: start1 - 1 + len(b)] = b
+
+    put(1, race_key); put(9, umaban); put(11, ketto); put(19, ymd); put(183, idm)
+    return bytes(r) + b"\r\n"
+
+
+def test_compare_seiseki_vs_sed_joins_and_matches(tmp_path):
+    from src.jrdb._parser import parse
+    from src.jrdb._target import compare_seiseki_vs_sed, parse_seiseki_idm
+
+    # SED: race_key 01082101(→race_id 200801020101) 馬番07 idm=45 / 馬番08 idm=30
+    sed_bytes = (
+        _sed_record_with_idm("01082101", "07", "06102843", "20080913", " 45")
+        + _sed_record_with_idm("01082101", "08", "06102844", "20080913", " 30")
+    )
+    sed_path = tmp_path / "SED080913.txt"
+    sed_path.write_bytes(sed_bytes)
+    sed = parse(str(sed_path), "SED")
+
+    # idmse: 同 (race_id, umaban) を作る鍵 = YYYYMMDD+場01+回02+日01+R01+馬番
+    idmse = parse_seiseki_idm(
+        ("200809130102010107,45\r\n"   # 馬番07: SED と一致(45)
+         "200809130102010108,31\r\n").encode("cp932")  # 馬番08: 30 vs 31 → 差1
+    )
+    rep = compare_seiseki_vs_sed(sed, idmse)
+    assert rep["n_overlap_keys"] == 2
+    assert rep["n_both_present"] == 2
+    assert rep["max_abs_diff"] == 1.0            # 馬番08 の 1 差
+    assert rep["exact_match_rate"] == 0.5        # 2件中1件一致
+    assert rep["sed_range"] == [30.0, 45.0]
+
+
+def test_attach_gaikyu_raw_leak_safe_join():
+    """featured への外厩 raw 特徴付与（G1）: has/days(年跨ぎ)/weeks/name カテゴリ。"""
+    from src.jrdb._target import attach_gaikyu_raw
+
+    featured = pd.DataFrame(
+        {"馬番": [3, 8, 1], "date": ["2026-07-26", "2026-07-26", "2026-01-10"],
+         "x": [0.1, 0.2, 0.3]},
+        index=["202601010201", "202601010201", "202601000101"],
+    )
+    gaikyu = pd.DataFrame({
+        "race_id": ["202601010201", "202601000101"],
+        "umaban": [3, 1],
+        "gaikyu_name": ["ノーザンFしがらき", "ノーザンF天栄"],
+        "kikyu_date": ["07/15", "12/20"],      # 2件目は年跨ぎ（出走1/10・帰厩12/20→前年）
+        "interval_weeks": [4, 6],
+    })
+    out = attach_gaikyu_raw(featured, gaikyu)
+    assert list(out["jrdb_gaikyu_has"]) == [1, 0, 1]
+    assert out["jrdb_gaikyu_days"].iloc[0] == 11        # 07/26 - 07/15
+    assert out["jrdb_gaikyu_days"].iloc[2] == 21        # 2026-01-10 - 2025-12-20（年跨ぎ）
+    assert pd.isna(out["jrdb_gaikyu_days"].iloc[1])     # 非利用は NaN
+    assert out["jrdb_gaikyu_weeks"].iloc[0] == 4
+    assert str(out["jrdb_gaikyu_name"].iloc[0]) == "ノーザンFしがらき"
+    assert out["jrdb_gaikyu_name"].dtype.name == "category"
+
+
+def test_read_sed_from_db_and_compare(tmp_path):
+    """DB(raw_jrdb_sed) から SED[idm] を読んで idmse と照合できる（既存取込経路）。"""
+    import importlib.util
+    import sqlite3
+
+    from src.jrdb._target import compare_seiseki_vs_sed, parse_seiseki_idm
+
+    db = tmp_path / "keibam.db"
+    con = sqlite3.connect(db)
+    con.execute('CREATE TABLE raw_jrdb_sed (race_id TEXT, umaban INTEGER, idm TEXT)')
+    con.executemany(
+        'INSERT INTO raw_jrdb_sed (race_id, umaban, idm) VALUES (?,?,?)',
+        [("200801020101", 7, " 45"), ("200801020101", 8, " 30")],
+    )
+    con.commit()
+    con.close()
+
+    spec = importlib.util.spec_from_file_location("jvs", "scripts/jrdb_seiseki_vs_sed.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    sed = mod.read_sed_from_db(str(db))
+    assert sed is not None and len(sed) == 2
+    assert mod.read_sed_from_db(str(tmp_path / "missing.db")) is None   # DB 無し→None
+
+    idmse = parse_seiseki_idm(
+        b"200809130102010107,45\r\n200809130102010108,31\r\n"
+    )
+    rep = compare_seiseki_vs_sed(sed, idmse)
+    assert rep["n_both_present"] == 2 and rep["max_abs_diff"] == 1.0
