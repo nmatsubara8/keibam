@@ -180,3 +180,8 @@ data/*.json
 
 # コースガイド手入力ソース（生成物 course_guide_master.csv は無視のまま追跡対象にする）
 !data/master/course_guide.csv
+# JRDB TARGET 追加データの現物サンプル（有料データ・コミット禁止）と解析生成物
+data/jrdb_target_samples/
+docs/jrdb_target_file_profiles.json
+docs/jrdb_target_links.json
+data/jrdb_target/seiseki_vs_sed.json
