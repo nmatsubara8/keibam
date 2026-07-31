@@ -30,6 +30,36 @@ from src.constants._local_paths import LocalPaths
 logger = logging.getLogger(__name__)
 
 
+def _train_with_optional_stacking(
+    ai, *, use_stacking: bool, meta_ratio: float, with_tuning: bool,
+    tuning_config=None, base_models_config=None,
+) -> bool:
+    """use_stacking なら stacking 学習。split が single-class(degenerate)なら非stacking へ自動
+    fallback する（--jra-only 等で末尾 slice に top3 が 0 になるケースを人手介入なしで通す）。
+
+    実際に stacking を使えたか（bool）を返す（meta の use_stacking 記録用）。例外の遅延 import で
+    本モジュールの軽さ（sklearn のみ依存の純ロジック）を保つ。
+    """
+    from src.training._data_splitter import StackingSplitDegenerateError
+
+    if use_stacking:
+        try:
+            ai.train_with_stacking(
+                meta_ratio=meta_ratio, with_tuning=with_tuning,
+                tuning_config=tuning_config, base_models_config=base_models_config,
+            )
+            return True
+        except StackingSplitDegenerateError as e:
+            logger.warning(
+                "[retrain] stacking split が single-class のため非stacking へ自動 fallback します: %s", e
+            )
+    if with_tuning:
+        ai.train_with_tuning(tuning_config=tuning_config)
+    else:
+        ai.train_without_tuning()
+    return False
+
+
 # ---------------------------------------------------------------------------
 # 設定 DTO（frozen）
 # ---------------------------------------------------------------------------
@@ -195,18 +225,11 @@ class RetrainJob:
             if hasattr(ai, "set_lgb_params"):
                 ai.set_lgb_params(lgb_params)
 
-        if self._cfg.use_stacking:
-            ai.train_with_stacking(
-                meta_ratio=self._cfg.meta_ratio,
-                with_tuning=with_tuning,
-                tuning_config=tuning_config,
-                base_models_config=base_models_config,
-            )
-        else:
-            if with_tuning:
-                ai.train_with_tuning(tuning_config=tuning_config)
-            else:
-                ai.train_without_tuning()
+        used_stacking = _train_with_optional_stacking(
+            ai, use_stacking=self._cfg.use_stacking, meta_ratio=self._cfg.meta_ratio,
+            with_tuning=with_tuning, tuning_config=tuning_config,
+            base_models_config=base_models_config,
+        )
 
         # Optuna 探索を行った場合は全 trial を成績順で保存（ユーザーが後から選択できる）
         study = getattr(ai, "tuning_study_", None)
@@ -269,7 +292,8 @@ class RetrainJob:
             "version": vname,
             "trained_at": dt.datetime.now().isoformat(),
             "n_races": int(len(_fd.index.unique())),
-            "use_stacking": self._cfg.use_stacking,
+            "use_stacking": used_stacking,   # 実際に stacking を使えたか（fallback 時 False）
+            "stacking_fallback": bool(self._cfg.use_stacking and not used_stacking),
             "base_models": list(ai.base_model_names_) if hasattr(ai, "base_model_names_") else ["LightGBM"],
             **metrics,
         }
@@ -387,14 +411,10 @@ class RetrainJob:
         try:
             if lgb_params and hasattr(win_ai, "set_lgb_params"):
                 win_ai.set_lgb_params(lgb_params)
-            if self._cfg.use_stacking:
-                win_ai.train_with_stacking(
-                    meta_ratio=self._cfg.meta_ratio,
-                    with_tuning=False,
-                    base_models_config=base_models_config,
-                )
-            else:
-                win_ai.train_without_tuning()
+            _train_with_optional_stacking(
+                win_ai, use_stacking=self._cfg.use_stacking, meta_ratio=self._cfg.meta_ratio,
+                with_tuning=False, base_models_config=base_models_config,
+            )
             win_metrics = evaluate_test(
                 win_ai.effective_model, win_ai.datasets.X_test, win_ai.datasets.y_test
             )
@@ -492,18 +512,11 @@ class RetrainJob:
             valid_size=self._cfg.valid_size,
             target_col="rank",
         )
-        if self._cfg.use_stacking:
-            ai.train_with_stacking(
-                meta_ratio=self._cfg.meta_ratio,
-                with_tuning=with_tuning,
-                tuning_config=tuning_config,
-                base_models_config=base_models_config,
-            )
-        else:
-            if with_tuning:
-                ai.train_with_tuning(tuning_config=tuning_config)
-            else:
-                ai.train_without_tuning()
+        _train_with_optional_stacking(
+            ai, use_stacking=self._cfg.use_stacking, meta_ratio=self._cfg.meta_ratio,
+            with_tuning=with_tuning, tuning_config=tuning_config,
+            base_models_config=base_models_config,
+        )
 
         study = getattr(ai, "tuning_study_", None)
         if with_tuning and study is not None:

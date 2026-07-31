@@ -60,6 +60,15 @@ def single_class_splits(reports: list[dict], guarded=("base_train", "meta_train"
     return [r for r in reports if r["split"] in guarded and (r["pos"] == 0 or r["neg"] == 0)]
 
 
+class StackingSplitDegenerateError(ValueError):
+    """stacking split が single-class（meta 学習器を学習不能）。
+
+    ValueError のサブクラス（既存の except ValueError も従来どおり捕捉）。オーケストレーション層
+    （retrain）はこの型を捕捉して**非stacking へ自動 fallback**する（--jra-only 等で末尾 slice に
+    top3 が 0 になるケースを人手介入なしで通す）。
+    """
+
+
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size, target_col: str = "rank") -> None:
         # target_col: 目的変数列。"rank"=複勝(top3, 既定) / "rank_win"=単勝(1着)。
@@ -342,7 +351,7 @@ class DataSplitter:
                 " 原因候補: date 欠損で末尾 slice が degenerate / JRA フィルタ後の対象縮小 /"
                 " target 列に無効値。"
             )
-            raise ValueError(
+            raise StackingSplitDegenerateError(
                 f"stacking split が single-class です（meta 学習器を学習できません）: {detail}。"
                 f" target={self.__target}。上の『stacking split 診断』表で期間・行数・クラス分布を"
                 f" 確認してください。{hint} --no-stacking でも回避可能です。"
