@@ -17,7 +17,9 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
 import re
+import unicodedata
 from pathlib import Path
 
 import pandas as pd
@@ -26,6 +28,11 @@ from src.jrdb._extract import read_jrdb_bytes
 from src.jrdb._keys import ketto_to_horse_id, race_key_to_race_id
 
 _ZEN_SPACE = "　"  # 全角スペース（コメントの区切り）
+
+# 外厩名の欠損を表すセンチネル（正規化で NA 化。生値は gaikyu_name_raw に保持）。
+# 実サンプルで確認: 情報無し(年次4件)・全角数値 ９９．９(年次3件)。docs 台帳 §3.1。
+_NAME_SENTINELS = {"情報無し"}
+_NUMERIC_SENTINEL_RE = re.compile(r"^\d+(?:\.\d+)?$")  # 例 99.9（NFKC 後）
 
 # 馬印系（固定長 [ketto][コード]）の仕様。reclen=総バイト長、code_col=出力列名。
 MARK_SPECS = {
@@ -113,9 +120,12 @@ def _split_fixed(data: bytes, reclen: int) -> list[bytes]:
 
 
 def parse_gaikyu_comment(data: bytes) -> pd.DataFrame:
-    """外厩コメント CSV を [race_id, umaban, gaikyu_name, kikyu_date, interval_weeks] へ。
+    """外厩コメント CSV を [race_id, umaban, gaikyu_name, gaikyu_name_raw, kikyu_date,
+    interval_weeks, interval_raw] へ。
 
     行 = `場年回日R馬番(10),外厩名␣帰厩日␣中N週`。キー先頭 8=レースキー、[8:10]=馬番。
+    生値（gaikyu_name_raw・interval_raw・kikyu_date）と正規化値を両方残す。
+    帰厩日の年補完・days_since_return は出走暦日が要るため merge 時に complete_return_date で付与。
     """
     rows = []
     for ln in _splitlines(data, "cp932"):
@@ -125,24 +135,68 @@ def parse_gaikyu_comment(data: bytes) -> pd.DataFrame:
             continue
         race_id = race_key_to_race_id(key[:8])
         umaban = _to_int(key[8:10])
-        name, kikyu, interval = _split_comment(rest)
+        name_raw, kikyu, interval = _split_comment(rest)
         rows.append({
-            "race_id": race_id, "umaban": umaban, "gaikyu_name": name,
+            "race_id": race_id, "umaban": umaban,
+            "gaikyu_name": _normalize_gaikyu_name(name_raw),
+            "gaikyu_name_raw": name_raw,
             "kikyu_date": kikyu, "interval_weeks": _weeks(interval), "interval_raw": interval,
         })
     return pd.DataFrame(
         rows,
-        columns=["race_id", "umaban", "gaikyu_name", "kikyu_date", "interval_weeks", "interval_raw"],
+        columns=["race_id", "umaban", "gaikyu_name", "gaikyu_name_raw",
+                 "kikyu_date", "interval_weeks", "interval_raw"],
     )
 
 
 def _split_comment(rest: str) -> tuple[str, str, str]:
-    """`外厩名␣帰厩日␣間隔` を分解（全角空白区切り・欠落に頑健）。"""
+    """`外厩名␣帰厩日␣間隔` を分解（全角空白区切り・欠落に頑健）。
+
+    帰厩日が欠損の行は `外厩名␣/␣中N週`（スラッシュのみ）＝実サンプルで確認。"/" は空扱い。
+    """
     parts = [p for p in rest.split(_ZEN_SPACE) if p != ""]
     name = parts[0].strip() if parts else ""
     kikyu = parts[1].strip() if len(parts) > 1 else ""
+    if kikyu == "/":            # 帰厩日欠損（スラッシュのみ）
+        kikyu = ""
     interval = parts[2].strip() if len(parts) > 2 else ""
     return name, kikyu, interval
+
+
+def _normalize_gaikyu_name(raw: str):
+    """外厩名を NFKC 正規化。センチネル（情報無し・数値のみ）は NA。
+
+    表記揺れ（ノーザンＦ↔ノーザンF）は NFKC の全角→半角化に留め、Ｆ↔ファーム 等の
+    辞書変換は将来の正規化テーブルに委ねる（元値は gaikyu_name_raw に保持済）。
+    """
+    if not raw:
+        return pd.NA
+    s = unicodedata.normalize("NFKC", raw).strip()
+    if not s or s in _NAME_SENTINELS or _NUMERIC_SENTINEL_RE.match(s):
+        return pd.NA
+    return s
+
+
+def kikyu_month_day(kikyu_date) -> tuple[int | None, int | None]:
+    """'MM/DD' → (month, day)。欠損/不正は (None, None)。"""
+    m = re.fullmatch(r"(\d{2})/(\d{2})", str(kikyu_date).strip())
+    return (int(m.group(1)), int(m.group(2))) if m else (None, None)
+
+
+def complete_return_date(kikyu_date, race_date: _dt.date) -> _dt.date | None:
+    """帰厩日(MM/DD, 無年) を出走日基準で年補完する。帰厩月>出走月なら前年（年跨ぎ）。
+
+    merge 側で featured の出走暦日を渡して return_date / days_since_return を得るための primitive。
+    実サンプルで年跨ぎを確認（年次の帰厩月に Dec/Nov＝前年12月帰厩→年初出走）。docs 台帳 §3.1。
+    """
+    month, day = kikyu_month_day(kikyu_date)
+    if month is None:
+        return None
+    year = race_date.year - 1 if month > race_date.month else race_date.year
+    try:
+        return _dt.date(year, month, day)
+    except ValueError:
+        return None  # 2/30 等の異常日付は None
 
 
 def parse_seiseki_idm(data: bytes) -> pd.DataFrame:

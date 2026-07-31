@@ -3,10 +3,14 @@ from __future__ import annotations
 
 import pandas as pd
 
+import datetime as dt
+
 from src.jrdb._target import (
     NATURAL_KEYS,
     classify,
+    complete_return_date,
     dedup_by_keys,
+    kikyu_month_day,
     parse_gaikyu_comment,
     parse_mark_file,
     parse_rank,
@@ -53,10 +57,44 @@ def test_parse_gaikyu_comment_key_and_fields():
     r0 = df.iloc[0]
     assert r0["race_id"] == "202604020201"                  # 場04 回02 日02 R01
     assert r0["umaban"] == 4
-    assert r0["gaikyu_name"] == "ノーザンＦしがらき"
+    assert r0["gaikyu_name"] == "ノーザンFしがらき"          # NFKC 正規化（Ｆ→F）
+    assert r0["gaikyu_name_raw"] == "ノーザンＦしがらき"      # 生値は保持
     assert r0["kikyu_date"] == "07/07"
     assert r0["interval_weeks"] == 4
     assert df.iloc[1]["interval_weeks"] == 0                 # 連闘=0週
+
+
+def test_gaikyu_comment_empty_weeks_is_na():
+    # 中週（週数空欄・年次で 12.9%）→ interval_weeks NA。前走なし=初出走等。
+    df = parse_gaikyu_comment("0126120303,チャンピオンヒルズ　05/30　中週\r\n".encode("cp932"))
+    assert pd.isna(df.iloc[0]["interval_weeks"])
+    assert df.iloc[0]["gaikyu_name"] == "チャンピオンヒルズ"
+
+
+def test_gaikyu_comment_missing_date_slash():
+    # 帰厩日欠損 `外厩名␣/␣中N週`（年次6件）→ kikyu_date 空。
+    df = parse_gaikyu_comment("0826140302,ノルマンディ小野町　/　中3週\r\n".encode("cp932"))
+    assert df.iloc[0]["kikyu_date"] == ""
+    assert df.iloc[0]["interval_weeks"] == 3
+
+
+def test_gaikyu_comment_sentinel_names_to_na():
+    # 情報無し(年次4件) / 全角数値 ９９．９(年次3件) → gaikyu_name NA だが生値は保持。
+    data = ("0826110301,情報無し　/　中1週\r\n"
+            "0226120506,９９．９　05/29　中週\r\n").encode("cp932")
+    df = parse_gaikyu_comment(data)
+    assert pd.isna(df.iloc[0]["gaikyu_name"]) and df.iloc[0]["gaikyu_name_raw"] == "情報無し"
+    assert pd.isna(df.iloc[1]["gaikyu_name"]) and df.iloc[1]["gaikyu_name_raw"] == "９９．９"
+
+
+def test_complete_return_date_year_crossing():
+    # 出走1月・帰厩12月 → 前年（年跨ぎ）。通常は当年。
+    assert complete_return_date("12/20", dt.date(2026, 1, 10)) == dt.date(2025, 12, 20)
+    assert complete_return_date("07/01", dt.date(2026, 7, 26)) == dt.date(2026, 7, 1)
+    assert complete_return_date("", dt.date(2026, 7, 26)) is None       # 欠損
+    assert complete_return_date("02/30", dt.date(2026, 3, 1)) is None   # 異常日付
+    assert kikyu_month_day("07/15") == (7, 15)
+    assert kikyu_month_day("/") == (None, None)
 
 
 def test_parse_seiseki_idm_signed_and_key():
