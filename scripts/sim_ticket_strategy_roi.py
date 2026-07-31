@@ -65,25 +65,39 @@ def _sim_race_probs(rd, *, n_sim, cfg, ability_spread, ability_sigma, rank_gain,
     return rank, probs, umaban, winner
 
 
-def _model_feature_names(eff):
-    """fit 済みモデルから学習特徴量名(順序付き)を辿る。較正ラッパー越しも試す。無ければ None。"""
-    getters = [
-        lambda m: list(m.feature_name_),                       # LGBMClassifier
-        lambda m: list(m.booster_.feature_name()),             # Booster
-        lambda m: list(m.feature_names_in_),                   # sklearn 一般
-    ]
+def _model_n_features(eff):
+    """fit 済みモデルが期待する特徴量数を辿る（較正ラッパー越しも試す）。無ければ None。"""
     for cand in (eff, getattr(eff, "_base_model", None), getattr(eff, "base_estimator", None),
                  getattr(eff, "estimator", None)):
         if cand is None:
             continue
-        for g in getters:
+        for g in (lambda m: int(m.n_features_in_), lambda m: int(m.booster_.num_feature())):
             try:
-                names = g(cand)
-                if names:
-                    return names
+                n = g(cand)
+                if n:
+                    return n
             except Exception:  # noqa: BLE001
                 continue
     return None
+
+
+def _training_feature_order(model, eff):
+    """学習時の**実列名**(順序付き)を返す。モデルは numpy fit で booster 名が汎用(Column_N)なため、
+    KeibaAI の feature_names_/feature_contract_ から、モデルが期待する特徴量数に一致する候補を選ぶ。"""
+    from src.policies._score_policy import META_COLS
+    contract = getattr(model, "feature_contract_", None)
+    cands = []
+    fn = getattr(model, "feature_names_", None)
+    if fn:
+        cands.append(list(fn))
+    if contract is not None:
+        cands.append(list(contract.names))
+        cands.append([c for c in contract.names if c not in META_COLS])
+    n_expect = _model_n_features(eff)
+    for lst in cands:
+        if n_expect and len(lst) == n_expect:
+            return lst          # 期待特徴量数に一致する実列名リストを採用
+    return cands[0] if cands else None
 
 
 def _lgbm_probs(model, featured, order):
@@ -99,24 +113,36 @@ def _lgbm_probs(model, featured, order):
 
     from src.constants._results_cols import ResultsCols
     eff = getattr(model, "effective_model", model)
-    feat_cols = _model_feature_names(eff)      # 学習特徴量(=588)の厳密な列名・列順（fitモデル由来）
+    feat_cols = _training_feature_order(model, eff)   # 学習時の実列名・列順（数で照合）
     if not feat_cols:
-        from src.policies._score_policy import META_COLS
-        contract = getattr(model, "feature_contract_", None)
-        names = (list(contract.names) if contract is not None
-                 else getattr(model, "feature_names_", None)) or []
-        feat_cols = [c for c in names if c not in META_COLS]
-    if not feat_cols:
-        raise RuntimeError("モデルの学習特徴量名を取得できません（fit モデル/契約いずれも不明）")
+        raise RuntimeError("モデルの学習特徴量名を取得できません（feature_names_/契約いずれも不明）")
+    n_expect = _model_n_features(eff)
     missing = [c for c in feat_cols if c not in featured.columns]
+    extra = [c for c in featured.columns if c not in feat_cols]
+    # [契約診断] 市場検証では 0 補完を禁止（1列でも欠ければ停止）。silent feature mismatch を再発させない。
+    print("  [契約診断] "
+          f"model_class={type(eff).__name__} n_features_in_={n_expect} "
+          f"学習列数={len(feat_cols)} featured列数={featured.shape[1]} "
+          f"共通={len(feat_cols) - len(missing)} 不足={len(missing)} 余分={len(extra)}",
+          file=sys.stderr)
+    print(f"  [契約診断] 学習列 先頭: {feat_cols[:8]}", file=sys.stderr)
     if missing:
-        print(f"  [warn] featured に学習特徴量 {len(missing)} 列が無く 0 補完: {missing[:5]} ...",
-              file=sys.stderr)
-    X_model = featured.reindex(columns=feat_cols, fill_value=0)
+        raise ValueError(
+            f"特徴量不一致: 学習{len(feat_cols)}列中 {len(missing)}列が featured に無い。0補完は"
+            f"市場検証では禁止（本番モデルを正しく推論できていない）。先頭20: {missing[:20]}")
+    X_model = featured.reindex(columns=feat_cols)     # 厳密整合（fill なし・順序固定）
     prob = np.asarray(eff.predict_proba(X_model.values))[:, 1]
+    rank_arr = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy()
     tbl = pd.DataFrame({"_rid": featured.index.astype(str),
                         "uma": pd.to_numeric(featured[ResultsCols.UMABAN], errors="coerce"),
-                        "prob": prob})
+                        "prob": prob, "rank": rank_arr})
+    # [正常性スモーク] 保存時 Place AUC≈0.807-0.809 を再現できるかで特徴整合を検証（≒0.5 なら破損）。
+    from src.simulation._bet_eval import _auc
+    valid = tbl.dropna(subset=["rank"])
+    place_auc = _auc(list(zip(valid["prob"], (valid["rank"] <= 3).astype(int), strict=False)))
+    win_auc = _auc(list(zip(valid["prob"], (valid["rank"] == 1).astype(int), strict=False)))
+    smoke = {"place_auc": place_auc, "win_auc": win_auc, "n": int(len(valid)),
+             "n_feat": len(feat_cols)}
     winners = _race_winners(featured)
     top_by_race: dict = {}
     calib: list = []
@@ -129,7 +155,7 @@ def _lgbm_probs(model, featured, order):
         w = winners.get(rid)
         if w is not None and w in umas:
             calib.append((rid[:4], probs, umas.index(w)))
-    return top_by_race, calib
+    return top_by_race, calib, smoke
 
 
 def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_spread,
@@ -590,18 +616,38 @@ def _print_calibration(calib: list, pick_label="Sim1位"):
         print(f"  学習{tr}/評価{te}が薄く校正不可。")
         return
     T = fit_temperature(train)
-    print(f"\n  walk-forward: {tr} で T を fit={T:.2f} → {te} に固定適用（T>1=過信を平坦化）")
-    print(f"  {te} 校正前 NLL={nll(test, 1.0):.4f} ECE={ece_top(test, T=1.0):.3f} / "
-          f"校正後 NLL={nll(test, T):.4f} ECE={ece_top(test, T=T):.3f}")
-    print(f"  {te} 校正後 {pick_label} 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
-    _reliability_print(reliability_top(test, T=T))
-    hi = [w for p, w in test if apply_temp_top(p, T) >= 0.5]
-    if hi:
-        print(f"  → 校正後 p1≥0.50 は {len(hi):,}レース（実勝率 {sum(hi)/len(hi):.3f}）。"
-              "ここで初めて S9 の 0.50 閾値に意味。")
+    ece_raw, ece_cal = ece_top(test, T=1.0), ece_top(test, T=T)
+    at_bound = T <= 0.31 or T >= 29.9
+    # temperature 採用の可否: ECE が有意に改善し、かつ T が境界に張り付いていないときだけ採用。
+    adopt = (ece_cal < ece_raw - 0.002) and not at_bound
+    print(f"\n  walk-forward: {tr} で T を fit={T:.2f} → {te} で検証"
+          + ("（T境界張付＝最適が範囲外）" if at_bound else ""))
+    print(f"  {te} 校正前 NLL={nll(test, 1.0):.4f} ECE={ece_raw:.3f} / "
+          f"温度後 NLL={nll(test, T):.4f} ECE={ece_cal:.3f}")
+    if not adopt:
+        reason = ("既に良好で改善なし" if ece_raw < 0.03 else
+                  "ECE悪化" if ece_cal >= ece_raw else "T境界張付")
+        print(f"  → temperature scaling 非採用（{reason}）。生確率で評価する。")
+        T = 1.0
     else:
-        print("  → 校正後は p1≥0.50 のレースがほぼ消失（過信が主因）。S9 の 0.50 閾値は実質無効"
-              "→閾値を校正後分布に合わせて引き下げるか、S9 を見送りにするのが妥当。")
+        print(f"  {te} 校正後 {pick_label} 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
+        _reliability_print(reliability_top(test, T=T))
+    # p1≥0.50 は採用した尺度（生 or 温度後）で、同一 test 集合の「トップ馬が実際に勝った率」を報告。
+    # ＝reliability_top と同一定義（勝者index の合計ではなく 1着一致の 0/1）。表と整合させる。
+    from src.simulation._prob_calibration import apply_temperature
+    hi = []
+    for p, w in test:
+        pc = apply_temperature(p, T)
+        j = max(range(len(pc)), key=lambda k: pc[k])
+        if pc[j] >= 0.5:
+            hi.append(1 if j == w else 0)
+    scale = "温度後" if adopt else "生"
+    if hi:
+        print(f"  → {te}・{scale}確率で p1≥0.50 は {len(hi):,}レース（トップ馬の実勝率 {sum(hi)/len(hi):.3f}）。"
+              "この帯が 0.5 近傍なら S9 の 0.50 閾値に意味。")
+    else:
+        print(f"  → {te}・{scale}確率では p1≥0.50 のレースが無い。S9 の 0.50 閾値は実質無効"
+              "（閾値を分位ベースに変えるか S9 見送り）。")
 
 
 def apply_temp_top(p_array, T):
@@ -714,15 +760,31 @@ def main() -> int:
 
     if not args.walk_forward and args.prob_source == "lgbm":
         # 確率源＝本番 LightGBM。市場対照・校正・A/B/C のみ（MC専用の券種戦略グリッドはスキップ）。
-        from app._data_loader import load_latest_model, load_model_by_version
-        model = (load_model_by_version(args.model_version) if args.model_version
-                 else load_latest_model())
-        if model is None:
-            print("本番モデルが見つかりません（models/ を確認）", file=sys.stderr)
-            return 1
-        print(f"[全期間・LightGBM] {len(order):,}レース / 確率源=本番較正勝率")
-        top_by_race, calib = _lgbm_probs(model, featured, order)
+        from app._data_loader import (
+            find_combined_model_paths, find_model_paths, load_model_by_version,
+            load_model_from_path,
+        )
+        if args.model_version:
+            model, mpath = load_model_by_version(args.model_version), args.model_version
+        else:
+            paths = find_combined_model_paths("models") or find_model_paths("models")
+            if not paths:
+                print("本番モデルが見つかりません（models/ を確認）", file=sys.stderr)
+                return 1
+            mpath = paths[0]
+            model = load_model_from_path(mpath)
+        print(f"[全期間・LightGBM] {len(order):,}レース / model={mpath}")
+        top_by_race, calib, smoke = _lgbm_probs(model, featured, order)
         pl = "LGBM1位"
+        # [正常性スモーク] 特徴整合が壊れていれば AUC≒0.5 になる。0.807 近傍で初めて ROI を信頼できる。
+        pa, wa = smoke["place_auc"], smoke["win_auc"]
+        print(f"\n[正常性スモーク] Place AUC={pa:.3f} / Win AUC={wa:.3f}"
+              f"（保存時 Place≈0.807-0.809 と一致すれば特徴整合OK・{smoke['n']:,}頭・{smoke['n_feat']}特徴量）")
+        if pa is None or pa < 0.65:
+            print("  ✗ AUC が低すぎる＝特徴量が正しく渡っていない。市場対照/ROIは無効なので中止。"
+                  "学習時と同一の前処理・列順でモデル入力を再構成する必要がある。", file=sys.stderr)
+            return 1
+        print("  ✓ AUC 正常域。以降の市場対照・校正・A/B/C を本番モデル評価として採用可。")
         _print_calibration(calib, pick_label=pl)
         _market_control(win_odds, top_by_race, ret_src, src_lbl, pick_label=pl)
         if win_odds:
