@@ -75,7 +75,9 @@ def _lgbm_probs(model, featured, order):
 
     from src.constants._results_cols import ResultsCols
     from src.policies._score_policy import PROB, ExpectedValueScorePolicy
-    table = ExpectedValueScorePolicy.calc(model, featured)
+    # KeibaAI ラッパーの calc_score が特徴量整合(#24契約)込みで較正勝率テーブルを返す
+    # （ExpectedValueScorePolicy.calc を直接呼ぶとラッパーに predict_proba が無く失敗する）。
+    table = model.calc_score(featured, ExpectedValueScorePolicy)
     table = table.copy()
     table["_rid"] = table.index.astype(str)
     winners = _race_winners(featured)
