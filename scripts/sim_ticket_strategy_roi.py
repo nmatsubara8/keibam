@@ -199,7 +199,7 @@ def main() -> int:
         # 過去年での選択規準: 除最大ROI 最大（フロック依存を避ける）かつ点数十分
         elig = [r for r in tr_rows if r["n_bets"] >= 100] or tr_rows
         best = max(elig, key=lambda r: r["roi_ex"])
-        te_res, _ = _run_strategies(featured.loc[te_order], te_order,
+        te_res, _ = _run_strategies(featured.loc[te_order], te_order, ret_src,
                                     {best["name"]: strategies[best["name"]]}, **kw)
         te_line = _strategy_line(best["name"], *te_res[best["name"]])
         picks.append((tr, te, best, te_line))
