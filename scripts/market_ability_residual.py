@@ -217,8 +217,12 @@ def _vs_production(df: pd.DataFrame, featured: pd.DataFrame, args) -> int:
         print("  → NO-GO: 簡易baselineでの増分は本番全特徴（豊富な過去成績）と重複。")
         print("     『Δabは簡易市場モデルに欠けた過去能力を効率表現するが、本番モデルへの追加情報は限定的』"
               "として一区切り。")
-    print("  ※ context記録: 「GO（本番全特徴との重複"
-          + ("否定＝独立増分確認" if go else "＝増分無し確認") + "）」")
+    print("  ※ context記録: "
+          + ("「GO（本番全特徴との重複否定＝Δab独立増分確認）」" if go
+             else "「NO-GO（本番全特徴との重複確認＝Δab増分無し）」"))
+    if d_raw <= -0.0005 and d_specific > 0:
+        print(f"  補足: raw MySpeed は本番へ増分あり(ΔLL(B−A)={d_raw:+.5f})だが直交で消える"
+              f"(C−B={d_specific:+.5f})。＝過去能力は実在／市場直交が誤操作。要B単独の年別・プラセボ確認。")
     return 0
 
 
