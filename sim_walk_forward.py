@@ -41,6 +41,10 @@ def main():
     ap.add_argument("--min-odds", type=float, default=1.0)
     ap.add_argument("--max-odds", type=float, default=100.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--rank-gain", type=float, default=0.0,
+                    help="騎手＋厩舎ランクの ability 加減点の強さ（featured に rank_bonus 列が要る＝"
+                         "先に scripts/build_rank_bonus.py。単一スナップ全期間＝leak・過去ROI探索用）。"
+                         "符号・大きさを振って回収率が動くか見る")
     ap.add_argument("--placebo", action="store_true", help="能力シャッフル対照も測る")
     args = ap.parse_args()
 
@@ -92,7 +96,8 @@ def main():
             continue
         w = int(winner[0])
 
-        field = field_from_featured(rd, ability_spread=args.ability_spread)
+        field = field_from_featured(rd, ability_spread=args.ability_spread,
+                                    rank_gain=args.rank_gain)
         sim = monte_carlo(field, n_sim=args.n_sim, cfg=cfg, seed=int(rng.integers(1 << 30)),
                           ability_sigma=args.ability_sigma)
         p_sim = sim["win"]

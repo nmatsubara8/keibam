@@ -97,11 +97,24 @@ def field_from_featured(
     stamina_hi: float = 1.4,
     noise_base: float = 0.04,
     noise_gain: float = 0.02,
+    rank_gain: float = 0.0,
 ) -> RaceField:
-    """1レースの featured 行群 → RaceField（前進安全・スキーマ寛容）。"""
+    """1レースの featured 行群 → RaceField（前進安全・スキーマ寛容）。
+
+    rank_gain: 騎手＋厩舎ランクの ability 加減点の強さ（既定 0＝opt-in）。featured に事前計算した
+    `rank_bonus` 列（build_rank_bonus.py・_rank_bonus.attach_rank_bonus）がある場合のみ効く。
+    ⚠ 単一スナップ全期間適用＝過去に未来ランクが混入する leak（探索用・live には transfer しない）。
+    """
     n = len(race_df)
     z = _ability_z(race_df).to_numpy()
     ability = np.clip(1.0 + ability_spread * z, 0.3, 2.0)
+
+    # 騎手＋厩舎ランク加減点（opt-in・rank_bonus 列がある時だけ）。ability に直接加点して再 clip。
+    if rank_gain:
+        rb = _num(race_df, "rank_bonus")
+        if rb is not None:
+            ability = np.clip(
+                ability + rank_gain * np.nan_to_num(rb.to_numpy(dtype=float)), 0.3, 2.0)
 
     # 脚質: leg_type_binary から（無ければ全 stalker）
     style = np.full(n, STYLE_STALKER, dtype=int)
