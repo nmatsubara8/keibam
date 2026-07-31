@@ -111,6 +111,15 @@
 → **市場と直交しうる真に新規なモダリティは「外厩(放牧先の質・帰厩鮮度)」ただ一つに絞られた。**
 最初の CI-下限検証対象は **外厩コメント**（(race_id,umaban) 直結・放牧先名＋帰厩日＋ローテ）。
 
+### 取込パイプライン（全8種・実装済）
+`src/jrdb/_target.py`（パーサ）＋`scripts/jrdb_target_ingest.py`（取込CLI）で全8種を正規化 pickle 化。
+- `python scripts/jrdb_target_ingest.py --src <DLフォルダ> --out-dir data/jrdb_target`
+  → `jrdb_target_{gaikyu,gaikyucomment,itidori,bante,idm,idmse,tnrank,jocrank}.pkl`。
+- zip 名先頭英字で自動分類・日/年パックをまたいで結合。`--types` で限定可（既定=全8種）。
+- 出力キー: 馬印系=[race_id,ketto,horse_id,コード] / コメント=[race_id,umaban,外厩名,帰厩日,中N週] /
+  成績IDM=[race_id,umaban,race_date,成績IDM] / ランク=[area,person_code,rank,name]。
+  race_id/horse_id は `_keys`（レースキー16進日・世紀補完）で標準形へ変換済。
+
 ### 次アクション（優先順）
 1. **成績IDM の冗長チェック（安価・先に潰す）**: SEI_IDM の値を `raw_jrdb_sed.idm`（同 date+race+馬番）と
    突合。一致すれば取込済＝新規性ゼロで確定。差があれば残差 IDM の可能性のみ再検討。
