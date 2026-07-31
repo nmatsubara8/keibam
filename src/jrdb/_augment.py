@@ -237,6 +237,17 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
     """
     orig_index = featured.index
     f = featured.reset_index(drop=True).copy()
+    # 冪等性: 既に attach 済み（jrdb_*/prev_* を持つ）featured へ再適用しても、pandas merge の
+    # _x/_y 重複列を作らないよう、attach 由来の出力列を先に除去してから貼り直す。
+    # （二重マージした featured で学習すると、推論時に _x/_y が無く 0 埋め＝静かな誤予測になる）
+    produced = [c for c in f.columns
+                if str(c).startswith("jrdb_") or c in ("prev_deokure", "prev_trouble")]
+    if produced:
+        import logging as _log
+        _log.getLogger(__name__).info(
+            "attach: 既存の attach 由来列 %d 列を除去して再付与（冪等化・二重マージ防止）: %s%s",
+            len(produced), produced[:5], " …" if len(produced) > 5 else "")
+        f = f.drop(columns=produced)
     f["_pos"] = range(len(f))
     f["_rid"] = orig_index.astype(str)
     f["_uma"] = pd.to_numeric(f[umaban_col], errors="coerce").astype("Int64")

@@ -58,3 +58,15 @@ def test_attach_empty_jrdb_is_safe():
     out = attach(_featured(), pd.DataFrame(), pd.DataFrame())
     assert "jrdb_kijun_odds" in out.columns
     assert out["jrdb_kijun_odds"].isna().all()
+
+
+def test_attach_is_idempotent_no_xy_dupes():
+    # 既に attach 済みの featured へ再適用しても jrdb_*_x/_y 重複列を作らない（冪等・二重マージ防止）。
+    once = attach(_featured(), _kyi(), pd.DataFrame())
+    assert "jrdb_idm" in once.columns
+    twice = attach(once, _kyi(), pd.DataFrame())
+    assert not any(str(c).endswith(("_x", "_y")) for c in twice.columns)  # 重複列なし
+    assert "jrdb_idm" in twice.columns and "jrdb_idm_x" not in twice.columns
+    assert set(once.columns) == set(twice.columns)                        # 列集合は不変
+    # 値も一度目と一致（再付与で壊れない）
+    assert twice["jrdb_idm"].tolist() == once["jrdb_idm"].tolist()
