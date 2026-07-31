@@ -219,6 +219,126 @@ def _load_db_win_odds(engine, race_set, *, table="raw_odds_snapshots", target_mt
     return out
 
 
+def _race_winners(featured):
+    """featured → {race_id: 勝ち馬番}（着順==1 が一意のレースのみ）。代表性監査・部分群集計に使う。"""
+    import pandas as pd
+
+    from src.constants._results_cols import ResultsCols
+    df = pd.DataFrame({"rid": featured.index.astype(str),
+                       "rank": pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy(),
+                       "uma": pd.to_numeric(featured[ResultsCols.UMABAN], errors="coerce").to_numpy()})
+    out: dict = {}
+    for rid, g in df.groupby("rid"):
+        w = g[g["rank"] == 1]
+        if len(w) == 1 and pd.notna(w["uma"].iloc[0]):
+            out[rid] = int(w["uma"].iloc[0])
+    return out
+
+
+def _dist_str(keys, top=6):
+    """キー列 → 上位カテゴリの 'k:割合' 文字列（代表性の目視用）。"""
+    from collections import Counter
+    c = Counter(keys)
+    n = sum(c.values()) or 1
+    items = sorted(c.items(), key=lambda kv: -kv[1])[:top]
+    return "  ".join(f"{k}:{v / n:.0%}" for k, v in items)
+
+
+def _print_coverage_audit(featured, order, comparable, sim_top, winners):
+    """[代表性監査] 市場比較可能レースが全評価レースを代表しているか（偏りの検出）。"""
+    import pandas as pd
+    nby = pd.Series(featured.index.astype(str)).value_counts().to_dict()   # race_id→頭数
+    allids = [str(r) for r in order]
+    comp = [str(r) for r in comparable]
+    cov = len(comp) / len(allids) if allids else 0.0
+    print(f"\n[代表性監査] 市場比較 {len(comp):,} / 全評価 {len(allids):,}（カバレッジ {cov:.1%}）"
+          "＝この比較が全体を代表しているか")
+
+    def _row(label, ids):
+        yrs = [i[:4] for i in ids]
+        trk = [i[4:6] for i in ids]                       # race_id の場コード相当
+        fs = [nby.get(i, 0) for i in ids]
+        fs_bucket = ["≤7" if n <= 7 else "8-12" if n <= 12 else "13+" for n in fs]
+        hit = [1 for i in ids if i in sim_top and winners.get(i) == sim_top[i]]
+        hr = len(hit) / len(ids) if ids else 0.0
+        avg_fs = sum(fs) / len(fs) if fs else 0.0
+        print(f"  {label}: n={len(ids):,} Sim1位的中={hr:.1%} 平均頭数={avg_fs:.1f}")
+        print(f"    年 {_dist_str(yrs)}")
+        print(f"    場 {_dist_str(trk)}")
+        print(f"    頭数 {_dist_str(fs_bucket)}")
+
+    _row("全評価", allids)
+    _row("市場比較", comp)
+    print("  → 市場比較の年/場/頭数分布・Sim1位的中率が全評価と大きく違えば、148件は偏った標本"
+          "（＝ΔROIの判定はさらに不確か）。カバレッジを上げて再監査すること。")
+
+
+def _market_rank_of(win_odds_race, horse):
+    """購入時点オッズでの人気順位（1=1番人気）。horse が無ければ None。"""
+    ranked = sorted(win_odds_race.items(), key=lambda kv: kv[1])
+    for i, (u, _o) in enumerate(ranked, 1):
+        if int(u) == int(horse):
+            return i
+    return None
+
+
+def _arm_stats_detailed(per_race, win_odds, pick):
+    """単一群の ROI/的中/平均オッズ/除最大ROI/年別ROI を per_race から算出。"""
+    st = sum(d["stake"] for d in per_race.values())
+    rt = sum(d["returned"] for d in per_race.values())
+    hits = sum(d["n_hits"] for d in per_race.values())
+    n = len(per_race)
+    max_ret = max((d["returned"] for d in per_race.values()), default=0.0)
+    roi = rt / st if st else 0.0
+    roi_ex = (rt - max_ret) / st if st else 0.0
+    avg_odds = (sum(win_odds[r].get(pick[r], 0.0) for r in per_race if r in win_odds and r in pick)
+                / n) if n else 0.0
+    yr: dict = {}
+    for rid, d in per_race.items():
+        y = str(rid)[:4]
+        a = yr.setdefault(y, [0.0, 0.0])
+        a[0] += d["stake"]
+        a[1] += d["returned"]
+    by_year = {y: (v[1] / v[0] if v[0] else 0.0) for y, v in sorted(yr.items())}
+    return {"n": n, "roi": roi, "hit": hits / n if n else 0.0, "avg_odds": avg_odds,
+            "roi_ex": roi_ex, "by_year": by_year}
+
+
+def _print_market_subgroups(win_odds, sim_top, ret_src):
+    """[市場×選択差] Sim1位が市場で何番人気かで A/B/C に分け、単勝/複勝成績を出す。
+
+    A=Sim1位が市場1番人気 / B=市場1番人気でない / C=市場4番人気以下。一致率10%の実体を見る。
+    """
+    from src.constants._bet_types import BetType
+    from src.simulation._ticket_backtest import settle_per_race
+    common = [r for r in sim_top if r in win_odds]
+    if not common:
+        return
+    mr = {r: _market_rank_of(win_odds[r], sim_top[r]) for r in common}
+    groups = {
+        "A:Sim1位=市場1番人気": [r for r in common if mr[r] == 1],
+        "B:Sim1位≠市場1番人気": [r for r in common if mr[r] not in (None, 1)],
+        "C:Sim1位が市場4番人気以下": [r for r in common if mr[r] is not None and mr[r] >= 4],
+    }
+    print("\n[市場×選択差] Sim1位の市場人気順位別 単勝/複勝成績（一致率10%の中身・確定払戻で精算）")
+    print(f"  {'群':<24}{'件数':>6}{'単ROI':>8}{'単的中':>7}{'複ROI':>8}{'平均O':>7}"
+          f"{'単除最大':>9}")
+    for label, ids in groups.items():
+        if not ids:
+            print(f"  {label:<24}{'0':>6}  （該当なし）")
+            continue
+        pick = {r: sim_top[r] for r in ids}
+        prw = settle_per_race(_single_candidates(BetType.TANSHO, pick), ret_src)
+        prp = settle_per_race(_single_candidates(BetType.FUKUSHO, pick), ret_src)
+        w = _arm_stats_detailed(prw, win_odds, pick)
+        p = _arm_stats_detailed(prp, win_odds, pick)
+        yr = "  ".join(f"{y}:{v:.0%}" for y, v in w["by_year"].items())
+        print(f"  {label:<24}{w['n']:>6,}{w['roi']:>8.1%}{w['hit']:>7.1%}{p['roi']:>8.1%}"
+              f"{w['avg_odds']:>7.1f}{w['roi_ex']:>9.1%}   年別単{yr}")
+    print("  → B/C（市場と違う選択）で十分件数かつ単勝ROIが市場対照を超えるなら、Simは弱い『人気薄"
+          "選定器』の可能性。ただし148件では探索的参考に留まる（要カバレッジ増）。")
+
+
 def _single_candidates(bet_type, pick_by_race):
     """{race_id: 馬番} → その馬1点を買う BetCandidate 群（単勝/複勝の対照用）。"""
     from src.policies._bet_candidate import BetCandidate
@@ -492,6 +612,11 @@ def main() -> int:
         else:
             win_odds, src_lbl = {}, "市場"
         _market_control(win_odds, sim_top, ret_src, src_lbl)
+        if win_odds:
+            winners = _race_winners(featured)
+            comparable = [r for r in win_odds if r in sim_top]
+            _print_coverage_audit(featured, order, comparable, sim_top, winners)   # 代表性監査
+            _print_market_subgroups(win_odds, sim_top, ret_src)                    # A/B/C 部分群
         # [戦略別]
         print("\n[戦略別]")
         _print_table([_strategy_line(n, pb, pr) for n, (pb, pr) in res.items()])

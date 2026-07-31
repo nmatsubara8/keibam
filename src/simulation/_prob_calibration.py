@@ -43,7 +43,7 @@ def nll(races, T: float = 1.0) -> float:
     return total / n if n else float("inf")
 
 
-def fit_temperature(races, *, lo: float = 0.3, hi: float = 12.0, iters: int = 60) -> float:
+def fit_temperature(races, *, lo: float = 0.3, hi: float = 30.0, iters: int = 70) -> float:
     """勝者 NLL を最小化する温度 T を黄金分割探索で1つ推定する（学習期間で fit → 翌年固定）。"""
     if not races:
         return 1.0
