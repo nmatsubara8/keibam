@@ -331,11 +331,21 @@ class DataSplitter:
         degenerate = single_class_splits(reports, guarded=("base_train", "meta_train"))
         if degenerate:
             detail = ", ".join(f"{r['split']}(pos={r['pos']}, neg={r['neg']})" for r in degenerate)
+            # アーカイブ二層の署名: 1レース1行（rows≈races）かつ pos=0＝古いアーカイブ層
+            # （horse_results 無し・rank 未生成）。日付順分割で最古が base/meta に入り degenerate 化。
+            archive_like = any(r["pos"] == 0 and r["rows"] == r["races"] for r in degenerate)
+            hint = (
+                " 該当 split は rows==races（1レース1行）＝アーカイブ二層(1986–2014頃・rank未生成)の"
+                " 署名です。日付順分割で最古層が base/meta に入り pos=0 になっています。"
+                " **--since-year 2015**（運用標準）で古いアーカイブ層を除外してください。"
+                if archive_like else
+                " 原因候補: date 欠損で末尾 slice が degenerate / JRA フィルタ後の対象縮小 /"
+                " target 列に無効値。"
+            )
             raise ValueError(
                 f"stacking split が single-class です（meta 学習器を学習できません）: {detail}。"
                 f" target={self.__target}。上の『stacking split 診断』表で期間・行数・クラス分布を"
-                " 確認してください。原因候補: date 欠損で末尾 slice が degenerate になる /"
-                " JRA フィルタ後の対象縮小 / target 列に無効値。--no-stacking で回避可能です。"
+                f" 確認してください。{hint} --no-stacking でも回避可能です。"
             )
 
     @property
