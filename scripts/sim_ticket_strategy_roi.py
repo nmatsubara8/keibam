@@ -94,20 +94,36 @@ def _lgbm_probs(model, featured, order):
 
     from app._model_eval import _DROP_FOR_TRAIN
     from src.constants._results_cols import ResultsCols
-    # 実績ある本番推論経路と同一: モデル入力 = featured − _DROP_FOR_TRAIN（学習時と同一列構成・同一順序）。
-    # モデルは X_base_train.values(numpy)で fit＝positional。featured は学習と同一 pkl 由来で列順が一致。
     eff = getattr(model, "effective_model", model)
     n_expect = _model_n_features(eff)
-    X_model = featured.drop(list(_DROP_FOR_TRAIN), axis=1, errors="ignore")
-    print(f"  [契約診断] model_class={type(eff).__name__} n_features_in_={n_expect} "
-          f"モデル入力列数={X_model.shape[1]}（featured {featured.shape[1]} − _DROP_FOR_TRAIN "
-          f"{len(_DROP_FOR_TRAIN)}）", file=sys.stderr)
-    print(f"  [契約診断] モデル入力 先頭: {list(X_model.columns[:8])}", file=sys.stderr)
-    # [strict] 市場検証では列数不一致で即停止（silent mismatch を再発させない・0補完なし）。
+    # モデル入力の列名は、学習時に確定した datasets.X_base_train.columns（=588の実列名・学習列順）を
+    # 正典とする。現 featured は学習後に増えた特徴量（例 rank_bonus 等）を含み得るので、学習列だけを
+    # 厳密に選ぶ（新規列を除外・順序固定）。取れない場合のみ featured − _DROP_FOR_TRAIN へフォールバック。
+    feat_names = None
+    ds = getattr(model, "datasets", None)
+    if ds is not None:
+        try:
+            feat_names = list(ds.X_base_train.columns)
+        except Exception:  # noqa: BLE001
+            feat_names = None
+    if feat_names:
+        missing = [c for c in feat_names if c not in featured.columns]
+        print(f"  [契約診断] model_class={type(eff).__name__} n_features_in_={n_expect} "
+              f"学習列数={len(feat_names)} featured列数={featured.shape[1]} 不足={len(missing)} "
+              f"（学習列を厳密選択）", file=sys.stderr)
+        print(f"  [契約診断] 学習列 先頭: {feat_names[:8]}", file=sys.stderr)
+        if missing:
+            raise ValueError(f"特徴量不一致: 学習{len(feat_names)}列中 {len(missing)}列が featured に"
+                             f"無い（0補完は市場検証で禁止）。先頭20: {missing[:20]}")
+        X_model = featured.reindex(columns=feat_names)   # 学習列だけ・学習順（新規19列を除外）
+    else:
+        X_model = featured.drop(list(_DROP_FOR_TRAIN), axis=1, errors="ignore")
+        print(f"  [契約診断] datasets 不在→fallback: model入力列数={X_model.shape[1]}"
+              f"（featured−_DROP_FOR_TRAIN）", file=sys.stderr)
     if n_expect and X_model.shape[1] != n_expect:
         raise ValueError(
-            f"特徴量数不一致: モデル入力 {X_model.shape[1]}列 ≠ 学習 {n_expect}列。featured の列構成が"
-            f"学習時と違う（新規/欠落特徴量を疑う）。差分列数={X_model.shape[1] - n_expect:+d}")
+            f"特徴量数不一致: モデル入力 {X_model.shape[1]}列 ≠ 学習 {n_expect}列。差分"
+            f"{X_model.shape[1] - n_expect:+d}（学習列選択後も不一致＝datasets とモデルの版ずれを疑う）")
     prob = np.asarray(eff.predict_proba(X_model.values))[:, 1]
     rank_arr = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy()
     tbl = pd.DataFrame({"_rid": featured.index.astype(str),
