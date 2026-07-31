@@ -203,3 +203,35 @@ def test_compare_seiseki_vs_sed_joins_and_matches(tmp_path):
     assert rep["max_abs_diff"] == 1.0            # 馬番08 の 1 差
     assert rep["exact_match_rate"] == 0.5        # 2件中1件一致
     assert rep["sed_range"] == [30.0, 45.0]
+
+
+def test_read_sed_from_db_and_compare(tmp_path):
+    """DB(raw_jrdb_sed) から SED[idm] を読んで idmse と照合できる（既存取込経路）。"""
+    import importlib.util
+    import sqlite3
+
+    from src.jrdb._target import compare_seiseki_vs_sed, parse_seiseki_idm
+
+    db = tmp_path / "keibam.db"
+    con = sqlite3.connect(db)
+    con.execute('CREATE TABLE raw_jrdb_sed (race_id TEXT, umaban INTEGER, idm TEXT)')
+    con.executemany(
+        'INSERT INTO raw_jrdb_sed (race_id, umaban, idm) VALUES (?,?,?)',
+        [("200801020101", 7, " 45"), ("200801020101", 8, " 30")],
+    )
+    con.commit()
+    con.close()
+
+    spec = importlib.util.spec_from_file_location("jvs", "scripts/jrdb_seiseki_vs_sed.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    sed = mod.read_sed_from_db(str(db))
+    assert sed is not None and len(sed) == 2
+    assert mod.read_sed_from_db(str(tmp_path / "missing.db")) is None   # DB 無し→None
+
+    idmse = parse_seiseki_idm(
+        b"200809130102010107,45\r\n200809130102010108,31\r\n"
+    )
+    rep = compare_seiseki_vs_sed(sed, idmse)
+    assert rep["n_both_present"] == 2 and rep["max_abs_diff"] == 1.0
