@@ -33,6 +33,10 @@ def main() -> int:
                     help="アーカイブ展開先（.lzh/.zip → .txt）")
     ap.add_argument("--out", default="data/featured_jrdb.pkl", help="出力 pickle")
     ap.add_argument("--sidecar", action="store_true", help="JRDB列だけのサイドカーも保存")
+    # raw MySpeed(jrdb_ms_*) は採用検証で現行 featured モデルへ No-Go（Issue #22・冗長〜有害）。
+    # 既定では付与しない（本番 featured を汚さない）。研究/再検証用に --with-myspeed で有効化。
+    ap.add_argument("--with-myspeed", action="store_true",
+                    help="raw MySpeed(jrdb_ms_*)を付与（既定 off・#22 は No-Go。研究用）")
     args = ap.parse_args()
 
     from src.jrdb._extract import extract_dir  # noqa: E402
@@ -55,15 +59,24 @@ def main() -> int:
     kyi = build_kyi(files["KYI"])
     print("SED/SKB 解析（前走特記の履歴）...")
     history = build_history(files["SED"], files["SKB"])
-    print("SED 解析（raw MySpeed 素点履歴）...")
-    soten = build_soten_history(files["SED"])
-    print(f"  KYI {len(kyi):,}行 / 履歴 {len(history):,}行 / MySpeed {len(soten):,}行")
+    soten = None
+    if args.with_myspeed:
+        print("SED 解析（raw MySpeed 素点履歴・--with-myspeed）...")
+        soten = build_soten_history(files["SED"])
+        print(f"  KYI {len(kyi):,}行 / 履歴 {len(history):,}行 / MySpeed {len(soten):,}行")
+    else:
+        print(f"  KYI {len(kyi):,}行 / 履歴 {len(history):,}行（MySpeed は既定 off・#22 No-Go）")
 
-    print("featured へ付与（(race_id,馬番)結合＋前走チェーン＋MySpeed履歴）...")
+    print("featured へ付与（(race_id,馬番)結合＋前走チェーン）...")
     out = attach(featured, kyi, history, soten=soten)
 
-    jr_cols = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure",
-               "prev_trouble", *MYSPEED_COLS]
+    jr_cols = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
+    if args.with_myspeed:
+        jr_cols += list(MYSPEED_COLS)
+    else:
+        # soten=None のとき attach は jrdb_ms_* を全 NaN で作る。既定 featured の schema を
+        # 従来通りに保つため落とす（本番学習に No-Go の空列を混ぜない）。
+        out = out.drop(columns=[c for c in MYSPEED_COLS if c in out.columns])
     print("\n[JRDB列カバレッジ]")
     for c in jr_cols:
         if c in out.columns:
