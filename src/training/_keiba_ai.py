@@ -333,16 +333,22 @@ class KeibaAI:
         score_policyを元に、馬の「勝ちやすさスコア」を計算する。
         train_with_stacking 済みの場合は較正済みスタッキングモデルを使用する。
 
-        feature_names_ が保存されている場合はライブ推論時の列不一致を自動修正する:
-        - 不足列は 0 埋め、余分な列は無視。
+        列契約（#24）: 学習時に確定した特徴量列を推論入力に厳密に要求する。
+        - 既定 strict: 不足列があれば FeatureContractError で停止（0 埋めの静かな誤予測を防止）。
+        - 逃げ道: 環境変数 KEIBA_LENIENT_FEATURES=1 で従来どおり 0 埋め＋警告に退避。
+        - 列順は学習時に固定（位置ベース predict の安全）。余分な列は無視。
         - score_policy が必要とする 枠番・馬番・単勝 等の非特徴量列は X から保持。
         """
         import logging as _log
+        import os as _os
         _logger = _log.getLogger(__name__)
         model = self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
 
-        # feature_names_ が保存済みでない旧モデルは datasets から補完する
-        feature_names: list[str] | None = getattr(self, "feature_names_", None)
+        # 契約は feature_contract_（正典）を優先し、旧モデルは feature_names_ / datasets で補完。
+        contract = getattr(self, "feature_contract_", None)
+        feature_names: list[str] | None = (
+            list(contract.names) if contract is not None else getattr(self, "feature_names_", None)
+        )
         if feature_names is None:
             try:
                 feature_names = list(self.__datasets.X_base_train.columns)
@@ -350,16 +356,20 @@ class KeibaAI:
             except Exception:
                 pass
 
-        # feature_names_ が保存済みの場合: 列を学習時の順序・セットに揃える
         if feature_names is not None:
             from src.policies._score_policy import META_COLS
+            from src.training._feature_contract import require_present
+            from src.pipeline._eval_stamp import feature_schema_hash
             # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
             meta_cols = [c for c in META_COLS if c in X.columns]
             feat_cols = [c for c in feature_names if c not in meta_cols]
-            X_feat = X.reindex(columns=feat_cols, fill_value=0)
-            missing = [c for c in feat_cols if c not in X.columns]
-            if missing:
-                _logger.warning("calc_score: %d 列が X に存在しないため 0 で補完: %s ...", len(missing), missing[:5])
+            lenient = _os.environ.get("KEIBA_LENIENT_FEATURES", "").strip().lower() not in ("", "0", "false")
+            # 既定 strict: 不足列は require_present が FeatureContractError で停止。lenient なら不足リスト。
+            missing = require_present(feat_cols, X.columns, lenient=lenient,
+                                      schema_hash=feature_schema_hash(feat_cols))
+            if missing:  # ここに来るのは lenient のときだけ
+                _logger.warning("calc_score: %d 列を 0 で補完(lenient・要注意): %s ...", len(missing), missing[:5])
+            X_feat = X.reindex(columns=feat_cols, fill_value=0)  # 列順固定＋余分列 drop
             X = pd.concat([X[[c for c in meta_cols if c in X.columns]], X_feat], axis=1)
 
         return score_policy.calc(model, X)

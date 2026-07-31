@@ -8,11 +8,32 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.training._feature_contract import FeatureContract, FeatureContractError
+from src.training._feature_contract import (
+    FeatureContract,
+    FeatureContractError,
+    require_present,
+)
 
 
 def _train_frame():
     return pd.DataFrame({"a": [1.0, 2.0], "b": [3, 4], "c": [0.1, 0.2]})
+
+
+def test_require_present_strict_raises_on_missing():
+    # 既定 strict: 学習時特徴量が推論入力に不足 → fail-fast（0埋め誤予測を防止）
+    with pytest.raises(FeatureContractError) as ei:
+        require_present(["a", "b", "c"], ["a", "c"], lenient=False)
+    assert "不足" in str(ei.value) and "b" in str(ei.value)
+
+
+def test_require_present_lenient_returns_missing():
+    # lenient: 送出せず不足リストを返す（呼出側が0埋めに退避）
+    missing = require_present(["a", "b", "c"], ["a", "c"], lenient=True)
+    assert missing == ["b"]
+
+
+def test_require_present_ok_when_all_present():
+    assert require_present(["a", "b"], ["b", "a", "extra"], lenient=False) == []
 
 
 def test_align_reorders_to_contract_order():

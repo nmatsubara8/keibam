@@ -23,6 +23,28 @@ class FeatureContractError(ValueError):
     """特徴量契約の不一致（不足列・dtype 不一致等）。学習=推論の乖離を fail-fast で止める。"""
 
 
+def require_present(
+    names, columns, *, lenient: bool = False, schema_hash: str | None = None
+) -> list:
+    """names（学習時の特徴量列）のうち columns に無い列を返す。
+
+    lenient=False（既定 strict）で不足があれば FeatureContractError を送出し、
+    「不足列を 0 埋めして静かに誤予測する」事故を fail-fast で止める。lenient=True なら
+    不足リストを返すだけ（呼出側が 0 埋め等に退避）。schema_hash は診断用（任意）。
+    """
+    present = {str(c) for c in columns}
+    missing = [str(c) for c in names if str(c) not in present]
+    if missing and not lenient:
+        tail = " …" if len(missing) > 20 else ""
+        note = f" schema={schema_hash}" if schema_hash else ""
+        raise FeatureContractError(
+            f"推論入力に学習時の特徴量が {len(missing)}/{len(list(names))} 列不足しています: "
+            f"{missing[:20]}{tail}{note}。学習=推論の列不一致（列名変更/未生成）を fail-fast で停止"
+            "（0 埋めによる静かな誤予測を防止）。意図的なら環境変数 KEIBA_LENIENT_FEATURES=1 で退避可。"
+        )
+    return missing
+
+
 @dataclass(frozen=True)
 class FeatureContract:
     """学習時に確定した特徴量の列名・順序（と任意で dtype 文字列）の契約。"""
