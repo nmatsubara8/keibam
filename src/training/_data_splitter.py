@@ -31,6 +31,35 @@ _DROP_FOR_TRAIN = [
 _DROP_FOR_TEST = ["rank", *TARGET_LEAK_COLS, "date", "horse_id", ResultsCols.RANK, HorseResultsCols.CORNER]
 
 
+def stacking_class_balance(splits, target: str) -> list[dict]:
+    """各 split の期間・行数・レース数・クラス分布（陽性/陰性/target欠損）を集計する（#23診断・純関数）。
+
+    splits: [(name, DataFrame|None)]。target 列を数値化し (==1)/(==0)/NaN を数える。
+    戻り値: [{split, date_range, rows, races, pos, neg, nan}]（df=None/target欠の split は除外）。
+    """
+    out = []
+    for name, df in splits:
+        if df is None or target not in df.columns:
+            continue
+        y = pd.to_numeric(df[target], errors="coerce")
+        if "date" in df.columns:
+            d = pd.to_datetime(df["date"], errors="coerce")
+            date_range = f"{d.min():%Y-%m-%d}..{d.max():%Y-%m-%d}" if d.notna().any() else "n/a"
+        else:
+            date_range = "n/a"
+        out.append({
+            "split": name, "date_range": date_range, "rows": int(len(df)),
+            "races": int(df.index.nunique()),
+            "pos": int((y == 1).sum()), "neg": int((y == 0).sum()), "nan": int(y.isna().sum()),
+        })
+    return out
+
+
+def single_class_splits(reports: list[dict], guarded=("base_train", "meta_train")) -> list[dict]:
+    """診断レポートから single-class（pos==0 または neg==0）の guarded split を返す（純関数）。"""
+    return [r for r in reports if r["split"] in guarded and (r["pos"] == 0 or r["neg"] == 0)]
+
+
 class DataSplitter:
     def __init__(self, featured_data, test_size, valid_size, target_col: str = "rank") -> None:
         # target_col: 目的変数列。"rank"=複勝(top3, 既定) / "rank_win"=単勝(1着)。
@@ -270,8 +299,44 @@ class DataSplitter:
             len(self.__meta_train),
             len(self.__valid_data_optuna),
         )
+        # #23: meta 学習器が single-class（例: --jra-only で末尾 slice に top3 が 0）で
+        # 落ちる前に、各 split のクラス分布・期間を明示して停止する（例外を握りつぶさない）。
+        self.__diagnose_stacking_splits()
 
         # NN 専用 split は遅延 transform（property 側）で導出するため、ここでは保持しない。
+
+    def __diagnose_stacking_splits(self) -> None:
+        """base/meta/calib 各 split のクラス分布・期間・行数を診断する（#23）。
+
+        meta 学習器（LogisticRegression 等）は単一クラスだと fit できず不透明な
+        ValueError で停止するため、その手前で split ごとに fold/期間/行数/陽性/陰性/
+        レース数/target欠損 を表で出し、base_train か meta_train が single-class なら
+        原因を明示して停止する（--no-stacking で回避可）。
+        """
+        reports = stacking_class_balance(
+            [
+                ("base_train", self.__base_train),
+                ("meta_train", self.__meta_train),
+                ("calib_holdout", self.__valid_data_optuna),
+            ],
+            self.__target,
+        )
+        logger.info("stacking split 診断（target=%s）", self.__target)
+        logger.info("  %-13s %-24s %9s %8s %8s %8s %6s",
+                    "split", "date[min..max]", "rows", "races", "pos", "neg", "NaN")
+        for r in reports:
+            logger.info("  %-13s %-24s %9d %8d %8d %8d %6d",
+                        r["split"], r["date_range"], r["rows"], r["races"],
+                        r["pos"], r["neg"], r["nan"])
+        degenerate = single_class_splits(reports, guarded=("base_train", "meta_train"))
+        if degenerate:
+            detail = ", ".join(f"{r['split']}(pos={r['pos']}, neg={r['neg']})" for r in degenerate)
+            raise ValueError(
+                f"stacking split が single-class です（meta 学習器を学習できません）: {detail}。"
+                f" target={self.__target}。上の『stacking split 診断』表で期間・行数・クラス分布を"
+                " 確認してください。原因候補: date 欠損で末尾 slice が degenerate になる /"
+                " JRA フィルタ後の対象縮小 / target 列に無効値。--no-stacking で回避可能です。"
+            )
 
     @property
     def base_train_data(self) -> pd.DataFrame:
