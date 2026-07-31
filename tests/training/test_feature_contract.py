@@ -65,3 +65,20 @@ def test_non_dataframe_input_errors():
     c = FeatureContract.from_frame(_train_frame())
     with pytest.raises(FeatureContractError, match="DataFrame"):
         c.align(np.array([[1, 2, 3]]))
+
+
+def test_contract_names_match_feature_names_list():
+    # 学習側の不変条件: KeibaAI は feature_names_ = list(X_base_train.columns) と
+    # feature_contract_ = FeatureContract.from_frame(X_base_train) を同時に採る。
+    # 両者が構造的に一致する（drift しない）ことを固定する。
+    df = _train_frame()
+    feature_names_ = list(df.columns)  # KeibaAI._keiba_ai:253 相当
+    contract = FeatureContract.from_frame(df)
+    assert list(contract.names) == feature_names_
+
+
+def test_keiba_ai_imports_feature_contract():
+    # 学習側の配線（KeibaAI が FeatureContract を import）が壊れていないことの疎通担保。
+    # 実際の学習時採録（feature_contract_ の設定）は本番学習パスで検証する。
+    import src.training._keiba_ai as ka
+    assert ka.FeatureContract is FeatureContract

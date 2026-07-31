@@ -8,6 +8,7 @@ from src.policies._bet_policy import AbstractBetPolicy
 from src.policies._score_policy import AbstractScorePolicy
 
 from ._data_splitter import DataSplitter
+from ._feature_contract import FeatureContract
 from ._model_wrapper import ModelWrapper
 
 
@@ -23,6 +24,9 @@ class KeibaAI:
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
         self.feature_names_: list[str] | None = None  # 学習時の列順序（推論時の列整合用）
+        # 学習時の特徴量契約（列名・順序・dtype）。#24: 推論前 align で列ずれ silent 誤予測を防ぐ。
+        # 本コミット群では「学習側の保存」まで（推論経路での適用は別 PR）。
+        self.feature_contract_: FeatureContract | None = None
         self._tuned_base_models_config: Any = None  # tune_per_model 探索後の完成 config（書き戻し用）
 
     @property
@@ -251,6 +255,9 @@ class KeibaAI:
             self.__datasets.y_calib.values,
         )
         self.feature_names_ = list(self.__datasets.X_base_train.columns)
+        # #24: 学習時の列名・順序・dtype を契約として保存（推論前 align の単一情報源）。
+        # base 学習器は X_base_train を .values（位置ベース）で消費するため、この順序が正典。
+        self.feature_contract_ = FeatureContract.from_frame(self.__datasets.X_base_train)
 
         # base LightGBM の特徴量重要度を ModelWrapper に反映（特徴量重要度ページ用）
         try:
