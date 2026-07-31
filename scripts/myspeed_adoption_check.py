@@ -6,11 +6,11 @@ myspeed_staged_gate.py は DB＋本番予測(prod_p)依存で「素点シグナ�
 （＝Issue #22 の採用チェックリストに対応。ROI は評価しない・目的は確率品質）。
 
 方式（leak-safe な前進分割）:
-  - target = 複勝(着順≤3)。--win で単勝(着順==1)。
-  - 分割 = 年 < cutoff で学習 / 年 ≥ cutoff で評価（未来を見ない）。
-  - baseline = featured の数値特徴量（rank/date/単勝 と jrdb_ms_* を除く）。
-    treatment = baseline + jrdb_ms_*。同じ LightGBM・同じ列順で学習/推論。
-  - 指標 = logloss / AUC / ECE(10ビン)。checklist に対応した診断:
+  - target = 複勝(rank=着順<4)。--win で単勝(rank_win=1着)。どちらも featured の二値目的変数を直用。
+  - 特徴量 = featured の数値列から目的変数・ID・事後情報を除外（src.training._residual_head の
+    _ALWAYS_DROP に準拠）。baseline は jrdb_ms_* も除外、treatment は含める。
+  - 分割 = 年 < cutoff で学習 / 年 ≥ cutoff で評価（未来を見ない）。同一 LightGBM・同一列順。
+  - 指標 = logloss / AUC / ECE(10ビン)。checklist 対応の診断:
       ① ΔlogLoss / ΔAUC（treatment − baseline）  ② 年別改善数
       ③ プラセボ（jrdb_ms_* をレース内シャッフル→増分消失を確認）
       ④ 過去≥3走（jrdb_ms_npast≥3）部分集合での ΔlogLoss（薄履歴のみ依存でない）
@@ -32,16 +32,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.constants._feature_cols import MYSPEED_FEATURE_COLS  # noqa: E402
 
-# 学習ターゲット・分割キー・リーク源は特徴量から除外（src.constants._nn_cols.NN_DROP_COLS 準拠）。
-_DROP_ALWAYS = ["rank", "date", "単勝", "着順", "won", "year"]
+# 目的変数・ID・事後情報（決して特徴量にしない）。src.training._residual_head._ALWAYS_DROP に準拠。
+# rank=複勝(着順<4)/rank_win=単勝(1着) は二値目的変数で、両方を必ず除外（相互リーク防止）。
+_ALWAYS_DROP = ["着順", "rank", "rank_win", "date", "horse_id", "race_id", "通過"]
+_TARGET_COL = {"place": "rank", "win": "rank_win"}
 
 
-def make_target(rank: pd.Series, *, win: bool) -> np.ndarray:
-    """着順 → 二値ターゲット。既定は複勝(≤3)、win=True で単勝(==1)。"""
-    r = pd.to_numeric(rank, errors="coerce")
-    thr = 1 if win else 3
-    y = (r <= thr).astype(float)
-    return y.where(r.notna(), np.nan).to_numpy()  # 着順欠損(出走取消等)は NaN で残し main で除外
+def target_series(df: pd.DataFrame, *, win: bool) -> np.ndarray:
+    """featured の二値目的変数を返す（複勝=rank / 単勝=rank_win）。欠損は NaN で残す。"""
+    col = _TARGET_COL["win" if win else "place"]
+    if col not in df.columns:
+        raise KeyError(col)
+    return pd.to_numeric(df[col], errors="coerce").to_numpy()
 
 
 def ece(p: np.ndarray, y: np.ndarray, n_bins: int = 10) -> float:
@@ -55,11 +57,17 @@ def ece(p: np.ndarray, y: np.ndarray, n_bins: int = 10) -> float:
     return float(e)
 
 
-def select_feature_cols(df: pd.DataFrame, myspeed_cols: list[str]) -> list[str]:
-    """数値特徴量のうち drop 対象・MySpeed 以外を baseline 特徴量として返す（列順固定）。"""
-    num = df.select_dtypes(include=["number"]).columns
-    drop = set(_DROP_ALWAYS) | set(myspeed_cols)
-    return [c for c in num if c not in drop]
+def select_feature_cols(df: pd.DataFrame, *, drop_prefixes: tuple[str, ...] = ()) -> list[str]:
+    """数値特徴量のうち目的変数・ID・事後情報・drop_prefixes を除いた列（df の列順を保存）。"""
+    drop = set(_ALWAYS_DROP)
+    cols = []
+    for c in df.columns:
+        cs = str(c)
+        if c in drop or any(cs.startswith(p) for p in drop_prefixes):
+            continue
+        if pd.api.types.is_numeric_dtype(df[c]):
+            cols.append(c)
+    return cols
 
 
 def _fit_predict(tr_x, tr_y, te_x):
@@ -75,12 +83,15 @@ def _fit_predict(tr_x, tr_y, te_x):
 def main(argv=None) -> int:
     from sklearn.metrics import log_loss, roc_auc_score
 
+    def _ll(y_true, p):  # 薄いスライスで単一クラスでも落ちないよう labels を明示
+        return log_loss(y_true, p, labels=[0, 1])
+
     ap = argparse.ArgumentParser(description="Issue #22 採用検証（raw MySpeed 確率品質増分）")
     ap.add_argument("--featured", default="data/featured_jrdb.pkl",
                     help="jrdb_build_features.py の出力（jrdb_ms_* を含む featured）")
     ap.add_argument("--cutoff-year", type=int, default=2024,
                     help="この年以降を OOS 評価に回す（未満で学習）")
-    ap.add_argument("--win", action="store_true", help="単勝(着順==1)。既定は複勝(≤3)")
+    ap.add_argument("--win", action="store_true", help="単勝(rank_win)。既定は複勝(rank)")
     args = ap.parse_args(argv)
 
     p = Path(args.featured)
@@ -92,33 +103,40 @@ def main(argv=None) -> int:
     if not ms_cols:
         print("jrdb_ms_* 列が featured にありません（配線ブランチで再生成が必要）", file=sys.stderr)
         return 1
-
-    if "rank" not in df.columns or "date" not in df.columns:
-        print("rank / date 列が featured にありません", file=sys.stderr)
+    try:
+        y = target_series(df, win=args.win)
+    except KeyError as e:
+        print(f"目的変数列 {e} が featured にありません", file=sys.stderr)
         return 1
-    y = make_target(df["rank"], win=args.win)
-    year = pd.to_datetime(df["date"], errors="coerce").dt.year.to_numpy()
-    groups = df.index.to_numpy()
-    ok = np.isfinite(y) & np.isfinite(year)
-    df, y, year, groups = df[ok].copy(), y[ok], year[ok], groups[ok]
+    if "date" not in df.columns:
+        print("date 列が featured にありません", file=sys.stderr)
+        return 1
 
-    base_cols = select_feature_cols(df, ms_cols)
-    trt_cols = base_cols + ms_cols                       # ⑦ 列順固定（baseline を先頭に MySpeed を後置）
+    # race_id はレース内プラセボ用のグルーピング鍵。featured では index=race_id（列でない）
+    # ことがあるため、列があれば列を、無ければ index を採用してから reset する。
+    race = (df["race_id"] if "race_id" in df.columns else pd.Series(df.index)).to_numpy()
+    year = pd.to_datetime(df["date"], errors="coerce").dt.year.to_numpy()
+    ok = np.isfinite(y) & np.isfinite(year)
+    df, y, year, race = df[ok].reset_index(drop=True), y[ok], year[ok], race[ok]
+
+    base_cols = select_feature_cols(df, drop_prefixes=("jrdb_ms_",))
+    trt_cols = select_feature_cols(df)                    # jrdb_ms_* を含む（+ 既存 jrdb_*）
     tr = year < args.cutoff_year
     te = ~tr
-    label = "単勝(≤1)" if args.win else "複勝(≤3)"
-    print(f"[採用検証] {label} / 特徴 baseline {len(base_cols)} + MySpeed {len(ms_cols)}"
-          f" / 学習 {int(tr.sum()):,} 行(<{args.cutoff_year}) / 評価 {int(te.sum()):,} 行")
+    label = "単勝(rank_win)" if args.win else "複勝(rank)"
+    base_rate = float(np.mean(y[te])) if te.any() else float("nan")
+    print(f"[採用検証] {label} / baseline {len(base_cols)}列 + MySpeed {len(ms_cols)}列"
+          f" / 学習 {int(tr.sum()):,}行(<{args.cutoff_year}) / 評価 {int(te.sum()):,}行"
+          f" / 評価陽性率 {base_rate:.3f}")
     if te.sum() < 2000 or tr.sum() < 2000:
         print("学習/評価データが薄すぎます（cutoff-year を見直してください）", file=sys.stderr)
         return 1
 
     yte = y[te]
-    # baseline / treatment（同一 LightGBM・列順固定・NaN は LightGBM がネイティブ処理）
     p_base, _ = _fit_predict(df.loc[tr, base_cols], y[tr], df.loc[te, base_cols])
     p_trt, clf = _fit_predict(df.loc[tr, trt_cols], y[tr], df.loc[te, trt_cols])
 
-    ll_b, ll_t = log_loss(yte, p_base), log_loss(yte, p_trt)
+    ll_b, ll_t = _ll(yte, p_base), _ll(yte, p_trt)
     auc_b, auc_t = roc_auc_score(yte, p_base), roc_auc_score(yte, p_trt)
     ece_b, ece_t = ece(p_base, yte), ece(p_trt, yte)
     print("\n[結果] OOS（未来分割）")
@@ -133,7 +151,7 @@ def main(argv=None) -> int:
     for yv in sorted(np.unique(year[te])):
         mk = year[te] == yv
         if mk.sum() > 500:
-            d = log_loss(yte[mk], p_trt[mk]) - log_loss(yte[mk], p_base[mk])
+            d = _ll(yte[mk], p_trt[mk]) - _ll(yte[mk], p_base[mk])
             imp += int(d < 0)
             tot += 1
             ybits.append(f"{int(yv)}:{d:+.5f}")
@@ -143,10 +161,10 @@ def main(argv=None) -> int:
     rng = np.random.default_rng(0)
     df_pl = df.copy()
     for c in ms_cols:
-        df_pl[c] = df_pl.groupby(level=0)[c].transform(
+        df_pl[c] = df_pl.groupby(race)[c].transform(
             lambda s: s.to_numpy()[rng.permutation(len(s))])
     p_pl, _ = _fit_predict(df_pl.loc[tr, trt_cols], y[tr], df_pl.loc[te, trt_cols])
-    d_pl = log_loss(yte, p_pl) - ll_b
+    d_pl = _ll(yte, p_pl) - ll_b
     print(f"③ プラセボ(レース内シャッフル) ΔlogLoss = {d_pl:+.5f}"
           f"（本物なら実測 {ll_t - ll_b:+.5f} より0寄り）")
 
@@ -154,18 +172,18 @@ def main(argv=None) -> int:
     if "jrdb_ms_npast" in df.columns:
         rich = pd.to_numeric(df.loc[te, "jrdb_ms_npast"], errors="coerce").to_numpy() >= 3
         if rich.sum() > 500:
-            d_rich = log_loss(yte[rich], p_trt[rich]) - log_loss(yte[rich], p_base[rich])
+            d_rich = _ll(yte[rich], p_trt[rich]) - _ll(yte[rich], p_base[rich])
             print(f"④ 過去≥3走({int(rich.sum()):,}行) ΔlogLoss = {d_rich:+.5f}")
 
     # ⑤⑥ 校正・importance
     print(f"⑤ ECE {ece_b:.4f}→{ece_t:.4f}（{ece_t - ece_b:+.4f}・悪化なし=非正が望ましい）")
     fi = pd.Series(clf.feature_importances_, index=trt_cols)
-    print("⑥ jrdb_ms_* importance（gain 相当・全特徴中の位置）:")
     ranks = fi.rank(ascending=False).astype(int)
+    print("⑥ jrdb_ms_* importance（split 数・全特徴中の順位）:")
     for c in ms_cols:
         print(f"   {c:<16} imp={int(fi[c]):>6}  rank {int(ranks[c])}/{len(trt_cols)}")
 
-    # ⑦ 列順パリティ
+    # ⑦ 列順パリティ（学習=推論で同一列・同一順）
     ok_order = list(df.loc[tr, trt_cols].columns) == list(df.loc[te, trt_cols].columns) == trt_cols
     print(f"⑦ 学習=推論の列順パリティ: {'OK' if ok_order else 'NG'}")
 
