@@ -52,6 +52,50 @@ def test_sim_rank_and_generator():
     assert len(tickets) == 4                                          # 2順列 × 2三着 = 4点
 
 
+def test_s4_shortfall_is_small_field_not_duplicates():
+    from src.simulation._ticket_backtest import s4_point_audit, validate_ranking
+    # 6頭以上=8点（full）。正常な順位列は重複なし（validate 通過）。
+    full = s4_point_audit([1, 2, 3, 4, 5, 6, 7])
+    assert full["actual"] == 8 and full["reason"] == "full"
+    validate_ranking([1, 2, 3, 4, 5, 6, 7], "R")           # 重複なし→例外なし
+    # 5頭=6点（3着候補が1つ足りない＝小頭数）。重複ではない。
+    small = s4_point_audit([1, 2, 3, 4, 5])
+    assert small["actual"] == 6 and small["reason"].startswith("small_field")
+
+
+def test_validate_ranking_detects_duplicates():
+    import pytest
+    from src.simulation._ticket_backtest import validate_ranking
+    with pytest.raises(ValueError, match="重複"):
+        validate_ranking([1, 2, 2, 3], "R1")
+
+
+def test_exacta_and_wide_axis_generators():
+    from src.simulation._ticket_backtest import (
+        exacta_single_winner, exacta_top2_reverse, wide_axis_flow,
+    )
+    rank = [7, 3, 5, 9, 2]
+    assert exacta_top2_reverse(rank) == [(7, 3), (3, 7)]              # S7 2点・順序あり
+    assert exacta_single_winner(rank, (1, 2, 3)) == [(7, 3), (7, 5), (7, 9)]  # S8 3点
+    assert wide_axis_flow(rank, (1, 2, 3, 4)) == [(3, 7), (5, 7), (7, 9), (2, 7)]  # S3b 4点・昇順
+
+
+def test_joint_topk_uses_joint_probability_not_rank():
+    from src.simulation._ticket_backtest import SANRENTAN, joint_topk
+    probs = {SANRENTAN: {(1, 2, 3): 0.10, (1, 2, 7): 0.25, (2, 1, 3): 0.05}}
+    # 同時確率の高い順（周辺順位ではない）: (1,2,7) が最上位
+    assert joint_topk(probs, SANRENTAN, 2) == [(1, 2, 7), (1, 2, 3)]
+
+
+def test_s9_conditional_on_p1():
+    from src.simulation._ticket_backtest import STRATEGY_TEMPLATES, TANSHO
+    s9 = STRATEGY_TEMPLATES["S9_三連単1着固定_p1≥0.50"]
+    rank = [1, 2, 3, 4, 5]
+    assert s9(rank, {TANSHO: {1: 0.60}}) != []                       # p1>=0.5→購入(12点)
+    assert len(s9(rank, {TANSHO: {1: 0.60}})) == 12
+    assert s9(rank, {TANSHO: {1: 0.40}}) == []                       # p1<0.5→見送り
+
+
 def test_empty_orders():
     probs = aggregate_ticket_probabilities(np.empty((0, 3)), umaban=[1, 2])
     assert probs[SANRENTAN] == {}
@@ -124,7 +168,8 @@ def test_runner_end_to_end_and_bootstrap():
     probs = aggregate_ticket_probabilities(np.array([[0, 1, 2]] * 10), umaban=[1, 2, 3, 4])
     rank = [1, 2, 3, 4]
     cands = build_candidates("202601010101", rank, probs,
-                             lambda r: [(BetType.SANRENTAN, (1, 2, 3)), (BetType.SANRENTAN, (1, 3, 2))])
+                             lambda r, p: [(BetType.SANRENTAN, (1, 2, 3)),
+                                           (BetType.SANRENTAN, (1, 3, 2))])
     per = settle_per_race(cands, src)
     d = per["202601010101"]
     assert d["n_bets"] == 2 and d["returned"] == 41.0                 # 2点買い・1点的中

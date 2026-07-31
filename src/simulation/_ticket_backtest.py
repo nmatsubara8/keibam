@@ -153,43 +153,140 @@ def wide_top_n(rank: list[int], n: int = 3) -> list[tuple]:
     return quinella_top_n(rank, n)
 
 
-# ────────────────────────── 戦略テンプレ（買い方＝券種×生成器の組） ──────────────────────────
-# 各戦略は sim_rank（馬番の降順リスト）→ [(bet_type, combo), ...] を返す純関数。買い方だけを
-# 定義し、確率/オッズ/決済は runner が担う。S4=利用者の代表例「三連単 1↔2位→3～6位 8点」。
+def validate_ranking(ranking: list[int], race_id: str = "") -> None:
+    """順位配列に馬番の重複が無いか検証（ROI 以前のデータ整合性ガード）。
 
-def _s_tansho_top1(rank):     # 対照: 単勝1位（購入時オッズあり＝EV選別可）
+    正常な順位列は各馬が1度ずつ現れる順列。重複があれば買い目生成が壊れるため即エラー。
+    """
+    valid = [int(h) for h in ranking if h is not None]
+    if len(valid) != len(set(valid)):
+        dups = sorted({h for h in valid if valid.count(h) > 1})
+        raise ValueError(f"{race_id}: ranking に重複馬番: {dups}")
+
+
+def s4_point_audit(rank: list[int]) -> dict:
+    """S4 の期待点数(8)と実際・不足理由を返す（点数不足はほぼ 6頭未満の小頭数が原因）。
+
+    正常な順位列なら S4 は 6頭以上で必ず 8点。不足は third_slots(2..5) が頭数を超えるため
+    （＝小頭数）で、重複除外ではない。reason: "full" / "small_field(n=..)"。
+    """
+    tickets = trifecta_top2_reverse(rank, (2, 3, 4, 5))
+    expected = 8 if len(rank) >= 6 else 0
+    n = len(rank)
+    reason = "full" if len(tickets) == 8 else f"small_field(n={n})"
+    return {"expected": expected, "actual": len(tickets), "n_horses": n, "reason": reason}
+
+
+# 馬単生成器（順序あり＝1着→2着）。
+def exacta_top2_reverse(rank: list[int]) -> list[tuple]:
+    """馬単「1↔2位折り返し」: Sim1位→2位 と 2位→1位 の2点。"""
+    if len(rank) < 2:
+        return []
+    return [(rank[0], rank[1]), (rank[1], rank[0])]
+
+
+def exacta_single_winner(rank: list[int], sub_slots=(1, 2, 3)) -> list[tuple]:
+    """馬単「1位固定→2着流し」: Sim1位→Sim(2..) の順序券。既定は 2〜4位で3点。"""
+    if len(rank) < 2:
+        return []
+    w = rank[0]
+    return [(w, rank[i]) for i in sub_slots if i < len(rank) and rank[i] != w]
+
+
+def wide_axis_flow(rank: list[int], sub_slots=(1, 2, 3, 4)) -> list[tuple]:
+    """ワイド「1位軸→2〜5位」: Sim1位と Sim(2..5) のワイド（3着内2頭で当たり）。既定4点。
+
+    上位3頭ボックスと違い Sim1位の複勝圏信頼度を使う戦略（相手は広めに流す）。
+    """
+    if len(rank) < 2:
+        return []
+    a = rank[0]
+    return [tuple(sorted((a, rank[i]))) for i in sub_slots if i < len(rank) and rank[i] != a]
+
+
+def joint_topk(probs: dict, bet_type: str, k: int) -> list[tuple]:
+    """券種の同時確率上位 k 点の買い目を返す（MC の順位依存構造を直接使う joint 版）。
+
+    probs=`aggregate_ticket_probabilities` の出力。周辺勝率順位ではなく、着順標本から推定した
+    同時確率が高い組合せを選ぶ。rank 版と同じ点数で並べると「MC の順位分布を使う価値」を測れる。
+    """
+    items = sorted(probs.get(bet_type, {}).items(), key=lambda kv: -kv[1])
+    return [combo for combo, p in items[:k] if p > 0]
+
+
+# ────────────────────────── 戦略テンプレ（買い方＝券種×生成器の組） ──────────────────────────
+# 各戦略は (rank, probs) → [(bet_type, combo), ...] を返す純関数。rank=Sim勝率(周辺)降順の馬番、
+# probs=同時確率(aggregate_ticket_probabilities)。rank 版は probs を無視、joint 版は probs を使う。
+# rank 版と同点数の joint 版を並べ、「MC の順位依存構造を使う価値」を直接比較する（S4↔J2 等）。
+
+def _s_tansho_top1(rank, probs):    # 対照: 単勝1位
     return [(TANSHO, (rank[0],))] if rank else []
 
 
-def _s_fukusho_top1(rank):    # 対照: 複勝1位
+def _s_fukusho_top1(rank, probs):   # 対照: 複勝1位
     return [(FUKUSHO, (rank[0],))] if rank else []
 
 
-def _s1_trio_top4(rank):      # S1: 三連複 上位4頭ボックス（4点）
+def _s1_trio_top4(rank, probs):     # S1: 三連複 上位4頭ボックス（4点・rank）
     return [(SANRENPUKU, c) for c in trio_top_n(rank, 4)]
 
 
-def _s2_quinella_top3(rank):  # S2: 馬連 上位3頭ボックス（3点）
+def _s2_quinella_top3(rank, probs):  # S2: 上位3頭ペア 馬連（3点・rank）
     return [(UMAREN, c) for c in quinella_top_n(rank, 3)]
 
 
-def _s3_wide_top3(rank):      # S3: ワイド 上位3頭ボックス（3点）
+def _s3_wide_top3(rank, probs):     # S3: 上位3頭ペア ワイド（3点・S2と同じ買い目/venue対照）
     return [(WIDE, c) for c in wide_top_n(rank, 3)]
 
 
-def _s4_trifecta_top2_reverse(rank):  # S4: 三連単 1↔2位→3～6位（8点）＝利用者代表例
+def _s3b_wide_axis(rank, probs):    # S3b: ワイド 1位軸→2〜5位（4点・rank・1位の複勝圏信頼）
+    return [(WIDE, c) for c in wide_axis_flow(rank, (1, 2, 3, 4))]
+
+
+def _s4_trifecta_top2_reverse(rank, probs):  # S4: 三連単 1↔2位→3〜6位（8点・rank）
     return [(SANRENTAN, c) for c in trifecta_top2_reverse(rank, (2, 3, 4, 5))]
 
 
-def _s5_trifecta_single_winner(rank):  # S5: 三連単 1位固定→2・3着流し（上位2-5頭の順列）
+def _s5_trifecta_single_winner(rank, probs):  # S5: 三連単 1位固定→2・3着(2〜5位)順列（常時・rank）
     return [(SANRENTAN, c) for c in trifecta_single_winner(rank, 0, (1, 2, 3, 4))]
 
 
-def _s6_trio_top5(rank):      # S6: 三連複 上位5頭ボックス（10点・的中率↑/配当↓）
+def _s6_trio_top5(rank, probs):     # S6: 三連複 上位5頭ボックス（10点・rank）
     return [(SANRENPUKU, c) for c in trio_top_n(rank, 5)]
 
 
-def _s0_skip(rank):           # S0: 何も買わない（帰無・取りこぼし基準）
+def _s7_exacta_reverse(rank, probs):  # S7: 馬単 1↔2位折り返し（2点・rank）
+    return [(UMATAN, c) for c in exacta_top2_reverse(rank)]
+
+
+def _s8_exacta_axis(rank, probs):   # S8: 馬単 1位固定→2〜4位（3点・rank）
+    return [(UMATAN, c) for c in exacta_single_winner(rank, (1, 2, 3))]
+
+
+def _s9_trifecta_p1(rank, probs, threshold: float = 0.50):
+    # S9: 三連単 1着固定→2・3着流し、ただし Sim1位の勝率 p1>=threshold のときだけ購入（12点/見送り）。
+    # ⚠ Sim勝率が未校正だと閾値に意味がない→先に予測p1帯別の実勝率を確認すること。
+    if not rank:
+        return []
+    p1 = float(probs.get(TANSHO, {}).get(int(rank[0]), 0.0))
+    if p1 < threshold:
+        return []
+    return [(SANRENTAN, c) for c in trifecta_single_winner(rank, 0, (1, 2, 3, 4))]
+
+
+def _j1_trio_joint4(rank, probs):   # J1: 三連複 同時確率上位4点（joint・S1と同点数対照）
+    return [(SANRENPUKU, c) for c in joint_topk(probs, SANRENPUKU, 4)]
+
+
+def _j2_trifecta_joint8(rank, probs):  # J2: 三連単 同時確率上位8点（joint・S4と同点数対照）
+    return [(SANRENTAN, c) for c in joint_topk(probs, SANRENTAN, 8)]
+
+
+def _j3_exacta_joint2(rank, probs):  # J3: 馬単 同時確率上位2点（joint・S7と同点数対照）
+    return [(UMATAN, c) for c in joint_topk(probs, UMATAN, 2)]
+
+
+def _s0_skip(rank, probs):          # S0: 何も買わない（帰無・取りこぼし基準）
     return []
 
 
@@ -198,12 +295,26 @@ STRATEGY_TEMPLATES = {
     "単勝1位": _s_tansho_top1,
     "複勝1位": _s_fukusho_top1,
     "S1_三連複box4": _s1_trio_top4,
-    "S2_馬連box3": _s2_quinella_top3,
-    "S3_ワイドbox3": _s3_wide_top3,
+    "S2_上位3頭ペア_馬連": _s2_quinella_top3,
+    "S3_上位3頭ペア_ワイド": _s3_wide_top3,
+    "S3b_ワイド1軸→2-5": _s3b_wide_axis,
     "S4_三連単1↔2→3-6": _s4_trifecta_top2_reverse,
     "S5_三連単1着固定流し": _s5_trifecta_single_winner,
     "S6_三連複box5": _s6_trio_top5,
+    "S7_馬単1↔2": _s7_exacta_reverse,
+    "S8_馬単1軸→2-4": _s8_exacta_axis,
+    "S9_三連単1着固定_p1≥0.50": _s9_trifecta_p1,
+    "J1_三連複joint4": _j1_trio_joint4,
+    "J2_三連単joint8": _j2_trifecta_joint8,
+    "J3_馬単joint2": _j3_exacta_joint2,
 }
+
+# rank↔joint の同点数対照ペア（「MC の順位依存構造を使う価値」の直接比較）。
+RANK_JOINT_PAIRS = [
+    ("S1_三連複box4", "J1_三連複joint4"),
+    ("S4_三連単1↔2→3-6", "J2_三連単joint8"),
+    ("S7_馬単1↔2", "J3_馬単joint2"),
+]
 
 
 # ────────────────────────── runner（sim→買い目→確定払戻決済） ──────────────────────────
@@ -229,7 +340,7 @@ def build_candidates(race_id, rank: list[int], probs: dict, strategy,
     """
     from src.policies._bet_candidate import BetCandidate
     out = []
-    for bet_type, combo in strategy(rank):
+    for bet_type, combo in strategy(rank, probs):
         combo = tuple(int(x) for x in combo)
         p = float(probs.get(bet_type, {}).get(_prob_key(bet_type, combo), 0.0))
         odds = 0.0

@@ -36,27 +36,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def _sim_race_probs(rd, *, n_sim, cfg, ability_spread, ability_sigma, rank_gain, seed):
-    """1レースを sim して (rank馬番リスト, 券種確率dict) を返す。無効レースは (None, None)。"""
+    """1レースを sim して (rank馬番リスト, 券種確率dict, umaban, winner馬番) を返す。無効は (None,..)。"""
     import numpy as np
     import pandas as pd
 
     from src.constants._results_cols import ResultsCols
     from src.simulation._agent_race import monte_carlo
     from src.simulation._sim_params import field_from_featured
-    from src.simulation._ticket_backtest import aggregate_ticket_probabilities, sim_rank
+    from src.simulation._ticket_backtest import (
+        aggregate_ticket_probabilities, sim_rank, validate_ranking,
+    )
 
     if len(rd) < 3:
-        return None, None, None
+        return None, None, None, None
     umaban = pd.to_numeric(rd[ResultsCols.UMABAN], errors="coerce").to_numpy()
     if not np.isfinite(umaban).all():
-        return None, None, None
+        return None, None, None, None
     umaban = umaban.astype(int)
+    rank_arr = pd.to_numeric(rd[ResultsCols.RANK], errors="coerce").to_numpy()
+    win_mask = np.where(rank_arr == 1)[0]
+    winner = int(umaban[win_mask[0]]) if len(win_mask) == 1 else None
     field = field_from_featured(rd, ability_spread=ability_spread, rank_gain=rank_gain)
     out = monte_carlo(field, n_sim=n_sim, cfg=cfg, seed=seed, ability_sigma=ability_sigma,
                       return_orders=True)
     probs = aggregate_ticket_probabilities(out["top3_orders"], umaban)
     rank = sim_rank(out["win"], umaban)
-    return rank, probs, umaban
+    validate_ranking(rank, str(rd.index[0]))          # ROI 以前のデータ整合性ガード（重複馬番検出）
+    return rank, probs, umaban, winner
 
 
 def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_spread,
@@ -73,20 +79,29 @@ def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_s
     from src.simulation._backtest import settle_candidates
     from src.simulation._ticket_backtest import build_candidates, settle_per_race
 
+    from src.simulation._ticket_backtest import TANSHO, s4_point_audit
+
     cfg = SimConfig(T=T)
     rng = np.random.default_rng(seed)
     cands_by_strat = {name: [] for name in strategies}
     sim_top_by_race: dict = {}
+    calib: list = []                # (p1_of_sim_top, sim_top_が勝ったか) ＝ S9 閾値の校正確認用
+    s4_field: dict = {}             # S4 の頭数別レース数（点数不足理由の実データ確認）
     n_ok = 0
     for i, rid in enumerate(order):
         rd = featured.loc[[rid]] if not isinstance(featured.loc[rid], pd.DataFrame) else featured.loc[rid]
-        rank, probs, _ = _sim_race_probs(rd, n_sim=n_sim, cfg=cfg, ability_spread=ability_spread,
-                                         ability_sigma=ability_sigma, rank_gain=rank_gain,
-                                         seed=int(rng.integers(1 << 30)))
+        rank, probs, _, winner = _sim_race_probs(rd, n_sim=n_sim, cfg=cfg,
+                                                 ability_spread=ability_spread,
+                                                 ability_sigma=ability_sigma, rank_gain=rank_gain,
+                                                 seed=int(rng.integers(1 << 30)))
         if rank is None:
             continue
         n_ok += 1
         sim_top_by_race[str(rid)] = rank[0]
+        if winner is not None:
+            calib.append((float(probs.get(TANSHO, {}).get(rank[0], 0.0)), int(winner == rank[0])))
+        aud = s4_point_audit(rank)
+        s4_field[aud["actual"]] = s4_field.get(aud["actual"], 0) + 1
         for name, strat in strategies.items():
             cands_by_strat[name].extend(build_candidates(rid, rank, probs, strat))
         if (i + 1) % 2000 == 0:
@@ -98,7 +113,7 @@ def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_s
         per_race = settle_per_race(cands, ret_src)
         result[name] = (per_bt, per_race)
         all_cands.extend(cands)
-    return result, n_ok, all_cands, sim_top_by_race
+    return result, n_ok, all_cands, sim_top_by_race, calib, s4_field
 
 
 def _strategy_line(name, per_bt, per_race):
@@ -257,6 +272,62 @@ def _print_total(all_cands, ret_src, order):
           "『買い目拡大で低品質な組合せへの投資が増え、より高控除・高分散の券種でもあるため全体ROIが低下』が適切。")
 
 
+def _print_s4_audit(s4_field: dict):
+    """[データ整合性] S4 の実点数内訳。8点でないレースは小頭数が原因（重複ではない）ことを示す。"""
+    total = sum(s4_field.values())
+    full = s4_field.get(8, 0)
+    short = total - full
+    print("[データ整合性] S4 三連単の実点数内訳（正常な順位列なら 6頭以上で必ず 8点）")
+    for pts in sorted(s4_field):
+        tag = "(=full)" if pts == 8 else "(小頭数)"
+        print(f"  {pts}点: {s4_field[pts]:,}レース {tag}")
+    print(f"  → 8点 {full:,} / 8点未満 {short:,}。不足は third_slots が頭数を超える小頭数が原因で、"
+          "重複馬番ではない（各レースで validate_ranking 済）。")
+
+
+def _print_calibration(calib: list):
+    """[校正] Sim1位の予測勝率 p1 を帯別に集計し実勝率と比べる（S9 の p1>=0.5 閾値の妥当性）。"""
+    print("\n[校正] Sim1位の予測勝率 p1 帯別 実勝率（S9 の p1≥0.50 が『強い軸』判定になっているか）")
+    if not calib:
+        print("  勝ち馬情報が無く測定不能。")
+        return
+    bins = [(0.0, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5), (0.5, 0.6), (0.6, 0.8), (0.8, 1.01)]
+    print(f"  {'予測p1帯':<12}{'レース数':>8}{'平均予測':>9}{'実勝率':>8}")
+    for lo, hi in bins:
+        sub = [(p, w) for p, w in calib if lo <= p < hi]
+        if not sub:
+            continue
+        pm = sum(p for p, _ in sub) / len(sub)
+        wr = sum(w for _, w in sub) / len(sub)
+        print(f"  [{lo:.1f},{hi:.1f}){'':<3}{len(sub):>8,}{pm:>9.3f}{wr:>8.3f}")
+    hi_bin = [(p, w) for p, w in calib if p >= 0.5]
+    if hi_bin:
+        wr = sum(w for _, w in hi_bin) / len(hi_bin)
+        print(f"  → p1≥0.50 の {len(hi_bin):,}レースの実勝率 {wr:.3f}。"
+              + ("0.5 近傍なら閾値は妥当。" if wr >= 0.45 else
+                 "予測ほど勝てておらず（過信）、S9 の 0.50 閾値は『強い軸』を選べていない。"))
+    else:
+        print("  → p1≥0.50 のレースが無い（sim 勝率が潰れ気味）。閾値を下げて帯別に再確認。")
+
+
+def _print_rank_joint(res: dict):
+    """[rank↔joint] 同点数の rank 版と joint 版を並べ、ΔROI(joint−rank) の paired CI で価値を測る。"""
+    from src.simulation._ticket_backtest import RANK_JOINT_PAIRS, paired_delta_roi_ci
+    print("\n[rank↔joint] 同点数で『MC の順位依存構造を使う価値』を直接比較（ΔROI=joint−rank）")
+    print(f"  {'対照(券種)':<20}{'rank ROI':>10}{'joint ROI':>11}{'ΔROI':>9}{'95%CI':>18}")
+    for rank_name, joint_name in RANK_JOINT_PAIRS:
+        if rank_name not in res or joint_name not in res:
+            continue
+        _, pr_rank = res[rank_name]
+        _, pr_joint = res[joint_name]
+        d = paired_delta_roi_ci(pr_joint, pr_rank, n_boot=2000)
+        ci = f"[{d['lo']:+.1%},{d['hi']:+.1%}]"
+        print(f"  {rank_name.split('_')[0]+'/'+joint_name.split('_')[0]:<20}"
+              f"{d['roi_mkt']:>10.1%}{d['roi_sim']:>11.1%}{d['delta']:>+9.1%}{ci:>18}")
+    print("  読み: ΔROI CI が有意に正なら『MC の同時確率は周辺順位より価値がある』。0を跨ぐなら"
+          "順位以上の情報は使えていない（＝物理シムの2・3着構造は ROI に効かない）。")
+
+
 def main() -> int:
     from app._model_eval import load_featured_data
     from src.simulation._ticket_backtest import STRATEGY_TEMPLATES
@@ -317,13 +388,20 @@ def main() -> int:
 
     if not args.walk_forward:
         print(f"[全期間] {len(order):,}レース / n_sim={args.n_sim} / rank_gain={args.rank_gain}")
-        res, n_ok, all_cands, sim_top = _run_strategies(featured, order, ret_src, strategies, **kw)
+        res, n_ok, all_cands, sim_top, calib, s4_field = _run_strategies(
+            featured, order, ret_src, strategies, **kw)
         print(f"有効 sim レース {n_ok:,}\n")
+        # [データ整合性] S4 点数不足の実データ内訳（重複ではなく小頭数が原因か確認）
+        _print_s4_audit(s4_field)
+        # [校正] Sim1位の予測勝率 p1 と実勝率（S9 の p1>=0.5 閾値に意味があるか）
+        _print_calibration(calib)
         # [市場対照] 購入時点オッズで市場1番人気を決め、Sim1位と単勝/複勝で並べる
         _market_control(args.oz_dir, featured, order, sim_top, ret_src)
         # [戦略別]
         print("\n[戦略別]")
         _print_table([_strategy_line(n, pb, pr) for n, (pb, pr) in res.items()])
+        # [rank↔joint] 同点数で「MC の順位依存構造を使う価値」を直接比較
+        _print_rank_joint(res)
         # [券種グループ別 TOTAL] と [ALL TOTAL]（全戦略を同時に全購入した仮想ポートフォリオ）
         _print_total(all_cands, ret_src, order)
         return 0
@@ -337,13 +415,13 @@ def main() -> int:
         te_order = [r for r in order if str(r)[:4] == te]
         if len(tr_order) < 50 or len(te_order) < 50:
             continue
-        tr_res, _, _, _ = _run_strategies(featured.loc[tr_order], tr_order, ret_src, strategies, **kw)
+        tr_res, *_ = _run_strategies(featured.loc[tr_order], tr_order, ret_src, strategies, **kw)
         tr_rows = [_strategy_line(n, pb, pr) for n, (pb, pr) in tr_res.items()]
         # 過去年での選択規準: 除最大ROI 最大（フロック依存を避ける）かつ点数十分
         elig = [r for r in tr_rows if r["n_bets"] >= 100] or tr_rows
         best = max(elig, key=lambda r: r["roi_ex"])
-        te_res, _, _, _ = _run_strategies(featured.loc[te_order], te_order, ret_src,
-                                          {best["name"]: strategies[best["name"]]}, **kw)
+        te_res, *_ = _run_strategies(featured.loc[te_order], te_order, ret_src,
+                                     {best["name"]: strategies[best["name"]]}, **kw)
         te_line = _strategy_line(best["name"], *te_res[best["name"]])
         picks.append((tr, te, best, te_line))
         print(f"  {tr}→{te}: 選択『{best['name']}』(train除最大ROI {best['roi_ex']:.1%}) → "
