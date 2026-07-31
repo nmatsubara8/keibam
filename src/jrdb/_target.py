@@ -40,12 +40,20 @@ TARGET_TYPES = (
 )
 
 # 種別ごとの自然キー（重複除去の単位）。同一キーの重複は再DLコピーや年次×日次の重なり由来。
+# ランクは日次スナップショット＝時系列。source_date を含めて「日付×人」で重複除去する
+# （person_code だけで潰すと最新1日に collapse し、レース時点ランクの asof 結合ができなくなる）。
 NATURAL_KEYS = {
     "gaikyu": ["race_id", "ketto"], "itidori": ["race_id", "ketto"],
     "bante": ["race_id", "ketto"], "idm": ["race_id", "ketto"],
     "gaikyucomment": ["race_id", "umaban"], "idmse": ["race_id", "umaban"],
-    "tnrank": ["person_code"], "jocrank": ["person_code"],
+    "tnrank": ["source_date", "person_code"], "jocrank": ["source_date", "person_code"],
 }
+
+
+def date_from_name(name: str) -> str | None:
+    """ファイル名から YYYYMMDD を抽出（ランクの日次スナップショット日付・zip 名にのみ在る）。"""
+    m = re.search(r"(20\d{6})", Path(str(name)).name)
+    return m.group(1) if m else None
 
 
 def dedup_by_keys(df: pd.DataFrame, keys: list[str]) -> tuple[pd.DataFrame, int]:
@@ -157,10 +165,11 @@ def parse_seiseki_idm(data: bytes) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["race_id", "umaban", "race_date", "seiseki_idm"])
 
 
-def parse_rank(data: bytes, kind: str) -> pd.DataFrame:
-    """厩舎/騎手ランク CSV(utf-8) を [area, person_code, rank, name] へ。
+def parse_rank(data: bytes, kind: str, source_date: str | None = None) -> pd.DataFrame:
+    """厩舎/騎手ランク CSV(utf-8) を [source_date, area, person_code, rank, name, kind] へ。
 
     行 = `区分,コード,ランク,名前`（tnrank=調教師5桁, jocrank=騎手4桁）。
+    source_date（zip 名の YYYYMMDD）は日次スナップショットの日付＝時系列保持に必須。
     """
     rows = []
     for ln in _splitlines(data, "utf-8"):
@@ -168,10 +177,12 @@ def parse_rank(data: bytes, kind: str) -> pd.DataFrame:
         if len(parts) < 4:
             continue
         rows.append({
-            "area": _to_int(parts[0]), "person_code": parts[1].strip(),
-            "rank": _to_int(parts[2]), "name": parts[3].strip(), "kind": kind,
+            "source_date": source_date, "area": _to_int(parts[0]),
+            "person_code": parts[1].strip(), "rank": _to_int(parts[2]),
+            "name": parts[3].strip(), "kind": kind,
         })
-    return pd.DataFrame(rows, columns=["area", "person_code", "rank", "name", "kind"])
+    return pd.DataFrame(
+        rows, columns=["source_date", "area", "person_code", "rank", "name", "kind"])
 
 
 def _to_int(s):
@@ -191,18 +202,23 @@ def _weeks(interval: str):
     return int(m.group(1)) if m else pd.NA
 
 
-def parse_target_bytes(zip_type: str, entries: list[tuple[str, bytes]]) -> pd.DataFrame:
-    """1 種別の (内包名, バイト列) 群を結合した正規化 DataFrame にする。"""
+def parse_target_bytes(zip_type: str, entries: list[tuple]) -> pd.DataFrame:
+    """1 種別のエントリ群を結合した正規化 DataFrame にする。
+
+    entries は (source_name, internal_name, data) の 3-tuple。後方互換で (internal_name, data)
+    の 2-tuple も受ける（その場合 source_name=internal_name とみなす）。
+    馬印系は internal_name（レースキー）、ランクは source_name（日付）を使う。
+    """
     frames = []
+    norm = [(e if len(e) == 3 else (e[0], e[0], e[1])) for e in entries]
     if zip_type in MARK_SPECS:
-        for name, data in entries:
-            frames.append(parse_mark_file(name, data, zip_type))
+        frames = [parse_mark_file(name, data, zip_type) for _, name, data in norm]
     elif zip_type == "gaikyucomment":
-        frames = [parse_gaikyu_comment(data) for _, data in entries]
+        frames = [parse_gaikyu_comment(data) for _, _, data in norm]
     elif zip_type == "idmse":
-        frames = [parse_seiseki_idm(data) for _, data in entries]
+        frames = [parse_seiseki_idm(data) for _, _, data in norm]
     elif zip_type in ("tnrank", "jocrank"):
-        frames = [parse_rank(data, zip_type) for _, data in entries]
+        frames = [parse_rank(data, zip_type, date_from_name(src)) for src, _, data in norm]
     else:
         raise ValueError(f"未知の TARGET 種別: {zip_type}")
     frames = [f for f in frames if not f.empty]
@@ -214,5 +230,5 @@ def parse_target_archive(path: str) -> tuple[str | None, pd.DataFrame]:
     zip_type = classify(path)
     if zip_type is None:
         return None, pd.DataFrame()
-    entries = read_jrdb_bytes(path)
+    entries = [(Path(path).name, name, data) for name, data in read_jrdb_bytes(path)]
     return zip_type, parse_target_bytes(zip_type, entries)

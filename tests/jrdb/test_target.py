@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.jrdb._target import (
+    NATURAL_KEYS,
     classify,
     dedup_by_keys,
     parse_gaikyu_comment,
@@ -70,11 +71,30 @@ def test_parse_seiseki_idm_signed_and_key():
     assert pd.isna(df.iloc[2]["seiseki_idm"])               # 空値は NA
 
 
-def test_parse_rank_utf8():
-    df = parse_rank("2,01048,05,畠山吉宏\n1,1181,12,秋山稔樹\n".encode("utf-8"), "tnrank")
+def test_parse_rank_utf8_with_source_date():
+    df = parse_rank("2,01048,05,畠山吉宏\n1,1181,12,秋山稔樹\n".encode("utf-8"),
+                    "tnrank", source_date="20260726")
     assert df.loc[0, "area"] == 2 and df.loc[0, "person_code"] == "01048"
     assert df.loc[0, "rank"] == 5 and df.loc[0, "name"] == "畠山吉宏"
-    assert df.loc[0, "kind"] == "tnrank"
+    assert df.loc[0, "kind"] == "tnrank" and df.loc[0, "source_date"] == "20260726"
+
+
+def test_rank_timeseries_preserved_across_dates():
+    # 同一人物が2日分 → (source_date, person_code) キーで両日残る（最新1日に collapse しない）。
+    e1 = ("tnrank_20260725.zip", "tnrank.csv", b"2,01048,06,X")
+    e2 = ("tnrank_20260726.zip", "tnrank.csv", b"2,01048,05,X")
+    df = parse_target_bytes("tnrank", [e1, e2])
+    out, dropped = dedup_by_keys(df, NATURAL_KEYS["tnrank"])
+    assert dropped == 0 and len(out) == 2                      # 2日分とも残る
+    assert set(out["source_date"]) == {"20260725", "20260726"}
+    assert dict(zip(out.source_date, out["rank"], strict=True)) == {"20260725": 6, "20260726": 5}
+
+
+def test_rank_same_date_redownload_dedups():
+    # 同一日を2回（再DL・内容同一）→ (source_date, person_code) で1つに。
+    e = ("tnrank_20260726.zip", "tnrank.csv", b"2,01048,05,X")
+    out, dropped = dedup_by_keys(parse_target_bytes("tnrank", [e, e]), NATURAL_KEYS["tnrank"])
+    assert dropped == 1 and len(out) == 1
 
 
 def test_parse_target_bytes_concats_multiple_race_files():
