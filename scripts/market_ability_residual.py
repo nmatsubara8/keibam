@@ -199,8 +199,8 @@ def main(argv=None) -> int:
     rng = np.random.default_rng(0)
     dab_te_pl = pd.Series(dab_te, index=te["rid"].to_numpy()).groupby(level=0).transform(
         lambda s: s.to_numpy()[rng.permutation(len(s))]).to_numpy()
-    _, ll_pl, _ = fit_eval(np.column_stack([lqtr, Xo_tr, dab_tr]),
-                           np.column_stack([lqte, Xo_te, dab_te_pl]))
+    _, _, ll_pl, _ = fit_eval(np.column_stack([lqtr, Xo_tr, dab_tr]),
+                              np.column_stack([lqte, Xo_te, dab_te_pl]))
     print(f"  プラセボ(Δabシャッフル) ΔlogLoss = {ll_pl - ll_orth:+.5f}（本物なら実測より悪化）")
 
     # 年別 ΔlogLoss（符号一致?）
