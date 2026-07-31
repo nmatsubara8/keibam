@@ -127,6 +127,49 @@ def _edge_axis(edge, rids, axis):
     return pd.Series(edge).groupby(pd.Series(rids)).rank(pct=True).to_numpy()
 
 
+def walk_forward(df, have, edge_axis, oof_win, n_eb, min_roi, min_n, n_ob):
+    """厳密 walk-forward。各年: OOF ゾーン学習→本番モデル<Y→Y適用。
+
+    返り値 rows は年別に zoneサイズ・**train-OOF ROI(選定ゾーンのOOF上ROI)**・OOS ROI 等を含み、
+    「OOFで良かったゾーンが翌年に崩れるか」を診断できる。
+    """
+    years = sorted(df["year"].unique())
+    rows, aggA, aggC = [], [0.0, 0], [0.0, 0]
+    med = df[have].median()
+    for i in range(oof_win + 1, len(years)):
+        Y = years[i]
+        oof_years = years[i - oof_win:i]
+        zfit = df[df["year"] < oof_years[0]]
+        zeval = df[df["year"].isin(oof_years)].copy()
+        prod_tr = df[df["year"] < Y]
+        te = df[df["year"] == Y].copy()
+        if len(zfit) < 15000 or len(zeval) < 5000 or len(te) < 3000:
+            continue
+        zeval["edge"] = _edge_axis(_fit_edge(zfit, zeval, have, med), zeval["rid"].to_numpy(), edge_axis)
+        te["edge"] = _edge_axis(_fit_edge(prod_tr, te, have, med), te["rid"].to_numpy(), edge_axis)
+        be = np.quantile(zeval["edge"], np.linspace(0, 1, n_eb + 1))
+        be[0], be[-1] = -np.inf, np.inf
+        zeval["eb"] = assign_edge_band(zeval["edge"].to_numpy(), be)
+        te["eb"] = assign_edge_band(te["edge"].to_numpy(), be)
+        zone_a = select_free_cells(cell_roi_table(zeval), min_roi, min_n)
+        zone_c = select_rectangle(zeval, n_eb, n_ob, min_roi, min_n)
+        oofC_roi, _, _ = apply_zone(zeval, zone_c)      # 選定ゾーンの OOF 上 ROI（学習側の見かけ）
+        roiA, nA, pA = apply_zone(te, zone_a)
+        roiC, nC, pC = apply_zone(te, zone_c)
+        maskC = [(e, o) in zone_c for e, o in zip(te["eb"], te["ob"], strict=False)]
+        exclC = roi_excl_top((te[maskC]["pay"] * te[maskC]["won"]).to_numpy()) if nC else float("nan")
+        rows.append({"year": Y, "zA": len(zone_a), "roiA": roiA, "nA": nA, "zC": len(zone_c),
+                     "oofC": oofC_roi, "roiC": roiC, "nC": nC, "exclC": exclC,
+                     "flat": float((te["pay"] * te["won"]).mean())})
+        if nA:
+            aggA[0] += pA
+            aggA[1] += nA
+        if nC:
+            aggC[0] += pC
+            aggC[1] += nC
+    return rows, aggA, aggC
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="卍式 購入ゾーン v2（OOF・形状制約・walk-forward）")
     ap.add_argument("--featured-path", default=None)
@@ -138,6 +181,8 @@ def main(argv=None) -> int:
     ap.add_argument("--n-eb", type=int, default=8, help="edge 帯数")
     ap.add_argument("--min-roi", type=float, default=1.0)
     ap.add_argument("--min-n", type=int, default=300)
+    ap.add_argument("--sweep", action="store_true",
+                    help="感度診断（oof窓/min_n/n_eb を振りゾーン形成とOOF→OOSギャップを見る・最良採用しない）")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     from src.constants._local_paths import LocalPaths
@@ -182,53 +227,47 @@ def main(argv=None) -> int:
     n_ob = len(_ODDS_EDGES) - 1
     print(f"[manji2] 結合 {len(df):,}頭 / {df['rid'].nunique():,}レース｜軸={args.edge_axis}｜OOF窓={args.oof_win}年")
 
-    years = sorted(df["year"].unique())
-    print(f"\n  {'test年':>6}{'方式':>5}{'zone':>6}{'OOS_n':>8}{'OOS_ROI':>9}{'除上位5':>9}{'全張り':>8}")
-    agg = {"A": [0.0, 0], "C": [0.0, 0]}
-    for i in range(args.oof_win + 1, len(years)):
-        Y = years[i]
-        oof_years = years[i - args.oof_win:i]           # OOF ゾーン評価期間（直近 oof_win 年）
-        zfit = df[df["year"] < oof_years[0]]            # ゾーン評価期間の手前までで fit
-        zeval = df[df["year"].isin(oof_years)].copy()
-        prod_tr = df[df["year"] < Y]                   # 本番モデルは <Y 全部で再学習
-        te = df[df["year"] == Y].copy()
-        if len(zfit) < 15000 or len(zeval) < 5000 or len(te) < 3000:
-            continue
-        med = df[have].median()
-        # OOF edge（zeval は zfit に含まれない＝学習外予測）
-        zeval["edge"] = _edge_axis(_fit_edge(zfit, zeval, have, med), zeval["rid"].to_numpy(), args.edge_axis)
-        # 本番 edge（te は prod_tr に含まれない）
-        te["edge"] = _edge_axis(_fit_edge(prod_tr, te, have, med), te["rid"].to_numpy(), args.edge_axis)
-        # ビン境界は OOF(zeval) の分位で固定 → te も同じ境界 (#2)
-        be = np.quantile(zeval["edge"], np.linspace(0, 1, args.n_eb + 1))
-        be[0], be[-1] = -np.inf, np.inf
-        zeval["eb"] = assign_edge_band(zeval["edge"].to_numpy(), be)
-        te["eb"] = assign_edge_band(te["edge"].to_numpy(), be)
-        roi_tbl = cell_roi_table(zeval)
-        zone_a = select_free_cells(roi_tbl, args.min_roi, args.min_n)
-        zone_c = select_rectangle(zeval, args.n_eb, n_ob, args.min_roi, args.min_n)
-        flat = float((te["pay"] * te["won"]).mean())
-        for name, zone in (("A", zone_a), ("C", zone_c)):
-            roi, n, psum = apply_zone(te, zone)
-            mask = [(e, o) in zone for e, o in zip(te["eb"], te["ob"], strict=False)]
-            excl = roi_excl_top((te[mask]["pay"] * te[mask]["won"]).to_numpy()) if n else float("nan")
-            rs = "—" if np.isnan(roi) else f"{roi:.4f}"
-            es = "—" if np.isnan(excl) else f"{excl:.4f}"
-            print(f"  {Y:>6}{name:>5}{len(zone):>6}{n:>8}{rs:>9}{es:>9}{flat:>8.4f}")
-            if n:
-                agg[name][0] += psum
-                agg[name][1] += n
+    if args.sweep:
+        # 感度診断: 最良設定の採用ではなく「ゾーンが消える理由/OOF→OOSギャップの一貫性」を見る。
+        print("\n[sweep] 設定を振り『ゾーン形成の有無』と『OOF ROI → OOS ROI ギャップ』を診断")
+        print("  （最良設定を採らない。長窓でOOF ROIが控除付近へ縮む/短窓で偶然ROI>1が翌年消える、を確認）")
+        print(f"\n  {'oof窓':>5}{'min_n':>7}{'n_eb':>5}｜{'方式C: 形成年数':>12}{'平均OOF_ROI':>12}"
+              f"{'OOS_ROI':>9}{'OOS_n':>8}")
+        for ow in (2, 3, 5):
+            for mn in (300, 1000):
+                for neb in (5, 10):
+                    rows, aggA, aggC = walk_forward(df, have, args.edge_axis, ow, neb,
+                                                    args.min_roi, mn, n_ob)
+                    formed = [r for r in rows if r["nC"] > 0]
+                    mean_oof = np.mean([r["oofC"] for r in formed]) if formed else float("nan")
+                    oos = aggC[0] / aggC[1] if aggC[1] else float("nan")
+                    oofs = "—" if np.isnan(mean_oof) else f"{mean_oof:.3f}"
+                    ooss = "—" if np.isnan(oos) else f"{oos:.3f}"
+                    print(f"  {ow:>5}{mn:>7}{neb:>5}｜{len(formed):>5}/{len(rows):<6}{oofs:>12}"
+                          f"{ooss:>9}{aggC[1]:>8}")
+        print("\n  読み方: OOF_ROI≥設定閾値(選定側)なのに OOS_ROI が一貫して <1 かつギャップ大／長窓で形成年数が")
+        print("  減り OOF_ROI が控除(~0.75)へ縮む → 中央購入帯の利益は偶然で翌年移植不能＝#1を強く終了。")
+        return 0
+
+    rows, aggA, aggC = walk_forward(df, have, args.edge_axis, args.oof_win, args.n_eb,
+                                    args.min_roi, args.min_n, n_ob)
+    def _f(v):
+        return "—" if v is None or np.isnan(v) else f"{v:.4f}"
+    print(f"\n  {'test年':>6}{'zA':>4}{'OOS_A':>8}{'nA':>6}｜{'zC':>4}{'OOF_C':>8}{'OOS_C':>8}"
+          f"{'除上5_C':>9}{'nC':>6}{'全張り':>8}")
+    for r in rows:
+        print(f"  {r['year']:>6}{r['zA']:>4}{_f(r['roiA']):>8}{r['nA']:>6}｜{r['zC']:>4}"
+              f"{_f(r['oofC']):>8}{_f(r['roiC']):>8}{_f(r['exclC']):>9}{r['nC']:>6}{r['flat']:>8.4f}")
     print("\n[manji2] walk-forward 全体 OOS_ROI:")
-    for name in ("A", "C"):
-        s, n = agg[name]
-        r = s / n if n else float("nan")
-        print(f"  方式{name}: {r:.4f}（n={n:,}）")
-    ra = agg["A"][0] / agg["A"][1] if agg["A"][1] else 0
-    rc = agg["C"][0] / agg["C"][1] if agg["C"][1] else 0
+    ra = aggA[0] / aggA[1] if aggA[1] else 0
+    rc = aggC[0] / aggC[1] if aggC[1] else 0
+    print(f"  方式A(自由セル): {ra:.4f}（n={aggA[1]:,}）／ 方式C(形状制約): {rc:.4f}（n={aggC[1]:,}）")
     if max(ra, rc) > 1.0:
         print("  → 控除超え候補。年別一貫性・除上位ROI・プラセボ・自票オッズ低下を要精査。")
     else:
-        print("  → OOF・形状制約でも <1＝中央購入帯でも控除未満。卍当時アルファの環境差/減衰を確定。")
+        print("  → 限定命題を確定: 【現GBM残差を指数化＋T-15複勝オッズ＋直近OOFの2D中央購入帯】は")
+        print("     翌年に安定移植せず（ゾーンほぼ形成されず・稀な形成も単一高配当依存）。")
+        print("     未否定: 卍固有45factor指数/別券種/7分前実オッズ/2005-09市場/独自スピード指数。")
     return 0
 
 
