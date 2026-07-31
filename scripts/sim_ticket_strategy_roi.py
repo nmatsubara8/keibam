@@ -81,25 +81,6 @@ def _model_n_features(eff):
     return None
 
 
-def _training_feature_order(model, eff):
-    """学習時の**実列名**(順序付き)を返す。モデルは numpy fit で booster 名が汎用(Column_N)なため、
-    KeibaAI の feature_names_/feature_contract_ から、モデルが期待する特徴量数に一致する候補を選ぶ。"""
-    from src.policies._score_policy import META_COLS
-    contract = getattr(model, "feature_contract_", None)
-    cands = []
-    fn = getattr(model, "feature_names_", None)
-    if fn:
-        cands.append(list(fn))
-    if contract is not None:
-        cands.append(list(contract.names))
-        cands.append([c for c in contract.names if c not in META_COLS])
-    n_expect = _model_n_features(eff)
-    for lst in cands:
-        if n_expect and len(lst) == n_expect:
-            return lst          # 期待特徴量数に一致する実列名リストを採用
-    return cands[0] if cands else None
-
-
 def _lgbm_probs(model, featured, order):
     """本番 LightGBM の較正勝率で (top_by_race, calib) を作る＝MC の代替確率源（差し当たり用）。
 
@@ -111,26 +92,22 @@ def _lgbm_probs(model, featured, order):
     import numpy as np
     import pandas as pd
 
+    from app._model_eval import _DROP_FOR_TRAIN
     from src.constants._results_cols import ResultsCols
+    # 実績ある本番推論経路と同一: モデル入力 = featured − _DROP_FOR_TRAIN（学習時と同一列構成・同一順序）。
+    # モデルは X_base_train.values(numpy)で fit＝positional。featured は学習と同一 pkl 由来で列順が一致。
     eff = getattr(model, "effective_model", model)
-    feat_cols = _training_feature_order(model, eff)   # 学習時の実列名・列順（数で照合）
-    if not feat_cols:
-        raise RuntimeError("モデルの学習特徴量名を取得できません（feature_names_/契約いずれも不明）")
     n_expect = _model_n_features(eff)
-    missing = [c for c in feat_cols if c not in featured.columns]
-    extra = [c for c in featured.columns if c not in feat_cols]
-    # [契約診断] 市場検証では 0 補完を禁止（1列でも欠ければ停止）。silent feature mismatch を再発させない。
-    print("  [契約診断] "
-          f"model_class={type(eff).__name__} n_features_in_={n_expect} "
-          f"学習列数={len(feat_cols)} featured列数={featured.shape[1]} "
-          f"共通={len(feat_cols) - len(missing)} 不足={len(missing)} 余分={len(extra)}",
-          file=sys.stderr)
-    print(f"  [契約診断] 学習列 先頭: {feat_cols[:8]}", file=sys.stderr)
-    if missing:
+    X_model = featured.drop(list(_DROP_FOR_TRAIN), axis=1, errors="ignore")
+    print(f"  [契約診断] model_class={type(eff).__name__} n_features_in_={n_expect} "
+          f"モデル入力列数={X_model.shape[1]}（featured {featured.shape[1]} − _DROP_FOR_TRAIN "
+          f"{len(_DROP_FOR_TRAIN)}）", file=sys.stderr)
+    print(f"  [契約診断] モデル入力 先頭: {list(X_model.columns[:8])}", file=sys.stderr)
+    # [strict] 市場検証では列数不一致で即停止（silent mismatch を再発させない・0補完なし）。
+    if n_expect and X_model.shape[1] != n_expect:
         raise ValueError(
-            f"特徴量不一致: 学習{len(feat_cols)}列中 {len(missing)}列が featured に無い。0補完は"
-            f"市場検証では禁止（本番モデルを正しく推論できていない）。先頭20: {missing[:20]}")
-    X_model = featured.reindex(columns=feat_cols)     # 厳密整合（fill なし・順序固定）
+            f"特徴量数不一致: モデル入力 {X_model.shape[1]}列 ≠ 学習 {n_expect}列。featured の列構成が"
+            f"学習時と違う（新規/欠落特徴量を疑う）。差分列数={X_model.shape[1] - n_expect:+d}")
     prob = np.asarray(eff.predict_proba(X_model.values))[:, 1]
     rank_arr = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy()
     tbl = pd.DataFrame({"_rid": featured.index.astype(str),
@@ -142,7 +119,7 @@ def _lgbm_probs(model, featured, order):
     place_auc = _auc(list(zip(valid["prob"], (valid["rank"] <= 3).astype(int), strict=False)))
     win_auc = _auc(list(zip(valid["prob"], (valid["rank"] == 1).astype(int), strict=False)))
     smoke = {"place_auc": place_auc, "win_auc": win_auc, "n": int(len(valid)),
-             "n_feat": len(feat_cols)}
+             "n_feat": int(X_model.shape[1])}
     winners = _race_winners(featured)
     top_by_race: dict = {}
     calib: list = []
