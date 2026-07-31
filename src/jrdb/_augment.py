@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import pandas as pd
 
+from src.constants._feature_cols import MYSPEED_FEATURE_COLS
 from src.jrdb._parser import parse
+
+# raw MySpeed（素点履歴）の付与列。正本の列名・列順は constants に一元化（学習/推論の契約）。
+MYSPEED_COLS = list(MYSPEED_FEATURE_COLS)
 
 # KYI パース列 → featured 付与名（jrdb_*）。市場から導けない JRDB 独自指数を優先収録。
 # pace_yosou（H/M/S）は jrdb_pace_hms に数値化（S=-1/M=0/H=+1）して別途付与する。
@@ -69,9 +73,11 @@ def jrdb_style(kyakushitsu_code) -> str | None:
 
 # JRDB 由来の付与列（VOI 評価の A/B で「JRDB あり/なし」を切り替える対象の正本）。
 # prev_* は接頭辞が異なるため、train_residual の --drop-jrdb はこの集合を落とす。
+# raw MySpeed（jrdb_ms_*）も JRDB 由来なので A/B 対象に含める。
 JRDB_COLS = (
     list(KYI_FEATURE_MAP.values())
     + ["jrdb_pace_hms", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
+    + MYSPEED_COLS
 )
 
 # 走行中の不利＝「着順が実力を過小評価している」隠れ妙味シグナル（卍の核・市場と直交）。
@@ -166,11 +172,68 @@ def build_history(sed_paths: list[str], skb_paths: list[str]) -> pd.DataFrame:
     return g.dropna(subset=["hist_date"])[["ketto", "hist_date", "prev_deokure", "prev_trouble"]]
 
 
+def build_soten_history(sed_paths: list[str]) -> pd.DataFrame:
+    """SED を結合し (ketto, hist_date) 単位の raw MySpeed 履歴集約を返す（Issue #22）。
+
+    各過去走の素点(soten)を馬(ketto)ごとに時系列 sort し、その走までを含む trailing 集約を
+    付与する。付与列は MYSPEED_COLS。attach 側で merge_asof(backward, exact不可) により
+    「今走より前の最新走」の集約が貼られ、当該走は除外される（leak-safe）。
+
+    各集約はこの過去走(=当該走の直近過去走)時点で観測できる値と厳密一致する:
+      - jrdb_ms_last  = その走の素点（asof後＝直近過去走の素点）
+      - jrdb_ms_mean3 = 直近3走の平均（inclusive rolling）
+      - jrdb_ms_max5  = 直近5走の最高（inclusive rolling）
+      - jrdb_ms_ewm   = 指数移動平均（α=0.3・inclusive）
+      - jrdb_ms_trend = その走 − 前2走平均（上昇度）
+      - jrdb_ms_npast = その走までの走数（当該走含む＝asof後は今走前の過去走数）
+    ※ scripts/myspeed_staged_gate.py::build_hist の shift(1) 定義と数値等価。
+    """
+    frames = []
+    for p in sed_paths:
+        d = parse(p, "SED")
+        if not {"ketto", "ymd", "soten"} <= set(d.columns):
+            continue
+        s = d[["ketto", "ymd", "soten"]].copy()
+        s["soten"] = pd.to_numeric(s["soten"], errors="coerce")
+        frames.append(s)
+    if not frames:
+        return pd.DataFrame(columns=["ketto", "hist_date", *MYSPEED_COLS])
+    h = pd.concat(frames, ignore_index=True).dropna(subset=["ketto", "soten"])
+    h["hist_date"] = pd.to_datetime(h["ymd"], format="%Y%m%d", errors="coerce")
+    h = h.dropna(subset=["hist_date"])
+    if h.empty:
+        return pd.DataFrame(columns=["ketto", "hist_date", *MYSPEED_COLS])
+    # 同一(ketto,日)の重複走は平均で1本化（競馬では非現実だが取込重複への保険）。
+    h = h.groupby(["ketto", "hist_date"], as_index=False)["soten"].mean()
+    return soten_history_aggregates(h)
+
+
+def soten_history_aggregates(h: pd.DataFrame) -> pd.DataFrame:
+    """[ketto, hist_date, soten] を時系列 sort し MYSPEED_COLS の trailing 集約を付与（純ロジック）。
+
+    各行 = その馬の1過去走。集約はその走までを含む inclusive 値（attach の asof が
+    「今走の直近過去走」を選ぶことで当該走が除外される）。テスト対象の純関数。
+    """
+    if h.empty:
+        return pd.DataFrame(columns=["ketto", "hist_date", *MYSPEED_COLS])
+    h = h.sort_values(["ketto", "hist_date"]).reset_index(drop=True)
+    grp = h.groupby("ketto")["soten"]
+    h["jrdb_ms_last"] = h["soten"]
+    h["jrdb_ms_mean3"] = grp.transform(lambda x: x.rolling(3, min_periods=1).mean())
+    h["jrdb_ms_max5"] = grp.transform(lambda x: x.rolling(5, min_periods=1).max())
+    h["jrdb_ms_ewm"] = grp.transform(lambda x: x.ewm(alpha=0.3, min_periods=1).mean())
+    h["jrdb_ms_trend"] = h["soten"] - (grp.shift(1) + grp.shift(2)) / 2.0
+    h["jrdb_ms_npast"] = h.groupby("ketto").cumcount() + 1
+    return h[["ketto", "hist_date", *MYSPEED_COLS]]
+
+
 def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
-           *, umaban_col: str = "馬番", odds_col: str = "単勝") -> pd.DataFrame:
+           *, umaban_col: str = "馬番", odds_col: str = "単勝",
+           soten: pd.DataFrame | None = None) -> pd.DataFrame:
     """featured に JRDB 列を付与して返す（元は非改変・コピー）。
 
-    追加列: jrdb_idm, jrdb_kijun_odds, jrdb_kijun_gap(=基準/市場), prev_deokure, prev_trouble。
+    追加列: jrdb_idm, jrdb_kijun_odds, jrdb_kijun_gap(=基準/市場), prev_deokure, prev_trouble、
+    および raw MySpeed（jrdb_ms_*・soten を渡した場合。build_soten_history の出力）。
     """
     orig_index = featured.index
     f = featured.reset_index(drop=True).copy()
@@ -187,7 +250,8 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
             f["jrdb_kijun_gap"] = f["jrdb_kijun_odds"] / mkt   # >1: 基準が市場より甘い=過小評価
     else:
         for c in JRDB_COLS:
-            if c not in ("prev_deokure", "prev_trouble"):
+            # prev_* と jrdb_ms_* は専用ブロックで別途付与するためここでは触れない。
+            if c not in ("prev_deokure", "prev_trouble", *MYSPEED_COLS):
                 f[c] = pd.NA
 
     # 前走トラブル: ketto × (年月日<今走) の直近を merge_asof(backward, exact不可)
@@ -203,6 +267,22 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
     else:
         f["prev_deokure"] = pd.NA
         f["prev_trouble"] = pd.NA
+
+    # raw MySpeed（素点履歴）: ketto × (過去日<今走) の直近走の trailing 集約を asof で貼る。
+    # backward+exact不可 で今走を除外＝leak-safe（prev_trouble と同じ機構）。
+    if soten is not None and not soten.empty and "ketto" in f.columns:
+        ms_today = pd.to_datetime(f["date"], errors="coerce")
+        ms_sub = pd.DataFrame({"_pos": f["_pos"], "ketto": f["ketto"], "_today": ms_today})
+        ms_sub = ms_sub.dropna(subset=["ketto", "_today"]).sort_values("_today")
+        ms_hist = soten.sort_values("hist_date")
+        ms = pd.merge_asof(ms_sub, ms_hist, by="ketto", left_on="_today",
+                           right_on="hist_date", direction="backward",
+                           allow_exact_matches=False)
+        pv = ms.set_index("_pos")[MYSPEED_COLS]
+        f = f.merge(pv, left_on="_pos", right_index=True, how="left")
+    else:
+        for c in MYSPEED_COLS:
+            f[c] = pd.NA
 
     f = f.sort_values("_pos")
     drop = [c for c in ("_pos", "_rid", "_uma", "_today", "race_id", "umaban", "ketto",

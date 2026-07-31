@@ -16,7 +16,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.jrdb._augment import attach, build_history, build_kyi  # noqa: E402
+from src.jrdb._augment import (  # noqa: E402
+    MYSPEED_COLS,
+    attach,
+    build_history,
+    build_kyi,
+    build_soten_history,
+)
 
 
 def main() -> int:
@@ -49,12 +55,15 @@ def main() -> int:
     kyi = build_kyi(files["KYI"])
     print("SED/SKB 解析（前走特記の履歴）...")
     history = build_history(files["SED"], files["SKB"])
-    print(f"  KYI {len(kyi):,}行 / 履歴 {len(history):,}行")
+    print("SED 解析（raw MySpeed 素点履歴）...")
+    soten = build_soten_history(files["SED"])
+    print(f"  KYI {len(kyi):,}行 / 履歴 {len(history):,}行 / MySpeed {len(soten):,}行")
 
-    print("featured へ付与（(race_id,馬番)結合＋前走チェーン）...")
-    out = attach(featured, kyi, history)
+    print("featured へ付与（(race_id,馬番)結合＋前走チェーン＋MySpeed履歴）...")
+    out = attach(featured, kyi, history, soten=soten)
 
-    jr_cols = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
+    jr_cols = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure",
+               "prev_trouble", *MYSPEED_COLS]
     print("\n[JRDB列カバレッジ]")
     for c in jr_cols:
         if c in out.columns:

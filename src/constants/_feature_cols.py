@@ -370,3 +370,19 @@ INTERACTION_FEATURE_COLS: list = [
     # 距離別コースガイド由来の交互作用（_course_guide の guide_* を使用）
     "style_guide_fit",     # 脚質 × 距離別脚質バイアス（出走馬×コース×距離相性）
 ]
+
+# ──────────────────────────────────────────
+# raw MySpeed（JRDB-SED 素点履歴・Issue #22）
+# ──────────────────────────────────────────
+# 各馬の過去 SED 素点(soten)を「当該走除外」で圧縮した leak-safe 履歴集約。
+# 正規化/残差化/直交化/ペース補正は入れない（Phase 1 で純増分ゼロと確定＝生値のまま
+# モデルに条件付き関係を学ばせる方が良い）。付与ロジックは src.jrdb._augment。
+# 列名・列順はこのリストで固定し、学習/推論間の列順ドリフト・feature-names 警告を防ぐ。
+MYSPEED_FEATURE_COLS: list = [
+    "jrdb_ms_last",    # 直近過去走の素点
+    "jrdb_ms_mean3",   # 直近3走の平均素点
+    "jrdb_ms_max5",    # 直近5走の最高素点
+    "jrdb_ms_ewm",     # 指数移動平均素点（α=0.3）
+    "jrdb_ms_trend",   # 直近走 − 前2走平均（上昇度）
+    "jrdb_ms_npast",   # 過去走数（薄履歴依存の監視用）
+]
