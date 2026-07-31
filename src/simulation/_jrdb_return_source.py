@@ -80,3 +80,18 @@ class JrdbReturnSource:
     @property
     def preprocessed_data(self) -> dict:
         return self._data
+
+    def coverage(self, race_ids, bet_type: BetType = BetType.FUKUSHO) -> float:
+        """指定 race_id 群のうち bet_type 払戻テーブルに存在する割合（0.0–1.0）。
+
+        「JRDB SED で 100% のはずの複勝カバレッジが netkeiba 46% 等へ退行していないか」を
+        検出する回帰ガード用。空テーブル/空入力は 0.0。
+        """
+        table = self._data.get(bet_type)
+        if table is None or table.empty:
+            return 0.0
+        want = {str(r).split(".")[0] for r in race_ids}
+        if not want:
+            return 0.0
+        idx = set(map(str, table.index))
+        return sum(1 for r in want if r in idx) / len(want)

@@ -46,3 +46,19 @@ def test_end_to_end_via_betting_tickets():
     # 外れ馬(5)は払戻0
     _, _, ret0 = bt.bet_fukusho("202401010101", [5], 100)
     assert ret0 == 0.0
+
+
+def test_coverage_guard_detects_regression():
+    # ③ 回帰ガード: 複勝払戻を持つ全レースは FUKUSHO テーブルに存在＝カバレッジ100%。
+    sed = pd.DataFrame({
+        "race_id": ["202601010101", "202601010101", "202601010102", "202601010103"],
+        "umaban": [1, 2, 1, 1],
+        "tansho_payoff": [250.0, 0.0, 300.0, 0.0],
+        "fukusho_payoff": [150.0, 120.0, 180.0, 110.0],
+    })
+    src = JrdbReturnSource(engine=None, sed=sed)
+    races = ["202601010101", "202601010102", "202601010103"]
+    assert src.coverage(races) == 1.0                       # 全レース複勝払戻あり=100%
+    # 払戻源に無いレースを混ぜると低下（netkeiba 46% 退行のような欠損を検出）
+    assert src.coverage(races + ["999999999999"]) < 1.0
+    assert src.coverage([]) == 0.0                          # 空入力は0.0
