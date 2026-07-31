@@ -32,9 +32,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.constants._feature_cols import MYSPEED_FEATURE_COLS  # noqa: E402
 
-# 目的変数・ID・事後情報（決して特徴量にしない）。src.training._residual_head._ALWAYS_DROP に準拠。
-# rank=複勝(着順<4)/rank_win=単勝(1着) は二値目的変数で、両方を必ず除外（相互リーク防止）。
-_ALWAYS_DROP = ["着順", "rank", "rank_win", "date", "horse_id", "race_id", "通過"]
+# 目的変数・ID・事後情報（決して特徴量にしない）。本番 src.training._data_splitter._DROP_FOR_TRAIN
+# に準拠（rank/rank_win/date/horse_id/着順/通過 と、市場オッズ 単勝）。
+# 単勝(市場オッズ)は本番が学習から落とす（モデルに市場の写経をさせない）。既定で除外し、
+# baseline を本番と同条件にする。--keep-odds で残せる（市場込み baseline との比較用）。
+_ALWAYS_DROP = ["着順", "rank", "rank_win", "date", "horse_id", "race_id", "通過", "単勝"]
 _TARGET_COL = {"place": "rank", "win": "rank_win"}
 
 
@@ -57,9 +59,15 @@ def ece(p: np.ndarray, y: np.ndarray, n_bins: int = 10) -> float:
     return float(e)
 
 
-def select_feature_cols(df: pd.DataFrame, *, drop_prefixes: tuple[str, ...] = ()) -> list[str]:
-    """数値特徴量のうち目的変数・ID・事後情報・drop_prefixes を除いた列（df の列順を保存）。"""
+def select_feature_cols(df: pd.DataFrame, *, drop_prefixes: tuple[str, ...] = (),
+                        keep_odds: bool = False) -> list[str]:
+    """数値特徴量のうち目的変数・ID・事後情報・drop_prefixes を除いた列（df の列順を保存）。
+
+    keep_odds=True で市場オッズ '単勝' を特徴量に残す（本番は既定で除外＝False）。
+    """
     drop = set(_ALWAYS_DROP)
+    if keep_odds:
+        drop.discard("単勝")
     cols = []
     for c in df.columns:
         cs = str(c)
@@ -92,6 +100,8 @@ def main(argv=None) -> int:
     ap.add_argument("--cutoff-year", type=int, default=2024,
                     help="この年以降を OOS 評価に回す（未満で学習）")
     ap.add_argument("--win", action="store_true", help="単勝(rank_win)。既定は複勝(rank)")
+    ap.add_argument("--keep-odds", action="store_true",
+                    help="市場オッズ 単勝 を特徴量に残す（本番は既定で除外）。市場込み baseline 比較用")
     args = ap.parse_args(argv)
 
     p = Path(args.featured)
@@ -119,13 +129,14 @@ def main(argv=None) -> int:
     ok = np.isfinite(y) & np.isfinite(year)
     df, y, year, race = df[ok].reset_index(drop=True), y[ok], year[ok], race[ok]
 
-    base_cols = select_feature_cols(df, drop_prefixes=("jrdb_ms_",))
-    trt_cols = select_feature_cols(df)                    # jrdb_ms_* を含む（+ 既存 jrdb_*）
+    base_cols = select_feature_cols(df, drop_prefixes=("jrdb_ms_",), keep_odds=args.keep_odds)
+    trt_cols = select_feature_cols(df, keep_odds=args.keep_odds)   # jrdb_ms_* を含む（+ 既存 jrdb_*）
     tr = year < args.cutoff_year
     te = ~tr
     label = "単勝(rank_win)" if args.win else "複勝(rank)"
+    odds_note = "市場オッズ込み" if args.keep_odds else "市場オッズ除外(本番準拠)"
     base_rate = float(np.mean(y[te])) if te.any() else float("nan")
-    print(f"[採用検証] {label} / baseline {len(base_cols)}列 + MySpeed {len(ms_cols)}列"
+    print(f"[採用検証] {label} / {odds_note} / baseline {len(base_cols)}列 + MySpeed {len(ms_cols)}列"
           f" / 学習 {int(tr.sum()):,}行(<{args.cutoff_year}) / 評価 {int(te.sum()):,}行"
           f" / 評価陽性率 {base_rate:.3f}")
     if te.sum() < 2000 or tr.sum() < 2000:
