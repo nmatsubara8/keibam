@@ -17,10 +17,10 @@ def test_build_hist_soten_is_leak_safe():
     # 1頭・4走。s_last は必ず「前走」で、当該走 soten を含めない。
     df = pd.DataFrame({
         "horse_id": ["h1"] * 4,
-        "race_id": ["202401", "202402", "202403", "202404"],
+        "rid": ["202401", "202402", "202403", "202404"],
         "soten": [50.0, 60.0, 70.0, 80.0],
     })
-    out = m.build_hist_soten(df).sort_values("race_id")
+    out = m.build_hist_soten(df).sort_values("rid")
     # 1走目は過去なし→NaN。2走目 s_last=50(前走)。当該走(80)は s_last に出ない。
     assert np.isnan(out["s_last"].iloc[0])
     assert out["s_last"].iloc[1] == 50.0 and out["s_last"].iloc[3] == 70.0

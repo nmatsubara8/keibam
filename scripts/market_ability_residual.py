@@ -40,8 +40,8 @@ _S = ["s_last", "s_mean3", "s_max5", "s_ewm", "s_trend"]
 
 # ── 純ロジック（テスト対象） ─────────────────────────────────────────
 def build_hist_soten(df: pd.DataFrame) -> pd.DataFrame:
-    """[horse_id, race_id(sortable), soten] → 当該走除外の過去集約（leak-safe）を付与して返す。"""
-    d = df.sort_values(["horse_id", "race_id"]).copy()
+    """[horse_id, rid(時系列sort可), soten] → 当該走除外の過去集約（leak-safe）を付与して返す。"""
+    d = df.sort_values(["horse_id", "rid"]).copy()
     sh1 = d.groupby("horse_id")["soten"].shift(1)     # 直前まで（当該走を含めない）
     d["s_last"] = sh1
     d["s_mean3"] = sh1.groupby(d["horse_id"]).transform(lambda x: x.rolling(3, min_periods=1).mean())
