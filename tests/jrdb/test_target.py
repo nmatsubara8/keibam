@@ -5,6 +5,7 @@ import pandas as pd
 
 from src.jrdb._target import (
     classify,
+    dedup_by_keys,
     parse_gaikyu_comment,
     parse_mark_file,
     parse_rank,
@@ -82,3 +83,27 @@ def test_parse_target_bytes_concats_multiple_race_files():
     df = parse_target_bytes("gaikyu", [e1, e2])
     assert len(df) == 2
     assert set(df["race_id"]) == {"202601010202", "202601010203"}  # R02/R03
+
+
+def test_dedup_by_keys_removes_dup_race_ketto_keep_last():
+    # 同一 (race_id, ketto) が2回（再DL/年次×日次の重なり）→ 1つに、keep=last。
+    df = pd.DataFrame({
+        "race_id": ["r1", "r1", "r2"], "ketto": ["k1", "k1", "k2"],
+        "gaikyu_code": ["CH", "NF", "天"],
+    })
+    out, dropped = dedup_by_keys(df, ["race_id", "ketto"])
+    assert dropped == 1 and len(out) == 2
+    assert out[(out.race_id == "r1")].iloc[0]["gaikyu_code"] == "NF"  # 後勝ち
+
+
+def test_dedup_by_keys_noop_when_keys_missing_or_empty():
+    df = pd.DataFrame({"a": [1, 1]})
+    out, dropped = dedup_by_keys(df, ["race_id"])   # キー列が無い→素通し
+    assert dropped == 0 and len(out) == 2
+    out2, d2 = dedup_by_keys(pd.DataFrame(), ["race_id"])  # 空df→素通し
+    assert d2 == 0 and out2.empty
+
+
+def test_classify_ignores_redownload_copy_suffix():
+    # 「gaikyu_20260726 (1).zip」も接頭辞 gaikyu に分類される（内容重複は CLI の sha1 で排除）。
+    assert classify("gaikyu_20260726 (1).zip") == "gaikyu"
