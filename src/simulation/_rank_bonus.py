@@ -1,18 +1,32 @@
-"""騎手＋厩舎ランクを物理シムの ability 加減点 rank_bonus にする（③ 単一スナップ全期間・リーク承知）。
+"""騎手＋厩舎ランクを物理シムの ability 加減点 rank_bonus にする（① live 専用プライア・保守的固定）。
 
-⚠ 重要（リーク前提）: jocrank/tnrank は日付なしスナップショット。単一スナップを全期間へ適用すると
-過去レースに「未来の昇格・成績を含む現在ランク」が混入する（leak）。本モジュールは
-「過去 ROI をどれだけ動かせるか」を探索する用途で、live(as-of)には transfer しない値である。
+■ 運用方針（①・確定）
+騎手/厩舎ランク（jocrank/tnrank）は日付なしの「現時点スナップ」。これを **これから走るレース**
+の予測に使うのは as-of 情報＝リークなし・妥当なプライア。だが **過去レース** に同じスナップを
+当てると「未来の昇格・成績を含む現在ランク」が混入する＝リークでバックテスト/較正を汚染する。
+したがって:
+  ・live（今後のレース予測）だけで rank_bonus を適用する。
+  ・バックテスト/較正/スイープでは rank_gain=0（適用しない）を厳守する。
+  ・加減点スケールは **過去データで最適化せず、保守的な固定値 RANK_GAIN_LIVE に据える**
+    （過去 ROI へのフィッティング＝自己欺瞞を避ける）。live 経路は build_live_field を使う。
 
 設計:
-  rank_bonus = zscore(騎手rank) + zscore(厩舎rank)   （騎手＋厩舎の合算）
-  物理シムで  ability += rank_gain · rank_bonus       （rank_gain は sweep する唯一のノブ）
-方向（良ランクが上/下）と強さは rank_gain の符号・大きさで吸収するため、zscore は素の rank に対して
-取り、正負両側に rank_gain を振れば過去 ROI 最大点が見つかる。
+  rank_bonus = zscore(騎手rank) + zscore(厩舎rank)          （騎手＋厩舎の合算）
+  物理シムで  ability += RANK_GAIN_LIVE · rank_bonus         （live のみ・固定スケール）
+
+歴史的経緯: 当初は ③（単一スナップ全期間・リーク承知で過去 ROI を sweep）を検討したが、過去
+データへの最適化はリーク値で live に transfer しないため、① へ切替。sim_rank_gain_sweep.py は
+「rank が過去 ROI を動かすか」を診るリサーチ専用（本番の調整機構ではない）。
 """
 from __future__ import annotations
 
 import pandas as pd
+
+# live 専用プライアの保守的固定スケール（過去データで調整しない）。
+# rank_bonus = zscore(騎手) + zscore(厩舎) は概ね標準偏差 ~1.4。RANK_GAIN_LIVE=0.05 なら
+# 騎手＋厩舎とも +1σ（rank_bonus≈2）で ability を +0.10 程度動かす＝能力スプレッド(≈0.2)の半分。
+# 過学習を避けるための控えめな一定値。強めたいときも 0.10 を上限の目安にする。
+RANK_GAIN_LIVE = 0.05
 
 
 def build_rank_z(rank_df, *, code_col: str = "person_code", rank_col: str = "rank",
@@ -58,3 +72,35 @@ def attach_rank_bonus(featured, jockey_z: dict, trainer_z: dict, *,
         tb = pd.Series(0.0, index=f.index)
     f[out_col] = (jb + tb).to_numpy()
     return f
+
+
+def assert_live_only(rank_gain, *, context: str = "backtest") -> bool:
+    """バックテスト/較正で rank_gain!=0 が渡されたら①方針違反として大きく警告する。
+
+    True=違反あり（呼び出し側で継続可否を判断）。① は rank_bonus を live 予測のみに使う規約で、
+    過去レースに当てるとリークして評価を汚染するため。既定の backtest 経路は rank_gain=0。
+    """
+    import sys
+    try:
+        g = float(rank_gain)
+    except (TypeError, ValueError):
+        return False
+    if abs(g) > 0:
+        print(f"⚠⚠ [rank_bonus 方針違反] {context} で rank_gain={g}。① では rank_bonus は "
+              "live 予測のみ——過去に当てるとリークで較正/ROI を汚染する。これはリサーチ専用の"
+              "挙動であり本番評価には rank_gain=0 を使うこと。", file=sys.stderr)
+        return True
+    return False
+
+
+def build_live_field(race_df, *, ability_spread: float = 0.20,
+                     rank_gain: float | None = None, **field_kwargs):
+    """今から走る1レースの RaceField を、騎手＋厩舎ランクの保守的固定プライア込みで作る（live専用）。
+
+    ① の唯一の live 適用経路。rank_gain 既定は RANK_GAIN_LIVE（保守的固定・過去データで調整しない）。
+    race_df に rank_bonus 列が無ければ加点は 0（field_from_featured 側で無効）。
+    **バックテスト/較正には使わないこと**（それらは rank_gain=0 の field_from_featured を直接使う）。
+    """
+    from src.simulation._sim_params import field_from_featured
+    g = RANK_GAIN_LIVE if rank_gain is None else float(rank_gain)
+    return field_from_featured(race_df, ability_spread=ability_spread, rank_gain=g, **field_kwargs)

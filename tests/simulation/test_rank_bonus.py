@@ -40,6 +40,27 @@ def test_attach_rank_bonus_missing_columns_safe():
     assert out["rank_bonus"].tolist() == [0.0]                # id 列なし→全0
 
 
+def test_build_live_field_uses_conservative_fixed_gain():
+    # ① live 経路: 既定は RANK_GAIN_LIVE（保守的固定）。過去データで調整しない。
+    from src.simulation._rank_bonus import RANK_GAIN_LIVE, build_live_field
+    from src.simulation._sim_params import field_from_featured
+
+    race = pd.DataFrame({"馬番": [1, 2, 3], "speed_figure": [1.0, 0.0, -1.0],
+                         "rank_bonus": [1.5, 0.0, -1.5]})
+    live = build_live_field(race)
+    ref = field_from_featured(race, rank_gain=RANK_GAIN_LIVE)
+    assert np.allclose(live.ability, ref.ability)          # 固定 gain と一致
+    base = field_from_featured(race, rank_gain=0.0)
+    assert live.ability[0] > base.ability[0]               # 正の rank_bonus は加点
+    assert 0.0 < RANK_GAIN_LIVE <= 0.10                    # 保守的レンジ
+
+
+def test_assert_live_only_flags_backtest_misuse():
+    from src.simulation._rank_bonus import assert_live_only
+    assert assert_live_only(0.0) is False                  # 0 は方針遵守（違反なし）
+    assert assert_live_only(0.05, context="test") is True  # 非0 は違反として True
+
+
 def test_field_from_featured_applies_rank_gain():
     from src.simulation._sim_params import field_from_featured
 

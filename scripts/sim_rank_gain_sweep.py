@@ -1,4 +1,9 @@
-"""rank_gain × threshold を同時最適化し max_t ROI(gain,t) で比較する（投資モデルの3層評価）。
+"""[リサーチ専用] rank_gain × threshold を同時最適化し max_t ROI(gain,t) で比較（投資モデルの3層評価）。
+
+⚠ 本番の調整機構ではない。運用は ①（rank_bonus は live 予測のみ・スケールは保守的固定 RANK_GAIN_LIVE、
+過去データで最適化しない）に確定済み。本スクリプトは「rank が過去 ROI を動かすか」を診るための
+リーク承知の診断であり、ここで見つかる最適 gain は live には transfer しない（過去への当てはめ）。
+
 
 Tier1(採否): 各 gain の最大 ROI = max_t ROI(gain, t)。← これで rank_gain の真価を測る。
 Tier2(診断): その最適 t での 的中率/買い目数/平均オッズ/最大DD(円)/Sharpe。

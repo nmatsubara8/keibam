@@ -54,7 +54,11 @@ def main():
     from app._model_eval import load_featured_data
     from src.constants._results_cols import ResultsCols
     from src.simulation._agent_race import SimConfig, monte_carlo
+    from src.simulation._rank_bonus import assert_live_only
     from src.simulation._sim_params import field_from_featured
+
+    # ① 規律: rank_bonus は live 予測専用。前進検証（過去レース）で rank_gain!=0 はリーク。
+    assert_live_only(args.rank_gain, context="前進検証(sim_walk_forward)")
 
     featured = load_featured_data()
     if featured is None or featured.empty:

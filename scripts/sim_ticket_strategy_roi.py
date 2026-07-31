@@ -166,6 +166,10 @@ def main() -> int:
     ret_src = JrdbHjcReturnSource(engine=None, hjc=hjc)
     print(f"[HJC] 払戻レコード {len(hjc):,} 行 → 8券種の確定払戻源を構築")
 
+    # ① 規律: rank_bonus は live 予測専用。バックテスト（本スクリプト）で rank_gain!=0 はリーク。
+    from src.simulation._rank_bonus import assert_live_only
+    assert_live_only(args.rank_gain, context="券種ROIバックテスト")
+
     date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
     order = list(date.index)
     if args.max_year:
