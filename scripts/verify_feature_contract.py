@@ -39,7 +39,7 @@ def main() -> int:
     ap.add_argument("--featured", default=None, help="featured pickle（既定=本番 featured）")
     args = ap.parse_args()
 
-    from app._data_loader import load_model_by_version, load_model_from_path
+    from app._data_loader import load_model_from_path
     from app._model_eval import load_featured_data
     from src.pipeline._eval_stamp import feature_schema_hash
     from src.policies._score_policy import META_COLS, StdScorePolicy
@@ -50,8 +50,19 @@ def main() -> int:
         ai = load_model_from_path(args.model_path)
         model_ref = args.model_path
     elif args.version:
-        ai = load_model_by_version(args.version, args.models_dir)
-        model_ref = args.version
+        # find_model_paths は本番命名(_keibam)のみ返すため、実験バージョン名でも拾えるよう
+        # models/*/*.pickle を version 部分一致で直接検索する（__win/__category は除外）。
+        cands = sorted(
+            (p for p in glob.glob(os.path.join(args.models_dir, "*", "*.pickle"))
+             if args.version in os.path.basename(p) and "__" not in os.path.basename(p)),
+            key=os.path.getmtime,
+        )
+        if not cands:
+            print(f"バージョン '{args.version}' のモデルが見つかりません: {args.models_dir}",
+                  file=sys.stderr)
+            return 1
+        ai = load_model_from_path(cands[-1])
+        model_ref = cands[-1]
     else:
         p = _latest_model_path(args.models_dir)
         if not p:
