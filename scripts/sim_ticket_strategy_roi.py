@@ -65,6 +65,34 @@ def _sim_race_probs(rd, *, n_sim, cfg, ability_spread, ability_sigma, rank_gain,
     return rank, probs, umaban, winner
 
 
+def _lgbm_probs(model, featured, order):
+    """本番 LightGBM の較正勝率で (top_by_race, calib) を作る＝MC の代替確率源（差し当たり用）。
+
+    ExpectedValueScorePolicy.calc(model, X) が特徴量整合込みで per-horse 較正勝率(PROB)を返す。
+    top_by_race={race_id: 予測1位馬番}、calib=[(年, 勝率ベクトル, 勝者index)]（校正/市場対照で共用）。
+    """
+    import numpy as np
+
+    from src.constants._results_cols import ResultsCols
+    from src.policies._score_policy import PROB, ExpectedValueScorePolicy
+    table = ExpectedValueScorePolicy.calc(model, featured)
+    table = table.copy()
+    table["_rid"] = table.index.astype(str)
+    winners = _race_winners(featured)
+    top_by_race: dict = {}
+    calib: list = []
+    for rid, g in table.groupby("_rid"):
+        umas = [int(u) for u in g[ResultsCols.UMABAN]]
+        probs = [float(p) for p in g[PROB]]
+        if not umas:
+            continue
+        top_by_race[rid] = umas[int(np.argmax(probs))]
+        w = winners.get(rid)
+        if w is not None and w in umas:
+            calib.append((rid[:4], probs, umas.index(w)))
+    return top_by_race, calib
+
+
 def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_spread,
                     ability_sigma, rank_gain, seed):
     """全レースを sim し、各戦略の候補＋レース情報を返す。
@@ -275,7 +303,7 @@ def _dist_str(keys, top=6):
     return "  ".join(f"{k}:{v / n:.0%}" for k, v in items)
 
 
-def _print_coverage_audit(featured, order, comparable, sim_top, winners):
+def _print_coverage_audit(featured, order, comparable, sim_top, winners, pick_label="Sim1位"):
     """[代表性監査] 市場比較可能レースが全評価レースを代表しているか（偏りの検出）。"""
     import pandas as pd
     nby = pd.Series(featured.index.astype(str)).value_counts().to_dict()   # race_id→頭数
@@ -293,14 +321,14 @@ def _print_coverage_audit(featured, order, comparable, sim_top, winners):
         hit = [1 for i in ids if i in sim_top and winners.get(i) == sim_top[i]]
         hr = len(hit) / len(ids) if ids else 0.0
         avg_fs = sum(fs) / len(fs) if fs else 0.0
-        print(f"  {label}: n={len(ids):,} Sim1位的中={hr:.1%} 平均頭数={avg_fs:.1f}")
+        print(f"  {label}: n={len(ids):,} {pick_label}的中={hr:.1%} 平均頭数={avg_fs:.1f}")
         print(f"    年 {_dist_str(yrs)}")
         print(f"    場 {_dist_str(trk)}")
         print(f"    頭数 {_dist_str(fs_bucket)}")
 
     _row("全評価", allids)
     _row("市場比較", comp)
-    print("  → 市場比較の年/場/頭数分布・Sim1位的中率が全評価と大きく違えば、148件は偏った標本"
+    print(f"  → 市場比較の年/場/頭数分布・{pick_label}的中率が全評価と大きく違えば偏った標本"
           "（＝ΔROIの判定はさらに不確か）。カバレッジを上げて再監査すること。")
 
 
@@ -335,10 +363,10 @@ def _arm_stats_detailed(per_race, win_odds, pick):
             "roi_ex": roi_ex, "by_year": by_year}
 
 
-def _print_market_subgroups(win_odds, sim_top, ret_src):
-    """[市場×選択差] Sim1位が市場で何番人気かで A/B/C に分け、単勝/複勝成績を出す。
+def _print_market_subgroups(win_odds, sim_top, ret_src, pick_label="Sim1位"):
+    """[市場×選択差] 予測1位が市場で何番人気かで A/B/C に分け、単勝/複勝成績を出す。
 
-    A=Sim1位が市場1番人気 / B=市場1番人気でない / C=市場4番人気以下。一致率10%の実体を見る。
+    A=予測1位が市場1番人気 / B=市場1番人気でない / C=市場4番人気以下。一致率の中身を見る。
     """
     from src.constants._bet_types import BetType
     from src.simulation._ticket_backtest import settle_per_race
@@ -347,11 +375,11 @@ def _print_market_subgroups(win_odds, sim_top, ret_src):
         return
     mr = {r: _market_rank_of(win_odds[r], sim_top[r]) for r in common}
     groups = {
-        "A:Sim1位=市場1番人気": [r for r in common if mr[r] == 1],
-        "B:Sim1位≠市場1番人気": [r for r in common if mr[r] not in (None, 1)],
-        "C:Sim1位が市場4番人気以下": [r for r in common if mr[r] is not None and mr[r] >= 4],
+        f"A:{pick_label}=市場1番人気": [r for r in common if mr[r] == 1],
+        f"B:{pick_label}≠市場1番人気": [r for r in common if mr[r] not in (None, 1)],
+        f"C:{pick_label}が市場4番人気以下": [r for r in common if mr[r] is not None and mr[r] >= 4],
     }
-    print("\n[市場×選択差] Sim1位の市場人気順位別 単勝/複勝成績（一致率10%の中身・確定払戻で精算）")
+    print(f"\n[市場×選択差] {pick_label}の市場人気順位別 単勝/複勝成績（一致率の中身・確定払戻で精算）")
     print(f"  {'群':<24}{'件数':>6}{'単ROI':>8}{'単的中':>7}{'複ROI':>8}{'平均O':>7}"
           f"{'単除最大':>9}")
     for label, ids in groups.items():
@@ -366,8 +394,8 @@ def _print_market_subgroups(win_odds, sim_top, ret_src):
         yr = "  ".join(f"{y}:{v:.0%}" for y, v in w["by_year"].items())
         print(f"  {label:<24}{w['n']:>6,}{w['roi']:>8.1%}{w['hit']:>7.1%}{p['roi']:>8.1%}"
               f"{w['avg_odds']:>7.1f}{w['roi_ex']:>9.1%}   年別単{yr}")
-    print("  → B/C（市場と違う選択）で十分件数かつ単勝ROIが市場対照を超えるなら、Simは弱い『人気薄"
-          "選定器』の可能性。ただし148件では探索的参考に留まる（要カバレッジ増）。")
+    print(f"  → B/C（市場と違う選択）で十分件数かつ単勝ROIが市場対照を超えるなら、{pick_label}源は"
+          "弱い『人気薄選定器』の可能性。ただし少件数では探索的参考（要 walk-forward＋最低的中件数）。")
 
 
 def _single_candidates(bet_type, pick_by_race):
@@ -386,8 +414,8 @@ def _arm_roi(per_race):
     return (rt / st if st else 0.0), (hits / n if n else 0.0), n
 
 
-def _market_control(win_odds, sim_top, ret_src, source_label="市場"):
-    """[市場対照] 購入時点の単勝1番人気 vs Sim1位 を 単勝/複勝で並べ、paired ΔROI CI・一致率を出す。
+def _market_control(win_odds, sim_top, ret_src, source_label="市場", pick_label="Sim1位"):
+    """[市場対照] 購入時点の単勝1番人気 vs 予測1位 を 単勝/複勝で並べ、paired ΔROI CI・一致率を出す。
 
     リーク規律: 市場1番人気は購入時点オッズ(win_odds)で決定・確定払戻(HJC)で精算。sim1位は as-of sim。
     win_odds={race_id:{馬番:購入時点単勝}}。空なら測定不能を明示（確定オッズでの代用はしない）。
@@ -396,15 +424,16 @@ def _market_control(win_odds, sim_top, ret_src, source_label="市場"):
     from src.simulation._ticket_backtest import (
         market_favorite, paired_delta_roi_ci, settle_per_race,
     )
-    print(f"[市場対照] 購入時点({source_label})の単勝1番人気 vs Sim1位（確定払戻で精算）")
+    sw, sp = f"{pick_label[:3]}-W", f"{pick_label[:3]}-P"
+    print(f"[市場対照] 購入時点({source_label})の単勝1番人気 vs {pick_label}（確定払戻で精算）")
     if not win_odds:
-        print("  → 購入時点オッズが無い（--oz-dir / --odds-db 未指定 or 被りゼロ）。市場対照は測定不能。"
+        print("  → 購入時点オッズが無い（--tyb / --oz-dir / --odds-db 未指定 or 被りゼロ）。測定不能。"
               "確定オッズでの1番人気代用は方針違反（リーク）なので行わない。")
         return
     fav = market_favorite(win_odds)
     common = [r for r in fav if r in sim_top]
     if not common:
-        print(f"  → OZ と評価レースの被りが0（OZ {len(fav):,} / sim {len(sim_top):,}）。測定不能。")
+        print(f"  → 市場と評価レースの被りが0（市場 {len(fav):,} / 予測 {len(sim_top):,}）。測定不能。")
         return
     mkt_pick = {r: fav[r] for r in common}
     sim_pick = {r: sim_top[r] for r in common}
@@ -412,27 +441,27 @@ def _market_control(win_odds, sim_top, ret_src, source_label="市場"):
 
     arms = {}
     for label, bt, pick in (("Market-W", BetType.TANSHO, mkt_pick),
-                            ("Sim-W", BetType.TANSHO, sim_pick),
+                            (sw, BetType.TANSHO, sim_pick),
                             ("Market-P", BetType.FUKUSHO, mkt_pick),
-                            ("Sim-P", BetType.FUKUSHO, sim_pick)):
+                            (sp, BetType.FUKUSHO, sim_pick)):
         pr = settle_per_race(_single_candidates(bt, pick), ret_src)
         roi, hit, n = _arm_roi(pr)
         avg_odds = (sum(win_odds[r].get(pick[r], 0.0) for r in common if r in win_odds)
                     / len(common))
         arms[label] = {"roi": roi, "hit": hit, "n": n, "avg_odds": avg_odds, "per_race": pr}
 
-    print(f"  評価レース(共通) {len(common):,} / Sim1位=市場1番人気の一致率 {agree:.1%}"
-          + ("  ← 90%超＝シムは市場順位の再表現に近い" if agree >= 0.90 else ""))
+    print(f"  評価レース(共通) {len(common):,} / {pick_label}=市場1番人気の一致率 {agree:.1%}"
+          + ("  ← 90%超＝予測は市場順位の再表現に近い" if agree >= 0.90 else ""))
     print(f"  {'':12}{'ROI':>8}{'的中率':>8}{'平均オッズ':>10}{'決済N':>7}")
-    for label in ("Market-W", "Sim-W", "Market-P", "Sim-P"):
+    for label in ("Market-W", sw, "Market-P", sp):
         a = arms[label]
         print(f"  {label:<12}{a['roi']:>8.1%}{a['hit']:>8.1%}{a['avg_odds']:>10.2f}{a['n']:>7,}")
-    for tag, sim_l, mkt_l in (("単勝", "Sim-W", "Market-W"), ("複勝", "Sim-P", "Market-P")):
+    for tag, sim_l, mkt_l in (("単勝", sw, "Market-W"), ("複勝", sp, "Market-P")):
         d = paired_delta_roi_ci(arms[sim_l]["per_race"], arms[mkt_l]["per_race"], n_boot=2000)
         sig = "有意" if (d["lo"] > 0 or d["hi"] < 0) else "有意でない"
-        print(f"  {tag} ΔROI(Sim−Market)={d['delta']:+.1%}  95%CI[{d['lo']:+.1%},{d['hi']:+.1%}] "
+        print(f"  {tag} ΔROI(予測−Market)={d['delta']:+.1%}  95%CI[{d['lo']:+.1%},{d['hi']:+.1%}] "
               f"→ {sig}（0を跨がなければ純増分あり）")
-    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら、シムは市場1番人気の再表現で純増分なし"
+    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら、予測は市場1番人気の再表現で純増分なし"
           "（＝市場効率の壁）。ΔROI CI が有意に正なら初めて『市場を超える選別』の候補。")
 
 
@@ -493,8 +522,8 @@ def _reliability_print(rel, indent="    "):
               f"{r['act']:>9.3f}")
 
 
-def _print_calibration(calib: list):
-    """[校正] Sim1位の予測勝率の帯別実勝率＋walk-forward temperature scaling（過信の矯正）。
+def _print_calibration(calib: list, pick_label="Sim1位"):
+    """[校正] 予測1位の予測勝率の帯別実勝率＋walk-forward temperature scaling（過信の矯正）。
 
     calib=[(年, 勝率ベクトル, 勝者index)]。生の過信を示し、過去年で T を fit→翌年へ固定して
     校正後の信頼度改善（NLL/ECE）を出す。確率ベース戦略(S9/EV/joint閾値)は校正後にのみ有効。
@@ -502,7 +531,7 @@ def _print_calibration(calib: list):
     from src.simulation._prob_calibration import (
         ece_top, fit_temperature, nll, reliability_top,
     )
-    print("\n[校正] Sim1位の予測勝率 帯別実勝率（生）＋ walk-forward temperature scaling")
+    print(f"\n[校正] {pick_label}の予測勝率 帯別実勝率（生）＋ walk-forward temperature scaling")
     if not calib:
         print("  勝ち馬情報が無く測定不能。")
         return
@@ -525,7 +554,7 @@ def _print_calibration(calib: list):
     print(f"\n  walk-forward: {tr} で T を fit={T:.2f} → {te} に固定適用（T>1=過信を平坦化）")
     print(f"  {te} 校正前 NLL={nll(test, 1.0):.4f} ECE={ece_top(test, T=1.0):.3f} / "
           f"校正後 NLL={nll(test, T):.4f} ECE={ece_top(test, T=T):.3f}")
-    print(f"  {te} 校正後 Sim1位 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
+    print(f"  {te} 校正後 {pick_label} 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
     _reliability_print(reliability_top(test, T=T))
     hi = [w for p, w in test if apply_temp_top(p, T) >= 0.5]
     if hi:
@@ -575,6 +604,10 @@ def main() -> int:
     ap.add_argument("--ability-spread", type=float, default=0.20)
     ap.add_argument("--ability-sigma", type=float, default=0.35)
     ap.add_argument("--rank-gain", type=float, default=0.0, help="rank_bonus の加減点強さ(leak注意)")
+    ap.add_argument("--prob-source", choices=("mc", "lgbm"), default="mc",
+                    help="確率源。mc=物理モンテカルロ / lgbm=本番LightGBM較正勝率。"
+                         "lgbm は市場対照・校正・A/B/C のみ実行（MC専用の券種戦略グリッドはスキップ）")
+    ap.add_argument("--model-version", default=None, help="lgbm 時のモデル版名（既定=最新統合）")
     ap.add_argument("--walk-forward", action="store_true", help="過去年で戦略選択→翌年で評価")
     ap.add_argument("--tyb", action="store_true",
                     help="JRDB TYB(直前情報)の直前単勝オッズ(≈T-15)で市場対照を有効化。年度パック"
@@ -627,6 +660,41 @@ def main() -> int:
     kw = dict(n_sim=args.n_sim, T=args.T, ability_spread=args.ability_spread,
               ability_sigma=args.ability_sigma, rank_gain=args.rank_gain, seed=args.seed)
 
+    # 市場対照の購入時点オッズ源（優先 --tyb > --oz-dir > --odds-db）
+    race_set = set(map(str, order))
+    if args.tyb:
+        win_odds, src_lbl = _load_tyb_win_odds(engine, race_set), "TYB直前(≈T-15)"
+    elif args.oz_dir:
+        win_odds, src_lbl = _load_oz_win_odds(args.oz_dir, race_set), "OZ前売り"
+    elif args.odds_db:
+        win_odds = _load_db_win_odds(engine, race_set, table=args.odds_table,
+                                     target_mtp=args.target_mtp)
+        src_lbl = f"{args.odds_table}(T-{args.target_mtp})"
+    else:
+        win_odds, src_lbl = {}, "市場"
+
+    if not args.walk_forward and args.prob_source == "lgbm":
+        # 確率源＝本番 LightGBM。市場対照・校正・A/B/C のみ（MC専用の券種戦略グリッドはスキップ）。
+        from app._data_loader import load_latest_model, load_model_by_version
+        model = (load_model_by_version(args.model_version) if args.model_version
+                 else load_latest_model())
+        if model is None:
+            print("本番モデルが見つかりません（models/ を確認）", file=sys.stderr)
+            return 1
+        print(f"[全期間・LightGBM] {len(order):,}レース / 確率源=本番較正勝率")
+        top_by_race, calib = _lgbm_probs(model, featured, order)
+        pl = "LGBM1位"
+        _print_calibration(calib, pick_label=pl)
+        _market_control(win_odds, top_by_race, ret_src, src_lbl, pick_label=pl)
+        if win_odds:
+            winners = _race_winners(featured)
+            comparable = [r for r in win_odds if r in top_by_race]
+            _print_coverage_audit(featured, order, comparable, top_by_race, winners, pick_label=pl)
+            _print_market_subgroups(win_odds, top_by_race, ret_src, pick_label=pl)
+        print("\n※ 券種戦略グリッド/TOTAL は MC 専用（joint 確率が要る）ためスキップ。"
+              "LightGBM は勝ち馬順位付けが強く、市場対照＝『本番モデルは市場を超えるか』の本命検証。")
+        return 0
+
     if not args.walk_forward:
         print(f"[全期間] {len(order):,}レース / n_sim={args.n_sim} / rank_gain={args.rank_gain}")
         res, n_ok, all_cands, sim_top, calib, s4_field = _run_strategies(
@@ -636,18 +704,7 @@ def main() -> int:
         _print_s4_audit(s4_field)
         # [校正] Sim1位の予測勝率 p1 と実勝率（S9 の p1>=0.5 閾値に意味があるか）
         _print_calibration(calib)
-        # [市場対照] 購入時点オッズ(OZ前売り or DB snapshot)で市場1番人気を決め、Sim1位と対照
-        race_set = set(map(str, order))
-        if args.tyb:
-            win_odds, src_lbl = _load_tyb_win_odds(engine, race_set), "TYB直前(≈T-15)"
-        elif args.oz_dir:
-            win_odds, src_lbl = _load_oz_win_odds(args.oz_dir, race_set), "OZ前売り"
-        elif args.odds_db:
-            win_odds = _load_db_win_odds(engine, race_set, table=args.odds_table,
-                                         target_mtp=args.target_mtp)
-            src_lbl = f"{args.odds_table}(T-{args.target_mtp})"
-        else:
-            win_odds, src_lbl = {}, "市場"
+        # [市場対照] 購入時点オッズ(TYB/OZ/DB)で市場1番人気を決め、Sim1位と対照
         _market_control(win_odds, sim_top, ret_src, src_lbl)
         if win_odds:
             winners = _race_winners(featured)
