@@ -81,49 +81,79 @@ def _model_n_features(eff):
     return None
 
 
-def _lgbm_probs(model, featured, order):
-    """本番 LightGBM の較正勝率で (top_by_race, calib) を作る＝MC の代替確率源（差し当たり用）。
+def _resolve_feature_names(model, eff):
+    """モデルに保存された学習特徴量の**実列名**を辿る。save()は feature_names_/feature_contract_ を
+    保持し datasets は切離す。旧モデルはいずれも無い（→None）。順序は学習列順。"""
+    fn = getattr(model, "feature_names_", None)
+    if fn:
+        return list(fn)
+    contract = getattr(model, "feature_contract_", None)
+    if contract is not None:
+        try:
+            return list(contract.names)
+        except Exception:  # noqa: BLE001
+            pass
+    ds = getattr(model, "datasets", None)          # 通常 save で除去済み（保険）
+    if ds is not None:
+        try:
+            return list(ds.X_base_train.columns)
+        except Exception:  # noqa: BLE001
+            pass
+    return None
 
-    バックテスト featured は結果・メタ列を余分に持つため、モデルの学習特徴量(feat_cols)に厳密整合
-    してから較正モデル(effective_model)で直接予測する（score_policy の部分 drop 経由だと余分列が
-    残り LightGBM の列数不一致で落ちるため）。top_by_race={race_id: 予測1位馬番}、
-    calib=[(年, 勝率ベクトル, 勝者index)]。
+
+def _select_usable_lgbm_model(featured, *, models_dir="models", explicit_version=None):
+    """現 featured と整合する（保存済み実列名が全て featured に在り n_features_in_ と一致する）
+    最新モデルを models/ から選ぶ。旧モデル（列名なし・版ずれ）はスキップし理由を report に残す。"""
+    import os
+
+    from app._data_loader import find_model_paths, load_model_from_path
+    paths = find_model_paths(models_dir)
+    if explicit_version:
+        paths = [p for p in paths if explicit_version in os.path.basename(p)]
+    fcols = set(featured.columns)
+    report = []
+    for p in paths:
+        try:
+            mdl = load_model_from_path(p)
+        except Exception as e:  # noqa: BLE001
+            report.append((os.path.basename(p), f"load失敗:{type(e).__name__}"))
+            continue
+        eff = getattr(mdl, "effective_model", mdl)
+        n = _model_n_features(eff)
+        names = _resolve_feature_names(mdl, eff)
+        if not names:
+            report.append((os.path.basename(p), f"保存済み列名なし(旧モデル・n_in={n})"))
+            continue
+        if n and len(names) != n:
+            report.append((os.path.basename(p), f"列名{len(names)}≠n_in{n}"))
+            continue
+        miss = [c for c in names if c not in fcols]
+        if miss:
+            report.append((os.path.basename(p), f"featuredに不足{len(miss)}(例{miss[:3]})"))
+            continue
+        return mdl, p, names, report
+    return None, None, None, report
+
+
+def _lgbm_probs(model, featured, feat_names):
+    """本番 LightGBM の較正勝率で (top_by_race, calib, smoke) を作る＝MC の代替確率源。
+
+    feat_names=学習列の実列名（_select_usable_lgbm_model が featured 内在を保証済み）。学習列だけを
+    学習順で厳密選択し（新規列を除外・0補完なし）、較正モデルで予測。top_by_race={race_id:予測1位}、
+    calib=[(年,勝率ベクトル,勝者index)]、smoke={place_auc,win_auc,...}。
     """
     import numpy as np
     import pandas as pd
 
-    from app._model_eval import _DROP_FOR_TRAIN
     from src.constants._results_cols import ResultsCols
     eff = getattr(model, "effective_model", model)
     n_expect = _model_n_features(eff)
-    # モデル入力の列名は、学習時に確定した datasets.X_base_train.columns（=588の実列名・学習列順）を
-    # 正典とする。現 featured は学習後に増えた特徴量（例 rank_bonus 等）を含み得るので、学習列だけを
-    # 厳密に選ぶ（新規列を除外・順序固定）。取れない場合のみ featured − _DROP_FOR_TRAIN へフォールバック。
-    feat_names = None
-    ds = getattr(model, "datasets", None)
-    if ds is not None:
-        try:
-            feat_names = list(ds.X_base_train.columns)
-        except Exception:  # noqa: BLE001
-            feat_names = None
-    if feat_names:
-        missing = [c for c in feat_names if c not in featured.columns]
-        print(f"  [契約診断] model_class={type(eff).__name__} n_features_in_={n_expect} "
-              f"学習列数={len(feat_names)} featured列数={featured.shape[1]} 不足={len(missing)} "
-              f"（学習列を厳密選択）", file=sys.stderr)
-        print(f"  [契約診断] 学習列 先頭: {feat_names[:8]}", file=sys.stderr)
-        if missing:
-            raise ValueError(f"特徴量不一致: 学習{len(feat_names)}列中 {len(missing)}列が featured に"
-                             f"無い（0補完は市場検証で禁止）。先頭20: {missing[:20]}")
-        X_model = featured.reindex(columns=feat_names)   # 学習列だけ・学習順（新規19列を除外）
-    else:
-        X_model = featured.drop(list(_DROP_FOR_TRAIN), axis=1, errors="ignore")
-        print(f"  [契約診断] datasets 不在→fallback: model入力列数={X_model.shape[1]}"
-              f"（featured−_DROP_FOR_TRAIN）", file=sys.stderr)
-    if n_expect and X_model.shape[1] != n_expect:
-        raise ValueError(
-            f"特徴量数不一致: モデル入力 {X_model.shape[1]}列 ≠ 学習 {n_expect}列。差分"
-            f"{X_model.shape[1] - n_expect:+d}（学習列選択後も不一致＝datasets とモデルの版ずれを疑う）")
+    print(f"  [契約診断] model_class={type(eff).__name__} n_features_in_={n_expect} "
+          f"学習列数={len(feat_names)} featured列数={featured.shape[1]}（学習列を厳密選択・0補完なし）",
+          file=sys.stderr)
+    print(f"  [契約診断] 学習列 先頭: {feat_names[:8]}", file=sys.stderr)
+    X_model = featured.reindex(columns=feat_names)   # 学習列だけ・学習順
     prob = np.asarray(eff.predict_proba(X_model.values))[:, 1]
     rank_arr = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy()
     tbl = pd.DataFrame({"_rid": featured.index.astype(str),
@@ -753,21 +783,21 @@ def main() -> int:
 
     if not args.walk_forward and args.prob_source == "lgbm":
         # 確率源＝本番 LightGBM。市場対照・校正・A/B/C のみ（MC専用の券種戦略グリッドはスキップ）。
-        from app._data_loader import (
-            find_combined_model_paths, find_model_paths, load_model_by_version,
-            load_model_from_path,
-        )
-        if args.model_version:
-            model, mpath = load_model_by_version(args.model_version), args.model_version
-        else:
-            paths = find_combined_model_paths("models") or find_model_paths("models")
-            if not paths:
-                print("本番モデルが見つかりません（models/ を確認）", file=sys.stderr)
-                return 1
-            mpath = paths[0]
-            model = load_model_from_path(mpath)
+        # 現 featured と整合する（保存済み実列名が全て在り n_features_in_ 一致）最新モデルを自動選択。
+        model, mpath, feat_names, report = _select_usable_lgbm_model(
+            featured, explicit_version=args.model_version)
+        if model is None:
+            print("現 featured と整合する LightGBM モデルが models/ に無い。各モデルの非採用理由:",
+                  file=sys.stderr)
+            for name, why in report[:20]:
+                print(f"    {name}: {why}", file=sys.stderr)
+            print("→ 現 featured で再学習するか、保存済み実列名(feature_names_/契約)を持つ整合モデルが必要。"
+                  "旧モデルは学習列名を pickle に持たず整合不能（datasets は save で除去）。", file=sys.stderr)
+            return 1
+        if report:
+            print(f"  [モデル選択] {len(report)} 個をスキップ（旧/版ずれ）→ 採用 {mpath}", file=sys.stderr)
         print(f"[全期間・LightGBM] {len(order):,}レース / model={mpath}")
-        top_by_race, calib, smoke = _lgbm_probs(model, featured, order)
+        top_by_race, calib, smoke = _lgbm_probs(model, featured, feat_names)
         pl = "LGBM1位"
         # [正常性スモーク] 特徴整合が壊れていれば AUC≒0.5 になる。0.807 近傍で初めて ROI を信頼できる。
         pa, wa = smoke["place_auc"], smoke["win_auc"]
