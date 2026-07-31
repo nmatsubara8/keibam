@@ -60,6 +60,30 @@ def _train_with_optional_stacking(
     return False
 
 
+def _training_stamp(ai, featured) -> dict:
+    """学習物の再現メタ（feature schema hash / seed / split / odds / データ期間）を返す（⑤合流）。
+
+    保存 meta に合流して「どの特徴スキーマ・seed・分割・オッズ条件で学習したか」を自己記述させ、
+    prod_p vs 簡易 harness の混乱（0.835 疑義）を学習側でも防ぐ。純ロジック（重い依存の遅延 import）。
+    """
+    from src.pipeline._eval_stamp import date_range, feature_schema_hash
+    from src.training._base_models_config import DEFAULT_XGB_PARAMS
+
+    out: dict = {
+        "seed": DEFAULT_XGB_PARAMS.get("seed", 100),   # base 学習器の固定 seed（プロジェクト共通 100）
+        "split_method": "temporal_holdout(date-ordered)",  # DataSplitter.__split_by_date
+        "odds_included": False,  # 本番は市場オッズ(単勝)を _DROP_FOR_TRAIN で学習除外
+    }
+    contract = getattr(ai, "feature_contract_", None)
+    if contract is not None:
+        out["feature_schema_hash"] = feature_schema_hash(contract.names)
+        out["n_features"] = len(contract.names)
+    fd = featured.gbdt if hasattr(featured, "gbdt") else featured
+    if hasattr(fd, "columns") and "date" in fd.columns:
+        out["data_period"] = date_range(fd["date"])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 設定 DTO（frozen）
 # ---------------------------------------------------------------------------
@@ -297,6 +321,7 @@ class RetrainJob:
             "base_models": list(ai.base_model_names_) if hasattr(ai, "base_model_names_") else ["LightGBM"],
             **metrics,
         }
+        meta.update(_training_stamp(ai, featured_data))  # ⑤合流: schema hash/seed/split/odds/期間
         if lgb_params:
             meta["params_rank"] = params_rank
             meta["lgb_params"] = lgb_params
