@@ -70,18 +70,19 @@ def main(argv=None) -> int:
     unreadable: list[str] = []
 
     for a in archives:
-        data = a.read_bytes()
-        sha = hashlib.sha1(data).hexdigest()
-        if sha in seen_sha1:                # 内容が同一＝再DLコピー等 → 1回だけ
-            dup_archives.append((a.name, seen_sha1[sha]))
-            continue
-        seen_sha1[sha] = a.name
+        # 先に名前で分類し、8種でないもの（KYI/SED/SKB 等）は読まない（無駄な I/O を避ける）。
         t = classify(a.name)
         if t is None:
             unclassified.append(a.name)
             continue
         if t not in want:
             continue
+        data = a.read_bytes()
+        sha = hashlib.sha1(data).hexdigest()
+        if sha in seen_sha1:                # 内容が同一＝再DLコピー等 → 1回だけ
+            dup_archives.append((a.name, seen_sha1[sha]))
+            continue
+        seen_sha1[sha] = a.name
         try:
             entries = read_jrdb_bytes(str(a))
         except (OSError, ValueError) as e:
@@ -90,7 +91,8 @@ def main(argv=None) -> int:
         if not entries:
             unreadable.append(f"{a.name}: 内包ファイルなし")
             continue
-        buckets[t].extend(entries)
+        # (source_name, internal_name, data)＝ランクの日付は source_name(zip名)から取る。
+        buckets[t].extend((a.name, name, d) for name, d in entries)
         n_files[t] += 1
 
     out_dir = Path(args.out_dir)
