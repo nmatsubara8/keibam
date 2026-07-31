@@ -65,27 +65,64 @@ def _sim_race_probs(rd, *, n_sim, cfg, ability_spread, ability_sigma, rank_gain,
     return rank, probs, umaban, winner
 
 
+def _model_feature_names(eff):
+    """fit 済みモデルから学習特徴量名(順序付き)を辿る。較正ラッパー越しも試す。無ければ None。"""
+    getters = [
+        lambda m: list(m.feature_name_),                       # LGBMClassifier
+        lambda m: list(m.booster_.feature_name()),             # Booster
+        lambda m: list(m.feature_names_in_),                   # sklearn 一般
+    ]
+    for cand in (eff, getattr(eff, "_base_model", None), getattr(eff, "base_estimator", None),
+                 getattr(eff, "estimator", None)):
+        if cand is None:
+            continue
+        for g in getters:
+            try:
+                names = g(cand)
+                if names:
+                    return names
+            except Exception:  # noqa: BLE001
+                continue
+    return None
+
+
 def _lgbm_probs(model, featured, order):
     """本番 LightGBM の較正勝率で (top_by_race, calib) を作る＝MC の代替確率源（差し当たり用）。
 
-    ExpectedValueScorePolicy.calc(model, X) が特徴量整合込みで per-horse 較正勝率(PROB)を返す。
-    top_by_race={race_id: 予測1位馬番}、calib=[(年, 勝率ベクトル, 勝者index)]（校正/市場対照で共用）。
+    バックテスト featured は結果・メタ列を余分に持つため、モデルの学習特徴量(feat_cols)に厳密整合
+    してから較正モデル(effective_model)で直接予測する（score_policy の部分 drop 経由だと余分列が
+    残り LightGBM の列数不一致で落ちるため）。top_by_race={race_id: 予測1位馬番}、
+    calib=[(年, 勝率ベクトル, 勝者index)]。
     """
     import numpy as np
+    import pandas as pd
 
     from src.constants._results_cols import ResultsCols
-    from src.policies._score_policy import PROB, ExpectedValueScorePolicy
-    # KeibaAI ラッパーの calc_score が特徴量整合(#24契約)込みで較正勝率テーブルを返す
-    # （ExpectedValueScorePolicy.calc を直接呼ぶとラッパーに predict_proba が無く失敗する）。
-    table = model.calc_score(featured, ExpectedValueScorePolicy)
-    table = table.copy()
-    table["_rid"] = table.index.astype(str)
+    eff = getattr(model, "effective_model", model)
+    feat_cols = _model_feature_names(eff)      # 学習特徴量(=588)の厳密な列名・列順（fitモデル由来）
+    if not feat_cols:
+        from src.policies._score_policy import META_COLS
+        contract = getattr(model, "feature_contract_", None)
+        names = (list(contract.names) if contract is not None
+                 else getattr(model, "feature_names_", None)) or []
+        feat_cols = [c for c in names if c not in META_COLS]
+    if not feat_cols:
+        raise RuntimeError("モデルの学習特徴量名を取得できません（fit モデル/契約いずれも不明）")
+    missing = [c for c in feat_cols if c not in featured.columns]
+    if missing:
+        print(f"  [warn] featured に学習特徴量 {len(missing)} 列が無く 0 補完: {missing[:5]} ...",
+              file=sys.stderr)
+    X_model = featured.reindex(columns=feat_cols, fill_value=0)
+    prob = np.asarray(eff.predict_proba(X_model.values))[:, 1]
+    tbl = pd.DataFrame({"_rid": featured.index.astype(str),
+                        "uma": pd.to_numeric(featured[ResultsCols.UMABAN], errors="coerce"),
+                        "prob": prob})
     winners = _race_winners(featured)
     top_by_race: dict = {}
     calib: list = []
-    for rid, g in table.groupby("_rid"):
-        umas = [int(u) for u in g[ResultsCols.UMABAN]]
-        probs = [float(p) for p in g[PROB]]
+    for rid, g in tbl.groupby("_rid"):
+        umas = [int(u) for u in g["uma"] if pd.notna(u)]
+        probs = [float(p) for u, p in zip(g["uma"], g["prob"], strict=False) if pd.notna(u)]
         if not umas:
             continue
         top_by_race[rid] = umas[int(np.argmax(probs))]
