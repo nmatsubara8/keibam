@@ -179,6 +179,46 @@ def _load_oz_win_odds(oz_dir, race_set):
     return out
 
 
+def _load_db_win_odds(engine, race_set, *, table="raw_odds_snapshots", target_mtp=15):
+    """raw_odds_snapshots → {race_id: {馬番: 購入時点単勝}}。締切 target_mtp 分前に最も近いスナップを採る。
+
+    購入時点オッズ＝発走前スナップ。各(race_id,馬番)で minutes_to_post が target_mtp(既定T-15)に
+    最も近い（かつ >=0＝発走前の）行を選ぶ。確定オッズは使わない（リーク回避）。列が違えば空返し。
+    """
+    import pandas as pd
+    from sqlalchemy import text
+    try:
+        cols = pd.read_sql(text(f"SELECT * FROM {table} LIMIT 1"), engine).columns
+    except Exception as e:  # noqa: BLE001
+        print(f"  [warn] {table} を読めません: {e}", file=sys.stderr)
+        return {}
+    need = {"race_id", "bet_type", "combo", "odds"}
+    if not need.issubset(set(cols)):
+        print(f"  [warn] {table} に必要列 {need} が無い（実列: {list(cols)}）。", file=sys.stderr)
+        return {}
+    has_mtp = "minutes_to_post" in cols
+    sel = "race_id, combo, odds" + (", minutes_to_post" if has_mtp else "")
+    df = pd.read_sql(text(f"SELECT {sel} FROM {table} WHERE bet_type='tansho'"), engine)
+    if df.empty:
+        return {}
+    df["race_id"] = df["race_id"].astype(str).str.split(".").str[0]
+    df = df[df["race_id"].isin(race_set)]
+    df["umaban"] = pd.to_numeric(df["combo"], errors="coerce")
+    df["odds"] = pd.to_numeric(df["odds"], errors="coerce")
+    df = df.dropna(subset=["umaban", "odds"])
+    df = df[(df["odds"] > 0) & (df["umaban"] > 0)]
+    if has_mtp:
+        mtp = pd.to_numeric(df["minutes_to_post"], errors="coerce")
+        df = df[mtp >= 0]
+        df = df.assign(_key=(pd.to_numeric(df["minutes_to_post"], errors="coerce") - target_mtp).abs())
+        df = df.sort_values("_key")                    # target_mtp に近い順→重複keep firstで採用
+    out: dict = {}
+    for rid, g in df.groupby("race_id"):
+        g = g.drop_duplicates("umaban", keep="first")
+        out[str(rid)] = {int(u): float(o) for u, o in zip(g["umaban"], g["odds"], strict=False)}
+    return out
+
+
 def _single_candidates(bet_type, pick_by_race):
     """{race_id: 馬番} → その馬1点を買う BetCandidate 群（単勝/複勝の対照用）。"""
     from src.policies._bet_candidate import BetCandidate
@@ -195,22 +235,21 @@ def _arm_roi(per_race):
     return (rt / st if st else 0.0), (hits / n if n else 0.0), n
 
 
-def _market_control(oz_dir, featured, order, sim_top, ret_src):
+def _market_control(win_odds, sim_top, ret_src, source_label="市場"):
     """[市場対照] 購入時点の単勝1番人気 vs Sim1位 を 単勝/複勝で並べ、paired ΔROI CI・一致率を出す。
 
-    リーク規律: 市場1番人気は OZ 前売り（購入時点）で決定・確定払戻(HJC)で精算。sim1位は as-of sim。
-    OZ 無指定/被りゼロなら測定不能を明示（確定オッズでの代用はしない）。
+    リーク規律: 市場1番人気は購入時点オッズ(win_odds)で決定・確定払戻(HJC)で精算。sim1位は as-of sim。
+    win_odds={race_id:{馬番:購入時点単勝}}。空なら測定不能を明示（確定オッズでの代用はしない）。
     """
     from src.constants._bet_types import BetType
     from src.simulation._ticket_backtest import (
         market_favorite, paired_delta_roi_ci, settle_per_race,
     )
-    print("[市場対照] 購入時点(前売り)の単勝1番人気 vs Sim1位（確定払戻で精算）")
-    if not oz_dir:
-        print("  → OZ 前売りオッズ未指定(--oz-dir)。市場対照は測定不能。"
+    print(f"[市場対照] 購入時点({source_label})の単勝1番人気 vs Sim1位（確定払戻で精算）")
+    if not win_odds:
+        print("  → 購入時点オッズが無い（--oz-dir / --odds-db 未指定 or 被りゼロ）。市場対照は測定不能。"
               "確定オッズでの1番人気代用は方針違反（リーク）なので行わない。")
         return
-    win_odds = _load_oz_win_odds(oz_dir, set(map(str, order)))
     fav = market_favorite(win_odds)
     common = [r for r in fav if r in sim_top]
     if not common:
@@ -387,8 +426,12 @@ def main() -> int:
     ap.add_argument("--rank-gain", type=float, default=0.0, help="rank_bonus の加減点強さ(leak注意)")
     ap.add_argument("--walk-forward", action="store_true", help="過去年で戦略選択→翌年で評価")
     ap.add_argument("--oz-dir", default=None,
-                    help="JRDB OZ 前売りオッズの .txt フォルダ。市場1番人気対照(購入時点)を有効化。"
+                    help="JRDB OZ 前売りオッズの .txt フォルダ。市場1番人気対照(購入時点)を有効化。")
+    ap.add_argument("--odds-db", action="store_true",
+                    help="DB の購入時点オッズ(raw_odds_snapshots)で市場対照を有効化（--oz-dir 優先）。"
                          "無指定なら市場対照は測定不能（確定オッズでの代用は方針違反なので行わない）")
+    ap.add_argument("--odds-table", default="raw_odds_snapshots", help="購入時点オッズのDBテーブル名")
+    ap.add_argument("--target-mtp", type=int, default=15, help="採用する締切前分数(T-N)。既定15")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -438,8 +481,17 @@ def main() -> int:
         _print_s4_audit(s4_field)
         # [校正] Sim1位の予測勝率 p1 と実勝率（S9 の p1>=0.5 閾値に意味があるか）
         _print_calibration(calib)
-        # [市場対照] 購入時点オッズで市場1番人気を決め、Sim1位と単勝/複勝で並べる
-        _market_control(args.oz_dir, featured, order, sim_top, ret_src)
+        # [市場対照] 購入時点オッズ(OZ前売り or DB snapshot)で市場1番人気を決め、Sim1位と対照
+        race_set = set(map(str, order))
+        if args.oz_dir:
+            win_odds, src_lbl = _load_oz_win_odds(args.oz_dir, race_set), "OZ前売り"
+        elif args.odds_db:
+            win_odds = _load_db_win_odds(engine, race_set, table=args.odds_table,
+                                         target_mtp=args.target_mtp)
+            src_lbl = f"{args.odds_table}(T-{args.target_mtp})"
+        else:
+            win_odds, src_lbl = {}, "市場"
+        _market_control(win_odds, sim_top, ret_src, src_lbl)
         # [戦略別]
         print("\n[戦略別]")
         _print_table([_strategy_line(n, pb, pr) for n, (pb, pr) in res.items()])
