@@ -30,6 +30,9 @@ def main(argv=None) -> int:
     ap.add_argument("--test-frac", type=float, default=0.2)
     ap.add_argument("--min-scores", type=float, nargs="+",
                     default=[-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0], help="見送り z 閾値の候補")
+    ap.add_argument("--db", default=None, help="JRDB SED 払戻用 SQLite（100%カバレッジ）")
+    ap.add_argument("--netkeiba-payout", action="store_true",
+                    help="払戻を netkeiba(欠損46%)に戻す（既定は JRDB SED 100%）")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     from app._data_loader import load_model_from_path, load_win_head_for
@@ -51,13 +54,23 @@ def main(argv=None) -> int:
     if holdout.empty:
         print("holdout が空。", file=sys.stderr)
         return 1
+    # 払戻源: 既定 JRDB SED（100%）。--netkeiba-payout で従来（欠損46%）。
+    return_processor = None
+    if not args.netkeiba_payout:
+        from src.simulation._jrdb_return_source import JrdbReturnSource
+        from src.storage._db import get_engine
+        return_processor = JrdbReturnSource(get_engine(args.db))
+        print("[opt] 払戻源: JRDB SED（複勝100%カバレッジ）")
+    else:
+        print("[opt] 払戻源: netkeiba return_tables（欠損あり）")
     print(f"[opt] holdout {len(holdout):,} 頭 / {holdout.index.nunique():,} レース\n")
 
     label = "複勝本命(損失最小)"
     print(f"  {'min_score':>10}{'return_rate':>12}{'hit_rate':>10}{'n_bets':>9}{'n_covered':>11}")
     best = (None, -1.0)
     for ms in args.min_scores:
-        summary, per_race, diag = simulate_model(ai, holdout, label, ms)
+        summary, per_race, diag = simulate_model(ai, holdout, label, ms,
+                                                  return_processor=return_processor)
         rr = float(summary.get("return_rate", float("nan")))
         hr = float(summary.get("hit_rate", float("nan")))
         nb = diag.get("n_matched_races", 0)
