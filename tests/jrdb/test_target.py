@@ -165,3 +165,41 @@ def test_dedup_by_keys_noop_when_keys_missing_or_empty():
 def test_classify_ignores_redownload_copy_suffix():
     # 「gaikyu_20260726 (1).zip」も接頭辞 gaikyu に分類される（内容重複は CLI の sha1 で排除）。
     assert classify("gaikyu_20260726 (1).zip") == "gaikyu"
+
+
+def _sed_record_with_idm(race_key: str, umaban: str, ketto: str, ymd: str, idm: str) -> bytes:
+    """idm@183 を設定した合成 SED レコード（成績IDM×SED 照合テスト用）。"""
+    r = bytearray(b" " * 376)
+
+    def put(start1, s):
+        b = s.encode("cp932")
+        r[start1 - 1: start1 - 1 + len(b)] = b
+
+    put(1, race_key); put(9, umaban); put(11, ketto); put(19, ymd); put(183, idm)
+    return bytes(r) + b"\r\n"
+
+
+def test_compare_seiseki_vs_sed_joins_and_matches(tmp_path):
+    from src.jrdb._parser import parse
+    from src.jrdb._target import compare_seiseki_vs_sed, parse_seiseki_idm
+
+    # SED: race_key 01082101(→race_id 200801020101) 馬番07 idm=45 / 馬番08 idm=30
+    sed_bytes = (
+        _sed_record_with_idm("01082101", "07", "06102843", "20080913", " 45")
+        + _sed_record_with_idm("01082101", "08", "06102844", "20080913", " 30")
+    )
+    sed_path = tmp_path / "SED080913.txt"
+    sed_path.write_bytes(sed_bytes)
+    sed = parse(str(sed_path), "SED")
+
+    # idmse: 同 (race_id, umaban) を作る鍵 = YYYYMMDD+場01+回02+日01+R01+馬番
+    idmse = parse_seiseki_idm(
+        ("200809130102010107,45\r\n"   # 馬番07: SED と一致(45)
+         "200809130102010108,31\r\n").encode("cp932")  # 馬番08: 30 vs 31 → 差1
+    )
+    rep = compare_seiseki_vs_sed(sed, idmse)
+    assert rep["n_overlap_keys"] == 2
+    assert rep["n_both_present"] == 2
+    assert rep["max_abs_diff"] == 1.0            # 馬番08 の 1 差
+    assert rep["exact_match_rate"] == 0.5        # 2件中1件一致
+    assert rep["sed_range"] == [30.0, 45.0]

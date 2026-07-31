@@ -279,6 +279,56 @@ def parse_target_bytes(zip_type: str, entries: list[tuple]) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def compare_seiseki_vs_sed(
+    sed_df: pd.DataFrame,
+    idmse_df: pd.DataFrame,
+    *,
+    sed_idm_col: str = "idm",
+) -> dict:
+    """配布「成績IDM」(idmse) と 既存 `SED[idm]` を (race_id, umaban) で照合する。
+
+    「成績IDM は既に SED から取込済みか、独立系列か」を値で判定するための集計を返す。
+    sed_df は parse(path,"SED") 由来（race_id, umaban, idm 列）、idmse_df は parse_seiseki_idm
+    由来（race_id, umaban, seiseki_idm 列）を想定。両者を内部結合し一致率・最大絶対差・
+    相関・スケール比・欠測差・件数差を返す（実データは呼び出し側＝ユーザー環境で流す）。
+    """
+    def _norm(df, val_col):
+        d = df[["race_id", "umaban", val_col]].copy()
+        d["race_id"] = d["race_id"].astype("string")
+        d["umaban"] = pd.to_numeric(d["umaban"], errors="coerce").astype("Int64")
+        d[val_col] = pd.to_numeric(d[val_col], errors="coerce")
+        return d.dropna(subset=["race_id", "umaban"])
+
+    s = _norm(sed_df, sed_idm_col).rename(columns={sed_idm_col: "sed_idm"})
+    i = _norm(idmse_df, "seiseki_idm")
+    s = s.drop_duplicates(["race_id", "umaban"])
+    i = i.drop_duplicates(["race_id", "umaban"])
+    m = s.merge(i, on=["race_id", "umaban"], how="inner")
+    both = m.dropna(subset=["sed_idm", "seiseki_idm"])
+    diff = (both["sed_idm"] - both["seiseki_idm"]).abs()
+    ratio = (both["sed_idm"] / both["seiseki_idm"]).replace([float("inf"), float("-inf")], pd.NA)
+    exact = int((diff == 0).sum())
+    return {
+        "n_sed": int(len(s)),
+        "n_idmse": int(len(i)),
+        "n_overlap_keys": int(len(m)),
+        "n_both_present": int(len(both)),
+        "exact_match_rate": (exact / len(both)) if len(both) else None,
+        "max_abs_diff": float(diff.max()) if len(both) else None,
+        "mean_abs_diff": float(diff.mean()) if len(both) else None,
+        "corr": float(both["sed_idm"].corr(both["seiseki_idm"])) if len(both) > 1 else None,
+        "scale_ratio_median": float(ratio.median()) if ratio.notna().any() else None,
+        "n_sed_only": int(len(s) - len(m)),
+        "n_idmse_only": int(len(i) - len(m)),
+        "sed_range": [float(s["sed_idm"].min()), float(s["sed_idm"].max())] if len(s) else None,
+        "idmse_range": [float(i["seiseki_idm"].min()), float(i["seiseki_idm"].max())] if len(i) else None,
+        "diff_examples": (
+            both[diff > 0].head(10)[["race_id", "umaban", "sed_idm", "seiseki_idm"]]
+            .to_dict("records")
+        ),
+    }
+
+
 def parse_target_archive(path: str) -> tuple[str | None, pd.DataFrame]:
     """1 つの zip/lzh/txt を種別判定し正規化 DataFrame を返す（(種別, df)）。"""
     zip_type = classify(path)
