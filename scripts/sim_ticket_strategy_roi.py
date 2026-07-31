@@ -90,16 +90,19 @@ def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_s
     n_ok = 0
     for i, rid in enumerate(order):
         rd = featured.loc[[rid]] if not isinstance(featured.loc[rid], pd.DataFrame) else featured.loc[rid]
-        rank, probs, _, winner = _sim_race_probs(rd, n_sim=n_sim, cfg=cfg,
-                                                 ability_spread=ability_spread,
-                                                 ability_sigma=ability_sigma, rank_gain=rank_gain,
-                                                 seed=int(rng.integers(1 << 30)))
+        rank, probs, umaban, winner = _sim_race_probs(rd, n_sim=n_sim, cfg=cfg,
+                                                      ability_spread=ability_spread,
+                                                      ability_sigma=ability_sigma,
+                                                      rank_gain=rank_gain,
+                                                      seed=int(rng.integers(1 << 30)))
         if rank is None:
             continue
         n_ok += 1
         sim_top_by_race[str(rid)] = rank[0]
-        if winner is not None:
-            calib.append((float(probs.get(TANSHO, {}).get(rank[0], 0.0)), int(winner == rank[0])))
+        if winner is not None and winner in list(umaban):
+            p_vec = [float(probs.get(TANSHO, {}).get(int(u), 0.0)) for u in umaban]
+            w_idx = list(umaban).index(winner)
+            calib.append((str(rid)[:4], p_vec, w_idx))   # (年, 勝率ベクトル, 勝者index)
         aud = s4_point_audit(rank)
         s4_field[aud["actual"]] = s4_field.get(aud["actual"], 0) + 1
         for name, strat in strategies.items():
@@ -243,27 +246,36 @@ def _market_control(oz_dir, featured, order, sim_top, ret_src):
           "（＝市場効率の壁）。ΔROI CI が有意に正なら初めて『市場を超える選別』の候補。")
 
 
-def _print_total(all_cands, ret_src, order):
-    """[券種グループ別 TOTAL] と [ALL TOTAL]（全戦略を同時に全購入した仮想ポートフォリオ）。"""
+def _print_total(all_cands, ret_src, order, n_strategies):
+    """[券種グループ別 TOTAL] と [ALL TOTAL]（全戦略を同時に全購入した仮想ポートフォリオ）。
+
+    金額は円で表示する（決済単位は 1点=1単位=100円なので stake/return は 100円単位→×100で円）。
+    """
+    from src.constants._units import PAYOUT_UNIT_YEN as U
     from src.simulation._ticket_backtest import (
         BET_GROUP_ORDER, portfolio_metrics, settle_tickets_detailed,
     )
     rows = settle_tickets_detailed(all_cands, ret_src)
     m = portfolio_metrics(rows, race_order=[str(r) for r in order])
-    print("\n[券種グループ別 TOTAL]（三連系の大量投資が全券種合算を支配するのを切り分け）")
-    print(f"  {'グループ':<14}{'点数':>9}{'的中率':>8}{'投資':>12}{'払戻':>13}{'ROI':>8}")
+    print("\n[券種グループ別 TOTAL]（三連系の大量投資が全券種合算を支配するのを切り分け・金額は円）")
+    print(f"  {'グループ':<14}{'点数':>9}{'的中率':>8}{'投資(円)':>13}{'払戻(円)':>14}{'ROI':>8}")
     for g in BET_GROUP_ORDER:
         d = m["by_group"].get(g)
         if not d:
             continue
         hit = d["n_hits"] / d["n_bets"] if d["n_bets"] else 0.0
-        print(f"  {g:<14}{d['n_bets']:>9,}{hit:>8.1%}{d['stake']:>12,.0f}"
-              f"{d['returned']:>13,.0f}{d['roi']:>8.1%}")
-    print("\n[ALL TOTAL]（全8戦略を同時に全購入した仮想ポートフォリオ・投資額加重ROI）")
-    print(f"  投資={m['total_stake']:,.0f}  払戻={m['total_return']:,.0f}  損益={m['profit']:+,.0f}")
+        print(f"  {g:<14}{d['n_bets']:>9,}{hit:>8.1%}{d['stake'] * U:>13,.0f}"
+              f"{d['returned'] * U:>14,.0f}{d['roi']:>8.1%}")
+    n_races = m["n_races"]
+    tickets = m["n_tickets"]
+    print(f"\n[ALL TOTAL]（全{n_strategies}戦略を同時に全購入した仮想ポートフォリオ・投資額加重ROI・"
+          f"1点=100円）")
+    print(f"  総点数={tickets:,}点  投資={m['total_stake'] * U:,.0f}円  "
+          f"払戻={m['total_return'] * U:,.0f}円  損益={m['profit'] * U:+,.0f}円")
     print(f"  ROI={m['roi']:.1%}  除最大1={m['roi_ex_top1']:.1%}  除上位5={m['roi_ex_top5']:.1%}")
-    print(f"  購入レース数={m['n_races']:,}  総点数={m['n_tickets']:,}  "
-          f"1レース平均投資={m['avg_stake_per_race']:,.0f}円  最大DD={m['max_dd']:,.0f}円")
+    avg_pts = tickets / n_races if n_races else 0.0
+    print(f"  購入レース数={n_races:,}  1レース平均={avg_pts:.1f}点／{m['avg_stake_per_race'] * U:,.0f}円  "
+          f"最大DD={m['max_dd'] * U:,.0f}円")
     yr = "  ".join(f"{y}:{v:.1%}" for y, v in m["by_year"].items())
     print(f"  年別TOTAL ROI: {yr}")
     print("  ※注意: 控除率は投資額に対する割合なので、点数を増やすこと自体が1円あたり控除率を"
@@ -285,29 +297,60 @@ def _print_s4_audit(s4_field: dict):
           "重複馬番ではない（各レースで validate_ranking 済）。")
 
 
+def _reliability_print(rel, indent="    "):
+    for r in rel:
+        print(f"{indent}[{r['lo']:.1f},{r['hi']:.1f}){'':<2}{r['n']:>8,}{r['pred']:>10.3f}"
+              f"{r['act']:>9.3f}")
+
+
 def _print_calibration(calib: list):
-    """[校正] Sim1位の予測勝率 p1 を帯別に集計し実勝率と比べる（S9 の p1>=0.5 閾値の妥当性）。"""
-    print("\n[校正] Sim1位の予測勝率 p1 帯別 実勝率（S9 の p1≥0.50 が『強い軸』判定になっているか）")
+    """[校正] Sim1位の予測勝率の帯別実勝率＋walk-forward temperature scaling（過信の矯正）。
+
+    calib=[(年, 勝率ベクトル, 勝者index)]。生の過信を示し、過去年で T を fit→翌年へ固定して
+    校正後の信頼度改善（NLL/ECE）を出す。確率ベース戦略(S9/EV/joint閾値)は校正後にのみ有効。
+    """
+    from src.simulation._prob_calibration import (
+        ece_top, fit_temperature, nll, reliability_top,
+    )
+    print("\n[校正] Sim1位の予測勝率 帯別実勝率（生）＋ walk-forward temperature scaling")
     if not calib:
         print("  勝ち馬情報が無く測定不能。")
         return
-    bins = [(0.0, 0.2), (0.2, 0.3), (0.3, 0.4), (0.4, 0.5), (0.5, 0.6), (0.6, 0.8), (0.8, 1.01)]
-    print(f"  {'予測p1帯':<12}{'レース数':>8}{'平均予測':>9}{'実勝率':>8}")
-    for lo, hi in bins:
-        sub = [(p, w) for p, w in calib if lo <= p < hi]
-        if not sub:
-            continue
-        pm = sum(p for p, _ in sub) / len(sub)
-        wr = sum(w for _, w in sub) / len(sub)
-        print(f"  [{lo:.1f},{hi:.1f}){'':<3}{len(sub):>8,}{pm:>9.3f}{wr:>8.3f}")
-    hi_bin = [(p, w) for p, w in calib if p >= 0.5]
-    if hi_bin:
-        wr = sum(w for _, w in hi_bin) / len(hi_bin)
-        print(f"  → p1≥0.50 の {len(hi_bin):,}レースの実勝率 {wr:.3f}。"
-              + ("0.5 近傍なら閾値は妥当。" if wr >= 0.45 else
-                 "予測ほど勝てておらず（過信）、S9 の 0.50 閾値は『強い軸』を選べていない。"))
+    races_all = [(p, w) for _y, p, w in calib]
+    print(f"  生（校正なし）:{'':<6}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
+    _reliability_print(reliability_top(races_all, T=1.0))
+    print(f"  生 ECE(top)={ece_top(races_all):.3f}  ← 大きいほど過信。確率値を使う規則は校正前は無効。")
+
+    years = sorted({y for y, _p, _w in calib})
+    if len(years) < 2:
+        print("  年が1つで walk-forward 校正不可（過去年→翌年が要る）。")
+        return
+    tr, te = years[0], years[-1]
+    train = [(p, w) for y, p, w in calib if y == tr]
+    test = [(p, w) for y, p, w in calib if y == te]
+    if len(train) < 100 or len(test) < 100:
+        print(f"  学習{tr}/評価{te}が薄く校正不可。")
+        return
+    T = fit_temperature(train)
+    print(f"\n  walk-forward: {tr} で T を fit={T:.2f} → {te} に固定適用（T>1=過信を平坦化）")
+    print(f"  {te} 校正前 NLL={nll(test, 1.0):.4f} ECE={ece_top(test, T=1.0):.3f} / "
+          f"校正後 NLL={nll(test, T):.4f} ECE={ece_top(test, T=T):.3f}")
+    print(f"  {te} 校正後 Sim1位 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
+    _reliability_print(reliability_top(test, T=T))
+    hi = [w for p, w in test if apply_temp_top(p, T) >= 0.5]
+    if hi:
+        print(f"  → 校正後 p1≥0.50 は {len(hi):,}レース（実勝率 {sum(hi)/len(hi):.3f}）。"
+              "ここで初めて S9 の 0.50 閾値に意味。")
     else:
-        print("  → p1≥0.50 のレースが無い（sim 勝率が潰れ気味）。閾値を下げて帯別に再確認。")
+        print("  → 校正後は p1≥0.50 のレースがほぼ消失（過信が主因）。S9 の 0.50 閾値は実質無効"
+              "→閾値を校正後分布に合わせて引き下げるか、S9 を見送りにするのが妥当。")
+
+
+def apply_temp_top(p_array, T):
+    """校正後の最上位確率（S9 閾値判定用の小ヘルパ）。"""
+    from src.simulation._prob_calibration import apply_temperature
+    pc = apply_temperature(p_array, T)
+    return max(pc) if pc else 0.0
 
 
 def _print_rank_joint(res: dict):
@@ -402,8 +445,10 @@ def main() -> int:
         _print_table([_strategy_line(n, pb, pr) for n, (pb, pr) in res.items()])
         # [rank↔joint] 同点数で「MC の順位依存構造を使う価値」を直接比較
         _print_rank_joint(res)
-        # [券種グループ別 TOTAL] と [ALL TOTAL]（全戦略を同時に全購入した仮想ポートフォリオ）
-        _print_total(all_cands, ret_src, order)
+        # [券種グループ別 TOTAL] と [ALL TOTAL]（買い目を出した戦略数で表示）
+        n_buying = sum(1 for _n, (pb, _pr) in res.items()
+                       if sum(s.n_bets for s in pb.values()) > 0)
+        _print_total(all_cands, ret_src, order, n_buying)
         return 0
 
     # 前進検証: 隣接年で「過去年の最良(除最大ROI)戦略 → 翌年評価」
