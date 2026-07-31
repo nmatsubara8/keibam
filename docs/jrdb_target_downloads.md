@@ -8,8 +8,8 @@
 
 > ステータス凡例: ✅確定（コード or 現物で照合済） / 🟡暫定（1サンプルからの推定・要全年度確認） / ⬜未取得
 
-最終更新: 2026-07-31（外厩コメント日次+年次に加え、追加7系列（馬印4種・成績IDM・騎手/厩舎ランク）の
-構造を現物確定。残: 成績IDM=SED値照合、ランク=日次スナップショット、全系列の他年度）
+最終更新: 2026-07-31（全8種の取込パイプラインを本ブランチへ統合＝§8。外厩コメントの正規化/年補完/
+センチネル処理を移植。残: 成績IDM=SED値照合、G1 純増分検証、ランク=日次スナップショット蓄積）
 
 ---
 
@@ -258,3 +258,30 @@ COMMENT_RE = re.compile(
 | 新規 parser が必要 | はい |
 | 検証価値 | 中〜高 |
 | 最初の研究対象 | 外厩名・帰厩日・厩舎との交互作用 |
+
+---
+
+## 8. 実装（本ブランチに統合済・全8種）
+
+取込パイプラインは `review-context-and-tasks-1vxigl` の step5 実装を本ブランチへ取り込み、
+外厩コメントの正規化・年補完・センチネル処理を移植して統合した。
+
+- **`src/jrdb/_target.py`**: 全8種のパーサ。zip 名先頭英字で `classify`、`read_jrdb_bytes` で
+  zip/lzh 展開、種別ごとに正規化 DataFrame。自然キー `NATURAL_KEYS` で重複除去
+  （ランクは `source_date×person_code` で時系列保持＝as-of 結合可）。
+  - 外厩コメント: `gaikyu_name`(NFKC正規化)＋`gaikyu_name_raw`(生値)、`情報無し`/`９９．９`→NA、
+    帰厩日欠損 `/`→空、`complete_return_date`/`kikyu_month_day`（年跨ぎ補完 primitive）。
+- **`scripts/jrdb_target_ingest.py`**: `--src <dir> --out-dir <dir>`。sha1 内容重複排除・未分類/読取不可の
+  可視化・種別ごと正規化 pickle 出力。日次⊂年次の重なりは自然キー dedup（例: 外厩コメント 生17008→16724）。
+- **テスト**: `tests/jrdb/test_target.py`(33件 green)。中週空欄/日付欠損/センチネル/年跨ぎを回帰固定。
+
+実行例:
+```
+python scripts/jrdb_target_ingest.py --src /mnt/c/Users/Ayaka/Downloads --out-dir data/jrdb_target
+```
+
+### 残作業
+- 成績IDM `seiseki_idm` × `SED[idm]` の値照合（一致率/最大絶対差）。要 SED 実データ。
+- G1: 外厩 raw4 特徴（has_gaikyu/gaikyu_name/days_since_return/interval_weeks）を production baseline に
+  加えた OOS ΔLogLoss/ΔAUC/ECE 判定。要 featured＋production model（本コンテナ外）。
+- ランクの予測利用は日次スナップショット蓄積が前提（現在版の過去一括適用はリーク）。
