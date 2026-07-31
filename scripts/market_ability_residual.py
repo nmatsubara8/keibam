@@ -71,6 +71,19 @@ def decile_realized(delta: np.ndarray, won: np.ndarray, n: int = 10) -> np.ndarr
     return pd.Series(won).groupby(b).mean().to_numpy()
 
 
+def roi_top_pct(pay: np.ndarray, score: np.ndarray, pct: float) -> float:
+    """score 上位 pct% を買った時の複勝ROI（払戻/1）。"""
+    k = max(1, int(len(score) * pct / 100.0))
+    return float(pay[np.argsort(-score)[:k]].mean())
+
+
+def roi_excl_top(sub_pay: np.ndarray, k: int = 5) -> float:
+    """上位 k 件の払戻を除いた ROI（単一高配当依存の検査）。分母は全件・除外は分子のみ。"""
+    if len(sub_pay) <= k:
+        return float("nan")
+    return float(np.sort(sub_pay)[:-k].sum() / len(sub_pay))
+
+
 def _load_col(engine, table, col):
     from sqlalchemy import text
     df = pd.read_sql(text(f"SELECT race_id, umaban, {col} FROM {table}"), engine)
@@ -80,12 +93,144 @@ def _load_col(engine, table, col):
     return df.dropna(subset=["uma"]).assign(uma=lambda x: x["uma"].astype(int))[["rid", "uma", col]]
 
 
+def _vs_production(df: pd.DataFrame, featured: pd.DataFrame, args) -> int:
+    """最終ゲート: 本番全モデル(baseline_jrdb_seirei ~600特徴)に対する Δab/raw の増分を te内CVで測る。
+
+    A. 本番baseline のみ          = [logit(prod_p)]
+    B. 本番baseline + raw MySpeed = [logit(prod_p), myspeed]   （過去能力を直交せず素で追加）
+    C. 本番baseline + Δability    = [logit(prod_p), dab]       （市場直交した能力残差）
+    3モデルとも te(2024+) 内 GroupKFold-OOF で比較。prod_p / myspeed / dab は全て <cutoff で
+    学習済みの写像から生成済み（leak-safe）。本番予測が te で in-sample の懸念があっても、
+    それは A を過大評価＝Δab増分を過小評価する保守方向なので、GO判定は安全側に出る。
+    """
+    from lightgbm import LGBMClassifier
+    from scipy.special import logit
+    from sklearn.metrics import log_loss, roc_auc_score
+    from sklearn.model_selection import GroupKFold
+
+    from app._data_loader import load_model_from_path
+    from src.constants._results_cols import ResultsCols
+    from src.pipeline.commands._evaluate import _resolve_backtest_model_path
+    from src.policies._score_policy import BasicScorePolicy
+
+    # 本番全モデルの place 確率を featured 全体で計算し (rid,uma) で te に結合。
+    prod_path = _resolve_backtest_model_path(args.prod_version)
+    prod_ai = load_model_from_path(prod_path)
+    st = prod_ai.calc_score(featured, BasicScorePolicy)
+    prod = pd.DataFrame({
+        "rid": st.index.astype(str).str.split(".").str[0].to_numpy(),
+        "uma": pd.to_numeric(st[ResultsCols.UMABAN], errors="coerce").to_numpy(),
+        "prod_p": pd.to_numeric(st["score"], errors="coerce").to_numpy(),
+    }).dropna(subset=["uma", "prod_p"])
+    prod["uma"] = prod["uma"].astype(int)
+    prod = prod.drop_duplicates(["rid", "uma"])
+    print(f"[vs本番] 本番モデル {Path(prod_path).name} place確率 {len(prod):,}頭")
+
+    g = df.merge(prod, on=["rid", "uma"], how="left")
+    te = g[(g["year"] >= args.cutoff_year) & g["prod_p"].notna()].copy()
+    if len(te) < 5000:
+        print(f"[vs本番] te薄 or prod_p欠損多（te={len(te)}）。", file=sys.stderr)
+        return 1
+    print(f"[vs本番] te(≥{args.cutoff_year}, prod_p有) {len(te):,}頭 / {te['rid'].nunique():,}レース\n")
+
+    y = te["won"].to_numpy()
+    groups = te["rid"].to_numpy()
+    lp = logit(np.clip(te["prod_p"].to_numpy(), 1e-6, 1 - 1e-6))
+    ms = te["myspeed"].to_numpy()
+    dab = te["dab"].to_numpy()
+    pay = te["pay"].to_numpy()
+    yr = te["year"].to_numpy()
+
+    def _lgbm():
+        return LGBMClassifier(n_estimators=300, num_leaves=31, learning_rate=0.05,
+                              min_child_samples=200, verbose=-1)
+
+    def _oof(X):
+        pred = np.zeros(len(y))
+        for tri, vai in GroupKFold(n_splits=5).split(X, y, groups):
+            pred[vai] = _lgbm().fit(X[tri], y[tri]).predict_proba(X[vai])[:, 1]
+        return pred
+
+    XA = lp.reshape(-1, 1)
+    XB = np.column_stack([lp, ms])
+    XC = np.column_stack([lp, dab])
+    pA, pB, pC = _oof(XA), _oof(XB), _oof(XC)
+    llA, llB, llC = log_loss(y, pA), log_loss(y, pB), log_loss(y, pC)
+    aA, aB, aC = roc_auc_score(y, pA), roc_auc_score(y, pB), roc_auc_score(y, pC)
+    d_ab, d_raw, d_specific = llC - llA, llB - llA, llC - llB
+
+    print("[vs本番] te内 GroupKFold-OOF（本番全モデルへの増分）")
+    print(f"  {'model':<26}{'logloss':>10}{'AUC':>9}")
+    print(f"  {'A: 本番のみ':<24}{llA:>10.5f}{aA:>9.5f}")
+    print(f"  {'B: 本番+raw MySpeed':<22}{llB:>10.5f}{aB:>9.5f}")
+    print(f"  {'C: 本番+Δability':<23}{llC:>10.5f}{aC:>9.5f}")
+    print(f"  → ΔlogLoss(C−A, Δab増分) = {d_ab:+.5f}（GO閾値 ≤−0.0005／強GO ≤−0.001）")
+    print(f"    ΔlogLoss(B−A, raw増分) = {d_raw:+.5f}／ΔAUC(C−A) = {aC - aA:+.5f}")
+    print(f"    Δab固有(C−B, 直交の価値) = {d_specific:+.5f}（負なら素の追加を上回る）")
+
+    # プラセボ: Δab をレース内シャッフル → 増分が消えるか
+    rng = np.random.default_rng(0)
+    dab_pl = pd.Series(dab, index=groups).groupby(level=0).transform(
+        lambda s: s.to_numpy()[rng.permutation(len(s))]).to_numpy()
+    pC_pl = _oof(np.column_stack([lp, dab_pl]))
+    ll_pl = log_loss(y, pC_pl)
+    print(f"  プラセボ(Δabレース内シャッフル) ΔlogLoss(C'−A) = {ll_pl - llA:+.5f}（本物なら実測より悪化）")
+
+    # 年別 ΔlogLoss(C−A)（≥2/3 年で改善?）
+    print("\n[vs本番] 年別 ΔlogLoss(C−A)")
+    yr_improve = 0
+    yr_total = 0
+    for yv in sorted(np.unique(yr)):
+        mk = yr == yv
+        if mk.sum() > 500:
+            dy = log_loss(y[mk], pC[mk]) - log_loss(y[mk], pA[mk])
+            yr_improve += int(dy < 0)
+            yr_total += 1
+            print(f"  {int(yv)}: {dy:+.5f}")
+
+    # ROI 上位x%（A vs C）＋ 除上位5（単一高配当依存の検査）
+    print("\n[vs本番] 複勝ROI 上位x%（A:本番のみ vs C:本番+Δab）")
+    print(f"  {'上位':>6}{'A':>9}{'C':>9}{'差':>9}{'C除上5':>10}")
+    roi_bands_improve = 0
+    for pct in (1.0, 2.0, 5.0, 10.0):
+        r_a = roi_top_pct(pay, pA, pct)
+        r_c = roi_top_pct(pay, pC, pct)
+        k = max(1, int(len(te) * pct / 100.0))
+        c_excl = roi_excl_top(pay[np.argsort(-pC)[:k]], k=5)
+        roi_bands_improve += int(r_c > r_a)
+        print(f"  {pct:>5.0f}%{r_a:>9.4f}{r_c:>9.4f}{r_c - r_a:>+9.4f}{c_excl:>10.4f}")
+
+    # Go/No-Go（ユーザ事前固定基準）
+    placebo_dies = (ll_pl - llA) > d_ab + 1e-9      # プラセボは実測より悪い
+    go = (d_ab <= -0.0005 and yr_improve >= 2 and (aC - aA) >= 0
+          and placebo_dies and roi_bands_improve >= 3)
+    strong = d_ab <= -0.001 and d_specific < 0
+    print("\n[vs本番] 最終Go/No-Go（本番全特徴に対する Δab の増分）:")
+    print(f"  ΔLL(C−A)≤−0.0005: {d_ab <= -0.0005} / 年別≥2改善: {yr_improve}/{yr_total}"
+          f" / ΔAUC≥0: {(aC - aA) >= 0} / プラセボ死: {placebo_dies} / ROI≥3帯改善: {roi_bands_improve}/4")
+    print(f"  Δab固有(C<B): {d_specific < 0}（直交が素の追加を上回るか）")
+    if go and strong:
+        print("  → 強GO: 本番全特徴に対しても Δab は独立増分を持つ。本格MySpeed build へ進む価値。")
+    elif go:
+        print("  → GO: 本番全特徴に対し増分あり（弱）。本格buildの期待値はROI除上5の依存度で調整。")
+    else:
+        print("  → NO-GO: 簡易baselineでの増分は本番全特徴（豊富な過去成績）と重複。")
+        print("     『Δabは簡易市場モデルに欠けた過去能力を効率表現するが、本番モデルへの追加情報は限定的』"
+              "として一区切り。")
+    print("  ※ context記録: 「GO（本番全特徴との重複"
+          + ("否定＝独立増分確認" if go else "＝増分無し確認") + "）」")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Δ_ability ゲート実験（一回限り）")
     ap.add_argument("--featured-path", default=None)
     ap.add_argument("--jra-only", action="store_true")
     ap.add_argument("--db", default=None)
     ap.add_argument("--cutoff-year", type=int, default=2024)
+    ap.add_argument("--vs-production", action="store_true",
+                    help="最終ゲート: 本番全モデル(baseline_jrdb_seirei)に対する Δab/raw の増分を te内CVで測る")
+    ap.add_argument("--prod-version", default="baseline_jrdb_seirei")
     args = ap.parse_args(argv if argv is not None else sys.argv[1:])
 
     from lightgbm import LGBMClassifier
@@ -164,6 +309,7 @@ def main(argv=None) -> int:
     # MySpeed: 過去 soten 群 → place を小型GBMで圧縮（fold内 <Y 学習）
     ms_model = _lgbm().fit(tr[_S].fillna(med_s).to_numpy(), ytr)
     myspeed = ms_model.predict_proba(df[_S].fillna(med_s).to_numpy())[:, 1]
+    df["myspeed"] = myspeed
     # 市場能力写像 g（fold内=<Y のみ学習）→ Δability = MySpeed − ĝ
     mktX = np.column_stack([df["idm"].fillna(df["idm"].median()).to_numpy(),
                             df["idm"].fillna(df["idm"].median()).to_numpy() ** 2,
@@ -174,6 +320,9 @@ def main(argv=None) -> int:
     df["dab"] = orth_residual(myspeed, mktX, fit_mask)
     dab_tr = df.loc[tr.index, "dab"].to_numpy()
     dab_te = df.loc[te.index, "dab"].to_numpy()
+
+    if args.vs_production:
+        return _vs_production(df, featured, args)
 
     # 3モデル
     def fit_eval(Xtr, Xte):

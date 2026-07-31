@@ -47,3 +47,17 @@ def test_decile_realized_monotone_for_sorted_signal():
     dec = m.decile_realized(delta, won, n=10)
     assert dec[0] == 0.0 and dec[-1] == 1.0
     assert np.all(np.diff(dec) >= -1e-9)
+
+
+def test_roi_top_pct_selects_highest_score():
+    pay = np.array([0.0, 0.0, 0.0, 6.0])       # 高score の1件だけ的中
+    score = np.array([0.1, 0.2, 0.3, 0.9])
+    assert abs(m.roi_top_pct(pay, score, 25.0) - 6.0) < 1e-9   # 上位25%=1件=payoff6
+    assert abs(m.roi_top_pct(pay, score, 50.0) - 3.0) < 1e-9   # 上位50%=2件=(6+0)/2
+
+
+def test_roi_excl_top_removes_top_payouts():
+    pay = np.array([0.0] * 9 + [100.0])         # 1件の大当たり
+    # 上位5件除外→分子は残り(全0)=0、分母10 → ROI 0（単一高配当依存を露呈）
+    assert m.roi_excl_top(pay, k=5) == 0.0
+    assert np.isnan(m.roi_excl_top(np.array([1.0, 2.0]), k=5))   # 件数不足→NaN
