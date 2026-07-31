@@ -39,6 +39,28 @@ TARGET_TYPES = (
     "gaikyucomment", "gaikyu", "itidori", "bante", "idmse", "idm", "tnrank", "jocrank",
 )
 
+# 種別ごとの自然キー（重複除去の単位）。同一キーの重複は再DLコピーや年次×日次の重なり由来。
+NATURAL_KEYS = {
+    "gaikyu": ["race_id", "ketto"], "itidori": ["race_id", "ketto"],
+    "bante": ["race_id", "ketto"], "idm": ["race_id", "ketto"],
+    "gaikyucomment": ["race_id", "umaban"], "idmse": ["race_id", "umaban"],
+    "tnrank": ["person_code"], "jocrank": ["person_code"],
+}
+
+
+def dedup_by_keys(df: pd.DataFrame, keys: list[str]) -> tuple[pd.DataFrame, int]:
+    """自然キーで重複除去し (dedup後df, 除去件数) を返す。keep='last'＝後勝ち（新しいDL/年）。
+
+    キー列が欠けている/空 df は素通し。入力は日/年ファイル順（=時系列順）を前提とし、
+    ランク等の更新系は最後の行を残す。
+    """
+    key_cols = [k for k in keys if k in df.columns]
+    if df.empty or not key_cols:
+        return df, 0
+    before = len(df)
+    out = df.drop_duplicates(subset=key_cols, keep="last").reset_index(drop=True)
+    return out, before - len(out)
+
 
 def classify(zip_name: str) -> str | None:
     """zip/ファイル名の先頭英字から種別を返す（未知は None）。"""
