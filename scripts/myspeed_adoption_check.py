@@ -31,6 +31,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.constants._feature_cols import MYSPEED_FEATURE_COLS  # noqa: E402
+from src.pipeline._eval_stamp import format_stamp, make_stamp  # noqa: E402
 
 # 目的変数・ID・事後情報（決して特徴量にしない）。本番 src.training._data_splitter._DROP_FOR_TRAIN
 # に準拠（rank/rank_win/date/horse_id/着順/通過 と、市場オッズ 単勝）。
@@ -198,6 +199,17 @@ def main(argv=None) -> int:
     ok_order = list(df.loc[tr, trt_cols].columns) == list(df.loc[te, trt_cols].columns) == trt_cols
     print(f"⑦ 学習=推論の列順パリティ: {'OK' if ok_order else 'NG'}")
 
+    stamp = make_stamp(
+        model_version=Path(args.featured).name,
+        feature_names=trt_cols,
+        training_dates=df.loc[tr, "date"],
+        eval_dates=df.loc[te, "date"],
+        drop_columns=[c for c in _ALWAYS_DROP if not (args.keep_odds and c == "単勝")],
+        odds_included=args.keep_odds,
+        seed=0,
+        split_method=f"year<{args.cutoff_year}",
+    )
+    print(format_stamp(stamp))
     print("\n判定の目安: ①が負(≈−0.0036)かつ②が過半年で改善、③でほぼ消失、④でも負、"
           "⑤非悪化 → 採用可（回収率は評価対象外）。")
     return 0

@@ -28,6 +28,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.jrdb._target import attach_gaikyu_raw  # noqa: E402
+from src.pipeline._eval_stamp import format_stamp, make_stamp  # noqa: E402
 
 _PREFIX = "jrdb_gaikyu_"
 _NAME_COL = _PREFIX + "name"
@@ -191,6 +192,18 @@ def main(argv=None) -> int:
 
     ok_order = list(df.loc[tr, trt_cols].columns) == list(df.loc[te, trt_cols].columns) == trt_cols
     print(f"⑦ 学習=推論の列順パリティ: {'OK' if ok_order else 'NG'}")
+
+    stamp = make_stamp(
+        model_version=Path(args.featured).name,
+        feature_names=trt_cols,
+        training_dates=df.loc[tr, "date"],
+        eval_dates=df.loc[te, "date"],
+        drop_columns=[c for c in _ALWAYS_DROP if not (args.keep_odds and c == "単勝")],
+        odds_included=args.keep_odds,
+        seed=0,
+        split_method=f"year<{args.cutoff_year}",
+    )
+    print(format_stamp(stamp))
     print("\n判定の目安: ①が負かつ②過半年で改善・③でほぼ消失・④でも負・⑤非悪化 → 次段（外厩履歴集約）へ。"
           "通らなければ外厩の高度化に進まず終了できる（回収率は評価対象外）。")
     return 0
