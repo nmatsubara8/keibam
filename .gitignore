@@ -15,6 +15,14 @@ data/*.pkl.bak
 # Phase 2: Parquet バックアップも容量が大きいため除外
 data/**/*.parquet
 data/*.parquet
+# JRDB TARGET 追加データの現物サンプル（有料データ・コミット禁止。README/.gitkeep のみ追跡）
+data/jrdb_target_samples/**
+!data/jrdb_target_samples/
+!data/jrdb_target_samples/README.md
+!data/jrdb_target_samples/.gitkeep
+# 会員ページから抽出したリンク一覧・プロファイル結果（URL/セッション情報を含みうるため除外）
+docs/jrdb_target_links.json
+docs/jrdb_target_file_profiles.json
 # Phase 1: SQLite raw データベース（WAL/SHM 含む）は容量・差分追跡の理由から除外
 data/keibam.db
 data/keibam.db-wal
