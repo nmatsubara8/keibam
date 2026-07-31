@@ -123,14 +123,38 @@
 
 ### 次アクション（優先順）
 1. ~~成績IDM の冗長チェック~~ **完了**: `raw_jrdb_sed.idm` と完全一致＝取込不要を実測確定（上記）。
-2. **外厩コメント G1 採用検証（実装済・実行待ち）**: `scripts/gaikyu_adoption_check.py`。
-   `gaikyucomment` pkl を featured へ (race_id,umaban) 結合し **raw 4 特徴**
-   （`jrdb_gaikyu_has/days/weeks/name`＝`src.jrdb._target.attach_gaikyu_raw`・履歴集約/target encoding なし）を足し、
-   `myspeed_adoption_check` と同方式で OOS ΔlogLoss/ΔAUC/ECE を①〜⑦診断。
-   実行: `python scripts/gaikyu_adoption_check.py --featured data/featured_jrdb.pkl \
-   --gaikyu-pkl data/jrdb_target/jrdb_target_gaikyucomment.pkl --cutoff-year 2024`
-3. **（G1 通過時のみ）外厩履歴集約 → 本番配線**: 外厩別複勝率/外厩×厩舎 等（fold 前のみ）。
-   通らなければ外厩の高度化に進まず終了（#22 の轍を踏まないよう本番準拠 baseline で判定）。
+2. ~~外厩コメント G1 採用検証~~ **完了＝NO-GO（外厩トラック クローズ）**。下記 G1 結果。
+3. ~~外厩履歴集約~~ **中止**（G1 不通過のため未着手のまま終了）。
+
+### G1 結果（外厩 raw 特徴の本番採用検証・2026-07-31・NO-GO 確定）
+
+`scripts/gaikyu_adoption_check.py`（本番 featured 570列 baseline vs +外厩・未来分割 2024 cutoff・
+学習 521,619 / 評価 147,415・複勝）。myspeed_adoption_check と同方式。
+
+| 構成 | ①ΔlogLoss | ①ΔAUC | ②年別改善 | ③placebo | ④利用馬のみΔLL | ⑤ECE |
+|---|---|---|---|---|---|---|
+| raw4（name あり） | **+0.00465**（悪化） | −0.00376 | 0/3 | +0.00397（≈実測） | +0.00158 | 悪化 |
+| operational（name なし） | **+0.00222**（悪化） | −0.00149 | 0/3 | +0.00097 | **−0.00007（≈0）** | 悪化 |
+
+- name(475水準の native categorical)は importance rank **1/574** なのに OOS 悪化＝**高カーディナリティ過学習**。
+- has/days/weeks は importance ほぼ0（has=0, days=23, weeks=18）＝**570特徴 baseline に限界情報ゼロ**。
+- name を外しても ΔlogLoss は正（悪化）、最も有利な④利用馬のみで ≈0。
+
+**結論**: 外厩の運用情報（利用有無・帰厩鮮度・ローテ間隔・放牧先名）は **既存特徴
+（`jrdb_nyukyu_days`/`jrdb_rotation` 等の休養・間隔系）＋市場に織り込み済みで、市場直交の純増分なし＝帰無**。
+本命だった外厩も No-Go。→ 履歴集約・target encoding には進まず終了（#22 と同じ規律）。
+
+### JRDB TARGET 全8種 最終結論（探索完了）
+| 系列 | 判定 |
+|---|---|
+| 成績IDM | `SED.idm` と完全一致＝冗長（取込不要） |
+| IDM馬印 | KYI idm の離散化＝情報減 |
+| 外厩馬印 | gaikyu_name のコード版＝重複 |
+| 番手/位置取 | 展開予想の派生（GBM 学習可） |
+| 騎手/厩舎ランク | 別スケール離散ランク・日付なしスナップショット（時系列蓄積前提・未検証） |
+| **外厩コメント** | **G1 NO-GO（帰無）＝本命も市場直交の純増分なし** |
+
+→ **新規に exploitable なモダリティはゼロ。控除後効率市場の中核結論と整合。**
 
 ### 未取得
 - 展開/番手/IDM 馬印・ランクの**年次パック**（履歴が要る場合）。仕様は確定済で probe 不要。
