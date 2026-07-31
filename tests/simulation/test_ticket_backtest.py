@@ -83,6 +83,42 @@ def test_hjc_source_settles_trifecta():
     assert src.coverage(["202601010101"], BetType.SANRENTAN) == 1.0
 
 
+def test_portfolio_metrics_total_and_groups():
+    from src.simulation._ticket_backtest import portfolio_metrics
+    # 3点: 単勝(投資100,払戻200)・三連単(100,4100)・三連単(100,0)。全戦略同時運用のTOTAL。
+    rows = [
+        ("202601010101", "tansho", 100.0, 200.0),
+        ("202601010101", "sanrentan", 100.0, 4100.0),
+        ("202601010102", "sanrentan", 100.0, 0.0),
+    ]
+    m = portfolio_metrics(rows, race_order=["202601010101", "202601010102"], top_k=5)
+    assert m["total_stake"] == 300.0 and m["total_return"] == 4300.0
+    assert m["roi"] == 4300.0 / 300.0
+    assert m["roi_ex_top1"] == (4300.0 - 4100.0) / 300.0     # 最大払戻1件除外
+    assert m["n_races"] == 2 and m["n_tickets"] == 3
+    assert m["by_group"]["三連単"]["roi"] == 4100.0 / 200.0  # 三連単だけのROI
+    assert m["by_group"]["単複"]["roi"] == 2.0
+    assert m["by_year"] == {"2026": 4300.0 / 300.0}
+    assert m["max_dd"] >= 100.0                               # R2で純-100の落ち込み
+
+
+def test_market_favorite_uses_purchase_time_odds():
+    from src.simulation._ticket_backtest import market_favorite
+    fav = market_favorite({"R1": {1: 3.5, 2: 2.1, 3: 9.0}, "R2": {4: 1.8, 5: 5.0}})
+    assert fav == {"R1": 2, "R2": 4}                          # 最小オッズ=1番人気
+
+
+def test_paired_delta_roi_ci():
+    from src.simulation._ticket_backtest import paired_delta_roi_ci
+    sim = {"R1": {"stake": 100.0, "returned": 300.0}, "R2": {"stake": 100.0, "returned": 0.0}}
+    mkt = {"R1": {"stake": 100.0, "returned": 150.0}, "R2": {"stake": 100.0, "returned": 100.0}}
+    d = paired_delta_roi_ci(sim, mkt, n_boot=300, seed=0)
+    assert d["n_races"] == 2
+    assert abs(d["roi_sim"] - 1.5) < 1e-9 and abs(d["roi_mkt"] - 1.25) < 1e-9
+    assert abs(d["delta"] - 0.25) < 1e-9
+    assert d["lo"] <= d["delta"] <= d["hi"]
+
+
 def test_runner_end_to_end_and_bootstrap():
     src = _hjc_return_processor()
     probs = aggregate_ticket_probabilities(np.array([[0, 1, 2]] * 10), umaban=[1, 2, 3, 4])

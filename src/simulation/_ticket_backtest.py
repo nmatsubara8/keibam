@@ -276,6 +276,144 @@ def roi_by_year(per_race: dict) -> dict:
     return {y: (a["returned"] / a["stake"] if a["stake"] else 0.0) for y, a in sorted(agg.items())}
 
 
+# 券種グループ（三連系の大量投資が全券種合算を支配するのを切り分けるため）。
+BET_GROUP = {
+    "tansho": "単複", "fukusho": "単複",
+    "umaren": "馬連馬単ワイド", "umatan": "馬連馬単ワイド", "wide": "馬連馬単ワイド",
+    "wakuren": "馬連馬単ワイド",
+    "sanrenpuku": "三連複", "sanrentan": "三連単",
+}
+BET_GROUP_ORDER = ["単複", "馬連馬単ワイド", "三連複", "三連単"]
+
+
+def settle_tickets_detailed(candidates, return_processor, unit: int = 1) -> list[tuple]:
+    """各買い目を1点決済し (race_id, bet_type, stake, returned) の明細を返す（払戻表に無い点は除外）。
+
+    `_backtest._settle_detailed` は race_id を落とすため、年別・レース単位 maxDD・除上位k払戻に
+    使えるよう race_id を保持した明細版。個票の returned（1点の払戻）を後段の各指標が使う。
+    """
+    from src.simulation._betting_tickets import BettingTickets
+    tickets = BettingTickets(return_processor)
+    rows: list[tuple] = []
+    for c in candidates:
+        n_bets, stake, returned = tickets.settle_one(c.bet_type, c.race_id, c.combo, unit)
+        if n_bets == 0:
+            continue
+        rows.append((str(c.race_id), c.bet_type, float(stake), float(returned)))
+    return rows
+
+
+def _max_drawdown(rows: list[tuple], race_order: list | None) -> float:
+    """レース単位のポートフォリオ純収支(円)の最大ドローダウン。全戦略を同時運用した資金曲線。
+
+    同一レースの全点を1ステップ（合算純収支）に束ね、race_order の時系列で累積する。
+    race_order 無しは race_id 昇順（≈時系列）。
+    """
+    net_by_race: dict = {}
+    for rid, _bt, stake, ret in rows:
+        net_by_race[rid] = net_by_race.get(rid, 0.0) + (ret - stake)
+    order = [r for r in (race_order or sorted(net_by_race)) if r in net_by_race]
+    for r in net_by_race:                       # race_order に無い race も末尾に足す
+        if r not in order:
+            order.append(r)
+    cum = peak = max_dd = 0.0
+    for r in order:
+        cum += net_by_race[r]
+        peak = max(peak, cum)
+        max_dd = max(max_dd, peak - cum)
+    return max_dd
+
+
+def portfolio_metrics(rows: list[tuple], *, race_order: list | None = None,
+                      top_k: int = 5) -> dict:
+    """明細(settle_tickets_detailed)→「全戦略を同時に全購入した仮想ポートフォリオ」のTOTAL指標。
+
+    投資額加重 ROI=Σreturned/Σstake。除最大1/除上位k払戻・購入レース数・総点数・
+    1レース平均投資・最大DD・年別TOTAL ROI・券種グループ別TOTAL を返す。
+    """
+    total_stake = sum(r[2] for r in rows)
+    total_ret = sum(r[3] for r in rows)
+    payouts = sorted((r[3] for r in rows), reverse=True)
+    races = {r[0] for r in rows}
+    groups: dict = {}
+    for rid, bt, stake, ret in rows:
+        g = BET_GROUP.get(bt, bt)
+        d = groups.setdefault(g, {"stake": 0.0, "returned": 0.0, "n_bets": 0, "n_hits": 0,
+                                  "max_return": 0.0})
+        d["stake"] += stake
+        d["returned"] += ret
+        d["n_bets"] += 1
+        d["n_hits"] += 1 if ret > 0 else 0
+        d["max_return"] = max(d["max_return"], ret)
+    yr: dict = {}
+    for rid, _bt, stake, ret in rows:
+        y = str(rid)[:4]
+        if y.isdigit():
+            a = yr.setdefault(y, {"stake": 0.0, "returned": 0.0})
+            a["stake"] += stake
+            a["returned"] += ret
+    for g in groups.values():
+        g["roi"] = g["returned"] / g["stake"] if g["stake"] else 0.0
+    return {
+        "n_tickets": len(rows), "n_races": len(races),
+        "total_stake": total_stake, "total_return": total_ret,
+        "profit": total_ret - total_stake,
+        "roi": total_ret / total_stake if total_stake else 0.0,
+        "roi_ex_top1": (total_ret - (payouts[0] if payouts else 0.0)) / total_stake
+        if total_stake else 0.0,
+        "roi_ex_top5": (total_ret - sum(payouts[:top_k])) / total_stake if total_stake else 0.0,
+        "avg_stake_per_race": total_stake / len(races) if races else 0.0,
+        "max_dd": _max_drawdown(rows, race_order),
+        "by_year": {y: (a["returned"] / a["stake"] if a["stake"] else 0.0)
+                    for y, a in sorted(yr.items())},
+        "by_group": groups,
+    }
+
+
+def market_favorite(win_odds_by_race: dict) -> dict:
+    """{race_id: {馬番: 単勝オッズ}} → {race_id: 1番人気馬番}（最小オッズ）。購入時点オッズで決める。
+
+    リーク回避の要: 市場1番人気は **購入可能時点** の単勝オッズで決める（確定オッズは精算のみ）。
+    """
+    fav: dict = {}
+    for rid, od in win_odds_by_race.items():
+        valid = {int(u): float(o) for u, o in od.items() if o and float(o) > 0}
+        if valid:
+            fav[str(rid)] = min(valid, key=valid.get)
+    return fav
+
+
+def paired_delta_roi_ci(per_race_sim: dict, per_race_mkt: dict, *, n_boot: int = 2000,
+                        alpha: float = 0.05, seed: int = 0) -> dict:
+    """同一レース集合で ΔROI=ROI_sim−ROI_mkt をレース単位 paired bootstrap し 95%CI を返す。
+
+    別々に bootstrap するより、同じレースを一緒に再標本化する方が検出力が高い（共変動を保持）。
+    共通レースのみ対象。返す: {"delta","lo","hi","roi_sim","roi_mkt","n_races"}。
+    """
+    import numpy as np
+    rids = [r for r in per_race_sim if r in per_race_mkt]
+    n = len(rids)
+    if n == 0:
+        return {"delta": 0.0, "lo": 0.0, "hi": 0.0, "roi_sim": 0.0, "roi_mkt": 0.0, "n_races": 0}
+    ss = np.array([per_race_sim[r]["stake"] for r in rids], float)
+    rs = np.array([per_race_sim[r]["returned"] for r in rids], float)
+    sm = np.array([per_race_mkt[r]["stake"] for r in rids], float)
+    rm = np.array([per_race_mkt[r]["returned"] for r in rids], float)
+
+    def _roi(a, b):
+        return a.sum() / b.sum() if b.sum() else 0.0
+
+    roi_s, roi_m = _roi(rs, ss), _roi(rm, sm)
+    rng = np.random.default_rng(seed)
+    deltas = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        deltas[b] = _roi(rs[idx], ss[idx]) - _roi(rm[idx], sm[idx])
+    lo, hi = np.quantile(deltas, [alpha / 2, 1 - alpha / 2])
+    return {"delta": float(roi_s - roi_m), "lo": float(lo), "hi": float(hi),
+            "roi_sim": float(roi_s), "roi_mkt": float(roi_m), "n_races": n}
+
+
 def race_bootstrap_ci(per_race: dict, *, n_boot: int = 2000, alpha: float = 0.05,
                       seed: int = 0) -> dict:
     """レース単位リサンプルで ROI の信頼区間を出す（三連単等ファットテールの頑健評価）。

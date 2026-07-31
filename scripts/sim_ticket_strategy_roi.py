@@ -61,7 +61,11 @@ def _sim_race_probs(rd, *, n_sim, cfg, ability_spread, ability_sigma, rank_gain,
 
 def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_spread,
                     ability_sigma, rank_gain, seed):
-    """全レースを sim し、各戦略の候補を集めて {戦略名: (per_bet_type, per_race)} を返す。"""
+    """全レースを sim し、各戦略の候補＋レース情報を返す。
+
+    返す: ({戦略名: (per_bet_type, per_race)}, n_ok, all_cands, sim_top_by_race)。
+    all_cands=全戦略の候補を連結（同時運用ポートフォリオ用）、sim_top_by_race={race_id: sim1位馬番}。
+    """
     import numpy as np
     import pandas as pd
 
@@ -72,6 +76,7 @@ def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_s
     cfg = SimConfig(T=T)
     rng = np.random.default_rng(seed)
     cands_by_strat = {name: [] for name in strategies}
+    sim_top_by_race: dict = {}
     n_ok = 0
     for i, rid in enumerate(order):
         rd = featured.loc[[rid]] if not isinstance(featured.loc[rid], pd.DataFrame) else featured.loc[rid]
@@ -81,16 +86,19 @@ def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_s
         if rank is None:
             continue
         n_ok += 1
+        sim_top_by_race[str(rid)] = rank[0]
         for name, strat in strategies.items():
             cands_by_strat[name].extend(build_candidates(rid, rank, probs, strat))
         if (i + 1) % 2000 == 0:
             print(f"  ...{i + 1:,} レース sim 済", file=sys.stderr)
     result = {}
+    all_cands = []
     for name, cands in cands_by_strat.items():
         per_bt = settle_candidates(cands, ret_src)
         per_race = settle_per_race(cands, ret_src)
         result[name] = (per_bt, per_race)
-    return result, n_ok
+        all_cands.extend(cands)
+    return result, n_ok, all_cands, sim_top_by_race
 
 
 def _strategy_line(name, per_bt, per_race):
@@ -127,6 +135,128 @@ def _print_table(rows):
           "万馬券1本で激変する。CI下限が1未満なら統計的に黒字とは言えない。")
 
 
+def _load_oz_win_odds(oz_dir, race_set):
+    """OZ .txt 群 → {race_id: {馬番: 前売り単勝オッズ}}（購入時点）。race_set に限定。"""
+    import glob
+
+    from src.jrdb._odds import parse_odds
+    files = sorted(glob.glob(f"{oz_dir}/OZ*.txt") + glob.glob(f"{oz_dir}/oz*.txt"))
+    out: dict = {}
+    for fp in files:
+        try:
+            long_df = parse_odds(fp, "OZ")
+        except Exception:  # noqa: BLE001
+            continue
+        if long_df is None or long_df.empty:
+            continue
+        tan = long_df[long_df["bet"] == "tansho"]
+        for rid, g in tan.groupby("race_id"):
+            rid = str(rid)
+            if rid not in race_set:
+                continue
+            od = {int(c): float(o) for c, o in zip(g["combo"], g["odds"], strict=False)
+                  if str(c).isdigit() and o and float(o) > 0}
+            if od:
+                out.setdefault(rid, {}).update(od)
+    return out
+
+
+def _single_candidates(bet_type, pick_by_race):
+    """{race_id: 馬番} → その馬1点を買う BetCandidate 群（単勝/複勝の対照用）。"""
+    from src.policies._bet_candidate import BetCandidate
+    return [BetCandidate(race_id=str(rid), bet_type=bet_type, combo=(int(u),),
+                         probability=0.0, odds=0.0, expected_value=0.0)
+            for rid, u in pick_by_race.items()]
+
+
+def _arm_roi(per_race):
+    st = sum(d["stake"] for d in per_race.values())
+    rt = sum(d["returned"] for d in per_race.values())
+    hits = sum(d["n_hits"] for d in per_race.values())
+    n = len(per_race)
+    return (rt / st if st else 0.0), (hits / n if n else 0.0), n
+
+
+def _market_control(oz_dir, featured, order, sim_top, ret_src):
+    """[市場対照] 購入時点の単勝1番人気 vs Sim1位 を 単勝/複勝で並べ、paired ΔROI CI・一致率を出す。
+
+    リーク規律: 市場1番人気は OZ 前売り（購入時点）で決定・確定払戻(HJC)で精算。sim1位は as-of sim。
+    OZ 無指定/被りゼロなら測定不能を明示（確定オッズでの代用はしない）。
+    """
+    from src.constants._bet_types import BetType
+    from src.simulation._ticket_backtest import (
+        market_favorite, paired_delta_roi_ci, settle_per_race,
+    )
+    print("[市場対照] 購入時点(前売り)の単勝1番人気 vs Sim1位（確定払戻で精算）")
+    if not oz_dir:
+        print("  → OZ 前売りオッズ未指定(--oz-dir)。市場対照は測定不能。"
+              "確定オッズでの1番人気代用は方針違反（リーク）なので行わない。")
+        return
+    win_odds = _load_oz_win_odds(oz_dir, set(map(str, order)))
+    fav = market_favorite(win_odds)
+    common = [r for r in fav if r in sim_top]
+    if not common:
+        print(f"  → OZ と評価レースの被りが0（OZ {len(fav):,} / sim {len(sim_top):,}）。測定不能。")
+        return
+    mkt_pick = {r: fav[r] for r in common}
+    sim_pick = {r: sim_top[r] for r in common}
+    agree = sum(1 for r in common if mkt_pick[r] == sim_pick[r]) / len(common)
+
+    arms = {}
+    for label, bt, pick in (("Market-W", BetType.TANSHO, mkt_pick),
+                            ("Sim-W", BetType.TANSHO, sim_pick),
+                            ("Market-P", BetType.FUKUSHO, mkt_pick),
+                            ("Sim-P", BetType.FUKUSHO, sim_pick)):
+        pr = settle_per_race(_single_candidates(bt, pick), ret_src)
+        roi, hit, n = _arm_roi(pr)
+        avg_odds = (sum(win_odds[r].get(pick[r], 0.0) for r in common if r in win_odds)
+                    / len(common))
+        arms[label] = {"roi": roi, "hit": hit, "n": n, "avg_odds": avg_odds, "per_race": pr}
+
+    print(f"  評価レース(共通) {len(common):,} / Sim1位=市場1番人気の一致率 {agree:.1%}"
+          + ("  ← 90%超＝シムは市場順位の再表現に近い" if agree >= 0.90 else ""))
+    print(f"  {'':12}{'ROI':>8}{'的中率':>8}{'平均オッズ':>10}{'決済N':>7}")
+    for label in ("Market-W", "Sim-W", "Market-P", "Sim-P"):
+        a = arms[label]
+        print(f"  {label:<12}{a['roi']:>8.1%}{a['hit']:>8.1%}{a['avg_odds']:>10.2f}{a['n']:>7,}")
+    for tag, sim_l, mkt_l in (("単勝", "Sim-W", "Market-W"), ("複勝", "Sim-P", "Market-P")):
+        d = paired_delta_roi_ci(arms[sim_l]["per_race"], arms[mkt_l]["per_race"], n_boot=2000)
+        sig = "有意" if (d["lo"] > 0 or d["hi"] < 0) else "有意でない"
+        print(f"  {tag} ΔROI(Sim−Market)={d['delta']:+.1%}  95%CI[{d['lo']:+.1%},{d['hi']:+.1%}] "
+              f"→ {sig}（0を跨がなければ純増分あり）")
+    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら、シムは市場1番人気の再表現で純増分なし"
+          "（＝市場効率の壁）。ΔROI CI が有意に正なら初めて『市場を超える選別』の候補。")
+
+
+def _print_total(all_cands, ret_src, order):
+    """[券種グループ別 TOTAL] と [ALL TOTAL]（全戦略を同時に全購入した仮想ポートフォリオ）。"""
+    from src.simulation._ticket_backtest import (
+        BET_GROUP_ORDER, portfolio_metrics, settle_tickets_detailed,
+    )
+    rows = settle_tickets_detailed(all_cands, ret_src)
+    m = portfolio_metrics(rows, race_order=[str(r) for r in order])
+    print("\n[券種グループ別 TOTAL]（三連系の大量投資が全券種合算を支配するのを切り分け）")
+    print(f"  {'グループ':<14}{'点数':>9}{'的中率':>8}{'投資':>12}{'払戻':>13}{'ROI':>8}")
+    for g in BET_GROUP_ORDER:
+        d = m["by_group"].get(g)
+        if not d:
+            continue
+        hit = d["n_hits"] / d["n_bets"] if d["n_bets"] else 0.0
+        print(f"  {g:<14}{d['n_bets']:>9,}{hit:>8.1%}{d['stake']:>12,.0f}"
+              f"{d['returned']:>13,.0f}{d['roi']:>8.1%}")
+    print("\n[ALL TOTAL]（全8戦略を同時に全購入した仮想ポートフォリオ・投資額加重ROI）")
+    print(f"  投資={m['total_stake']:,.0f}  払戻={m['total_return']:,.0f}  損益={m['profit']:+,.0f}")
+    print(f"  ROI={m['roi']:.1%}  除最大1={m['roi_ex_top1']:.1%}  除上位5={m['roi_ex_top5']:.1%}")
+    print(f"  購入レース数={m['n_races']:,}  総点数={m['n_tickets']:,}  "
+          f"1レース平均投資={m['avg_stake_per_race']:,.0f}円  最大DD={m['max_dd']:,.0f}円")
+    yr = "  ".join(f"{y}:{v:.1%}" for y, v in m["by_year"].items())
+    print(f"  年別TOTAL ROI: {yr}")
+    print("  ※注意: 控除率は投資額に対する割合なので、点数を増やすこと自体が1円あたり控除率を"
+          "上げるわけではない。ROI低下の主因は複合——シムの2・3着順位付けが弱い／組合せ確率が"
+          "未校正／点数拡大で低確率・低EV券が増える／三連系の高分散／券種ごとの高控除／最大払戻依存。"
+          "『買い目拡大で低品質な組合せへの投資が増え、より高控除・高分散の券種でもあるため全体ROIが低下』が適切。")
+
+
 def main() -> int:
     from app._model_eval import load_featured_data
     from src.simulation._ticket_backtest import STRATEGY_TEMPLATES
@@ -142,6 +272,9 @@ def main() -> int:
     ap.add_argument("--ability-sigma", type=float, default=0.35)
     ap.add_argument("--rank-gain", type=float, default=0.0, help="rank_bonus の加減点強さ(leak注意)")
     ap.add_argument("--walk-forward", action="store_true", help="過去年で戦略選択→翌年で評価")
+    ap.add_argument("--oz-dir", default=None,
+                    help="JRDB OZ 前売りオッズの .txt フォルダ。市場1番人気対照(購入時点)を有効化。"
+                         "無指定なら市場対照は測定不能（確定オッズでの代用は方針違反なので行わない）")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
@@ -178,15 +311,21 @@ def main() -> int:
         order = order[-args.limit:]
     featured = featured.loc[order]
 
-    strategies = {k: v for k, v in STRATEGY_TEMPLATES.items() if k != "S0_skip"}
+    strategies = dict(STRATEGY_TEMPLATES)          # S0_skip も対照として含める
     kw = dict(n_sim=args.n_sim, T=args.T, ability_spread=args.ability_spread,
               ability_sigma=args.ability_sigma, rank_gain=args.rank_gain, seed=args.seed)
 
     if not args.walk_forward:
         print(f"[全期間] {len(order):,}レース / n_sim={args.n_sim} / rank_gain={args.rank_gain}")
-        res, n_ok = _run_strategies(featured, order, ret_src, strategies, **kw)
+        res, n_ok, all_cands, sim_top = _run_strategies(featured, order, ret_src, strategies, **kw)
         print(f"有効 sim レース {n_ok:,}\n")
+        # [市場対照] 購入時点オッズで市場1番人気を決め、Sim1位と単勝/複勝で並べる
+        _market_control(args.oz_dir, featured, order, sim_top, ret_src)
+        # [戦略別]
+        print("\n[戦略別]")
         _print_table([_strategy_line(n, pb, pr) for n, (pb, pr) in res.items()])
+        # [券種グループ別 TOTAL] と [ALL TOTAL]（全戦略を同時に全購入した仮想ポートフォリオ）
+        _print_total(all_cands, ret_src, order)
         return 0
 
     # 前進検証: 隣接年で「過去年の最良(除最大ROI)戦略 → 翌年評価」
@@ -198,13 +337,13 @@ def main() -> int:
         te_order = [r for r in order if str(r)[:4] == te]
         if len(tr_order) < 50 or len(te_order) < 50:
             continue
-        tr_res, _ = _run_strategies(featured.loc[tr_order], tr_order, ret_src, strategies, **kw)
+        tr_res, _, _, _ = _run_strategies(featured.loc[tr_order], tr_order, ret_src, strategies, **kw)
         tr_rows = [_strategy_line(n, pb, pr) for n, (pb, pr) in tr_res.items()]
         # 過去年での選択規準: 除最大ROI 最大（フロック依存を避ける）かつ点数十分
         elig = [r for r in tr_rows if r["n_bets"] >= 100] or tr_rows
         best = max(elig, key=lambda r: r["roi_ex"])
-        te_res, _ = _run_strategies(featured.loc[te_order], te_order, ret_src,
-                                    {best["name"]: strategies[best["name"]]}, **kw)
+        te_res, _, _, _ = _run_strategies(featured.loc[te_order], te_order, ret_src,
+                                          {best["name"]: strategies[best["name"]]}, **kw)
         te_line = _strategy_line(best["name"], *te_res[best["name"]])
         picks.append((tr, te, best, te_line))
         print(f"  {tr}→{te}: 選択『{best['name']}』(train除最大ROI {best['roi_ex']:.1%}) → "
