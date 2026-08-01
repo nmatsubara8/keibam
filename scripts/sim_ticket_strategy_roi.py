@@ -562,13 +562,19 @@ def _market_control(win_odds, sim_top, ret_src, source_label="市場", pick_labe
     for label in ("Market-W", sw, "Market-P", sp):
         a = arms[label]
         print(f"  {label:<12}{a['roi']:>8.1%}{a['hit']:>8.1%}{a['avg_odds']:>10.2f}{a['n']:>7,}")
+    from src.simulation._ticket_backtest import paired_log_growth_ci
     for tag, sim_l, mkt_l in (("単勝", sw, "Market-W"), ("複勝", sp, "Market-P")):
         d = paired_delta_roi_ci(arms[sim_l]["per_race"], arms[mkt_l]["per_race"], n_boot=2000)
         sig = "有意" if (d["lo"] > 0 or d["hi"] < 0) else "有意でない"
         print(f"  {tag} ΔROI(予測−Market)={d['delta']:+.1%}  95%CI[{d['lo']:+.1%},{d['hi']:+.1%}] "
               f"→ {sig}（0を跨がなければ純増分あり）")
-    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら、予測は市場1番人気の再表現で純増分なし"
-          "（＝市場効率の壁）。ΔROI CI が有意に正なら初めて『市場を超える選別』の候補。")
+    # P4: Kelly log 成長率（固定比率 f=0.05）。ROI 僅差でも log 成長では差が出うる。
+    g = paired_log_growth_ci(arms[sw]["per_race"], arms["Market-W"]["per_race"])
+    sigk = "有意" if (g["lo"] > 0 or g["hi"] < 0) else "有意でない"
+    print(f"  単勝 Kelly log成長率(f=.05) 予測={g['g_a']:+.4f} 市場={g['g_b']:+.4f} "
+          f"Δ={g['delta']:+.4f} CI[{g['lo']:+.4f},{g['hi']:+.4f}] → {sigk}")
+    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら市場の再表現。ΔROI/Δlog成長が有意に正で"
+          "初めて『市場を超える選別』の候補。")
 
 
 def _print_total(all_cands, ret_src, order, n_strategies):
@@ -695,6 +701,71 @@ def apply_temp_top(p_array, T):
     return max(pc) if pc else 0.0
 
 
+def _print_disagreement_patterns(top_by_race, win_odds, pick_label="LGBM1位"):
+    """[不一致パターン] 予測が市場と違うとき市場は何番人気を選んでいるか（記述的・採否に使わない）。"""
+    from collections import Counter
+
+    from src.simulation._ticket_backtest import market_favorite
+    fav = market_favorite(win_odds)
+    c: Counter = Counter()
+    for rid, lg in top_by_race.items():
+        if rid not in win_odds or rid not in fav or lg == fav[rid]:
+            continue
+        mr = _market_rank_of(win_odds[rid], lg)
+        b = ("2番人気" if mr == 2 else "3番人気" if mr == 3 else "4-6番人気" if mr and mr <= 6
+             else "7番人気以下" if mr else "不明")
+        c[b] += 1
+    tot = sum(c.values()) or 1
+    print(f"\n[不一致パターン] {pick_label}≠市場1番人気のとき、市場では何番人気を推すか（記述的）")
+    for b in ("2番人気", "3番人気", "4-6番人気", "7番人気以下", "不明"):
+        if c[b]:
+            print(f"  {b}: {c[b]:,} ({c[b] / tot:.0%})")
+    print("  → 大半が市場2-3番人気なら『僅差の入替』、7番人気以下が多いなら『大穴指名』。研究の性質が変わる。")
+
+
+def _dump_disagreement(path, prob_vec, top_by_race, win_odds, ret_src, T, winners):
+    """[B/C群保存] 予測≠市場1番人気のレースを CSV 保存（累積して将来 5000件で最も価値が出る）。"""
+    import pandas as pd
+
+    from src.constants._bet_types import BetType
+    from src.simulation._betting_tickets import BettingTickets
+    from src.simulation._prob_calibration import apply_temperature
+    from src.simulation._ticket_backtest import market_favorite
+    fav = market_favorite(win_odds)
+    tk = BettingTickets(ret_src)
+    rows = []
+    for rid, lg in top_by_race.items():
+        if rid not in win_odds or rid not in fav or lg == fav[rid]:
+            continue
+        od = win_odds[rid]
+        mk = fav[rid]
+        umas, probs = prob_vec.get(rid, ([], []))
+        pc = apply_temperature(probs, T) if probs else []
+        p_lg = pc[umas.index(lg)] if (pc and lg in umas) else float("nan")
+        inv = {u: 1.0 / o for u, o in od.items() if o > 0}
+        s = sum(inv.values()) or 1.0
+        w = winners.get(rid)
+        ret_lg = tk.settle_one(BetType.TANSHO, rid, (lg,), 1)[2]
+        ret_mk = tk.settle_one(BetType.TANSHO, rid, (mk,), 1)[2]
+        rows.append({
+            "race_id": rid, "year": rid[:4], "track": rid[4:6],
+            "market_fav": mk, "market_fav_odds": od.get(mk, float("nan")),
+            "lgbm_top": lg, "lgbm_top_odds": od.get(lg, float("nan")),
+            "market_rank_of_lgbm": _market_rank_of(od, lg),
+            "lgbm_prob_cal": p_lg, "market_impl_lgbm": inv.get(lg, 0.0) / s,
+            "prob_diff": p_lg - inv.get(lg, 0.0) / s,
+            "odds_diff": od.get(lg, float("nan")) - od.get(mk, float("nan")),
+            "winner": w if w is not None else "",
+            "lgbm_win_payout": ret_lg * 100, "market_win_payout": ret_mk * 100,
+            "lgbm_hit": (int(w == lg) if w is not None else ""),
+            "market_hit": (int(w == mk) if w is not None else ""),
+        })
+    df = pd.DataFrame(rows)
+    df.to_csv(path, index=False, encoding="utf-8-sig")
+    print(f"  [B/C群保存] 不一致 {len(df):,}レースを {path} に保存"
+          "（race_id/両本命/オッズ差/確率差/払戻＝累積で価値・将来5000件目標）")
+
+
 def _print_high_conf_single(prob_vec_by_race, T, ret_src, win_odds, *, threshold=0.5,
                             pick_label="LGBM1位"):
     """[高信頼 単複] 校正後 p1≥threshold のレースで、まず単勝/複勝を市場と paired 比較する。
@@ -771,6 +842,8 @@ def main() -> int:
                     help="確率源。mc=物理モンテカルロ / lgbm=本番LightGBM較正勝率。"
                          "lgbm は市場対照・校正・A/B/C のみ実行（MC専用の券種戦略グリッドはスキップ）")
     ap.add_argument("--model-version", default=None, help="lgbm 時のモデル版名（既定=最新統合）")
+    ap.add_argument("--dump-disagreement", default=None,
+                    help="lgbm 時、予測≠市場1番人気のレースを CSV 保存（市場×モデル不一致研究の累積用）")
     ap.add_argument("--walk-forward", action="store_true", help="過去年で戦略選択→翌年で評価")
     ap.add_argument("--tyb", action="store_true",
                     help="JRDB TYB(直前情報)の直前単勝オッズ(≈T-15)で市場対照を有効化。年度パック"
@@ -874,7 +947,11 @@ def main() -> int:
             comparable = [r for r in win_odds if r in top_by_race]
             _print_coverage_audit(featured, order, comparable, top_by_race, winners, pick_label=pl)
             _print_market_subgroups(win_odds, top_by_race, ret_src, pick_label=pl)
+            _print_disagreement_patterns(top_by_race, win_odds, pick_label=pl)      # P2 記述
             _print_high_conf_single(prob_vec, T, ret_src, win_odds, pick_label=pl)
+            if args.dump_disagreement:                                             # P1 累積保存
+                _dump_disagreement(args.dump_disagreement, prob_vec, top_by_race,
+                                   win_odds, ret_src, T, winners)
         print("\n※ 券種戦略グリッド/TOTAL は MC 専用（joint 確率が要る）ためスキップ。"
               "LightGBM は勝ち馬順位付けが強く、市場対照＝『本番モデルは市場を超えるか』の本命検証。")
         return 0

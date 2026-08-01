@@ -152,6 +152,17 @@ def test_market_favorite_uses_purchase_time_odds():
     assert fav == {"R1": 2, "R2": 4}                          # 最小オッズ=1番人気
 
 
+def test_kelly_log_growth_and_paired():
+    from src.simulation._ticket_backtest import kelly_log_growth, paired_log_growth_ci
+    # a: 的中でオッズ3.0(returned=3), b: 外れ(returned=0)。f=0.05。
+    a = {"R1": {"stake": 1.0, "returned": 3.0}, "R2": {"stake": 1.0, "returned": 3.0}}
+    b = {"R1": {"stake": 1.0, "returned": 0.0}, "R2": {"stake": 1.0, "returned": 0.0}}
+    ga, gb = kelly_log_growth(a), kelly_log_growth(b)
+    assert ga > 0 > gb                                   # 的中側は成長・外れ側は縮小
+    d = paired_log_growth_ci(a, b, n_boot=200, seed=0)
+    assert d["n_races"] == 2 and abs(d["delta"] - (ga - gb)) < 1e-9
+
+
 def test_paired_delta_roi_ci():
     from src.simulation._ticket_backtest import paired_delta_roi_ci
     sim = {"R1": {"stake": 100.0, "returned": 300.0}, "R2": {"stake": 100.0, "returned": 0.0}}

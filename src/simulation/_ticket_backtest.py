@@ -20,6 +20,7 @@ umaban:      (n_horses,) インデックス→実馬番。券種確率・買い�
 """
 from __future__ import annotations
 
+import math
 from collections import Counter
 
 import numpy as np
@@ -523,6 +524,49 @@ def paired_delta_roi_ci(per_race_sim: dict, per_race_mkt: dict, *, n_boot: int =
     lo, hi = np.quantile(deltas, [alpha / 2, 1 - alpha / 2])
     return {"delta": float(roi_s - roi_m), "lo": float(lo), "hi": float(hi),
             "roi_sim": float(roi_s), "roi_mkt": float(roi_m), "n_races": n}
+
+
+def kelly_log_growth(per_race: dict, *, fraction: float = 0.05) -> float:
+    """固定比率 fraction を各レースの単一買い目に賭けたときの1レース平均 log 成長率（Kelly 近似）。
+
+    per_race[rid]={stake,returned,...}（stake=単位・returned=払戻/100円単位）。1レース1点前提。
+    wealth 倍率 = 1 − f + f·(returned/stake)（的中なら returned=オッズ・外れは0）。ROI が僅差でも
+    log 成長率では差が出ることがある（分散の効き方が違う）＝Kelly 的な優劣比較。
+    """
+    if not per_race:
+        return 0.0
+    tot = 0.0
+    for d in per_race.values():
+        ratio = d["returned"] / d["stake"] if d["stake"] else 0.0
+        m = 1.0 - fraction + fraction * ratio
+        tot += math.log(m) if m > 0 else -20.0        # 破産（m<=0）は強い負のペナルティ
+    return tot / len(per_race)
+
+
+def paired_log_growth_ci(per_race_a: dict, per_race_b: dict, *, fraction: float = 0.05,
+                         n_boot: int = 2000, alpha: float = 0.05, seed: int = 0) -> dict:
+    """同一レース集合で Δlog成長率(a−b) をレース単位 paired bootstrap（ROI差より検出力が出る場合）。"""
+    import numpy as np
+    rids = [r for r in per_race_a if r in per_race_b]
+    n = len(rids)
+    if n == 0:
+        return {"delta": 0.0, "lo": 0.0, "hi": 0.0, "g_a": 0.0, "g_b": 0.0, "n_races": 0}
+
+    def _g(d):
+        ratio = d["returned"] / d["stake"] if d["stake"] else 0.0
+        m = 1.0 - fraction + fraction * ratio
+        return math.log(m) if m > 0 else -20.0
+
+    ga = np.array([_g(per_race_a[r]) for r in rids])
+    gb = np.array([_g(per_race_b[r]) for r in rids])
+    rng = np.random.default_rng(seed)
+    deltas = np.empty(n_boot)
+    for b in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        deltas[b] = ga[idx].mean() - gb[idx].mean()
+    lo, hi = np.quantile(deltas, [alpha / 2, 1 - alpha / 2])
+    return {"delta": float(ga.mean() - gb.mean()), "lo": float(lo), "hi": float(hi),
+            "g_a": float(ga.mean()), "g_b": float(gb.mean()), "n_races": n}
 
 
 def race_bootstrap_ci(per_race: dict, *, n_boot: int = 2000, alpha: float = 0.05,
