@@ -57,21 +57,35 @@ _KNOWN_CONSTANT_FLAGS = {
 }
 
 
-def classify_dead(col, prof_entry, *, source_present=None):
-    """DEAD 列を SOURCE_MISSING/JOIN_FAILURE/UNSEEN_CATEGORY/TRUE_CONSTANT/UNKNOWN に分類する純関数。
+# race_class 由来（ordinal/TE）。one-hot と別で、元列の変換失敗（JRDB joken 未読み等）を示す。
+_RACE_CLASS_TRANSFORM = {"race_class_level", "race_class_place_te", "race_class_win_te"}
+# guide マスタ未生成の波及（course_* / interaction）。
+_GUIDE_DERIVED_PREFIX = ("guide_", "course_", "style_guide", "distance_x_around")
 
-    source_present: 生ソースの有無（True=在る/False=無い/None=不明）。
-      - one-hot（列名に "__"）でファミリの一部だけ dead → UNSEEN_CATEGORY（出現しなかったカテゴリ）
-      - 既知の条件フラグ名 → TRUE_CONSTANT
-      - 生ソース無し → SOURCE_MISSING / 生ソース在り → JOIN_FAILURE / 不明 → UNKNOWN
+
+def classify_dead(col, prof_entry, *, source_present=None):
+    """DEAD 列を対処方針に直結する種別へ分類する純関数（ユーザ提案の精緻ラベル）。
+
+    ラベル: ID_NAMESPACE_MISMATCH(owner_py) / SOURCE_PARTIAL_OR_KEY_MISMATCH(sire/damsire) /
+      DERIVED_MASTER_MISSING(guide 由来) / TRANSFORM_FAILURE(race_class 変換) /
+      UNSEEN_CATEGORY(one-hot 未出現) / TRUE_CONSTANT_OR_SCOPE_CONSTANT(条件フラグ) / UNKNOWN。
+    source_present は判定不能時のフォールバックにのみ使う。
     """
     if not prof_entry["dead"]:
         return "OK"
     name = str(col)
     if "__" in name:
         return "UNSEEN_CATEGORY"
+    if name in _RACE_CLASS_TRANSFORM or name.startswith("race_class_"):
+        return "TRANSFORM_FAILURE"
+    if name.startswith("owner_py"):
+        return "ID_NAMESPACE_MISMATCH"
+    if name.startswith(("sire_", "damsire_")):
+        return "SOURCE_PARTIAL_OR_KEY_MISMATCH"
+    if name.startswith(_GUIDE_DERIVED_PREFIX):
+        return "DERIVED_MASTER_MISSING"
     if name in _KNOWN_CONSTANT_FLAGS:
-        return "TRUE_CONSTANT"
+        return "TRUE_CONSTANT_OR_SCOPE_CONSTANT"
     if source_present is True:
         return "JOIN_FAILURE"
     if source_present is False:
@@ -127,23 +141,36 @@ def _owner_py_join_probe(py):
     eid = ow.index if ow.index.name == "entity_id" else ow.get("entity_id")
     p_ids = set(_norm_id(eid.dropna()).unique()) if eid is not None else set()
     inter = r_ids & p_ids
-    print(f"   owner_id ユニーク: results={len(r_ids):,} / person_yearly={len(p_ids):,} / 一致={len(inter):,}"
-          f"（一致率 results側 {len(inter)/max(1,len(r_ids)):.1%}）")
-    # 例示（形式差を目視で確認）
+    id_match = len(inter) / max(1, len(r_ids))
+    print(f"   [1] owner_id一致: results={len(r_ids):,} / person_yearly={len(p_ids):,} / 一致={len(inter):,}"
+          f"（results側 {id_match:.1%}）")
     print(f"   例 results owner_id : {sorted(list(r_ids))[:5]}")
     print(f"   例 person owner id  : {sorted(list(p_ids))[:5]}")
-    if p_ids and len(inter) / max(1, len(r_ids)) < 0.2:
-        print("   → ID一致率が低い＝owner_id の形式/型不一致（先頭ゼロ落ち・別ID空間等）が JOIN_FAILURE の主因。")
-    # year 一致（results 年-1 が person_yearly の owner year に在るか）
+    # [2] ID一致 かつ 前年(year=race_year-1)が person_yearly に在る率
     if "date" in res.columns and "year" in ow.columns:
         ry = set((pd.to_datetime(res["date"], errors="coerce").dt.year - 1).dropna().astype(int))
         py_years = set(pd.to_numeric(ow["year"], errors="coerce").dropna().astype(int))
-        print(f"   前年(results年-1) {sorted(ry)[:3]}… ∩ person_yearly owner year {sorted(py_years)[:3]}… "
-              f"= {len(ry & py_years)} 年一致")
+        print(f"   [2] year一致: 前年集合 {sorted(ry)[-3:]} ∩ owner年 {sorted(py_years)[-3:]} = {len(ry & py_years)}年")
+    # [3] 名前照合（ID空間の対応をコード加工でなく名前で確定する。名前列があれば）
+    name_cols_py = [c for c in ow.columns if any(k in str(c) for k in ("name", "名", "owner_name"))]
+    name_cols_res = [c for c in res.columns if any(k in str(c) for k in ("owner_name", "馬主"))]
+    if name_cols_py and name_cols_res:
+        rn = set(_norm_id(res[name_cols_res[0]].dropna()).str.strip().unique())
+        pn = set(_norm_id(ow[name_cols_py[0]].dropna()).str.strip().unique())
+        print(f"   [3] 名前照合: results名 {len(rn):,} ∩ person名 {len(pn):,} = {len(rn & pn):,}"
+              "（名前一致・ID不一致なら別コード体系＝変換表が必要）")
+    else:
+        print("   [3] 名前照合: 名前列が見つからず不可（entity_name/馬主名の永続化があれば ID空間を名前で確定できる）")
+    if p_ids and id_match < 0.2:
+        print("   → owner_id 一致率が低い＝別ID空間 or 部分scrape(255<<3060)。単純ゼロ埋めでは直らない。"
+              "名前照合で対応関係を確定してから変換表 or 再scrape。owner情報は owner_win_te(99.6%)で概ね代替済み。")
 
 
-def _raw_source_probe(featured_profiles=None):
-    """生ソース(best-effort)を突合し、owner/peds/guide の取得可否と JOIN 可否を報告する。失敗は握りつぶす。"""
+def _raw_source_probe(featured_horse_ids=None):
+    """生ソース(best-effort)を突合し、owner/peds/guide の取得可否と JOIN 可否を報告する。失敗は握りつぶす。
+
+    featured_horse_ids: featured の horse_id 集合（peds coverage 判定に使う）。
+    """
     import os
 
     import pandas as pd
@@ -177,7 +204,21 @@ def _raw_source_probe(featured_profiles=None):
             ped_like = [c for c in peds.columns if str(c).startswith("peds")][:8]
             print(f"   → peds_0/peds_32 が無い＝列名/フラット化不一致(SOURCE不在でなく列名ズレ)。peds列例: {ped_like}")
         else:
-            print("   → 列は在る。sire/damsire DEAD は結合キー(horse_id)不一致 or peds_processor 出力の問題を疑う。")
+            # Step4: featured horse_id ∩ peds horse_id で「824は全データか/キー不一致か」を確定
+            if featured_horse_ids is not None:
+                p_idx = (peds.index if peds.index.name in ("horse_id", None)
+                         else peds.get("horse_id"))
+                p_ids = set(_norm_id(pd.Series(p_idx)).unique()) if p_idx is not None else set()
+                inter = featured_horse_ids & p_ids
+                print(f"   peds horse_id: featured={len(featured_horse_ids):,} / peds={len(p_ids):,} / "
+                      f"一致={len(inter):,}（featured側 {len(inter)/max(1,len(featured_horse_ids)):.2%}）")
+                print(f"   例 featured horse_id: {sorted(list(featured_horse_ids))[:3]} / "
+                      f"peds horse_id: {sorted(list(p_ids))[:3]}")
+                if len(inter) < len(featured_horse_ids) * 0.2:
+                    print("   → 交差が僅少。824頭が全データなら SOURCE_PARTIAL(全期間の血統再取得が必要)。"
+                          "IDが桁違い/形式差なら KEY_MISMATCH。ID例で桁数・ゼロ落ちを確認。")
+            else:
+                print("   → 列は在る。featured horse_id を渡せば peds との交差率で partial/keymismatch を判定可能。")
     else:
         print("\n  raw peds.pkl を読めず＝sire/damsire は SOURCE_MISSING（血統ソース未取得。_scrape_html_ped で取得案件）")
 
@@ -238,15 +279,21 @@ def main() -> int:
     for c in dead_all:
         cat = classify_dead(c, prof[c], source_present=src_hint.get(c))
         by_cat.setdefault(cat, []).append(c)
-    print(f"\n  DEAD（単一値）列 合計 {len(dead_all):,}。種別内訳:")
-    for cat in ("SOURCE_MISSING", "JOIN_FAILURE", "UNSEEN_CATEGORY", "TRUE_CONSTANT", "UNKNOWN"):
+    print(f"\n  DEAD（単一値）列 合計 {len(dead_all):,}。種別内訳（対処方針に直結）:")
+    _order = ("TRANSFORM_FAILURE", "ID_NAMESPACE_MISMATCH", "SOURCE_PARTIAL_OR_KEY_MISMATCH",
+              "DERIVED_MASTER_MISSING", "JOIN_FAILURE", "SOURCE_MISSING",
+              "UNSEEN_CATEGORY", "TRUE_CONSTANT_OR_SCOPE_CONSTANT", "UNKNOWN")
+    for cat in _order:
         cols = by_cat.get(cat, [])
         if cols:
             print(f"   [{cat}] {len(cols)}列: {', '.join(cols[: args.top_dead])}"
                   + (" …" if len(cols) > args.top_dead else ""))
 
     if not args.no_raw:
-        _raw_source_probe(prof)
+        fhids = None
+        if "horse_id" in feat.columns:
+            fhids = set(_norm_id(feat["horse_id"].dropna()).unique())
+        _raw_source_probe(featured_horse_ids=fhids)
     print("\n※ DEAD は同一視しない: SOURCE_MISSING(血統/guide=ソース未取得)・JOIN_FAILURE(owner_py=生ソース在るが"
           "id/year不一致)・UNSEEN_CATEGORY(開催__/race_class__=未出現one-hot・正常)・TRUE_CONSTANT(条件フラグ)。"
           "投資対効果順: P1 owner_py join → P2 guide master → P3 sire/damsire ソース。修正後 再監査で DEAD 減を確認。")

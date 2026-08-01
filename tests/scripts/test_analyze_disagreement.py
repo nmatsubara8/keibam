@@ -248,10 +248,15 @@ def test_group_by_prefix_all_dead_flag():
 def test_classify_dead_taxonomy():
     dead = {"dead": True}
     alive = {"dead": False}
-    assert au.classify_dead("開催__30", dead) == "UNSEEN_CATEGORY"      # one-hot 未出現
-    assert au.classify_dead("race_class__G1", dead) == "UNSEEN_CATEGORY"
-    assert au.classify_dead("kokusai", dead) == "TRUE_CONSTANT"         # 既知の条件フラグ
-    assert au.classify_dead("sire_win_rate", dead, source_present=False) == "SOURCE_MISSING"
-    assert au.classify_dead("owner_py_勝率", dead, source_present=True) == "JOIN_FAILURE"
+    assert au.classify_dead("開催__30", dead) == "UNSEEN_CATEGORY"          # one-hot 未出現
+    assert au.classify_dead("race_class__G1", dead) == "UNSEEN_CATEGORY"    # one-hot が優先
+    assert au.classify_dead("race_class_level", dead) == "TRANSFORM_FAILURE"
+    assert au.classify_dead("race_class_win_te", dead) == "TRANSFORM_FAILURE"
+    assert au.classify_dead("owner_py_勝率", dead) == "ID_NAMESPACE_MISMATCH"
+    assert au.classify_dead("sire_win_rate", dead) == "SOURCE_PARTIAL_OR_KEY_MISMATCH"
+    assert au.classify_dead("damsire_avg_rank", dead) == "SOURCE_PARTIAL_OR_KEY_MISMATCH"
+    assert au.classify_dead("guide_time_bias", dead) == "DERIVED_MASTER_MISSING"
+    assert au.classify_dead("course_time_bias", dead) == "DERIVED_MASTER_MISSING"
+    assert au.classify_dead("kokusai", dead) == "TRUE_CONSTANT_OR_SCOPE_CONSTANT"
     assert au.classify_dead("mystery_col", dead, source_present=None) == "UNKNOWN"
-    assert au.classify_dead("jockey_py_勝率", alive) == "OK"            # 生存列は OK
+    assert au.classify_dead("jockey_py_勝率", alive) == "OK"                # 生存列は OK
