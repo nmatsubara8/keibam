@@ -29,12 +29,15 @@ def test_fill_policy_nulls_recent_only_race_info():
     # 全年充填の列は値が入る
     assert ri.iloc[0]["race_type"] == "芝" and ri.iloc[0]["weather"] == "晴"
     assert ri.iloc[0]["ground_state1"] == "良"
-    # recent-only 列は NaN 化（fill 方針）
-    for c in ["place", "around", "time", "age", "race_class"]:
+    # race_class は JRDB joken(=A3→未勝利)を全年で保持する（fill しても NaN 化しない・是正後）
+    assert ri.iloc[0]["race_class"] == "未勝利"
+    # 他の recent-only 列は NaN 化（fill 方針・JRDB 側マップ不完全のため）
+    for c in ["place", "around", "time", "age"]:
         if c in ri.columns:
             assert pd.isna(ri.iloc[0][c]), c
-    # keep 集合の妥当性
+    # keep 集合の妥当性（race_class を含む）
     assert set(FILL_RACE_INFO_KEEP) <= set(ri.columns)
+    assert "race_class" in FILL_RACE_INFO_KEEP
 
 
 def test_filter_years_and_new_by_race_id():

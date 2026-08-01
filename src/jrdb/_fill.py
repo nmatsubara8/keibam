@@ -20,11 +20,14 @@ from src.jrdb._adapter import (
     build_raw_results,
 )
 
-# race_info で全年充填される（= fill してよい）列。他（place/place_id/times/days/around/
-# time/age/race_class/sex/race_condition）は netkeiba が 2023+ のみ充填のため NaN に落とす
-# （2023 前後の分布不連続を避ける）。
+# race_info で fill してよい列（JRDB が全年で確実に供給できる列）。
+# race_class は JRDB SED の joken を 100% 正準クラス(netkeiba 表記)へ写せる（実データ 559,700 行で
+# 被覆率 100% を確認）ため保持する＝netkeiba が 2023+ のみ充填する欠損を JRDB で全年埋める。これを
+# NaN 化していたため featured の race_class 一族(level/one-hot/TE)が全 DEAD になっていた（是正）。
+# 他（place/place_id/times/days/around/time/age/sex/race_condition）は netkeiba が 2023+ のみ充填で
+# JRDB 側マップも不完全なため、2023 前後の分布不連続を避けて NaN に落とす。
 FILL_RACE_INFO_KEEP = ("race_type", "weather", "ground_state1", "ground_state2",
-                       "course_len", "date")
+                       "course_len", "date", "race_class")
 
 
 def build_fill_tables(
