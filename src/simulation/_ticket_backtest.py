@@ -543,6 +543,27 @@ def kelly_log_growth(per_race: dict, *, fraction: float = 0.05) -> float:
     return tot / len(per_race)
 
 
+def kelly_log_growth_ci(per_race: dict, *, fraction: float = 0.05, n_boot: int = 2000,
+                        alpha: float = 0.05, seed: int = 0) -> dict:
+    """単一群の log 成長率とレース単位 bootstrap CI（絶対の成長が 0 を超えるか＝賭ける価値の有無）。"""
+    import numpy as np
+    rids = list(per_race)
+    n = len(rids)
+    if n == 0:
+        return {"g": 0.0, "lo": 0.0, "hi": 0.0, "n_races": 0}
+
+    def _g1(d):
+        ratio = d["returned"] / d["stake"] if d["stake"] else 0.0
+        m = 1.0 - fraction + fraction * ratio
+        return math.log(m) if m > 0 else -20.0
+
+    g = np.array([_g1(per_race[r]) for r in rids])
+    rng = np.random.default_rng(seed)
+    boot = np.array([g[rng.integers(0, n, size=n)].mean() for _ in range(n_boot)])
+    lo, hi = np.quantile(boot, [alpha / 2, 1 - alpha / 2])
+    return {"g": float(g.mean()), "lo": float(lo), "hi": float(hi), "n_races": n}
+
+
 def paired_log_growth_ci(per_race_a: dict, per_race_b: dict, *, fraction: float = 0.05,
                          n_boot: int = 2000, alpha: float = 0.05, seed: int = 0) -> dict:
     """同一レース集合で Δlog成長率(a−b) をレース単位 paired bootstrap（ROI差より検出力が出る場合）。"""

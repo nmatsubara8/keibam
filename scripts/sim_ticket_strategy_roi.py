@@ -492,16 +492,28 @@ def _print_market_subgroups(win_odds, sim_top, ret_src, pick_label="Sim1位"):
         sig = "*" if (d["lo"] > 0 or d["hi"] < 0) else " "
         print(f"  {label:<22}{w['n']:>6,}{n_hits:>6,}{w['roi']:>8.1%}{d['roi_mkt']:>8.1%}"
               f"{d['delta']:>+8.1%}{ci:>15}{sig}{w['roi_ex']:>8.1%}")
+    # 年別 paired Δ単勝（同一レース比較の out-of-sample 複製確認。年で符号が揃うか＋各年CI）。
     for label, ids in groups.items():
-        if ids:
-            w = _arm_stats_detailed(
-                settle_per_race(_single_candidates(BetType.TANSHO, {r: sim_top[r] for r in ids}),
-                                ret_src), win_odds, {r: sim_top[r] for r in ids})
-            yr = "  ".join(f"{y}:{v:.0%}" for y, v in w["by_year"].items())
-            print(f"    {label} 年別単ROI: {yr}")
-    print("  → 判定は『同一群での Δ単勝(LGBM−市場) の 95%CI が 0 を超える』＋的中数十分＋年別安定＋"
-          "除最大でも維持、で。市場全体(74%)と直接比べない（群ごとに平均オッズが違う）。"
-          "C群は少件数＝探索的参考（要 walk-forward・最低的中数の事前固定）。")
+        if not ids:
+            continue
+        years = sorted({r[:4] for r in ids if r[:4].isdigit()})
+        parts = []
+        for y in years:
+            yids = [r for r in ids if r[:4] == y]
+            if len(yids) < 20:
+                parts.append(f"{y}:n{len(yids)}(薄)")
+                continue
+            pk = {r: sim_top[r] for r in yids}
+            mk = {r: fav[r] for r in yids if r in fav}
+            dy = paired_delta_roi_ci(
+                settle_per_race(_single_candidates(BetType.TANSHO, pk), ret_src),
+                settle_per_race(_single_candidates(BetType.TANSHO, mk), ret_src), n_boot=1000)
+            s = "*" if (dy["lo"] > 0 or dy["hi"] < 0) else ""
+            parts.append(f"{y}:Δ{dy['delta']:+.0%}[{dy['lo']:+.0%},{dy['hi']:+.0%}]{s}(n{dy['n_races']})")
+        print(f"    {label} 年別Δ単勝: {'  '.join(parts)}")
+    print("  → 採用条件: 同一群Δ単勝CI下限>0 ＋ 年で同符号 ＋ 的中数十分 ＋ 除最大でも維持。"
+          "全体は市場74%と直接比べない。C群/薄い年は探索的参考。"
+          "⚠ 学習が評価年を含むモデルでは in-sample＝この判定は無効（完全OOS walk-forwardで再確認）。")
 
 
 def _single_candidates(bet_type, pick_by_race):
@@ -568,13 +580,17 @@ def _market_control(win_odds, sim_top, ret_src, source_label="市場", pick_labe
         sig = "有意" if (d["lo"] > 0 or d["hi"] < 0) else "有意でない"
         print(f"  {tag} ΔROI(予測−Market)={d['delta']:+.1%}  95%CI[{d['lo']:+.1%},{d['hi']:+.1%}] "
               f"→ {sig}（0を跨がなければ純増分あり）")
-    # P4: Kelly log 成長率（固定比率 f=0.05）。ROI 僅差でも log 成長では差が出うる。
+    # P4: Kelly log 成長率（固定比率 f=0.05）。絶対成長(vs 0)と 市場との差(vs Market) を別々に見る。
+    from src.simulation._ticket_backtest import kelly_log_growth_ci
+    ga = kelly_log_growth_ci(arms[sw]["per_race"])
     g = paired_log_growth_ci(arms[sw]["per_race"], arms["Market-W"]["per_race"])
+    abss = "＞0(賭ける価値)" if ga["lo"] > 0 else "≤0(絶対では負＝f*=0が妥当)"
     sigk = "有意" if (g["lo"] > 0 or g["hi"] < 0) else "有意でない"
-    print(f"  単勝 Kelly log成長率(f=.05) 予測={g['g_a']:+.4f} 市場={g['g_b']:+.4f} "
-          f"Δ={g['delta']:+.4f} CI[{g['lo']:+.4f},{g['hi']:+.4f}] → {sigk}")
-    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら市場の再表現。ΔROI/Δlog成長が有意に正で"
-          "初めて『市場を超える選別』の候補。")
+    print(f"  単勝 Kelly log成長率(f=.05) LGBM絶対={ga['g']:+.4f} CI[{ga['lo']:+.4f},{ga['hi']:+.4f}]→{abss}")
+    print(f"    LGBM−市場 Δ={g['delta']:+.4f} CI[{g['lo']:+.4f},{g['hi']:+.4f}] → {sigk}"
+          "（Δが有意でも絶対が負なら運用対象でない）")
+    print("  読み: 一致率≥90%かつ ΔROI CI が 0 を跨ぐなら市場の再表現。ΔROI/Δlog成長が有意に正"
+          "＋LGBM絶対log成長>0 で初めて『賭けて増やせる』候補。")
 
 
 def _print_total(all_cands, ret_src, order, n_strategies):
@@ -723,14 +739,23 @@ def _print_disagreement_patterns(top_by_race, win_odds, pick_label="LGBM1位"):
     print("  → 大半が市場2-3番人気なら『僅差の入替』、7番人気以下が多いなら『大穴指名』。研究の性質が変わる。")
 
 
-def _dump_disagreement(path, prob_vec, top_by_race, win_odds, ret_src, T, winners):
-    """[B/C群保存] 予測≠市場1番人気のレースを CSV 保存（累積して将来 5000件で最も価値が出る）。"""
+def _dump_disagreement(path, prob_vec, top_by_race, win_odds, ret_src, T, winners,
+                       *, model_version="", schema_hash=""):
+    """[B/C群保存] 予測≠市場1番人気のレースを CSV に累積保存（race_id×model_version で重複排除）。
+
+    同じ過去レースを再生成しても件数は増えない（重複排除する）。本当に増えるのは新規レース・
+    未評価過去年・別 walk-forward fold だけ。各行に model_version/schema_hash/生成時刻を持たせる。
+    """
+    import datetime as _dt
+    import os
+
     import pandas as pd
 
     from src.constants._bet_types import BetType
     from src.simulation._betting_tickets import BettingTickets
     from src.simulation._prob_calibration import apply_temperature
     from src.simulation._ticket_backtest import market_favorite
+    gen_at = _dt.datetime.now().isoformat(timespec="seconds")
     fav = market_favorite(win_odds)
     tk = BettingTickets(ret_src)
     rows = []
@@ -748,7 +773,9 @@ def _dump_disagreement(path, prob_vec, top_by_race, win_odds, ret_src, T, winner
         ret_lg = tk.settle_one(BetType.TANSHO, rid, (lg,), 1)[2]
         ret_mk = tk.settle_one(BetType.TANSHO, rid, (mk,), 1)[2]
         rows.append({
-            "race_id": rid, "year": rid[:4], "track": rid[4:6],
+            "race_id": rid, "model_version": model_version, "schema_hash": schema_hash,
+            "prediction_generated_at": gen_at, "calibration_T": round(float(T), 4),
+            "year": rid[:4], "track": rid[4:6],
             "market_fav": mk, "market_fav_odds": od.get(mk, float("nan")),
             "lgbm_top": lg, "lgbm_top_odds": od.get(lg, float("nan")),
             "market_rank_of_lgbm": _market_rank_of(od, lg),
@@ -761,17 +788,27 @@ def _dump_disagreement(path, prob_vec, top_by_race, win_odds, ret_src, T, winner
             "market_hit": (int(w == mk) if w is not None else ""),
         })
     df = pd.DataFrame(rows)
+    # 累積: 既存 CSV に追記し race_id×model_version で重複排除（同一レース再生成では件数は増えない）。
+    if os.path.exists(path):
+        try:
+            prev = pd.read_csv(path, dtype={"race_id": str, "model_version": str})
+            df = pd.concat([prev, df], ignore_index=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [warn] 既存CSV読込失敗（上書き）: {e}", file=sys.stderr)
+    if "model_version" in df.columns:
+        df = df.drop_duplicates(subset=["race_id", "model_version"], keep="last")
     df.to_csv(path, index=False, encoding="utf-8-sig")
-    print(f"  [B/C群保存] 不一致 {len(df):,}レースを {path} に保存"
-          "（race_id/両本命/オッズ差/確率差/払戻＝累積で価値・将来5000件目標）")
+    print(f"  [B/C群保存] 不一致 {len(rows):,}レース→ 累積 {len(df):,}件を {path} に保存"
+          f"（model={model_version}・schema={schema_hash}・race_id×model_versionで重複排除）。"
+          "同一過去レース再生成では増えない＝新規/未評価年/別foldでのみ増える。")
 
 
 def _print_high_conf_single(prob_vec_by_race, T, ret_src, win_odds, *, threshold=0.5,
-                            pick_label="LGBM1位"):
+                            pick_label="LGBM1位", restrict: set | None = None):
     """[高信頼 単複] 校正後 p1≥threshold のレースで、まず単勝/複勝を市場と paired 比較する。
 
     校正後にトップ馬の勝率が高くても 2・3着は弱い(MC検証)ため、三連単1着固定へ広げる前に
-    単複が控除を超えるかを先に見る。閾値は学習側で固定した前提（結果を見て動かさない）。
+    単複が控除を超えるかを先に見る。restrict 指定時はその race_id 集合(＝校正の評価年=OOS)に限定。
     """
     from src.constants._bet_types import BetType
     from src.simulation._prob_calibration import apply_temperature
@@ -781,13 +818,14 @@ def _print_high_conf_single(prob_vec_by_race, T, ret_src, win_odds, *, threshold
     fav = market_favorite(win_odds)
     sel: dict = {}
     for rid, (umas, probs) in prob_vec_by_race.items():
-        if rid not in win_odds or not umas:
+        if rid not in win_odds or not umas or (restrict is not None and rid not in restrict):
             continue
         pc = apply_temperature(probs, T)
         j = int(max(range(len(pc)), key=lambda k: pc[k]))
         if pc[j] >= threshold:
             sel[rid] = umas[j]
-    print(f"\n[高信頼 単複] 校正後 p1≥{threshold:.2f} の {len(sel):,}レース"
+    scope = "（OOS評価年に限定）" if restrict is not None else ""
+    print(f"\n[高信頼 単複] 校正後 p1≥{threshold:.2f} の {len(sel):,}レース{scope}"
           "（三連単へ広げる前に単複で控除超えを確認）")
     if not sel:
         print("  該当レースなし。")
@@ -948,10 +986,16 @@ def main() -> int:
             _print_coverage_audit(featured, order, comparable, top_by_race, winners, pick_label=pl)
             _print_market_subgroups(win_odds, top_by_race, ret_src, pick_label=pl)
             _print_disagreement_patterns(top_by_race, win_odds, pick_label=pl)      # P2 記述
-            _print_high_conf_single(prob_vec, T, ret_src, win_odds, pick_label=pl)
+            # 高信頼単複は OOS（校正の評価年＝共通の最新年）に限定して測る。
+            oos_years = sorted({r[:4] for r in common if r[:4].isdigit()})
+            oos_set = {r for r in common if r[:4] == oos_years[-1]} if len(oos_years) >= 2 else common
+            _print_high_conf_single(prob_vec, T, ret_src, win_odds, pick_label=pl, restrict=oos_set)
             if args.dump_disagreement:                                             # P1 累積保存
+                from src.pipeline._eval_stamp import feature_schema_hash
+                mv = mpath.replace("\\", "/").split("/")[-1].replace(".pickle", "")
                 _dump_disagreement(args.dump_disagreement, prob_vec, top_by_race,
-                                   win_odds, ret_src, T, winners)
+                                   win_odds, ret_src, T, winners,
+                                   model_version=mv, schema_hash=feature_schema_hash(feat_names))
         print("\n※ 券種戦略グリッド/TOTAL は MC 専用（joint 確率が要る）ためスキップ。"
               "LightGBM は勝ち馬順位付けが強く、市場対照＝『本番モデルは市場を超えるか』の本命検証。")
         return 0

@@ -133,6 +133,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
              "全40年がメモリに載らない環境で Elo 有無等の A/B を回すための行数上限。",
     )
     retrain_p.add_argument(
+        "--until-year", type=int, default=None, metavar="YYYY",
+        help="指定年以前(<=)の行だけで学習＝評価年より前だけの完全OOS walk-forwardモデルを作る。"
+             "例: --until-year 2025 --version-name wf_2025 で 2026評価用(2025以前学習)モデル。",
+    )
+    retrain_p.add_argument(
         "--jra-only", action="store_true",
         help="中央（JRA・場コード01-10）のレースだけで学習する。地方(NAR)の netkeiba データが"
              "壊れている（1レース数頭しか無い）場合に除外するためのフィルタ。backtest も同フラグを付ける。",

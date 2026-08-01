@@ -160,6 +160,18 @@ def _retrain(args: argparse.Namespace) -> None:
             logger.error("[retrain] --since-year 後の学習データが空です（年が新しすぎ/race_id 形式不一致）")
             return
 
+    # --until-year: 指定年以前(<=)の行だけで学習＝評価年より前だけの完全OOS walk-forwardモデル。
+    until_year = getattr(args, "until_year", None)
+    if until_year:
+        before = len(featured_data)
+        yr = pd.to_numeric(featured_data.index.astype(str).str[:4], errors="coerce")
+        featured_data = featured_data[yr <= until_year]
+        logger.info("[retrain] --until-year %d: %d年以前のみで学習 %d→%d 行（完全OOS用）",
+                    until_year, until_year, before, len(featured_data))
+        if featured_data.empty:
+            logger.error("[retrain] --until-year 後の学習データが空です")
+            return
+
     # --jra-only: 中央（JRA・場コード01-10）だけで学習。地方(NAR)の netkeiba データが壊れている
     # 場合に除外する（1レース数頭しか無いと race 文脈が無意味＝学習に有害）。
     if getattr(args, "jra_only", False):
