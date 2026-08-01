@@ -355,6 +355,15 @@ class DataMerger:
             res[idcol] = res[idcol].map(lambda v, _e=etype: canon_person_id(_e, v))
             res = res.merge(sub.drop_duplicates([idcol, "_pry"]), on=[idcol, "_pry"], how="left")
 
+        # 充足監査: 各 _py_ ファミリが全欠測なら未取得として警告（owner_id が raw_results に無い等で
+        # backfill が skip したケースを本番ビルドで可視化する。race_class 全ゼロと同種の検出）。
+        for prefix in ("jockey_py", "trainer_py", "owner_py", "breeder_py"):
+            fcols = [f"{prefix}_{c}" for c in stat_cols if f"{prefix}_{c}" in res.columns]
+            if fcols and not res[fcols].notna().any().any():
+                logger.warning(
+                    "[person_yearly] %s_* が全欠測＝未取得の疑い（%s の年度別成績が結合できていない。"
+                    "backfill-persons と id ソースを確認）", prefix, prefix.replace("_py", ""),
+                )
         self._results = res.drop(columns=["_pry", "_breeder_tmp"], errors="ignore").set_index("race_id")
 
     # ライブ推論(ShutubaDataMerger)が person_te / form-from-results を serve で再計算するために

@@ -210,3 +210,36 @@ def test_oriented_auc_flips_sign_by_train():
     test_x = [1, 2, 3, 4];   test_y = [1, 1, 0, 0]
     a = de._oriented_auc(train_x, train_y, test_x, test_y)
     assert a is not None and a > 0.5
+
+
+# ---- audit_feature_coverage の純ヘルパのテスト ----
+_AUD_PATH = Path(__file__).resolve().parents[2] / "scripts" / "audit_feature_coverage.py"
+_aspec = importlib.util.spec_from_file_location("audit_feature_coverage", _AUD_PATH)
+au = importlib.util.module_from_spec(_aspec)
+_aspec.loader.exec_module(au)
+
+
+def test_profile_columns_detects_dead():
+    import numpy as np
+    df = pd.DataFrame({
+        "owner_py_勝率": [0.0, 0.0, 0.0, 0.0],       # 全ゼロ＝dead
+        "sire_win_rate": [np.nan] * 4,               # 全欠測＝dead
+        "jockey_py_勝率": [0.1, 0.2, 0.3, 0.4],       # 生きている
+    })
+    prof = au.profile_columns(df)
+    assert prof["owner_py_勝率"]["dead"] is True
+    assert prof["sire_win_rate"]["dead"] is True
+    assert prof["jockey_py_勝率"]["dead"] is False
+    assert prof["jockey_py_勝率"]["pct_nonnull"] == 1.0
+
+
+def test_group_by_prefix_all_dead_flag():
+    import numpy as np
+    df = pd.DataFrame({
+        "owner_py_勝率": [0.0] * 4, "owner_py_複勝率": [0.0] * 4,   # ファミリ全滅
+        "jockey_py_勝率": [0.1, 0.2, 0.3, 0.4],                    # 生存
+    })
+    g = au.group_by_prefix(au.profile_columns(df), ["owner_py_", "jockey_py_", "sire_"])
+    assert g["owner_py_"]["all_dead"] is True and g["owner_py_"]["n_cols"] == 2
+    assert g["jockey_py_"]["all_dead"] is False
+    assert g["sire_"]["n_cols"] == 0            # 列が無いファミリは n_cols=0
