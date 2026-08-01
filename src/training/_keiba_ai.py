@@ -27,6 +27,8 @@ class KeibaAI:
         # 学習時の特徴量契約（列名・順序・dtype）。#24: 推論前 align で列ずれ silent 誤予測を防ぐ。
         # 本コミット群では「学習側の保存」まで（推論経路での適用は別 PR）。
         self.feature_contract_: FeatureContract | None = None
+        # 学習データの日付範囲(min,max)。評価/学習の時間重なり(リーク)を機械的に assert するため保存。
+        self.training_data_period_: tuple[str, str] | None = None
         self._tuned_base_models_config: Any = None  # tune_per_model 探索後の完成 config（書き戻し用）
 
     @property
@@ -56,6 +58,19 @@ class KeibaAI:
         """
         self.__model_wrapper.set_params(params)
 
+    def _set_feature_contract(self, X_train) -> None:
+        """学習列名の契約（#24）を確定する。fit直前の実列名・列順(＋dtype)を正典として保存し、
+        推論/評価時に厳密選択できるようにする。**全学習経路（stacking/非stacking fallback）で必須**。
+        併せて学習データの日付範囲(training_data_period_)も保存し OOS の時間重なりを検出可能にする。"""
+        self.feature_names_ = list(X_train.columns)
+        self.feature_contract_ = FeatureContract.from_frame(X_train)
+        try:
+            d = pd.to_datetime(self.__datasets.featured_data["date"], errors="coerce").dropna()
+            if len(d):
+                self.training_data_period_ = (str(d.min().date()), str(d.max().date()))
+        except Exception:  # noqa: BLE001
+            self.training_data_period_ = None
+
     def train_with_tuning(self, tuning_config=None):
         """
         optunaでのチューニング後、訓練させる。
@@ -64,12 +79,14 @@ class KeibaAI:
         """
         self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
         self.__model_wrapper.train(self.__datasets)
+        self._set_feature_contract(self.__datasets.X_train)   # 非stackingでも契約を保存
 
     def train_without_tuning(self):
         """
         ハイパーパラメータチューニングをスキップして訓練させる。
         """
         self.__model_wrapper.train(self.__datasets)
+        self._set_feature_contract(self.__datasets.X_train)   # 非stackingでも契約を保存
 
     def train_with_stacking(self, meta_ratio=0.3, with_tuning=True, tuning_config=None, base_models_config=None):
         """スタッキング+Isotonic 較正の Layer1 パイプラインを実行する。
@@ -254,10 +271,9 @@ class KeibaAI:
             self.__datasets.X_calib,
             self.__datasets.y_calib.values,
         )
-        self.feature_names_ = list(self.__datasets.X_base_train.columns)
         # #24: 学習時の列名・順序・dtype を契約として保存（推論前 align の単一情報源）。
         # base 学習器は X_base_train を .values（位置ベース）で消費するため、この順序が正典。
-        self.feature_contract_ = FeatureContract.from_frame(self.__datasets.X_base_train)
+        self._set_feature_contract(self.__datasets.X_base_train)
 
         # base LightGBM の特徴量重要度を ModelWrapper に反映（特徴量重要度ページ用）
         try:

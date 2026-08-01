@@ -105,12 +105,20 @@ def _resolve_feature_names(model, eff):
 def _select_usable_lgbm_model(featured, *, models_dir="models", explicit_version=None):
     """現 featured と整合する（保存済み実列名が全て featured に在り n_features_in_ と一致する）
     最新モデルを models/ から選ぶ。旧モデル（列名なし・版ずれ）はスキップし理由を report に残す。"""
+    import glob
     import os
 
     from app._data_loader import find_model_paths, load_model_from_path
-    paths = find_model_paths(models_dir)
     if explicit_version:
-        paths = [p for p in paths if explicit_version in os.path.basename(p)]
+        # 明示版名は find_model_paths(_keibam.pickle 限定) に載らない任意名(wf_2025.pickle 等)。
+        # models/**/ を直接 glob。__win/__category 等の派生ヘッドは除外し Place 本体を優先採用。
+        cands = sorted(glob.glob(os.path.join(models_dir, "**", f"*{explicit_version}*.pickle"),
+                                 recursive=True))
+        exact = [p for p in cands if os.path.basename(p) == f"{explicit_version}.pickle"]
+        non_sub = [p for p in cands if "__" not in os.path.basename(p) and p not in exact]
+        paths = exact + non_sub + [p for p in cands if "__" in os.path.basename(p)]
+    else:
+        paths = find_model_paths(models_dir)
     fcols = set(featured.columns)
     report = []
     for p in paths:
@@ -880,6 +888,8 @@ def main() -> int:
                     help="確率源。mc=物理モンテカルロ / lgbm=本番LightGBM較正勝率。"
                          "lgbm は市場対照・校正・A/B/C のみ実行（MC専用の券種戦略グリッドはスキップ）")
     ap.add_argument("--model-version", default=None, help="lgbm 時のモデル版名（既定=最新統合）")
+    ap.add_argument("--eval-year", type=int, default=None,
+                    help="評価対象を厳密に単一年へ限定（完全OOS用。例 --eval-year 2026 で wf_2025 と組む）")
     ap.add_argument("--dump-disagreement", default=None,
                     help="lgbm 時、予測≠市場1番人気のレースを CSV 保存（市場×モデル不一致研究の累積用）")
     ap.add_argument("--walk-forward", action="store_true", help="過去年で戦略選択→翌年で評価")
@@ -924,7 +934,9 @@ def main() -> int:
 
     date = pd.to_datetime(featured["date"]).groupby(level=0).first().sort_values()
     order = list(date.index)
-    if args.max_year:
+    if args.eval_year:      # 完全OOS: 評価対象を厳密に単一年へ限定（<=max-year では前年が混ざる）
+        order = [r for r in order if str(r)[:4].isdigit() and int(str(r)[:4]) == args.eval_year]
+    elif args.max_year:
         order = [r for r in order if str(r)[:4].isdigit() and int(str(r)[:4]) <= args.max_year]
     if args.limit and len(order) > args.limit:
         order = order[-args.limit:]
@@ -962,7 +974,20 @@ def main() -> int:
             return 1
         if report:
             print(f"  [モデル選択] {len(report)} 個をスキップ（旧/版ずれ）→ 採用 {mpath}", file=sys.stderr)
-        print(f"[全期間・LightGBM] {len(order):,}レース / model={mpath}")
+        # [OOS assert] 学習期間が評価年に食い込んでいないか機械チェック（in-sample を機械的に拒否）。
+        tperiod = getattr(model, "training_data_period_", None)
+        if args.eval_year and tperiod:
+            train_end = str(tperiod[1])
+            if train_end >= f"{args.eval_year}-01-01":
+                print(f"  ✗ [OOS違反] 学習終端 {train_end} ≧ 評価年 {args.eval_year} 開始。in-sample のため中止。"
+                      f"--until-year {args.eval_year - 1} で学習した OOS モデルを使うこと。", file=sys.stderr)
+                return 1
+            print(f"  ✓ [OOS] 学習終端 {train_end} < 評価年 {args.eval_year}（完全OOS）")
+        elif args.eval_year and not tperiod:
+            print(f"  ⚠ [OOS] モデルに training_data_period_ が無く時間重なりを検証不能"
+                  f"（旧モデル）。評価年={args.eval_year} が学習に含まれないこと要手動確認。", file=sys.stderr)
+        print(f"[{'OOS ' + str(args.eval_year) if args.eval_year else '全期間'}・LightGBM] "
+              f"{len(order):,}レース / model={mpath}")
         top_by_race, calib, smoke, prob_vec = _lgbm_probs(model, featured, feat_names)
         pl = "LGBM1位"
         # [正常性スモーク] 特徴整合が壊れていれば AUC≒0.5 になる。0.807 近傍で初めて ROI を信頼できる。
