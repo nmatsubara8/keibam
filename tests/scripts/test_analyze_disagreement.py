@@ -260,3 +260,24 @@ def test_classify_dead_taxonomy():
     assert au.classify_dead("kokusai", dead) == "TRUE_CONSTANT_OR_SCOPE_CONSTANT"
     assert au.classify_dead("mystery_col", dead, source_present=None) == "UNKNOWN"
     assert au.classify_dead("jockey_py_勝率", alive) == "OK"                # 生存列は OK
+
+
+# ---- audit_jrdb_race_class.summarize_codes（純関数）のテスト ----
+_JRC_PATH = Path(__file__).resolve().parents[2] / "scripts" / "audit_jrdb_race_class.py"
+_jrcspec = importlib.util.spec_from_file_location("audit_jrdb_race_class", _JRC_PATH)
+jrc = importlib.util.module_from_spec(_jrcspec)
+_jrcspec.loader.exec_module(jrc)
+
+
+def test_summarize_codes_normalizes_and_counts_unmapped():
+    j2c = {"04": "1勝クラス", "A1": "新馬"}
+    # '4 '→'04'(mapped), 'A1'(mapped), '99'/'16'→unmapped, 空白/nan は除外
+    joken = ["4 ", " 4", "A1", "99", "16", "", "nan"]
+    grade = ["1", "1", "6", "", "nan"]
+    s = jrc.summarize_codes(joken, grade, j2c)
+    assert s["n"] == 5                                  # 空白/nan 除外で 5 行
+    assert s["mapped"]["04"] == 2                       # '4 ' と ' 4' が '04' に正規化
+    assert s["mapped"]["A1"] == 1
+    assert set(s["unmapped"]) == {"99", "16"}
+    assert abs(s["coverage"] - 3 / 5) < 1e-9
+    assert s["grade"]["1"] == 2 and s["grade"]["6"] == 1
