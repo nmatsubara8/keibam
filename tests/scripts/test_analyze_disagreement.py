@@ -243,3 +243,15 @@ def test_group_by_prefix_all_dead_flag():
     assert g["owner_py_"]["all_dead"] is True and g["owner_py_"]["n_cols"] == 2
     assert g["jockey_py_"]["all_dead"] is False
     assert g["sire_"]["n_cols"] == 0            # 列が無いファミリは n_cols=0
+
+
+def test_classify_dead_taxonomy():
+    dead = {"dead": True}
+    alive = {"dead": False}
+    assert au.classify_dead("開催__30", dead) == "UNSEEN_CATEGORY"      # one-hot 未出現
+    assert au.classify_dead("race_class__G1", dead) == "UNSEEN_CATEGORY"
+    assert au.classify_dead("kokusai", dead) == "TRUE_CONSTANT"         # 既知の条件フラグ
+    assert au.classify_dead("sire_win_rate", dead, source_present=False) == "SOURCE_MISSING"
+    assert au.classify_dead("owner_py_勝率", dead, source_present=True) == "JOIN_FAILURE"
+    assert au.classify_dead("mystery_col", dead, source_present=None) == "UNKNOWN"
+    assert au.classify_dead("jockey_py_勝率", alive) == "OK"            # 生存列は OK
