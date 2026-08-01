@@ -146,3 +146,34 @@ def test_summarize_delta_shap_consistent_sign_across_years():
     assert "f0" in cons          # 両年とも負＝符号一致
     assert "f1" not in cons      # 符号反転
     assert "f2" not in cons      # ゼロ（符号なし）
+
+
+# ---- difficulty_estimation の純ヘルパのテスト ----
+_DIFF_PATH = Path(__file__).resolve().parents[2] / "scripts" / "difficulty_estimation.py"
+_dspec = importlib.util.spec_from_file_location("difficulty_estimation", _DIFF_PATH)
+de = importlib.util.module_from_spec(_dspec)
+_dspec.loader.exec_module(de)
+
+
+def test_neither_label():
+    df = pd.DataFrame({"lgbm_hit": [1, 0, 0, None], "market_hit": [0, 1, 0, 0]})
+    y = de.neither_label(df)
+    assert y.iloc[0] == 0.0        # LGBM勝ち → 難レースでない
+    assert y.iloc[1] == 0.0        # 市場勝ち → 難レースでない
+    assert y.iloc[2] == 1.0        # どちらも負け → 難レース
+    assert y.iloc[3] != y.iloc[3]  # 着順不明 → NaN
+
+
+def test_walk_forward_splits_leak_safe():
+    # 学習は必ず評価年より前のみ（完全OOS）。最古年は評価対象にならない。
+    assert de.walk_forward_splits(["2026", "2025", "2025", "2027"]) == [
+        (("2025",), "2026"), (("2025", "2026"), "2027")]
+    assert de.walk_forward_splits(["2025"]) == []          # 学習年が無い→空
+
+
+def test_oriented_auc_flips_sign_by_train():
+    # 学習年で「小さいほど neither」なら評価年でも符号を反転して >0.5 に揃う。
+    train_x = [1, 2, 3, 4];  train_y = [1, 1, 0, 0]     # x小→neither(=1)
+    test_x = [1, 2, 3, 4];   test_y = [1, 1, 0, 0]
+    a = de._oriented_auc(train_x, train_y, test_x, test_y)
+    assert a is not None and a > 0.5
