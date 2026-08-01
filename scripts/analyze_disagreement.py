@@ -369,34 +369,46 @@ def _candidate_scan(df, feats, *, min_nonnull=50, min_nonzero=20, min_unique=3, 
     years = sorted(sub["year"].astype(str).unique())
     print(f"\n[候補スキャン] 決着{len(sub):,}レース・{len(feats)}特徴を coverage＋方向補正AUC(max(AUC,1−AUC))"
           f"＋年再現性で判定（各年 非欠測≥{min_nonnull}/非ゼロ≥{min_nonzero}/unique≥{min_unique}・両年strength≥{strength_thr}・方向一致）")
-    cands = []
+    cands, near = [], []
     for f in feats:
-        per, ok, dirs, strengths = {}, True, [], []
+        per = {}
         for y in years:
             g = sub[sub["year"].astype(str) == y]
             x = pd.to_numeric(g[f], errors="coerce")
-            nn = int(x.notna().sum())
-            nz = int((x.fillna(0) != 0).sum())
-            uq = int(x.nunique(dropna=True))
             a = _auc(list(zip(x.fillna(0.0), g["lgbm_hit"].astype(int), strict=False)))
-            per[y] = (a, nn, nz, uq)
-            if not (nn >= min_nonnull and nz >= min_nonzero and uq >= min_unique and a is not None):
-                ok = False
-            else:
-                dirs.append(1 if a >= 0.5 else -1)
-                strengths.append(max(a, 1 - a))
-        if ok and len(set(dirs)) == 1 and min(strengths) >= strength_thr:
+            per[y] = (a, int(x.notna().sum()), int((x.fillna(0) != 0).sum()),
+                      int(x.nunique(dropna=True)))
+        if any(per[y][0] is None for y in years):
+            continue
+        dirs = [1 if per[y][0] >= 0.5 else -1 for y in years]
+        strengths = [max(per[y][0], 1 - per[y][0]) for y in years]
+        cov_ok = all(per[y][1] >= min_nonnull and per[y][2] >= min_nonzero
+                     and per[y][3] >= min_unique for y in years)
+        signal = len(set(dirs)) == 1 and min(strengths) >= strength_thr
+        if signal and cov_ok:
             cands.append((f, min(strengths), dirs[0], per))
-    if not cands:
+        elif signal and not cov_ok:               # 効果はあるが coverage 不足＝subsample 依存で保留
+            near.append((f, min(strengths), dirs[0], per))
+
+    def _mk(f):
+        return "  (市場情報)" if ("単勝" in f or "odds" in f or "impl" in f) else ""
+    if cands:
+        print(f"  {'特徴':<24}{'方向':>5}" + "".join(f"{y+'AUC*':>10}" for y in years) + f"{'最小strength':>12}")
+        for f, smin, d, per in sorted(cands, key=lambda r: -r[1]):
+            cells = "".join(f"{max(per[y][0], 1 - per[y][0]):>10.3f}" for y in years)
+            print(f"  {f:<24}{('LGBM+' if d > 0 else 'LGBM-'):>5}{cells}{smin:>12.3f}{_mk(f)}")
+        print("  → これらは事前登録候補（方向のみ凍結）。数百特徴の後発見のため 2025-2026 で閾値調整せず、"
+              "2027完全OOSで検証。『単勝/オッズ』系は購入時点の市場情報＝直交情報でないため別枠。")
+    else:
         print("  → coverage＋方向補正AUC＋年再現性を全て満たす特徴なし（現情報では事前識別不能）。")
-        return []
-    print(f"  {'特徴':<24}{'方向':>5}" + "".join(f"{y+'AUC*':>10}" for y in years) + f"{'最小strength':>12}")
-    for f, smin, d, per in sorted(cands, key=lambda r: -r[1]):
-        cells = "".join(f"{max(per[y][0], 1 - per[y][0]):>10.3f}" for y in years)
-        market = "  (市場情報)" if ("単勝" in f or "odds" in f or "impl" in f) else ""
-        print(f"  {f:<24}{('LGBM+' if d > 0 else 'LGBM-'):>5}{cells}{smin:>12.3f}{market}")
-    print("  → これらは事前登録候補（方向のみ凍結）。数百特徴の後発見のため 2025-2026 で閾値調整せず、"
-          "2027完全OOSで検証。『単勝/オッズ』系は購入時点の市場情報＝直交情報でないため別枠。")
+    if near:
+        print("\n  [保留: 効果はあるが coverage不足＝subsample依存]（両年strength≥閾値・方向一致だが非欠測/非ゼロ不足）")
+        print(f"  {'特徴':<24}{'方向':>5}" + "".join(f"{y+'非欠測':>10}" for y in years))
+        for f, smin, d, per in sorted(near, key=lambda r: -r[1]):
+            cells = "".join(f"{per[y][1]:>10,}" for y in years)
+            print(f"  {f:<24}{('LGBM+' if d > 0 else 'LGBM-'):>5}{cells}{_mk(f)}")
+        print(f"  → wet_rel_rank 等はここ。効果量では上位でも母集団が限られる（例:道悪実績のある馬のみ）。"
+              "事前登録するなら『両本命に当該実績がある部分集合限定』の条件を明記して 2027 検証。")
     return [c[0] for c in cands]
 
 
