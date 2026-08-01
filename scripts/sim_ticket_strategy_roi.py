@@ -154,7 +154,9 @@ def _lgbm_probs(model, featured, feat_names):
           file=sys.stderr)
     print(f"  [契約診断] 学習列 先頭: {feat_names[:8]}", file=sys.stderr)
     X_model = featured.reindex(columns=feat_names)   # 学習列だけ・学習順
-    prob = np.asarray(eff.predict_proba(X_model.values))[:, 1]
+    # nullable拡張dtype/object の pd.NA(NAType) を np.nan へ（学習時の coerce と同じ・本番推論経路と同一）。
+    from src.policies._score_policy import _coerce_for_predict
+    prob = np.asarray(eff.predict_proba(_coerce_for_predict(X_model).values))[:, 1]
     rank_arr = pd.to_numeric(featured[ResultsCols.RANK], errors="coerce").to_numpy()
     tbl = pd.DataFrame({"_rid": featured.index.astype(str),
                         "uma": pd.to_numeric(featured[ResultsCols.UMABAN], errors="coerce"),
