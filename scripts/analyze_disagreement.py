@@ -50,8 +50,12 @@ def _summary(df):
 def _breakdown(df, col, bins=None, labels=None, title=None):
     import pandas as pd
     print(f"\n[{title or col}別]  {'区分':<14}{'件数':>7}{'モ勝':>7}{'市勝':>7}{'モROI':>8}{'市ROI':>8}")
+    s = pd.to_numeric(df[col], errors="coerce")
     if bins is not None:
-        key = pd.cut(pd.to_numeric(df[col], errors="coerce"), bins=bins, labels=labels)
+        key = pd.cut(s, bins=bins, labels=labels)
+    elif s.notna().sum() >= len(df) * 0.5 and s.nunique() > 15:
+        # 連続値(距離・馬場長 等)は分位で ~6 区分に丸める（生 groupby で1行/値・空表になるのを防ぐ）。
+        key = pd.qcut(s, q=min(6, s.nunique()), duplicates="drop")
     else:
         key = df[col].astype(str)
     for k, g in df.groupby(key, observed=True):
@@ -85,28 +89,88 @@ def _meta_auc(df):
 
 
 def _featured_join(df, featured_path):
-    """(任意) featured から race 単位の 芝ダ/距離/クラス/頭数 を join して内訳を出す（列があれば）。"""
+    """(任意) featured の race 単位 数値特徴(頭数/距離/コース/クラス等)を join。返す:(df, 数値列名)。"""
     import pandas as pd
 
     from app._model_eval import load_featured_data
     f = load_featured_data(featured_path) if featured_path else load_featured_data()
     if f is None or f.empty:
-        print("\n[featured] 読み込めず（芝ダ/距離等の内訳はスキップ）", file=sys.stderr)
-        return
-    cand = {c: c for c in f.columns if any(k in str(c) for k in
-            ("コース", "course", "距離", "dist", "race_class", "頭数", "n_horses", "going", "芝"))}
+        print("\n[featured] 読み込めず（race-context の効果量/内訳はスキップ）", file=sys.stderr)
+        return df, []
+    cand = [c for c in f.columns if any(k in str(c) for k in
+            ("コース", "course", "距離", "dist", "race_class", "頭数", "n_horses", "going", "芝",
+             "class_level"))]
     if not cand:
-        print("\n[featured] 芝ダ/距離/クラス相当の列が見つからず内訳スキップ", file=sys.stderr)
-        return
+        return df, []
     race = f.groupby(level=0).first()
     race.index = race.index.astype(str)
-    j = df.join(race[list(cand)], on="race_id")
-    print(f"\n[featured 内訳] join 列: {list(cand)[:8]}")
-    for c in list(cand)[:4]:
-        try:
-            _breakdown(j.dropna(subset=[c]), c, title=f"featured:{c}")
-        except Exception as e:  # noqa: BLE001
-            print(f"  {c}: 集計失敗 {e}", file=sys.stderr)
+    j = df.join(race[cand], on="race_id")
+    num_cols = [c for c in cand if pd.to_numeric(j[c], errors="coerce").notna().sum() >= len(j) * 0.5]
+    print(f"\n[featured join] race-context 数値列 {len(num_cols)}: {num_cols[:8]}")
+    return j, num_cols
+
+
+def _cohens_d(a, b):
+    """Cohen's d（標準化平均差）。|d|<0.2小 / 0.5中 / 0.8大。"""
+    import numpy as np
+    a = np.asarray(a, float); a = a[np.isfinite(a)]
+    b = np.asarray(b, float); b = b[np.isfinite(b)]
+    if len(a) < 2 or len(b) < 2:
+        return None
+    sp = (((len(a) - 1) * a.std(ddof=1) ** 2 + (len(b) - 1) * b.std(ddof=1) ** 2)
+          / (len(a) + len(b) - 2)) ** 0.5
+    return float((a.mean() - b.mean()) / sp) if sp > 0 else 0.0
+
+
+def _cliffs_delta(a, b):
+    """Cliff's delta（順位ベース・非正規頑健）= 2·AUC−1。|δ|<0.147小 / 0.33中 / 0.474大。"""
+    from src.simulation._bet_eval import _auc
+    scores = [(float(x), 1) for x in a if x == x] + [(float(x), 0) for x in b if x == x]
+    auc = _auc(scores)
+    return (2 * auc - 1) if auc is not None else None
+
+
+def _mag(delta):
+    """Cliff's delta の大きさラベル。"""
+    if delta is None:
+        return "-"
+    ad = abs(delta)
+    return "大" if ad >= 0.474 else "中" if ad >= 0.33 else "小" if ad >= 0.147 else "無視"
+
+
+def _effect_sizes(df, feats):
+    """B群内『モデルが勝ったレース vs 市場が勝ったレース』の二群を各特徴の効果量で比較（記述）。
+
+    片方の本命だけが勝ったレース(lgbm_hit XOR market_hit)を対象に、A=モデル勝ち/B=市場勝ち。
+    Cohen's d と Cliff's delta を出し、|δ| 降順で『両群を最も分ける特徴』を示す。全て小なら
+    『現特徴ではモデルが勝つ場面を事前識別できない』(AUC≈0.5 を別角度で裏付け)。大きい特徴があれば
+    事前登録して完全OOSで検証すべき仮説。※有意性検定はしない（記述＝多重探索を避ける）。
+    """
+    import pandas as pd
+    sub = df[(pd.to_numeric(df["lgbm_hit"], errors="coerce") == 1)
+             ^ (pd.to_numeric(df["market_hit"], errors="coerce") == 1)].copy()
+    A = sub[sub["lgbm_hit"] == 1]
+    B = sub[sub["market_hit"] == 1]
+    print(f"\n[効果量: モデル勝ち {len(A):,} vs 市場勝ち {len(B):,}]（片方の本命が勝った{len(sub):,}レース）")
+    print(f"  {'特徴':<22}{'Cohen d':>9}{'Cliff δ':>9}{'大きさ':>7}  (Aμ/Bμ)")
+    rows = []
+    for f in feats:
+        a = pd.to_numeric(A[f], errors="coerce")
+        b = pd.to_numeric(B[f], errors="coerce")
+        d = _cohens_d(a, b)
+        cd = _cliffs_delta(a.dropna().tolist(), b.dropna().tolist())
+        rows.append((f, d, cd, a.mean(), b.mean()))
+    for f, d, cd, am, bm in sorted(rows, key=lambda r: -(abs(r[2]) if r[2] is not None else -1)):
+        ds = f"{d:+.3f}" if d is not None else "  -  "
+        cds = f"{cd:+.3f}" if cd is not None else "  -  "
+        print(f"  {f:<22}{ds:>9}{cds:>9}{_mag(cd):>7}  ({am:.2f}/{bm:.2f})")
+    big = [r for r in rows if r[2] is not None and abs(r[2]) >= 0.33]
+    if big:
+        print(f"  → |Cliff δ|≥0.33(中以上)の特徴あり: {[r[0] for r in big]}。"
+              "これは事前登録して完全OOSで検証すべき仮説（今ここで買い目化しない）。")
+    else:
+        print("  → 全特徴 |Cliff δ|<0.33（小/無視）。現特徴ではモデルが市場に勝つ場面を事前識別できない"
+              "＝③のAUC≒0.5 を別角度で裏付け（不一致は現情報で分離不能）。")
 
 
 def main() -> int:
@@ -126,17 +190,22 @@ def main() -> int:
     for c in ("lgbm_hit", "market_hit", "lgbm_win_payout", "market_win_payout"):
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
     print(f"=== 不一致分析（説明可能性・ROIでなく発生機構） {args.csv} ===")
+    print("※ 主要指標は 勝率差（どちらの本命が勝ったか）。ROIはオッズ由来の分散が大きく年で不安定。")
+    csv_feats = ["prob_diff", "odds_diff", "market_rank_of_lgbm", "lgbm_top_odds", "lgbm_prob_cal"]
+    race_cols = []
+    if args.featured is not None:
+        df, race_cols = _featured_join(df, args.featured or None)
     _summary(df)
     _breakdown(df, "market_rank_of_lgbm", title="市場人気順位(モデル本命の)")
     _breakdown(df, "odds_diff", bins=[-999, -5, -2, 0, 2, 5, 999],
                labels=["≤-5", "-5..-2", "-2..0", "0..2", "2..5", ">5"], title="オッズ差(モ-市)")
-    _breakdown(df, "prob_diff", bins=[-1, 0, 0.05, 0.1, 0.2, 1],
-               labels=["<0", "0-.05", ".05-.1", ".1-.2", ">.2"], title="確率差(モ-市implied)")
     _breakdown(df, "lgbm_top_odds", bins=[0, 3, 5, 10, 20, 999],
                labels=["≤3", "3-5", "5-10", "10-20", ">20"], title="モデル本命オッズ帯")
-    _meta_auc(df)
-    if args.featured is not None:
-        _featured_join(df, args.featured or None)
+    for c in race_cols[:4]:
+        _breakdown(df, c, title=f"featured:{c}")
+    feats = csv_feats + race_cols
+    _meta_auc(df)                    # ③ 予測可能性（単変量AUC・年別）
+    _effect_sizes(df, feats)         # 二群(モデル勝ち vs 市場勝ち)の効果量（記述・分離度）
     print("\n※ これは記述統計。ここで見つけた条件で買い目を作ると多重探索。条件は事前登録し完全OOSで検証すること。")
     return 0
 
