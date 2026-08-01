@@ -170,6 +170,7 @@ def _lgbm_probs(model, featured, feat_names):
              "n_feat": int(X_model.shape[1])}
     winners = _race_winners(featured)
     top_by_race: dict = {}
+    prob_vec_by_race: dict = {}          # {race_id: (umaban_list, prob_list)} 校正/高確率評価で共用
     calib: list = []
     for rid, g in tbl.groupby("_rid"):
         umas = [int(u) for u in g["uma"] if pd.notna(u)]
@@ -177,10 +178,11 @@ def _lgbm_probs(model, featured, feat_names):
         if not umas:
             continue
         top_by_race[rid] = umas[int(np.argmax(probs))]
+        prob_vec_by_race[rid] = (umas, probs)
         w = winners.get(rid)
         if w is not None and w in umas:
-            calib.append((rid[:4], probs, umas.index(w)))
-    return top_by_race, calib, smoke
+            calib.append((rid, rid[:4], probs, umas.index(w)))   # (race_id, 年, 勝率ベクトル, 勝者index)
+    return top_by_race, calib, smoke, prob_vec_by_race
 
 
 def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_spread,
@@ -220,7 +222,7 @@ def _run_strategies(featured, order, ret_src, strategies, *, n_sim, T, ability_s
         if winner is not None and winner in list(umaban):
             p_vec = [float(probs.get(TANSHO, {}).get(int(u), 0.0)) for u in umaban]
             w_idx = list(umaban).index(winner)
-            calib.append((str(rid)[:4], p_vec, w_idx))   # (年, 勝率ベクトル, 勝者index)
+            calib.append((str(rid), str(rid)[:4], p_vec, w_idx))   # (race_id, 年, 勝率ベクトル, 勝者index)
         aud = s4_point_audit(rank)
         s4_field[aud["actual"]] = s4_field.get(aud["actual"], 0) + 1
         for name, strat in strategies.items():
@@ -417,9 +419,10 @@ def _print_coverage_audit(featured, order, comparable, sim_top, winners, pick_la
         print(f"    頭数 {_dist_str(fs_bucket)}")
 
     _row("全評価", allids)
-    _row("市場比較", comp)
-    print(f"  → 市場比較の年/場/頭数分布・{pick_label}的中率が全評価と大きく違えば偏った標本"
-          "（＝ΔROIの判定はさらに不確か）。カバレッジを上げて再監査すること。")
+    _row("市場比較(=JRA×TYB共通)", comp)
+    print("  → 全評価は地方/少頭数/TYB対象外を含む別母集団（平均頭数が大きく違う）。市場命題は"
+          "『JRA×TYB×HJC共通集合』で評価するのが正しく、分母は市場比較側に固定する。"
+          "『46.7%だから偏り』ではなく『別母集団なので適格集合へ揃える』が適切な解釈。")
 
 
 def _market_rank_of(win_odds_race, horse):
@@ -469,23 +472,36 @@ def _print_market_subgroups(win_odds, sim_top, ret_src, pick_label="Sim1位"):
         f"B:{pick_label}≠市場1番人気": [r for r in common if mr[r] not in (None, 1)],
         f"C:{pick_label}が市場4番人気以下": [r for r in common if mr[r] is not None and mr[r] >= 4],
     }
-    print(f"\n[市場×選択差] {pick_label}の市場人気順位別 単勝/複勝成績（一致率の中身・確定払戻で精算）")
-    print(f"  {'群':<24}{'件数':>6}{'単ROI':>8}{'単的中':>7}{'複ROI':>8}{'平均O':>7}"
-          f"{'単除最大':>9}")
+    from src.simulation._ticket_backtest import market_favorite, paired_delta_roi_ci
+    fav = market_favorite(win_odds)
+    print(f"\n[市場×選択差] {pick_label} vs 同一レースの市場1番人気（各群で paired ΔROI・確定払戻精算）")
+    print(f"  {'群':<22}{'件数':>6}{'的中':>6}{'単ROI':>8}{'市場単':>8}{'Δ単勝':>8}"
+          f"{'95%CI':>16}{'除最大':>8}")
     for label, ids in groups.items():
         if not ids:
-            print(f"  {label:<24}{'0':>6}  （該当なし）")
+            print(f"  {label:<22}{'0':>6}  （該当なし）")
             continue
         pick = {r: sim_top[r] for r in ids}
+        mkt = {r: fav[r] for r in ids if r in fav}
         prw = settle_per_race(_single_candidates(BetType.TANSHO, pick), ret_src)
-        prp = settle_per_race(_single_candidates(BetType.FUKUSHO, pick), ret_src)
+        prw_m = settle_per_race(_single_candidates(BetType.TANSHO, mkt), ret_src)
         w = _arm_stats_detailed(prw, win_odds, pick)
-        p = _arm_stats_detailed(prp, win_odds, pick)
-        yr = "  ".join(f"{y}:{v:.0%}" for y, v in w["by_year"].items())
-        print(f"  {label:<24}{w['n']:>6,}{w['roi']:>8.1%}{w['hit']:>7.1%}{p['roi']:>8.1%}"
-              f"{w['avg_odds']:>7.1f}{w['roi_ex']:>9.1%}   年別単{yr}")
-    print(f"  → B/C（市場と違う選択）で十分件数かつ単勝ROIが市場対照を超えるなら、{pick_label}源は"
-          "弱い『人気薄選定器』の可能性。ただし少件数では探索的参考（要 walk-forward＋最低的中件数）。")
+        d = paired_delta_roi_ci(prw, prw_m, n_boot=2000)      # 同一群レースで LGBM−市場
+        n_hits = sum(dd["n_hits"] for dd in prw.values())
+        ci = f"[{d['lo']:+.0%},{d['hi']:+.0%}]"
+        sig = "*" if (d["lo"] > 0 or d["hi"] < 0) else " "
+        print(f"  {label:<22}{w['n']:>6,}{n_hits:>6,}{w['roi']:>8.1%}{d['roi_mkt']:>8.1%}"
+              f"{d['delta']:>+8.1%}{ci:>15}{sig}{w['roi_ex']:>8.1%}")
+    for label, ids in groups.items():
+        if ids:
+            w = _arm_stats_detailed(
+                settle_per_race(_single_candidates(BetType.TANSHO, {r: sim_top[r] for r in ids}),
+                                ret_src), win_odds, {r: sim_top[r] for r in ids})
+            yr = "  ".join(f"{y}:{v:.0%}" for y, v in w["by_year"].items())
+            print(f"    {label} 年別単ROI: {yr}")
+    print("  → 判定は『同一群での Δ単勝(LGBM−市場) の 95%CI が 0 を超える』＋的中数十分＋年別安定＋"
+          "除最大でも維持、で。市場全体(74%)と直接比べない（群ごとに平均オッズが違う）。"
+          "C群は少件数＝探索的参考（要 walk-forward・最低的中数の事前固定）。")
 
 
 def _single_candidates(bet_type, pick_by_race):
@@ -612,40 +628,53 @@ def _reliability_print(rel, indent="    "):
               f"{r['act']:>9.3f}")
 
 
-def _print_calibration(calib: list, pick_label="Sim1位"):
-    """[校正] 予測1位の予測勝率の帯別実勝率＋walk-forward temperature scaling（過信の矯正）。
+def _calib_direction(rel):
+    """帯別 reliability から件数加重の (実勝率−平均予測) を出す。>0=過小信頼 / <0=過信。"""
+    n = sum(r["n"] for r in rel) or 1
+    return sum(r["n"] * (r["act"] - r["pred"]) for r in rel) / n
 
-    calib=[(年, 勝率ベクトル, 勝者index)]。生の過信を示し、過去年で T を fit→翌年へ固定して
-    校正後の信頼度改善（NLL/ECE）を出す。確率ベース戦略(S9/EV/joint閾値)は校正後にのみ有効。
+
+def _print_calibration(calib: list, pick_label="Sim1位", restrict: set | None = None):
+    """[校正] 予測1位の予測勝率の帯別実勝率＋walk-forward temperature scaling。返す:(T, adopted)。
+
+    calib=[(race_id, 年, 勝率ベクトル, 勝者index)]。restrict 指定時はその race_id 集合に限定
+    （JRA×TYB×HJC 共通母集団で評価するため）。方向（過信/過小信頼）を実測から判定して表示。
     """
     from src.simulation._prob_calibration import (
         ece_top, fit_temperature, nll, reliability_top,
     )
-    print(f"\n[校正] {pick_label}の予測勝率 帯別実勝率（生）＋ walk-forward temperature scaling")
+    if restrict is not None:
+        calib = [c for c in calib if c[0] in restrict]
+    tag = "（共通母集団に限定）" if restrict is not None else ""
+    print(f"\n[校正] {pick_label}の予測勝率 帯別実勝率（生）＋ walk-forward temperature scaling{tag}")
     if not calib:
         print("  勝ち馬情報が無く測定不能。")
-        return
-    races_all = [(p, w) for _y, p, w in calib]
+        return 1.0, False
+    races_all = [(p, w) for _r, _y, p, w in calib]
+    rel_raw = reliability_top(races_all, T=1.0)
     print(f"  生（校正なし）:{'':<6}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
-    _reliability_print(reliability_top(races_all, T=1.0))
-    print(f"  生 ECE(top)={ece_top(races_all):.3f}  ← 大きいほど過信。確率値を使う規則は校正前は無効。")
+    _reliability_print(rel_raw)
+    dirn = _calib_direction(rel_raw)
+    label = ("過小信頼（実勝率>予測・T<1で確率差を強めると改善）" if dirn > 0.01 else
+             "過信（実勝率<予測・T>1で平坦化すると改善）" if dirn < -0.01 else "概ね整合")
+    print(f"  生 ECE(top)={ece_top(races_all):.3f}  方向: {label}（件数加重 実−予={dirn:+.3f}）")
 
-    years = sorted({y for y, _p, _w in calib})
+    years = sorted({y for _r, y, _p, _w in calib})
     if len(years) < 2:
         print("  年が1つで walk-forward 校正不可（過去年→翌年が要る）。")
-        return
+        return 1.0, False
     tr, te = years[0], years[-1]
-    train = [(p, w) for y, p, w in calib if y == tr]
-    test = [(p, w) for y, p, w in calib if y == te]
+    train = [(p, w) for _r, y, p, w in calib if y == tr]
+    test = [(p, w) for _r, y, p, w in calib if y == te]
     if len(train) < 100 or len(test) < 100:
         print(f"  学習{tr}/評価{te}が薄く校正不可。")
-        return
+        return 1.0, False
     T = fit_temperature(train)
     ece_raw, ece_cal = ece_top(test, T=1.0), ece_top(test, T=T)
     at_bound = T <= 0.31 or T >= 29.9
-    # temperature 採用の可否: ECE が有意に改善し、かつ T が境界に張り付いていないときだけ採用。
     adopt = (ece_cal < ece_raw - 0.002) and not at_bound
-    print(f"\n  walk-forward: {tr} で T を fit={T:.2f} → {te} で検証"
+    sharpen = "確率差を強める(T<1)" if T < 1 else "平坦化(T>1)" if T > 1 else "不変"
+    print(f"\n  walk-forward: {tr} で T を fit={T:.2f}（{sharpen}）→ {te} で検証"
           + ("（T境界張付＝最適が範囲外）" if at_bound else ""))
     print(f"  {te} 校正前 NLL={nll(test, 1.0):.4f} ECE={ece_raw:.3f} / "
           f"温度後 NLL={nll(test, T):.4f} ECE={ece_cal:.3f}")
@@ -653,26 +682,10 @@ def _print_calibration(calib: list, pick_label="Sim1位"):
         reason = ("既に良好で改善なし" if ece_raw < 0.03 else
                   "ECE悪化" if ece_cal >= ece_raw else "T境界張付")
         print(f"  → temperature scaling 非採用（{reason}）。生確率で評価する。")
-        T = 1.0
-    else:
-        print(f"  {te} 校正後 {pick_label} 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
-        _reliability_print(reliability_top(test, T=T))
-    # p1≥0.50 は採用した尺度（生 or 温度後）で、同一 test 集合の「トップ馬が実際に勝った率」を報告。
-    # ＝reliability_top と同一定義（勝者index の合計ではなく 1着一致の 0/1）。表と整合させる。
-    from src.simulation._prob_calibration import apply_temperature
-    hi = []
-    for p, w in test:
-        pc = apply_temperature(p, T)
-        j = max(range(len(pc)), key=lambda k: pc[k])
-        if pc[j] >= 0.5:
-            hi.append(1 if j == w else 0)
-    scale = "温度後" if adopt else "生"
-    if hi:
-        print(f"  → {te}・{scale}確率で p1≥0.50 は {len(hi):,}レース（トップ馬の実勝率 {sum(hi)/len(hi):.3f}）。"
-              "この帯が 0.5 近傍なら S9 の 0.50 閾値に意味。")
-    else:
-        print(f"  → {te}・{scale}確率では p1≥0.50 のレースが無い。S9 の 0.50 閾値は実質無効"
-              "（閾値を分位ベースに変えるか S9 見送り）。")
+        return 1.0, False
+    print(f"  {te} 校正後 {pick_label} 帯別:{'':<2}{'レース数':>8}{'平均予測':>10}{'実勝率':>9}")
+    _reliability_print(reliability_top(test, T=T))
+    return T, True
 
 
 def apply_temp_top(p_array, T):
@@ -680,6 +693,46 @@ def apply_temp_top(p_array, T):
     from src.simulation._prob_calibration import apply_temperature
     pc = apply_temperature(p_array, T)
     return max(pc) if pc else 0.0
+
+
+def _print_high_conf_single(prob_vec_by_race, T, ret_src, win_odds, *, threshold=0.5,
+                            pick_label="LGBM1位"):
+    """[高信頼 単複] 校正後 p1≥threshold のレースで、まず単勝/複勝を市場と paired 比較する。
+
+    校正後にトップ馬の勝率が高くても 2・3着は弱い(MC検証)ため、三連単1着固定へ広げる前に
+    単複が控除を超えるかを先に見る。閾値は学習側で固定した前提（結果を見て動かさない）。
+    """
+    from src.constants._bet_types import BetType
+    from src.simulation._prob_calibration import apply_temperature
+    from src.simulation._ticket_backtest import (
+        market_favorite, paired_delta_roi_ci, settle_per_race,
+    )
+    fav = market_favorite(win_odds)
+    sel: dict = {}
+    for rid, (umas, probs) in prob_vec_by_race.items():
+        if rid not in win_odds or not umas:
+            continue
+        pc = apply_temperature(probs, T)
+        j = int(max(range(len(pc)), key=lambda k: pc[k]))
+        if pc[j] >= threshold:
+            sel[rid] = umas[j]
+    print(f"\n[高信頼 単複] 校正後 p1≥{threshold:.2f} の {len(sel):,}レース"
+          "（三連単へ広げる前に単複で控除超えを確認）")
+    if not sel:
+        print("  該当レースなし。")
+        return
+    prw = settle_per_race(_single_candidates(BetType.TANSHO, sel), ret_src)
+    prp = settle_per_race(_single_candidates(BetType.FUKUSHO, sel), ret_src)
+    w = _arm_stats_detailed(prw, win_odds, sel)
+    p = _arm_stats_detailed(prp, win_odds, sel)
+    mkt = {r: fav[r] for r in sel if r in fav}
+    d = paired_delta_roi_ci(prw, settle_per_race(_single_candidates(BetType.TANSHO, mkt), ret_src),
+                            n_boot=2000)
+    nh = sum(dd["n_hits"] for dd in prw.values())
+    print(f"  単勝 ROI={w['roi']:.1%} 的中={w['hit']:.1%}({nh}件) 除最大={w['roi_ex']:.1%}"
+          f" 平均O={w['avg_odds']:.2f} / 複勝 ROI={p['roi']:.1%}")
+    print(f"  Δ単勝(LGBM−市場)={d['delta']:+.1%} 95%CI[{d['lo']:+.1%},{d['hi']:+.1%}] 市場単={d['roi_mkt']:.1%}")
+    print("  → 単複が控除未満なら、勝率が高くても三連単1着固定へ広げる根拠なし（2・3着は弱いとMC検証済）。")
 
 
 def _print_rank_joint(res: dict):
@@ -799,24 +852,29 @@ def main() -> int:
         if report:
             print(f"  [モデル選択] {len(report)} 個をスキップ（旧/版ずれ）→ 採用 {mpath}", file=sys.stderr)
         print(f"[全期間・LightGBM] {len(order):,}レース / model={mpath}")
-        top_by_race, calib, smoke = _lgbm_probs(model, featured, feat_names)
+        top_by_race, calib, smoke, prob_vec = _lgbm_probs(model, featured, feat_names)
         pl = "LGBM1位"
         # [正常性スモーク] 特徴整合が壊れていれば AUC≒0.5 になる。0.807 近傍で初めて ROI を信頼できる。
         pa, wa = smoke["place_auc"], smoke["win_auc"]
         print(f"\n[正常性スモーク] Place AUC={pa:.3f} / Win AUC={wa:.3f}"
-              f"（保存時 Place≈0.807-0.809 と一致すれば特徴整合OK・{smoke['n']:,}頭・{smoke['n_feat']}特徴量）")
+              f"（保存時 Place≈0.807-0.809・{smoke['n']:,}頭・{smoke['n_feat']}特徴量。"
+              "分割/母集団差でずれ得る＝完全一致でなく『異常でない』の確認）")
         if pa is None or pa < 0.65:
-            print("  ✗ AUC が低すぎる＝特徴量が正しく渡っていない。市場対照/ROIは無効なので中止。"
-                  "学習時と同一の前処理・列順でモデル入力を再構成する必要がある。", file=sys.stderr)
+            print("  ✗ AUC が低すぎる＝特徴量が正しく渡っていない。市場対照/ROIは無効なので中止。",
+                  file=sys.stderr)
             return 1
         print("  ✓ AUC 正常域。以降の市場対照・校正・A/B/C を本番モデル評価として採用可。")
-        _print_calibration(calib, pick_label=pl)
+        # 共通母集団＝JRA×TYB(購入時点オッズ)×HJC(精算可)×モデル予測可。全指標をこの集合で評価する。
+        common = set(win_odds) & set(top_by_race)
+        print(f"  [共通母集団] JRA×TYB×モデル予測可 = {len(common):,}レース（全指標をこれに固定）")
+        T, adopted = _print_calibration(calib, pick_label=pl, restrict=common)
         _market_control(win_odds, top_by_race, ret_src, src_lbl, pick_label=pl)
         if win_odds:
             winners = _race_winners(featured)
             comparable = [r for r in win_odds if r in top_by_race]
             _print_coverage_audit(featured, order, comparable, top_by_race, winners, pick_label=pl)
             _print_market_subgroups(win_odds, top_by_race, ret_src, pick_label=pl)
+            _print_high_conf_single(prob_vec, T, ret_src, win_odds, pick_label=pl)
         print("\n※ 券種戦略グリッド/TOTAL は MC 専用（joint 確率が要る）ためスキップ。"
               "LightGBM は勝ち馬順位付けが強く、市場対照＝『本番モデルは市場を超えるか』の本命検証。")
         return 0
