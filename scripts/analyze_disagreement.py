@@ -8,17 +8,21 @@
    market_rank_of_lgbm/lgbm_prob_cal/market_impl_lgbm/prob_diff/odds_diff/winner/
    lgbm_win_payout/market_win_payout/lgbm_hit/market_hit）。
 
-出力（すべて記述統計・採否判定ではない）:
+出力（記述統計中心。ただし勝率差のみ常設 paired 検定）:
   ① 誰が勝ったか（モデル本命/市場本命/どちらでもない）を年別に。
+  ①' 常設検定: 片方の本命が勝った決着レースでのモデル勝率の Wilson 95%CI（年別・通算。0.5基準）。
   ② CSV自己完結の切り口別（市場人気順位/オッズ差/確率差/モデル本命オッズ帯）の
      モデル勝率・市場勝率・単ROI・件数。
   ③ メタ判断の種: 「モデルと市場が割れて片方が勝ったレース」で、どの特徴が『モデルの勝ち』を
      予測するか＝**単変量 AUC を年別**に（sklearn非依存）。両年で AUC>0.55 なら『信じる条件』候補。
-  （--featured 指定時のみ）芝ダ/距離/クラス/頭数 別の内訳（列が featured にあれば）。
+  （--featured 指定時のみ）**二頭差分**: LGBM本命と市場本命を (race_id, 馬番) で各々引き当て、
+     馬固有特徴の `lgbm − market` 差分列 d_* を作る（旧 groupby.first() が無関係な先頭馬の値を
+     付けていたバグの修正）。距離/クラス/頭数 等レース内一定の列は文脈として実値で内訳表示。
+     クラスは疎な one-hot でなく ordinal `race_class_level` を採用（“race_class 全ゼロ”の是正）。
 
 使い方:
   python scripts/analyze_disagreement.py --csv data/disagreement.csv
-  python scripts/analyze_disagreement.py --csv data/disagreement.csv --featured  # 芝ダ等を join
+  python scripts/analyze_disagreement.py --csv data/disagreement.csv --featured  # 二頭差分＋文脈内訳
 """
 from __future__ import annotations
 
@@ -65,13 +69,53 @@ def _breakdown(df, col, bins=None, labels=None, title=None):
               f"{_roi(g['lgbm_win_payout']):>8.1%}{_roi(g['market_win_payout']):>8.1%}")
 
 
-def _meta_auc(df):
+def _wilson(k, n, z=1.96):
+    """二項割合の Wilson 95%CI（正規近似より小標本で頑健）。返す (p, lo, hi)。"""
+    if n <= 0:
+        return 0.0, 0.0, 0.0
+    p = k / n
+    denom = 1 + z * z / n
+    center = (p + z * z / (2 * n)) / denom
+    half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / denom
+    return p, max(0.0, center - half), min(1.0, center + half)
+
+
+def _winrate_test(df):
+    """[常設 paired 検定] 片方の本命が勝った決着レースで『モデル勝率』の Wilson 95%CI を出す。
+
+    不一致レースでは勝ち馬は高々一方の本命（同着以外は排他）。決着レース n のうち
+    モデル本命の勝ち k を割合とし、95%CI が 0.5 を跨ぐか（＝市場より有意に上か）を年別・通算で判定。
+    ここは記述でなく検定（買い目化ではないので多重探索にならない・単一の事前指標）。
+    """
+    import pandas as pd
+    lh = pd.to_numeric(df["lgbm_hit"], errors="coerce").fillna(0).astype(int)
+    mh = pd.to_numeric(df["market_hit"], errors="coerce").fillna(0).astype(int)
+    dec = df[(lh == 1) ^ (mh == 1)].copy()   # 片方の本命だけが勝った決着レース
+    print(f"\n[常設検定] 片方の本命が勝った {len(dec):,}決着レースでのモデル勝率（Wilson 95%CI・0.5基準）")
+    print(f"  {'年':<8}{'決着n':>7}{'モ勝k':>7}{'モ勝率':>8}{'95%CI':>18}{'判定':>10}")
+
+    def _row(label, g):
+        n = len(g)
+        k = int(pd.to_numeric(g["lgbm_hit"], errors="coerce").fillna(0).sum())
+        p, lo, hi = _wilson(k, n)
+        verdict = "市場超↑" if lo > 0.5 else "市場未満↓" if hi < 0.5 else "判別不能"
+        print(f"  {label:<8}{n:>7,}{k:>7,}{p:>8.1%}[{lo:>5.1%},{hi:>5.1%}]{verdict:>10}")
+
+    for y, g in dec.groupby("year"):
+        _row(str(y), g)
+    _row("通算", dec)
+    print("  → 通算CIが0.5超なら『不一致時にモデル本命の方が勝ちやすい』を年跨ぎで支持（ROIは控除で別問題）。"
+          "各年CIが0を跨ぐなら年単体では確言できない。")
+
+
+def _meta_auc(df, extra_feats=()):
     """③ メタ判断の種: 割れて片方が勝ったレースで『モデルの勝ち』を各特徴が予測するか（年別単変量AUC）。"""
     from src.simulation._bet_eval import _auc
     sub = df[(df["lgbm_hit"] == 1) | (df["market_hit"] == 1)].copy()   # どちらかの本命が勝ったレース
     print(f"\n[③メタ判断の種] モデルor市場の本命が勝った {len(sub):,}レースで、"
           "『モデルの勝ち(=lgbm_hit)』を予測する単変量AUC（年別・0.5=無情報）")
-    feats = ["prob_diff", "odds_diff", "market_rank_of_lgbm", "lgbm_top_odds", "lgbm_prob_cal"]
+    feats = ["prob_diff", "odds_diff", "market_rank_of_lgbm", "lgbm_top_odds", "lgbm_prob_cal",
+             *extra_feats]
     years = sorted(sub["year"].unique())
     print(f"  {'特徴':<20}" + "".join(f"{y:>10}" for y in years))
     import pandas as pd
@@ -88,26 +132,98 @@ def _meta_auc(df):
           "全て≒0.5 なら、不一致からモデル/市場どちらが勝つかは事前に判別できない（現状の見込み）。")
 
 
-def _featured_join(df, featured_path):
-    """(任意) featured の race 単位 数値特徴(頭数/距離/コース/クラス等)を join。返す:(df, 数値列名)。"""
+# 順序値クラス（格の大小 1..9）。疎な one-hot ダミー race_class__<cat> は個別にほぼ全ゼロで
+# 無情報のため除外し、この連続軸を「クラス」文脈として使う（“race_class 全ゼロ”問題の原因＝
+# ダミー列を掴んでいたこと。ordinal を明示採用する）。
+_CTX_KEEP = {"race_class_level"}
+# レース内でほぼ全ゼロになる疎な one-hot 群（個別ダミーは分析に使わない）。
+_SPARSE_ONEHOT = ("race_class_", "race_type_", "ground_state", "weather_", "性_",
+                  "around_", "place_", "コース_", "course_")
+_DIFF_DROP = {"rank", "着順", "date", "horse_id"}
+
+
+def _horse_feature_cols(feat, uma_col):
+    """featured から二頭差分に使う数値/真偽の特徴列を選ぶ（疎 one-hot は除外、ordinal は残す）。"""
+    import numpy as np
+    out = []
+    for c in feat.select_dtypes(include=[np.number, "bool"]).columns:
+        cs = str(c)
+        if c == uma_col or cs in _DIFF_DROP:
+            continue
+        if cs in _CTX_KEEP:
+            out.append(c)
+            continue
+        if any(b in cs for b in _SPARSE_ONEHOT):
+            continue
+        out.append(c)
+    return out
+
+
+def _two_horse_diff(df, feat, uma_col, *, tol=1e-9):
+    """二頭(LGBM本命/市場本命)を (race_id, 馬番) で引き当て、race文脈列と二頭差分列を作る。
+
+    馬固有特徴(騎手/厩舎/生産者勝率・斤量・馬体重・年齢等)は本命ごとに値が違うので、
+    `(race_id, LGBM馬番)` と `(race_id, 市場馬番)` の二系統で引いて `lgbm − market` を差分列
+    `d_<feat>` にする（＝旧 groupby.first() が“先頭馬”の無関係値を付けていたバグの修正）。
+    レース内で一定の列(距離/クラス/頭数 等)は差分が0になるので文脈列として実値を残す。
+
+    返す: (df_joined, race_cols, diff_cols)。
+    """
+    import numpy as np
     import pandas as pd
 
+    feat = feat.copy()
+    feat.index = feat.index.astype(str)
+    if uma_col not in feat.columns:
+        print(f"  [featured] 馬番列 {uma_col!r} なし → 二頭差分はスキップ", file=sys.stderr)
+        return df, [], []
+    cols = _horse_feature_cols(feat, uma_col)
+    if not cols:
+        return df, [], []
+
+    def _key(rid_str, uma):
+        u = pd.to_numeric(uma, errors="coerce").astype("Int64").astype(str)
+        return np.asarray(rid_str, dtype=object) + "#" + np.asarray(u, dtype=object)
+
+    lut = feat[cols].astype(float, errors="ignore")
+    lut.index = _key(feat.index.astype(str), feat[uma_col])
+    lut = lut[~lut.index.duplicated(keep="first")]
+
+    rid = df["race_id"].astype(str)
+    L = lut.reindex(_key(rid, df["lgbm_top"])); L.index = df.index
+    M = lut.reindex(_key(rid, df["market_fav"])); M.index = df.index
+    matched = L.notna().any(axis=1) & M.notna().any(axis=1)
+    n_both = int(matched.sum())
+    diff = L.astype(float) - M.astype(float)
+    nz = (diff[matched].abs() > tol).mean() if n_both else pd.Series(0.0, index=cols)
+
+    out = df.copy()
+    race_cols, diff_cols = [], []
+    for c in cols:
+        frac = float(nz.get(c, 0.0))
+        if frac < 1e-4:                    # レース内一定＝文脈（距離/クラス/頭数 等）
+            out[c] = L[c]                  # 実値（どちらの本命でも同じ）
+            race_cols.append(c)
+        else:                              # 馬ごとに違う＝二頭差分（本命の情報差）
+            out[f"d_{c}"] = diff[c]
+            diff_cols.append(f"d_{c}")
+    dead = [c for c in race_cols if out[c].nunique(dropna=True) <= 1]
+    if dead:
+        print(f"  [警告] 文脈列が全レースで単一値＝特徴が取得できていない疑い: {dead}", file=sys.stderr)
+    print(f"  [二頭差分] {n_both:,}/{len(df):,} レースで両本命を featured に照合 → "
+          f"文脈列 {len(race_cols)} / 差分列 {len(diff_cols)}")
+    return out, race_cols, diff_cols
+
+
+def _featured_join(df, featured_path):
+    """featured を二頭(LGBM/市場)で結合。返す:(df, race_cols, diff_cols)。"""
     from app._model_eval import load_featured_data
+    from src.constants._results_cols import ResultsCols
     f = load_featured_data(featured_path) if featured_path else load_featured_data()
     if f is None or f.empty:
-        print("\n[featured] 読み込めず（race-context の効果量/内訳はスキップ）", file=sys.stderr)
-        return df, []
-    cand = [c for c in f.columns if any(k in str(c) for k in
-            ("コース", "course", "距離", "dist", "race_class", "頭数", "n_horses", "going", "芝",
-             "class_level"))]
-    if not cand:
-        return df, []
-    race = f.groupby(level=0).first()
-    race.index = race.index.astype(str)
-    j = df.join(race[cand], on="race_id")
-    num_cols = [c for c in cand if pd.to_numeric(j[c], errors="coerce").notna().sum() >= len(j) * 0.5]
-    print(f"\n[featured join] race-context 数値列 {len(num_cols)}: {num_cols[:8]}")
-    return j, num_cols
+        print("\n[featured] 読み込めず（race-context/二頭差分はスキップ）", file=sys.stderr)
+        return df, [], []
+    return _two_horse_diff(df, f, ResultsCols.UMABAN)
 
 
 def _cohens_d(a, b):
@@ -192,10 +308,11 @@ def main() -> int:
     print(f"=== 不一致分析（説明可能性・ROIでなく発生機構） {args.csv} ===")
     print("※ 主要指標は 勝率差（どちらの本命が勝ったか）。ROIはオッズ由来の分散が大きく年で不安定。")
     csv_feats = ["prob_diff", "odds_diff", "market_rank_of_lgbm", "lgbm_top_odds", "lgbm_prob_cal"]
-    race_cols = []
+    race_cols, diff_cols = [], []
     if args.featured is not None:
-        df, race_cols = _featured_join(df, args.featured or None)
+        df, race_cols, diff_cols = _featured_join(df, args.featured or None)
     _summary(df)
+    _winrate_test(df)                # 常設 paired 検定（Wilson CI・勝率差）
     _breakdown(df, "market_rank_of_lgbm", title="市場人気順位(モデル本命の)")
     _breakdown(df, "odds_diff", bins=[-999, -5, -2, 0, 2, 5, 999],
                labels=["≤-5", "-5..-2", "-2..0", "0..2", "2..5", ">5"], title="オッズ差(モ-市)")
@@ -203,9 +320,9 @@ def main() -> int:
                labels=["≤3", "3-5", "5-10", "10-20", ">20"], title="モデル本命オッズ帯")
     for c in race_cols[:4]:
         _breakdown(df, c, title=f"featured:{c}")
-    feats = csv_feats + race_cols
-    _meta_auc(df)                    # ③ 予測可能性（単変量AUC・年別）
-    _effect_sizes(df, feats)         # 二群(モデル勝ち vs 市場勝ち)の効果量（記述・分離度）
+    _meta_auc(df, extra_feats=diff_cols)      # ③ 予測可能性（単変量AUC・年別／二頭差分含む）
+    # 効果量は CSV由来スカラ＋馬単位の二頭差分列(d_*)で。race文脈列は差分0のため除外。
+    _effect_sizes(df, csv_feats + diff_cols)  # 二群(モデル勝ち vs 市場勝ち)の効果量（記述・分離度）
     print("\n※ これは記述統計。ここで見つけた条件で買い目を作ると多重探索。条件は事前登録し完全OOSで検証すること。")
     return 0
 
