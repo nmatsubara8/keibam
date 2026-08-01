@@ -104,8 +104,8 @@ def _winrate_test(df):
     for y, g in dec.groupby("year"):
         _row(str(y), g)
     _row("通算", dec)
-    print("  → 通算CIが0.5超なら『不一致時にモデル本命の方が勝ちやすい』を年跨ぎで支持（ROIは控除で別問題）。"
-          "各年CIが0を跨ぐなら年単体では確言できない。")
+    print("  → 通算CI下限が0.5超なら『不一致時にモデル本命の方が勝ちやすい』弱い証拠（ROIは控除で別問題）。"
+          "各年CIが0.5を跨ぐなら年単体では確言できず、点推定が年で異なれば時間安定性は未確定。")
 
 
 def _meta_auc(df, extra_feats=()):
@@ -139,7 +139,21 @@ _CTX_KEEP = {"race_class_level"}
 # レース内でほぼ全ゼロになる疎な one-hot 群（個別ダミーは分析に使わない）。
 _SPARSE_ONEHOT = ("race_class_", "race_type_", "ground_state", "weather_", "性_",
                   "around_", "place_", "コース_", "course_")
-_DIFF_DROP = {"rank", "着順", "date", "horse_id"}
+# 着順由来（＝結果）の列は特徴でなく目的変数。二頭差分に混ぜると『どちらが勝ったか』を
+# そのまま符号化してリーク（例 rank_win: 勝ち=1 → d_rank_win が勝敗そのもの・AUC=1.000）。
+_DIFF_DROP = {"rank", "着順", "date", "horse_id",
+              "rank_win", "rank_place", "is_win", "is_place", "win_flag", "着", "確定着順"}
+# 目的変数・事後（結果由来）列。効果量/メタAUC/難易度の入力から必ず除外（差分化した d_ 版も含む）。
+_TARGET_POST_COLS = {
+    "rank_win", "d_rank_win", "lgbm_hit", "market_hit", "winner",
+    "lgbm_return", "market_return", "lgbm_win_payout", "market_win_payout",
+    "lgbm_hit_i", "market_hit_i", "_neither",
+}
+
+
+def _drop_targets(feats):
+    """特徴リストから目的変数・事後列を除く（リーク防止・全解析共通）。"""
+    return [f for f in feats if f not in _TARGET_POST_COLS]
 
 
 def _horse_feature_cols(feat, uma_col):
@@ -209,7 +223,9 @@ def _two_horse_diff(df, feat, uma_col, *, tol=1e-9):
             diff_cols.append(f"d_{c}")
     dead = [c for c in race_cols if out[c].nunique(dropna=True) <= 1]
     if dead:
-        print(f"  [警告] 文脈列が全レースで単一値＝特徴が取得できていない疑い: {dead}", file=sys.stderr)
+        print(f"  [警告] 文脈列が全レースで単一値＝特徴未取得の疑い（内訳から除外）: {dead}",
+              file=sys.stderr)
+        race_cols = [c for c in race_cols if c not in dead]   # 全件0(days/times/teiryo等)は内訳に出さない
     print(f"  [二頭差分] {n_both:,}/{len(df):,} レースで両本命を featured に照合 → "
           f"文脈列 {len(race_cols)} / 差分列 {len(diff_cols)}")
     return out, race_cols, diff_cols
@@ -275,15 +291,26 @@ def _effect_sizes(df, feats):
         b = pd.to_numeric(B[f], errors="coerce")
         d = _cohens_d(a, b)
         cd = _cliffs_delta(a.dropna().tolist(), b.dropna().tolist())
-        rows.append((f, d, cd, a.mean(), b.mean()))
-    for f, d, cd, am, bm in sorted(rows, key=lambda r: -(abs(r[2]) if r[2] is not None else -1)):
+        # 片群だけ値がある（もう片群が全欠測）＝群間比較にならない → 効果量は無効扱い
+        n_min = min(a.dropna().shape[0], b.dropna().shape[0])
+        rows.append((f, d, cd, a.mean(), b.mean(), n_min))
+    # |δ|≈1 は結果そのものを符号化したリーク疑い（名前で拾えなかった着順由来列の保険）。
+    leaks = [r[0] for r in rows if r[2] is not None and abs(r[2]) >= 0.99]
+    if leaks:
+        print(f"  [リーク疑い・除外] |Cliff δ|≈1.0＝結果を符号化: {leaks}"
+              "（着順由来列。_DIFF_DROP に追加すべき）", file=sys.stderr)
+    rows = [r for r in rows if r[0] not in leaks]
+    for f, d, cd, am, bm, nmin in sorted(rows, key=lambda r: -(abs(r[2]) if r[2] is not None else -1)):
         ds = f"{d:+.3f}" if d is not None else "  -  "
         cds = f"{cd:+.3f}" if cd is not None else "  -  "
-        print(f"  {f:<22}{ds:>9}{cds:>9}{_mag(cd):>7}  ({am:.2f}/{bm:.2f})")
-    big = [r for r in rows if r[2] is not None and abs(r[2]) >= 0.33]
+        note = "  ※片群のみ" if nmin < 10 else ""
+        print(f"  {f:<22}{ds:>9}{cds:>9}{_mag(cd):>7}  ({am:.2f}/{bm:.2f}){note}")
+    # 候補は「両群とも十分な件数がある」ものに限る（片群のみ/単年偏在の見かけ上の大効果を除外）。
+    big = [r for r in rows if r[2] is not None and abs(r[2]) >= 0.33 and r[5] >= 10]
     if big:
-        print(f"  → |Cliff δ|≥0.33(中以上)の特徴あり: {[r[0] for r in big]}。"
-              "これは事前登録して完全OOSで検証すべき仮説（今ここで買い目化しない）。")
+        print(f"  → |Cliff δ|≥0.33(中以上・両群≥10件)の特徴: {[r[0] for r in big]}。"
+              "これは事前登録して完全OOSで検証すべき仮説（今ここで買い目化しない）。"
+              "※年別再現性(次表○)も満たすもののみ採用。")
     else:
         print("  → 全特徴 |Cliff δ|<0.33（小/無視）。現特徴ではモデルが市場に勝つ場面を事前識別できない"
               "＝③のAUC≒0.5 を別角度で裏付け（不一致は現情報で分離不能）。")
@@ -323,6 +350,56 @@ def _effect_sizes_by_year(df, feats):
           "×や小のものは現件数の偶然＝閾値化してはいけない。")
 
 
+def _candidate_scan(df, feats, *, min_nonnull=50, min_nonzero=20, min_unique=3, strength_thr=0.55):
+    """候補の一括判定＝coverage監査＋AUC方向補正＋年再現性を同時に満たす特徴だけ残す。
+
+    ユーザ指摘の3バグ是正:
+      ① AUC方向補正: 識別力は max(AUC,1−AUC)。AUC0.44 は反転すれば0.56＝見逃さない。
+      ② coverage: 各年 非欠測≥min_nonnull・非ゼロ≥min_nonzero・全体 unique≥min_unique を必須（片年欠測/
+         全件0を候補から除外）。
+      ③ 目的変数・事後列を除外（_drop_targets）。
+    残す条件: 全評価年で 方向一致 かつ max(AUC,1−AUC)≥strength_thr かつ coverage 合格。
+    """
+    import pandas as pd
+
+    from src.simulation._bet_eval import _auc
+    feats = _drop_targets(feats)
+    sub = df[(pd.to_numeric(df["lgbm_hit"], errors="coerce") == 1)
+             ^ (pd.to_numeric(df["market_hit"], errors="coerce") == 1)].copy()
+    years = sorted(sub["year"].astype(str).unique())
+    print(f"\n[候補スキャン] 決着{len(sub):,}レース・{len(feats)}特徴を coverage＋方向補正AUC(max(AUC,1−AUC))"
+          f"＋年再現性で判定（各年 非欠測≥{min_nonnull}/非ゼロ≥{min_nonzero}/unique≥{min_unique}・両年strength≥{strength_thr}・方向一致）")
+    cands = []
+    for f in feats:
+        per, ok, dirs, strengths = {}, True, [], []
+        for y in years:
+            g = sub[sub["year"].astype(str) == y]
+            x = pd.to_numeric(g[f], errors="coerce")
+            nn = int(x.notna().sum())
+            nz = int((x.fillna(0) != 0).sum())
+            uq = int(x.nunique(dropna=True))
+            a = _auc(list(zip(x.fillna(0.0), g["lgbm_hit"].astype(int), strict=False)))
+            per[y] = (a, nn, nz, uq)
+            if not (nn >= min_nonnull and nz >= min_nonzero and uq >= min_unique and a is not None):
+                ok = False
+            else:
+                dirs.append(1 if a >= 0.5 else -1)
+                strengths.append(max(a, 1 - a))
+        if ok and len(set(dirs)) == 1 and min(strengths) >= strength_thr:
+            cands.append((f, min(strengths), dirs[0], per))
+    if not cands:
+        print("  → coverage＋方向補正AUC＋年再現性を全て満たす特徴なし（現情報では事前識別不能）。")
+        return []
+    print(f"  {'特徴':<24}{'方向':>5}" + "".join(f"{y+'AUC*':>10}" for y in years) + f"{'最小strength':>12}")
+    for f, smin, d, per in sorted(cands, key=lambda r: -r[1]):
+        cells = "".join(f"{max(per[y][0], 1 - per[y][0]):>10.3f}" for y in years)
+        market = "  (市場情報)" if ("単勝" in f or "odds" in f or "impl" in f) else ""
+        print(f"  {f:<24}{('LGBM+' if d > 0 else 'LGBM-'):>5}{cells}{smin:>12.3f}{market}")
+    print("  → これらは事前登録候補（方向のみ凍結）。数百特徴の後発見のため 2025-2026 で閾値調整せず、"
+          "2027完全OOSで検証。『単勝/オッズ』系は購入時点の市場情報＝直交情報でないため別枠。")
+    return [c[0] for c in cands]
+
+
 def main() -> int:
     import pandas as pd
 
@@ -354,11 +431,12 @@ def main() -> int:
                labels=["≤3", "3-5", "5-10", "10-20", ">20"], title="モデル本命オッズ帯")
     for c in race_cols[:4]:
         _breakdown(df, c, title=f"featured:{c}")
-    _meta_auc(df, extra_feats=diff_cols)      # ③ 予測可能性（単変量AUC・年別／二頭差分含む）
-    # 効果量は CSV由来スカラ＋馬単位の二頭差分列(d_*)で。race文脈列は差分0のため除外。
-    ef = csv_feats + diff_cols
+    # 目的変数・事後列（rank_win 等）はリークのため全解析から除外。
+    ef = _drop_targets(csv_feats + diff_cols)
+    _meta_auc(df, extra_feats=[c for c in ef if c not in csv_feats])  # ③ 単変量AUC（年別）
     _effect_sizes(df, ef)            # 二群(モデル勝ち vs 市場勝ち)の効果量（記述・分離度）
     _effect_sizes_by_year(df, ef)    # 年別再現性（同符号のみ事前登録候補・点3）
+    _candidate_scan(df, ef)          # coverage＋方向補正AUC＋年再現性を満たす候補だけ抽出
     print("\n※ これは記述統計。ここで見つけた条件で買い目を作ると多重探索。条件は事前登録し完全OOSで検証すること。")
     return 0
 

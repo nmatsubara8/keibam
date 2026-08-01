@@ -171,6 +171,39 @@ def test_walk_forward_splits_leak_safe():
     assert de.walk_forward_splits(["2025"]) == []          # 学習年が無い→空
 
 
+def test_drop_targets_removes_leak_and_outcome_cols():
+    feats = ["prob_diff", "d_rank_win", "rank_win", "lgbm_hit", "market_hit",
+             "winner", "d_wet_rel_rank"]
+    kept = ad._drop_targets(feats)
+    assert "prob_diff" in kept and "d_wet_rel_rank" in kept
+    for leak in ("d_rank_win", "rank_win", "lgbm_hit", "market_hit", "winner"):
+        assert leak not in kept
+
+
+def test_candidate_scan_direction_correction_and_coverage():
+    import numpy as np
+    rng = np.random.default_rng(1)
+    n = 400
+    year = np.array(["2025"] * 200 + ["2026"] * 200)
+    lgbm_hit = rng.integers(0, 2, n)
+    market_hit = 1 - lgbm_hit                       # 決着レース（排他）
+    # good: 反転AUC>0.55・両年同方向（lgbm_hit=1 で小さい＝AUC<0.5→反転で拾える）
+    good = np.where(lgbm_hit == 1, rng.normal(-1, 0.5, n), rng.normal(1, 0.5, n))
+    # single_year: 2025 は全欠測（coverage 不合格で候補から外れるべき）
+    single = np.where(year == "2026", rng.normal(0, 1, n), np.nan)
+    # noise: 無情報
+    noise = rng.normal(0, 1, n)
+    df = pd.DataFrame({"year": year, "lgbm_hit": lgbm_hit, "market_hit": market_hit,
+                       "d_good": good, "d_single": single, "d_noise": noise,
+                       "d_rank_win": np.where(lgbm_hit == 1, 1.0, -1.0)})  # リーク
+    cands = ad._candidate_scan(df, ["d_good", "d_single", "d_noise", "d_rank_win"],
+                               min_nonnull=50, min_nonzero=20, min_unique=3, strength_thr=0.55)
+    assert "d_good" in cands                # 反転AUCで拾える両年一致の特徴
+    assert "d_single" not in cands          # 片年欠測＝coverage不合格
+    assert "d_noise" not in cands           # 無情報
+    assert "d_rank_win" not in cands        # 目的変数リークは _drop_targets で除外
+
+
 def test_oriented_auc_flips_sign_by_train():
     # 学習年で「小さいほど neither」なら評価年でも符号を反転して >0.5 に揃う。
     train_x = [1, 2, 3, 4];  train_y = [1, 1, 0, 0]     # x小→neither(=1)
