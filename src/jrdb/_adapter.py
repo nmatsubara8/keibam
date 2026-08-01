@@ -10,12 +10,15 @@ raw_jrdb_* を netkeiba の raw_results / raw_race_info と同じ列・値へ変
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from src.jrdb._keys import ketto_to_horse_id
+
+logger = logging.getLogger(__name__)
 
 # netkeiba は非完走（異常区分 1取消/2除外/3中止/4失格/5降着…）の着順を NaN で持つ
 # （2018 実突合で 419/419 が netkeiba NaN と確認）。マーカーは付けず None にする。
@@ -245,7 +248,21 @@ def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     out["ground_state1"] = gs.to_numpy()
     out["ground_state2"] = gs.to_numpy()
     out["age"] = _col(d, "shubetsu").map(SHUBETSU_TO_AGE).to_numpy()
-    out["race_class"] = _col(d, "joken").map(JOKEN_TO_CLASS).to_numpy()
+    # 条件コードは固定長で空白詰め・右詰めのことがある（"4 "/" 4"）。JOKEN_TO_CLASS は "04" 前提なので
+    # strip→zfill(2) で正規化してから引く（"要検証" の取りこぼしを機械的に減らす）。
+    joken_raw = _col(d, "joken").astype(str).str.strip()
+    joken_norm = joken_raw.where(~joken_raw.str.fullmatch(r"\d+"), joken_raw.str.zfill(2))
+    out["race_class"] = joken_norm.map(JOKEN_TO_CLASS).to_numpy()
+    # [充足監査] race_class が大半 NaN なら joken コード表(JOKEN_TO_CLASS)が実データと不一致の疑い。
+    # featured の race_class 一族(level/one-hot/TE)全滅の直接原因になるため本番ビルドで可視化する。
+    nonnull = float(pd.Series(out["race_class"]).notna().mean()) if len(out) else 0.0
+    if nonnull < 0.5:
+        top = joken_raw.value_counts().head(8).to_dict()
+        logger.warning(
+            "[jrdb race_class] joken→race_class 充足率 %.1f%%（<50%%）＝JOKEN_TO_CLASS が実 joken コードと"
+            "不一致の疑い。未マップ含む joken 上位=%s。grade(G1-3)も race_class 未反映。要コード表検証。",
+            nonnull * 100, top,
+        )
     return out.set_index("race_id")
 
 
