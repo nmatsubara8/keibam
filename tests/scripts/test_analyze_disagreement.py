@@ -98,3 +98,51 @@ def test_wilson_ci_basic():
 def pytest_approx(x, tol=1e-9):
     import pytest
     return pytest.approx(x, abs=tol)
+
+
+# ---- shap_disagreement.summarize_delta_shap（純関数）のテスト ----
+_SHAP_PATH = Path(__file__).resolve().parents[2] / "scripts" / "shap_disagreement.py"
+_sspec = importlib.util.spec_from_file_location("shap_disagreement", _SHAP_PATH)
+sd = importlib.util.module_from_spec(_sspec)
+_sspec.loader.exec_module(sd)
+
+
+def test_summarize_delta_shap_ranks_and_group_diff():
+    import numpy as np
+    # 3特徴 f0/f1/f2, 4レース。f0 が最も大きく振れる＝平均|Δ|最大。
+    delta = np.array([
+        [+2.0, +0.1, -0.2],   # 2025 LGBM勝ち
+        [-2.0, -0.1, +0.2],   # 2025 市場勝ち
+        [+3.0, +0.0, +0.1],   # 2026 LGBM勝ち
+        [-3.0, +0.0, -0.1],   # 2026 市場勝ち
+    ])
+    feat = ["f0", "f1", "f2"]
+    years = ["2025", "2025", "2026", "2026"]
+    lgbm_won = [1, 0, 1, 0]
+    s = sd.summarize_delta_shap(delta, feat, years, lgbm_won, topn=3, per_race_top=2)
+    assert s["n_race"] == 4
+    assert s["overall"][0][0] == "f0"                       # 最大平均|Δ|
+    assert s["overall"][0][1] == pytest_approx((2 + 2 + 3 + 3) / 4)
+    # ③ 群差: f0 は LGBM勝ちで +、市場勝ちで − → 群差が最大かつ正
+    gd = {r[0]: r[1] for r in s["group_diff"]}
+    assert gd["f0"] > 0 and abs(gd["f0"]) >= abs(gd["f1"]) and abs(gd["f0"]) >= abs(gd["f2"])
+    # ④ 各レース上位2理由: レース0は f0 が最大
+    assert s["per_race"][0][0][0] == "f0"
+    assert len(s["per_race"][0]) == 2
+
+
+def test_summarize_delta_shap_consistent_sign_across_years():
+    import numpy as np
+    # f0 は両年とも平均Δが負（符号一致）、f1 は年で符号反転。
+    delta = np.array([
+        [-1.0, +1.0, 0.0],   # 2025
+        [-1.0, +1.0, 0.0],   # 2025
+        [-2.0, -1.0, 0.0],   # 2026
+        [-2.0, -1.0, 0.0],   # 2026
+    ])
+    s = sd.summarize_delta_shap(delta, ["f0", "f1", "f2"], ["2025", "2025", "2026", "2026"],
+                                [1, 0, 1, 0], topn=3)
+    cons = {r[0] for r in s["consistent"]}
+    assert "f0" in cons          # 両年とも負＝符号一致
+    assert "f1" not in cons      # 符号反転
+    assert "f2" not in cons      # ゼロ（符号なし）

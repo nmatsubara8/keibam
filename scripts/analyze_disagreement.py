@@ -289,6 +289,40 @@ def _effect_sizes(df, feats):
               "＝③のAUC≒0.5 を別角度で裏付け（不一致は現情報で分離不能）。")
 
 
+def _effect_sizes_by_year(df, feats):
+    """効果量の年別再現性（同符号かつ同程度なら将来年向けの事前登録仮説にできる）。
+
+    点3対応: `breeder_py_芝勝率` 等の最大効果量が「37特徴の最大＝多重探索の産物」でないかを、
+    年ごとに Cohen d / Cliff δ を出して同符号・同程度かで確認する。現在の全件で閾値は作らない。
+    """
+    import pandas as pd
+    years = sorted(df["year"].astype(str).unique())
+    if len(years) < 2:
+        return
+    print(f"\n[効果量の年別再現性] 年ごとの Cliff δ（同符号かつ同程度のみ事前登録候補）  年={years}")
+    print(f"  {'特徴':<22}" + "".join(f"{y:>10}" for y in years) + f"{'同符号':>8}")
+    rows = []
+    for f in feats:
+        cells, signs = [], []
+        for y in years:
+            g = df[df["year"].astype(str) == y]
+            sub = g[(pd.to_numeric(g["lgbm_hit"], errors="coerce") == 1)
+                    ^ (pd.to_numeric(g["market_hit"], errors="coerce") == 1)]
+            a = pd.to_numeric(sub[sub["lgbm_hit"] == 1][f], errors="coerce").dropna().tolist()
+            b = pd.to_numeric(sub[sub["market_hit"] == 1][f], errors="coerce").dropna().tolist()
+            cd = _cliffs_delta(a, b)
+            cells.append(f"{cd:+.3f}" if cd is not None else "  -  ")
+            signs.append(None if cd is None else (cd > 0))
+        same = (len({s for s in signs if s is not None}) == 1 and all(s is not None for s in signs))
+        rows.append((f, cells, same, signs))
+    # |δ| が大きい順の目安として、2群pooledのδで並べる
+    for f, cells, same, _ in rows:
+        mark = "○" if same else "×"
+        print(f"  {f:<22}" + "".join(f"{c:>10}" for c in cells) + f"{mark:>8}")
+    print("  → ○(両年同符号)かつ両年とも|δ|が中以上の特徴のみ、将来年度向けの事前登録仮説にできる。"
+          "×や小のものは現件数の偶然＝閾値化してはいけない。")
+
+
 def main() -> int:
     import pandas as pd
 
@@ -322,7 +356,9 @@ def main() -> int:
         _breakdown(df, c, title=f"featured:{c}")
     _meta_auc(df, extra_feats=diff_cols)      # ③ 予測可能性（単変量AUC・年別／二頭差分含む）
     # 効果量は CSV由来スカラ＋馬単位の二頭差分列(d_*)で。race文脈列は差分0のため除外。
-    _effect_sizes(df, csv_feats + diff_cols)  # 二群(モデル勝ち vs 市場勝ち)の効果量（記述・分離度）
+    ef = csv_feats + diff_cols
+    _effect_sizes(df, ef)            # 二群(モデル勝ち vs 市場勝ち)の効果量（記述・分離度）
+    _effect_sizes_by_year(df, ef)    # 年別再現性（同符号のみ事前登録候補・点3）
     print("\n※ これは記述統計。ここで見つけた条件で買い目を作ると多重探索。条件は事前登録し完全OOSで検証すること。")
     return 0
 
