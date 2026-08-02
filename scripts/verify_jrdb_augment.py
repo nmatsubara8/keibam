@@ -82,6 +82,46 @@ def _ensure_ketto(base, kyi_raw):
     return base
 
 
+def _canary_npast(base, attached, soten):
+    """1頭を canary に、jrdb_ms_npast が過去走数として単調増加するかを target 側で確認する。
+
+    base(ketto/date 付) と attached は行順が一致（attach は入力順・index を保持）＝**位置**で整列できる
+    （attached は ketto を落とすため）。3走以上かつ soten 在の馬を1頭選び、target 各走の npast を表示。
+    初出走=NaN、以降 1,2,... と増えれば as-of の行復元は健全。全 NaN なら index/行復元の不備を示唆。
+    """
+    import numpy as np
+    import pandas as pd
+    if base is None or "ketto" not in base.columns or soten is None or getattr(soten, "empty", True):
+        print("  [canary] ketto/soten 不足でスキップ")
+        return
+    if "jrdb_ms_npast" not in attached.columns or "date" not in base.columns:
+        print("  [canary] npast/date 列が無くスキップ")
+        return
+    bpos = base.reset_index(drop=True)
+    apos = attached.reset_index(drop=True)
+    npast = pd.to_numeric(apos["jrdb_ms_npast"], errors="coerce").to_numpy()
+    kser = bpos["ketto"].astype("string")
+    dser = pd.to_datetime(bpos["date"], errors="coerce")
+    sk = set(soten["ketto"].astype(str))
+    cnt = kser.value_counts()
+    cand = [k for k, n in cnt.items() if n >= 3 and str(k) in sk and str(k) != "<NA>"]
+    if not cand:
+        print("  [canary] 3走以上かつ soten 在の馬が無くスキップ")
+        return
+    k = cand[0]
+    mask = (kser == k).to_numpy()
+    idx = np.where(mask)[0]
+    order = np.argsort(dser.to_numpy()[idx])
+    idx = idx[order]
+    src_dates = pd.to_datetime(soten[soten["ketto"].astype(str) == str(k)]["hist_date"]).sort_values()
+    print(f"  [canary jrdb_ms_npast] ketto={k}  base走数={int(mask.sum())}  soten履歴={len(src_dates)}")
+    print(f"    source dates: {[d.strftime('%Y-%m-%d') for d in src_dates][:6]}")
+    for j, i in enumerate(idx[:5]):
+        d = dser.iloc[i]
+        ds = d.strftime("%Y-%m-%d") if pd.notna(d) else "NaT"
+        print(f"    target[{j}] {ds} → npast={npast[i]}（期待: 初走 NaN, 以降 1,2,...）")
+
+
 def _load_augmented(args):
     import pandas as pd
     if args.from_store:
@@ -110,15 +150,25 @@ def _load_augmented(args):
             robust = float(_to_race_datetime(base["date"]).notna().mean())
         else:
             naive = robust = 0.0
-        kcov = float(_pd.Series(base.get("ketto")).notna().mean()) if "ketto" in base.columns else 0.0
+        # ketto 有効率は all-rows と JRA2015+ eligible を分けて表示（地方/2014以前は分母外＝誤解防止）。
+        if "ketto" in base.columns:
+            kall = float(_pd.Series(base["ketto"]).notna().mean())
+            _rid = _pd.Series(base.index.astype(str))
+            _elig = (_rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)})
+                     & (_pd.to_numeric(_rid.str[:4], errors="coerce") >= 2015)).to_numpy()
+            kelig = float(_pd.Series(base["ketto"]).notna().to_numpy()[_elig].mean()) if _elig.any() else 0.0
+        else:
+            kall = kelig = 0.0
         hk = set(hist["ketto"].astype(str)) if len(hist) else set()
         bk = set(_pd.Series(base.get("ketto")).dropna().astype(str)) if "ketto" in base.columns else set()
         print(f"  [asof前提] base date有効率 既定={naive:.3f}→robust={robust:.3f}  "
-              f"base ketto有効率={kcov:.3f}  ketto∩(base,hist)={len(bk & hk):,}")
+              f"base ketto有効率 all={kall:.3f}/JRA2015+={kelig:.3f}  ketto∩(base,hist)={len(bk & hk):,}")
         print(f"  [from-store] KYI jrdb列={len([c for c in kyi.columns if str(c).startswith('jrdb_')])} "
               f"history rows={len(hist):,} soten rows={len(soten):,} "
               f"base ketto={'あり' if 'ketto' in base.columns else 'なし'}")
-        return attach(base, kyi, hist, soten=soten)
+        out = attach(base, kyi, hist, soten=soten)
+        _canary_npast(base, out, soten)   # jrdb_ms_npast の行復元 canary（as-of の健全性）
+        return out
     if args.augmented:
         p = Path(args.augmented)
         if not p.exists():
@@ -144,7 +194,9 @@ def main() -> int:
     import numpy as np
     import pandas as pd
     from app._model_eval import load_featured_data
-    from src.training._feature_materialization import (EXPECTED_JRDB_FULL, REQUIRED_JRDB_MIN,
+    from src.training._feature_materialization import (CONTEXT_JRDB, CURRENT_ACTIVE_JRDB,
+                                                       EXPECTED_JRDB_FULL, HISTORY_JRDB,
+                                                       REQUIRED_JRDB_MIN,
                                                        assert_features_materialized)
 
     ap = argparse.ArgumentParser(description="JRDB 完全 augment 出力の feature-only 認定（性能を見ない）")
@@ -154,7 +206,7 @@ def main() -> int:
     args = ap.parse_args()
 
     print("=" * 88)
-    print("JRDB 完全 augment 検証（feature-only・38特徴の実体化認定・性能は見ない）")
+    print("JRDB augment 検証（feature-only・実体化を3契約で認定・性能は見ない）")
     try:
         feat = _load_augmented(args)
     except RuntimeError as e:
@@ -169,32 +221,66 @@ def main() -> int:
     sel = (jra & (year >= 2015)).to_numpy()
     fj = feat[sel]
 
+    newcols = [c for c in EXPECTED_JRDB_FULL if c not in base_cols]
     print(f"[入力] augmented rows={len(feat):,}  JRA2015+={len(fj):,}  base featured 列数={len(base_cols)}")
-    print(f"  base(現5列)に在る EXPECTED: {sorted(set(EXPECTED_JRDB_FULL) & base_cols)}")
+    print(f"  既存 EXPECTED（base に在る5列）: {sorted(set(EXPECTED_JRDB_FULL) & base_cols)}")
+    print(f"  新規生成 EXPECTED={len(newcols)}（内訳: ACTIVE {len(CURRENT_ACTIVE_JRDB)-5}＋"
+          f"CONTEXT {len(CONTEXT_JRDB)}＋HISTORY {len(HISTORY_JRDB)}・既存5は ACTIVE に含む）")
 
-    ok, thin, absent = [], [], []
-    print(f"\n  {'特徴':<24}{'実在':>4}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'新規':>5}{'判定':>7}")
+    # 列を3群に割り当てて群別の判定基準で認定する（「列が在るだけで全欠測でも PASS」を防ぐ）。
+    def _klass(c):
+        if c in CONTEXT_JRDB:
+            return "CONTEXT"
+        if c in HISTORY_JRDB:
+            return "HISTORY"
+        return "ACTIVE"
+
+    stats = {}                     # c -> (nm, sent, vf, verdict, klass)
+    absent = []
+    print(f"\n  {'特徴':<24}{'群':>8}{'実在':>4}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'新規':>5}{'判定':>8}")
     for c in EXPECTED_JRDB_FULL:
+        kl = _klass(c)
         newly = "新" if c not in base_cols else "既"
         if c not in feat.columns:
             absent.append(c)
-            print(f"  {c:<24}{'無':>4}{'—':>8}{'—':>9}{'—':>9}{newly:>5}{'ABSENT':>7}")
+            print(f"  {c:<24}{kl:>8}{'無':>4}{'—':>8}{'—':>9}{'—':>9}{newly:>5}{'ABSENT':>8}")
             continue
         col = pd.to_numeric(fj[c], errors="coerce")
         nm = float(col.notna().mean()) if len(col) else 0.0
         sent = float((col <= -99).mean()) if len(col) else 0.0
         vf = _within_race_var_frac(fj, c)
         inf = int(np.isinf(col.to_numpy(dtype=float, na_value=np.nan)).sum())
-        v = "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
-        (ok if v == "OK" else thin).append(c)
+        if kl == "ACTIVE":         # presence + coverage + race分散
+            v = "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
+        elif kl == "CONTEXT":      # presence + coverage（race分散は要求しない＝全馬共通で正常）
+            v = "CTX_OK" if (nm >= 0.3 and sent < 0.2) else ("DEAD" if nm < 0.02 else "薄い")
+        else:                      # HISTORY: semantic coverage（過去走ゼロで NaN は正常・全欠測は失敗）
+            v = "HIST_OK" if nm > 0.02 else "DEAD"
+        stats[c] = (nm, sent, vf, v, kl)
         flag = "!inf" if inf else ""
-        print(f"  {c:<24}{'有':>4}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{newly:>5}{v:>7}{flag}")
+        print(f"  {c:<24}{kl:>8}{'有':>4}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{newly:>5}{v:>8}{flag}")
 
-    print(f"\n[認定] OK={len(ok)}  薄い/DEAD={len(thin)}  ABSENT={len(absent)}  / EXPECTED={len(EXPECTED_JRDB_FULL)}")
-    if absent:
-        print(f"  ABSENT（augment 後も欠落＝実装/結合の不備）: {absent}")
-    if thin:
-        print(f"  薄い/DEAD（要 sentinel/coverage 精査）: {thin}")
+    # 群別の契約判定（分離）。CURRENT_ACTIVE=全 OK / CONTEXT=CTX_OK / HISTORY=全 HIST_OK（history有効時）。
+    def _fail(group, good):
+        return [c for c in group if c in absent or stats.get(c, (0, 0, 0, "DEAD"))[3] not in good]
+
+    active_fail = _fail(CURRENT_ACTIVE_JRDB, {"OK"})
+    context_fail = _fail(CONTEXT_JRDB, {"CTX_OK"})
+    history_present = any(stats.get(c, (0,))[0] > 0.02 for c in HISTORY_JRDB)  # history 有効化された build か
+    history_fail = _fail(HISTORY_JRDB, {"HIST_OK"}) if history_present else []
+
+    print(f"\n[3契約認定]  ABSENT={len(absent)}"
+          f"{('  '+str(absent)) if absent else ''}")
+    print(f"  CURRENT_ACTIVE_REQUIRED（{len(CURRENT_ACTIVE_JRDB)}列・presence+coverage+race分散）: "
+          f"{'✅ PASS' if not active_fail else '❌ FAIL '+str(active_fail)}")
+    print(f"  CONTEXT_REQUIRED（{len(CONTEXT_JRDB)}列・presence+coverage・race分散は不問）: "
+          f"{'✅ PASS' if not context_fail else '❌ FAIL '+str(context_fail)}")
+    if history_present:
+        print(f"  HISTORY_REQUIRED（{len(HISTORY_JRDB)}列・semantic coverage・全欠測は fail-closed）: "
+              f"{'✅ PASS' if not history_fail else '❌ FAIL '+str(history_fail)}")
+    else:
+        print(f"  HISTORY_REQUIRED（{len(HISTORY_JRDB)}列）: ⚠ history 無効 build（全欠測）＝current-only 認定"
+              "（history を有効にした build では全欠測を fail-closed にする）")
 
     # asof 特徴の leak spot-check（jrdb_ms_npast は「今走前の過去走数」＝初出走は NaN/0 のはず）
     if "jrdb_ms_npast" in fj.columns:
@@ -210,9 +296,12 @@ def main() -> int:
     except RuntimeError as e:
         print(f"\n[fail-closed] {e}", file=sys.stderr)
 
-    print("\n[判定基準] OK=非欠測>=0.3 & sentinel<0.2 & race内分散有率>0.1。ABSENT が 0 で大半 OK なら"
-          "\n  standalone augment は 38 を正しく materialize＝本線統合へ進める。ABSENT/薄いが多いなら"
-          "\n  結合キー/sentinel/年 coverage を先に修正。性能評価は standing protocol(2027)で別途。")
+    current_ok = not active_fail and not context_fail and not absent
+    full_ok = current_ok and not history_fail and history_present
+    print("\n[本線統合の判定]")
+    print(f"  current-only 統合（ACTIVE+CONTEXT）: {'✅ 可（明示 allowlist 付き）' if current_ok else '❌ 不可'}")
+    print(f"  完全 augment 認定（+HISTORY）: {'✅ 可' if full_ok else '❌ 不可（HISTORY 修復まで）'}")
+    print("  既存モデルへの新規列 silent 混入は assert_training_allowlist で阻止。B frozen は従来5特徴のまま。")
     return 0
 
 

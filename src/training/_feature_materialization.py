@@ -23,6 +23,16 @@ EXPECTED_JRDB_FULL = tuple(dict.fromkeys(
     + ["jrdb_pace_hms", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
     + list(MYSPEED_COLS)))
 
+# --- 実体化の3契約（続36-d：「列が在るだけで全欠測でも PASS」を防ぐため判定を分離）-----------
+# CURRENT_ACTIVE: KYI 由来 current-race の馬別 active 特徴（33列）＝presence + coverage + race分散 を要求。
+CURRENT_ACTIVE_JRDB = tuple(dict.fromkeys(
+    list(KYI_FEATURE_MAP.values()) + ["jrdb_kijun_gap"]))
+# CONTEXT: race 内で全馬共通の場コンテキスト（pace_hms）＝presence + coverage のみ（race分散は要求しない）。
+CONTEXT_JRDB = ("jrdb_pace_hms",)
+# HISTORY: 過去走 as-of 集約（prev_* + MySpeed 8列）＝presence だけでなく semantic coverage を要求。
+#   history を有効化した build で全欠測なら fail-closed（列は在るが結合が壊れている状態を検知）。
+HISTORY_JRDB = tuple(["prev_deokure", "prev_trouble"] + list(MYSPEED_COLS))
+
 
 def assert_features_materialized(columns: Iterable[str], required: Iterable[str],
                                  *, optional: Iterable[str] = ()) -> list:

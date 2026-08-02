@@ -45,6 +45,31 @@ ketto coalesce＋kakutei 除去）。加えて `_to_race_datetime`(和暦 'YYYY�
 JRDB 列が**黙って既存モデルへ混入**する。関門で (1) allowlist 未実体化=RuntimeError、(2) allowlist 外の
 jrdb_*/prev_* 混入=RuntimeError にし、本線統合の前に**明示決定**を強制する。B 凍結は 5 特徴のまま不変。
 
+## 続36-d 実データ再監査で history 修復を確認＋3契約に分離
+
+ketto coalesce 修復後の `verify --from-store`（JRA2015+ 555,128行）で **8 history 列すべてが実体化**:
+prev_deokure/prev_trouble=非欠測0.891、jrdb_ms_last/mean3/max5/ewm=0.887、jrdb_ms_trend=0.693、
+jrdb_ms_npast=0.887（min=1・median=6）。npast の canary も過去走数として単調増加を確認＝as-of の
+行復元は健全。欠測分は「初出走＝過去走なし」で正常。
+
+**正確な内訳（EXPECTED=42・kakutei 除外後）**: 新規生成 37 列 = ACTIVE 28（+既存5=33）／CONTEXT 1
+（jrdb_pace_hms）／HISTORY 8。「38 を materialize」は旧表記で撤回。
+
+**実体化を3契約に分離**（`src/training/_feature_materialization.py`・列が在るだけの全欠測 PASS を防止）:
+
+| 契約 | 列 | 判定基準 |
+|---|---|---|
+| CURRENT_ACTIVE_REQUIRED | 33（既存5＋新規28・KYI current-race） | presence + coverage + **race内分散** |
+| CONTEXT_REQUIRED | 1（jrdb_pace_hms） | presence + coverage（**race分散は不問**＝全馬共通の場コンテキスト） |
+| HISTORY_REQUIRED | 8（prev_*＋jrdb_ms_*） | **semantic coverage**（過去走ゼロの NaN は正常・全欠測は fail-closed） |
+
+verify は3契約を個別に PASS/FAIL 表示し、`jrdb_pace_hms` は CONTEXT として「薄い」から除外。ketto 有効率も
+all-rows と JRA2015+ eligible を分けて表示（0.830 は地方/2014以前を分母に含むため＝JRA2015+ は≈1.0）。
+
+**本線統合の判定**: current-only（ACTIVE+CONTEXT）は ✅ 明示 allowlist 付きで統合可。完全 augment
+（+HISTORY）も実データで ✅（8列 semantic coverage 達成）。既存モデルへの新規列 silent 混入は
+`assert_training_allowlist` で阻止・**B frozen は従来5特徴のまま不変**。
+
 ## lineage（38 実体化のための追跡表・repair の骨子）
 
 各特徴について次を一本化する: parser field → store column → augment 関数 → build 呼出し → join key →

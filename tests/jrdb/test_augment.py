@@ -87,6 +87,20 @@ def test_attach_ketto_collision_still_joins_history():
     assert out.loc["202005010201"]["jrdb_ms_last"] == 55.0              # MySpeed も貼られる
 
 
+def test_attach_non_contiguous_index_still_joins_history():
+    # 続36-d 回帰（ユーザ指定）: target を非連番 index にしても as-of の行復元が壊れないこと。
+    # attach は先頭で reset_index(drop=True)＋_pos で復元するため label 整列に依存しない設計を保証。
+    feat = pd.DataFrame(
+        {"馬番": [1, 1], "単勝": [5.0, 4.0], "date": ["2020-02-01", "2020-03-01"],
+         "ketto": ["20170001", "20170001"]},
+        index=[100, 900],   # 非連番・非 RangeIndex
+    )
+    out = attach(feat, _kyi().iloc[[0, 2]].copy(), _history())
+    assert list(out.index) == [100, 900]                # index は保持
+    assert out.loc[900]["prev_trouble"] == 1            # 前走 trouble が正しく貼られる
+    assert pd.isna(out.loc[100]["prev_trouble"])        # 初走は前走なし
+
+
 def test_kakutei_bataijuu_not_from_kyi():
     # 続36 WRONG_SOURCE: 確定馬体重は KYI 由来にしない（発走前は 0/空・DEAD）。TYB へ移譲。
     from src.jrdb._augment import KYI_FEATURE_MAP
