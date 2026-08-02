@@ -302,6 +302,15 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
     if kyi is not None and not kyi.empty:
         k = kyi.drop_duplicates(["race_id", "umaban"])
         f = f.merge(k, left_on=["_rid", "_uma"], right_on=["race_id", "umaban"], how="left")
+        # ketto 衝突の解消: base が既に ketto を持ち（本線ブリッジ or verify の _ensure_ketto）、
+        # kyi 側も ketto を持つと merge が ketto_x/ketto_y に分裂する。すると後段 asof の
+        # `"ketto" in f.columns` が False になり prev_*/jrdb_ms_* が**全 NA**（続36 DEAD の真因）。
+        # 単一 ketto へ coalesce（base 優先→kyi 補完）してから asof に渡す。
+        if "ketto" not in f.columns and ("ketto_x" in f.columns or "ketto_y" in f.columns):
+            base_k = f["ketto_x"] if "ketto_x" in f.columns else pd.Series(pd.NA, index=f.index)
+            kyi_k = f["ketto_y"] if "ketto_y" in f.columns else pd.Series(pd.NA, index=f.index)
+            f["ketto"] = base_k.where(base_k.notna(), kyi_k)
+            f = f.drop(columns=[c for c in ("ketto_x", "ketto_y") if c in f.columns])
         f = f.sort_values("_pos").reset_index(drop=True)  # 左順を保証
         if odds_col in f.columns and "jrdb_kijun_odds" in f.columns:
             mkt = pd.to_numeric(f[odds_col], errors="coerce")

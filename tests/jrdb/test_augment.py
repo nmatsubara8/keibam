@@ -68,6 +68,25 @@ def test_attach_asof_handles_japanese_date():
     assert pd.isna(out.loc["202005010101"].iloc[0]["prev_trouble"])  # 今走当日は exact不可で除外
 
 
+def test_attach_ketto_collision_still_joins_history():
+    # 続36 真因: base が既に ketto を持ち（本線ブリッジ/verify の _ensure_ketto）kyi 側も ketto を
+    # 持つと merge が ketto_x/ketto_y に分裂→`"ketto" in f.columns` False→prev_*/jrdb_ms_* 全 NA。
+    # coalesce で単一 ketto を復元し asof が成立することを保証する。
+    base = pd.DataFrame(
+        {"馬番": [1, 1], "単勝": [5.0, 4.0], "date": ["2020-02-01", "2020-03-01"],
+         "ketto": ["20170001", "20170001"]},
+        index=["202005010101", "202005010201"])
+    kyi = _kyi().iloc[[0, 2]].copy()   # ketto を持つ kyi（R1馬1・R2馬1）
+    soten = pd.DataFrame({
+        "ketto": ["20170001"], "hist_date": pd.to_datetime(["2020-02-01"]),
+        "jrdb_ms_last": [55.0], "jrdb_ms_mean3": [55.0], "jrdb_ms_max5": [55.0],
+        "jrdb_ms_ewm": [55.0], "jrdb_ms_trend": [0.0], "jrdb_ms_npast": [1]})
+    out = attach(base, kyi, _history(), soten=soten)
+    assert not any(str(c).endswith(("_x", "_y")) for c in out.columns)  # 分裂列なし
+    assert out.loc["202005010201"]["prev_trouble"] == 1                 # 前走 trouble が貼られる
+    assert out.loc["202005010201"]["jrdb_ms_last"] == 55.0              # MySpeed も貼られる
+
+
 def test_kakutei_bataijuu_not_from_kyi():
     # 続36 WRONG_SOURCE: 確定馬体重は KYI 由来にしない（発走前は 0/空・DEAD）。TYB へ移譲。
     from src.jrdb._augment import KYI_FEATURE_MAP

@@ -31,11 +31,14 @@ standalone augment を実データで検証し、**列実体化は成功（33 OK
 |---|---|---|---|
 | jrdb_pace_hms | MATERIALIZED_RACE_CONTEXT | 場の展開予想＝race 内定数（馬間分散≈0） | 「薄い」でなく正常。分類を訂正（DEAD 扱いしない） |
 | jrdb_kakutei_bataijuu | WRONG_SOURCE | 確定馬体重は発走約15分前に確定。KYI(前日〜当日朝)では 0/空 | KYI_FEATURE_MAP から**除去**。TYB(直前・T-15)の bataijuu へ移譲(bet_time_contract) |
-| prev_deokure / prev_trouble | HISTORY_ATTACH_FAILED | attach の asof 左キー `pd.to_datetime(featured.date)` が **netkeiba 和暦 'YYYY年MM月DD日' を全 NaT** 化→空結合 | `_to_race_datetime`(明示フォーマット検出)で堅牢化。ketto は (race_id,馬番)→KYI で補完 |
-| jrdb_ms_last/mean3/max5/ewm/trend/npast | HISTORY_PIPELINE_FAILED | 同上（同じ asof の date パース不備） | 同上。soten 生成関数・groupby は正常で、原因は左キー日付のみ |
+| prev_deokure / prev_trouble | HISTORY_ATTACH_FAILED | **ketto 列衝突**: base が既に ketto を持ち(=_ensure_ketto/本線ブリッジ)、kyi 側も ketto を持つと KYI merge が **ketto_x/ketto_y に分裂**→asof の `"ketto" in f.columns` が False→prev_* 全 NA | attach で KYI merge 後に **ketto を単一列へ coalesce**(base 優先→kyi 補完)してから asof |
+| jrdb_ms_last/mean3/max5/ewm/trend/npast | HISTORY_PIPELINE_FAILED | 同上（同じ ketto 列衝突） | 同上。soten 生成関数・groupby は正常で、原因は ketto 列衝突のみ |
 
-修復は `src/jrdb/_augment.py`（`_to_race_datetime` 追加＋両 asof で使用・kakutei 除去）。ISO 表記の
-既存テストも回帰維持（サンプル被覆で最良フォーマットを選ぶため '2020-02-01' もそのまま解ける）。
+**真因の切り分け（実データ verify --from-store）**: date有効率 既定=robust=1.000（date は問題なし）・
+ketto∩(base,hist)=61,120（重複は十分）にも関わらず prev_*/ms_* が 0.000 だったことから、原因は
+「前提不足」でなく attach 内の **ketto 列分裂** と特定。修復は `src/jrdb/_augment.py`（KYI merge 後の
+ketto coalesce＋kakutei 除去）。加えて `_to_race_datetime`(和暦 'YYYY年MM月DD日' も解ける明示フォーマット
+検出) を asof 左キーに導入＝防御的堅牢化（ISO 既存テストも回帰維持）。
 
 **学習側 allowlist 関門**（`src/training/_feature_materialization.py::assert_training_allowlist`）:
 本線の特徴選択は denylist（`_DROP_FOR_TRAIN` 以外を全採用）なので、attach 配線後に新規実体化した
