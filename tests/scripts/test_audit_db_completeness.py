@@ -40,6 +40,26 @@ def test_year_span_missing():
     assert ad.year_span([])["min"] is None
 
 
+def test_norm_rank_series_tolerant():
+    import numpy as np
+    s = ad.norm_rank_series(["1", "01", "１", "1着", "10", "取消", "", None, np.nan])
+    got = [None if (v != v) else int(v) for v in s]   # NaN→None
+    assert got == [1, 1, 1, 1, 10, None, None, None, None]
+
+
+def test_race_stats_by_year_splits_representation():
+    import pandas as pd
+    # 2014: 着順が '1着' 表現でも 1着1頭を正しく判定（頑健正規化）。2015: 素の int。
+    df = pd.DataFrame({
+        "race_id": ["201401010101"] * 3 + ["201501010101"] * 3,
+        "着順": ["1着", "2着", "3着", 1, 2, 3],
+    })
+    ys = ad.race_stats_by_year(df)
+    assert ys["2014"]["one_winner_rate"] == 1.0    # '1着' も 1着として拾える
+    assert ys["2015"]["one_winner_rate"] == 1.0
+    assert ys["2014"]["rows_per_race"] == 3.0
+
+
 def test_rank_consistency():
     # R1: 3頭・1着1頭・範囲内。R2: 1着が2頭（同着扱いでなく異常）
     df = pd.DataFrame({

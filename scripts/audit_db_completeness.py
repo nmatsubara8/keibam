@@ -55,23 +55,68 @@ def year_span(years) -> dict:
             "missing": sorted(full - set(ys))}
 
 
+def norm_rank_series(s):
+    """着順を頑健に整数化する（NFKC で全角→半角、先頭連続数字を採用）。純関数。
+
+    '1'/'01'/'１'/'1着'→1、'取消'/'中止'/''→NaN。SQLite の無条件 CAST(→0) や pd.to_numeric
+    （'1着'→NaN, '１'→NaN）が異常を隠す/誤検出するのを避ける（ユーザ指摘の年別表現差対策）。
+    """
+    import re
+    import unicodedata
+
+    import numpy as np
+    import pandas as pd
+
+    def _one(v):
+        if v is None or (isinstance(v, float) and v != v):
+            return np.nan
+        m = re.match(r"^(\d+)", unicodedata.normalize("NFKC", str(v)).strip())
+        return int(m.group(1)) if m else np.nan
+    idx = s.index if isinstance(s, pd.Series) else None
+    return pd.Series([_one(v) for v in s], index=idx)
+
+
 def rank_consistency(df, *, race_col="race_id", rank_col="着順", n_col="頭数") -> dict:
     """着順の整合: 各レースに rank==1 が1頭か・rank が 1..頭数 に収まるか。返す率の dict。"""
     import pandas as pd
     if df is None or len(df) == 0 or race_col not in df.columns or rank_col not in df.columns:
         return {"n_races": 0}
-    r = pd.to_numeric(df[rank_col], errors="coerce")
+    r = norm_rank_series(df[rank_col])
+    r.index = df.index
     g = df.assign(_r=r).groupby(race_col)
     n_races = g.ngroups
     winners = g["_r"].apply(lambda s: (s == 1).sum())
     one_winner = float((winners == 1).mean())
     if n_col in df.columns:
-        nn = pd.to_numeric(df[n_col], errors="coerce")
-        in_range = float(((r >= 1) & (r <= nn)).mean())
+        nn = pd.to_numeric(df[n_col], errors="coerce").values
+        fin = r.notna().values
+        in_range = float(((r.values[fin] >= 1) & (r.values[fin] <= nn[fin])).mean()) if fin.any() else float("nan")
     else:
         in_range = float("nan")
     return {"n_races": int(n_races), "one_winner_rate": one_winner,
             "rank_in_range_rate": in_range}
+
+
+def race_stats_by_year(df, *, race_col="race_id", rank_col="着順") -> dict:
+    """年別（race_id[:4]）に {n_races, rows_per_race, one_winner_rate} を返す純関数。
+
+    1着1頭率が年で割れるかを見る＝古年 netkeiba の結果疎か・全年構造異常かを切り分ける
+    （近年が高率なら学習対象は健全・古年疎は benign）。
+    """
+    if df is None or len(df) == 0 or race_col not in df.columns or rank_col not in df.columns:
+        return {}
+    rid = df[race_col].astype(str)
+    r = norm_rank_series(df[rank_col]); r.index = df.index
+    work = df.assign(_y=rid.str[:4].values, _r=r.values)
+    out: dict = {}
+    for y, sub in work.groupby("_y"):
+        g = sub.groupby(race_col)["_r"]
+        n_races = g.ngroups
+        one = float((g.apply(lambda s: (s == 1).sum()) == 1).mean())
+        out[str(y)] = {"n_races": int(n_races),
+                       "rows_per_race": round(len(sub) / max(n_races, 1), 1),
+                       "one_winner_rate": one}
+    return out
 
 
 def _fmt_pct(x):
@@ -114,6 +159,15 @@ def main() -> int:
         print(f"  {rt:<5} 行={len(d):>8,}  PK重複={dup:>6,}  "
               f"年={yr.get('min')}-{yr.get('max')} 欠落{yr.get('missing')}")
 
+    # JRDB テーブル間の小差を anti-join で説明（TYB=SED+18 の18行はどちら片側か）
+    tyb = _jrdb("TYB")
+    if sed is not None and tyb is not None and all(
+            "race_id" in d.columns and "umaban" in d.columns for d in (sed, tyb)):
+        skey = set(zip(sed["race_id"].astype(str), sed["umaban"].astype(str), strict=False))
+        tkey = set(zip(tyb["race_id"].astype(str), tyb["umaban"].astype(str), strict=False))
+        print(f"\n[JRDB anti-join] TYBのみ(∉SED)={len(tkey - skey):,}  SEDのみ(∉TYB)={len(skey - tkey):,}"
+              "（取消/発売対象外/提供差で説明できれば正常）")
+
     # netkeiba raw の相互整合（孤児キー）＋着順整合
     res = load_raw(LocalPaths.RAW_RESULTS_PATH)
     ri = load_raw(LocalPaths.RAW_RACE_INFO_PATH)
@@ -136,11 +190,25 @@ def main() -> int:
         for c in ("race_id", "馬番", "着順", "単勝", "horse_id"):
             print(f"  {c:<10} {_fmt_pct(null_rate(res, c))}")
 
-    print("\n[着順整合]（各レースに1着1頭・rank∈1..頭数）")
+    print("\n[着順整合]（頑健正規化 NFKC＋先頭数字＝'01'/'１'/'1着'も1着と判定）")
     rc = rank_consistency(res) if res is not None else {"n_races": 0}
     if rc.get("n_races"):
         print(f"  results: races={rc['n_races']:,}  1着1頭率={_fmt_pct(rc['one_winner_rate'])}  "
               f"rank範囲内率={_fmt_pct(rc.get('rank_in_range_rate'))}")
+    # 着順の生表現分布（年で型が変わる＝24.6%の主因かを見る）
+    if res is not None and "着順" in res.columns:
+        vc = res["着順"].astype(str).value_counts().head(12)
+        print("  着順 生値 上位:", {k: int(v) for k, v in vc.items()})
+    # 年別 1着1頭率＋rows/race（近年が高率なら学習対象は健全・古年疎は benign）
+    ys = race_stats_by_year(res) if res is not None else {}
+    if ys:
+        print("  [年別] 1着1頭率 / rows_per_race（抜粋: 最古・境界・近年）")
+        keys = sorted(ys)
+        show = keys[:2] + [k for k in ("2014", "2015", "2019", "2023", "2025", "2026") if k in ys]
+        for y in sorted(set(show)):
+            s = ys[y]
+            print(f"    {y}: races={s['n_races']:>6,}  rows/race={s['rows_per_race']:>4}  "
+                  f"1着1頭率={_fmt_pct(s['one_winner_rate'])}")
 
     if ri is not None and "race_id" in ri.columns:
         ys = year_span(ri["race_id"].astype(str).str[:4])
