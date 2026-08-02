@@ -274,8 +274,8 @@ def main() -> int:
     else:
         print("  SED/ketto が無いためスキップ。")
 
-    # (3b) target(featured/results)↔SED の (race_id,馬番) 一致率（H3 特徴を target に載せられるか）
-    print("\n[3b] target↔SED 結合率（featured の (race_id,馬番) が SED に在るか）")
+    # (3b) Gate A: **eligible 母集団**での target↔SED 結合率（year>=2015・JRA場01-10・有効馬番）
+    print("\n[3b] Gate A: eligible(year>=2015 & JRA場01-10 & 有効馬番) での target↔SED 結合率")
     if sed is None:
         print("  SED が無いためスキップ。")
     else:
@@ -286,15 +286,60 @@ def main() -> int:
             feat = None
         rid = "race_id" if "race_id" in sed.columns else ("race_key" if "race_key" in sed.columns else None)
         if feat is not None and rid is not None and "umaban" in sed.columns:
+            import numpy as np
             import pandas as pd
-            fr = pd.DataFrame({"race_id": feat.index.astype(str),
-                               "umaban": pd.to_numeric(feat.get("馬番"), errors="coerce")})
+            ridx = feat.index.astype(str)
+            fr = pd.DataFrame({"race_id": ridx,
+                               "umaban": pd.to_numeric(feat.get("馬番"), errors="coerce"),
+                               "year": pd.to_numeric(ridx.str[:4], errors="coerce"),
+                               "place": ridx.str[4:6]})
+            jra = fr["place"].isin({f"{i:02d}" for i in range(1, 11)})
+            elig = (fr["year"] >= 2015) & jra & fr["umaban"].notna()
+            fe = fr[elig.to_numpy()].copy()
             skey = set(zip(sed[rid].astype(str), pd.to_numeric(sed["umaban"], errors="coerce")))
-            m = fr.apply(lambda r: (r["race_id"], r["umaban"]) in skey, axis=1)
-            print(f"  featured {len(fr):,} 行のうち SED に (race_id,馬番) 一致={float(m.mean()):.4f}"
-                  f"（H3 特徴を target 側へ載せられる割合）")
+            fe["matched"] = [(a, b) in skey for a, b in zip(fe["race_id"], fe["umaban"])]
+            print(f"  全featured={len(fr):,} → eligible={len(fe):,}  一致率={float(fe['matched'].mean()):.4f}"
+                  f"  (SED総数={len(sed):,})")
+            yr = fe.groupby("year")["matched"].mean()
+            print("  年別一致率: " + "  ".join(f"{int(y)}:{v:.3f}" for y, v in yr.items()))
+            un = fe[~fe["matched"]]
+            print(f"  未一致={len(un):,}  未一致の年×場 上位: "
+                  f"{dict(list(un.groupby(['year','place']).size().sort_values(ascending=False).head(8).items()))}")
+            print(f"  未一致 race_id 例: {list(un['race_id'].unique()[:5])}")
+            # キー重複（双方）
+            sed_dup = int(pd.Series(list(zip(sed[rid].astype(str),
+                          pd.to_numeric(sed['umaban'], errors='coerce')))).duplicated().sum())
+            print(f"  SED (race_id,馬番) 重複={sed_dup:,}（0 が理想＝1出走1行）")
         else:
             print("  featured 無し or SED に race_id/umaban 無しでスキップ。")
+
+    # (5) Gate B: 意味的 validity（空文字を含む非欠測でなく spec 準拠の有効率）
+    print("\n[5] Gate B: 意味的 validity（spec/ijo 準拠・空文字は無効・経験quantile不使用）")
+    if sed is not None:
+        import numpy as np
+        import pandas as pd
+        from src.features._strictly_prior import clip_3f, sed_market_perf, sed_pace_state
+        ymd = "ymd" if "ymd" in sed.columns else _date_col(sed)
+        year = _year_series(sed, ymd) if ymd else pd.Series([np.nan] * len(sed))
+        # race_pace: 年別 H/M/S 変換率
+        if "race_pace" in sed.columns:
+            z = sed_pace_state(sed["race_pace"])
+            yr = z.notna().groupby(year).mean()
+            print("  race_pace H/M/S 有効率(年別): " + "  ".join(f"{int(y)}:{v:.3f}" for y, v in yr.items()))
+        # chakujun / kakutei_ninki: 有効範囲率（1..N・ijo=0）
+        if {"chakujun", "kakutei_ninki", "race_id", "ijo_kubun"}.issubset(sed.columns):
+            perf = sed_market_perf(sed)
+            print(f"  市場残差 r=(人気−着順)/(N−1) の有効(非NaN)率={float(perf.notna().mean()):.4f}"
+                  f"（ijo≠0/範囲外/N<=1 を除外後）")
+            ijo = sed["ijo_kubun"].astype(str).str.strip()
+            print(f"  ijo_kubun 分布(非完走=除外対象): {dict(list(ijo.value_counts().head(8).items()))}")
+        # ato3f: 物理域 valid 率（年別）
+        if "ato3f_time" in sed.columns:
+            valid = pd.Series(np.isfinite(clip_3f(sed["ato3f_time"].to_numpy())))
+            yr = valid.groupby(year.reset_index(drop=True)).mean()
+            print(f"  ato3f 物理域[28.0-45.0s] valid 率 全体={float(valid.mean()):.4f}  "
+                  "年別: " + "  ".join(f"{int(y)}:{v:.3f}" for y, v in yr.items()))
+        print("  ※ 単位: 3F は 0.1秒単位（280=28.0秒）。sentinel/空/0/域外は欠測化。ijo≠0 は市場残差から除外。")
 
     # (4) 参考: horse_results 構造（H3 では不使用だが、race_id 欠如を明示記録）
     print("\n[4] 参考: horse_results 構造（H3 では不使用・race_id 欠如の記録）")

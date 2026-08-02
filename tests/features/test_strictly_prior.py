@@ -8,6 +8,11 @@ from src.features._strictly_prior import (
     PACE_FAST,
     PACE_NORMAL,
     PACE_SLOW,
+    PACE_STATES,
+    clip_3f,
+    fit_pace_calibration,
+    h3a_pace_aptitude,
+    h3b_lap_aptitude,
     has_leak,
     lap_aptitude,
     market_anchored_perf,
@@ -15,6 +20,10 @@ from src.features._strictly_prior import (
     pace_state_from_balance,
     pace_state_residuals,
     pace_states_of_runs,
+    pr_z_from_forecast,
+    sed_market_perf,
+    sed_pace_state,
+    sed_race_percentile_ato3f,
     shrink,
     strictly_prior_runs,
 )
@@ -167,3 +176,95 @@ def test_lap_aptitude_basic_and_baseline():
 def test_lap_aptitude_empty():
     out = lap_aptitude(pd.DataFrame({"上り": [], "ペース": []}), k=0.0)
     assert np.isnan(out["late3f"]) and out["n"] == 0
+
+
+# ============================================================================================
+# FROZEN H3 SPEC（SED 主ソース）テスト
+
+def test_clip_3f_physical_range():
+    out = clip_3f([280.0, 369.0, 450.0, 0.0, -89.0, 984.0, 279.0, 451.0, None])
+    # 有効: 280,369,450 / 無効(NaN): 0,-89,984,279,451,None
+    assert out[0] == 280.0 and out[1] == 369.0 and out[2] == 450.0
+    assert all(np.isnan(out[i]) for i in (3, 4, 5, 6, 7, 8))
+
+
+def test_sed_pace_state_mapping():
+    z = sed_pace_state(pd.Series(["H", "m", " S ", "", "X"]))
+    assert list(z[:3]) == [PACE_FAST, PACE_NORMAL, PACE_SLOW]
+    assert z.iloc[3] is None or z.isna().iloc[3]
+    assert z.iloc[4] is None or z.isna().iloc[4]
+
+
+def test_sed_market_perf_formula_and_ijo():
+    sed = pd.DataFrame({
+        "race_id": ["R"] * 4,
+        "kakutei_ninki": [4, 1, 2, 3],
+        "chakujun": [1, 4, 2, 3],
+        "ijo_kubun": ["0", "0", "3", "0"],   # 3頭目は中止→除外
+    })
+    perf = sed_market_perf(sed)
+    # N=4, r=(人気−着順)/(N−1)=/3。row0: (4−1)/3=1.0（大穴激走）row1:(1−4)/3=-1.0
+    assert abs(perf.iloc[0] - 1.0) < 1e-12
+    assert abs(perf.iloc[1] - (-1.0)) < 1e-12
+    assert np.isnan(perf.iloc[2])            # ijo≠0 除外
+
+
+def test_sed_market_perf_range_bounds():
+    sed = pd.DataFrame({"race_id": ["R"] * 3, "kakutei_ninki": [1, 2, 3],
+                        "chakujun": [1, 2, 3], "ijo_kubun": ["0"] * 3})
+    perf = sed_market_perf(sed)
+    assert (perf.abs() <= 1.0 + 1e-9).all()   # r∈[−1,1]
+
+
+def test_sed_race_percentile_ato3f():
+    # 同一 race で上りが速い(小)ほど s>0
+    sed = pd.DataFrame({"race_id": ["R"] * 3, "ato3f_time": [340.0, 360.0, 380.0]})
+    s = sed_race_percentile_ato3f(sed)
+    assert s.iloc[0] > 0 > s.iloc[2]          # 最速→正, 最遅→負
+    # 物理域外は欠測→percentile も NaN
+    sed2 = pd.DataFrame({"race_id": ["R", "R"], "ato3f_time": [340.0, 984.0]})
+    s2 = sed_race_percentile_ato3f(sed2)
+    assert np.isnan(s2.iloc[1])
+
+
+def test_fit_pace_calibration_rows_normalized_and_smoothed():
+    # forecast H の実測が全部 H でも Dirichlet で M/S にわずかな質量が残る
+    fy = ["H", "H", "H", "S", "S"]
+    az = ["H", "H", "H", "S", "M"]
+    cal = fit_pace_calibration(fy, az, alpha=1.0)
+    for f in PACE_STATES:
+        assert abs(sum(cal[f].values()) - 1.0) < 1e-12   # 各行正規化
+    assert cal[PACE_FAST][PACE_FAST] > cal[PACE_FAST][PACE_SLOW]  # H予想はH実測が最大
+    assert cal[PACE_FAST][PACE_SLOW] > 0                 # α=1 でゼロにならない
+
+
+def test_pr_z_from_forecast_missing():
+    cal = fit_pace_calibration(["H"], ["H"])
+    assert pr_z_from_forecast("H", cal) is not None
+    assert pr_z_from_forecast("", cal) is None           # 空→None
+    assert pr_z_from_forecast("H", None) is None
+
+
+def test_h3a_pace_aptitude_calibrated_and_defaults():
+    # 履歴: fast で市場超過(+), slow で凡走(−)
+    hist = pd.DataFrame({
+        "_z": [PACE_FAST, PACE_FAST, PACE_SLOW],
+        "_perf": [0.6, 0.4, -0.5],
+    })
+    cal_hi = {PACE_FAST: {PACE_FAST: 1.0, PACE_NORMAL: 0.0, PACE_SLOW: 0.0},
+              PACE_NORMAL: {PACE_FAST: 0, PACE_NORMAL: 1, PACE_SLOW: 0},
+              PACE_SLOW: {PACE_FAST: 0, PACE_NORMAL: 0, PACE_SLOW: 1}}
+    x = h3a_pace_aptitude(hist, "H", cal_hi, k=0.0)     # k=0→縮約なし
+    assert abs(x - 0.5) < 1e-9                            # fast の平均(0.5)を重み1で
+    x_lo = h3a_pace_aptitude(hist, "S", cal_hi, k=0.0)
+    assert abs(x_lo - (-0.5)) < 1e-9
+    # 予想欠測→0, 履歴なし→0
+    assert h3a_pace_aptitude(hist, "", cal_hi) == 0.0
+    assert h3a_pace_aptitude(pd.DataFrame({"_z": [], "_perf": []}), "H", cal_hi) == 0.0
+
+
+def test_h3b_lap_aptitude_shrink_and_default():
+    hist = pd.DataFrame({"_agari_pct": [0.4, 0.2]})
+    assert abs(h3b_lap_aptitude(hist, k=0.0) - 0.3) < 1e-9   # 平均
+    assert abs(h3b_lap_aptitude(hist, k=2.0) - 0.3 * (2 / 4)) < 1e-9  # n=2,k=2→半分
+    assert h3b_lap_aptitude(pd.DataFrame({"_agari_pct": []})) == 0.0
