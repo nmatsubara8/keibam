@@ -54,6 +54,27 @@ def test_prev_trouble_leak_safe():
     assert pd.isna(r1["prev_trouble"])
 
 
+def test_attach_asof_handles_japanese_date():
+    # 続36 回帰: netkeiba featured の date は 'YYYY年MM月DD日'。既定 pd.to_datetime はこれを
+    # 全 NaT にし history/soten の asof が空結合＝prev_*/jrdb_ms_* 全欠測になっていた。
+    # robust パーサで日本語表記でも asof が成立し前走トラブルが貼られることを保証する。
+    feat = pd.DataFrame(
+        {"馬番": [1, 2, 1], "単勝": [5.0, 8.0, 4.0],
+         "date": ["2020年02月01日", "2020年02月01日", "2020年03月01日"]},
+        index=["202005010101", "202005010101", "202005010201"],
+    )
+    out = attach(feat, _kyi(), _history())
+    assert out.loc["202005010201"]["prev_trouble"] == 1        # 前走(2/1)の trouble が貼られる
+    assert pd.isna(out.loc["202005010101"].iloc[0]["prev_trouble"])  # 今走当日は exact不可で除外
+
+
+def test_kakutei_bataijuu_not_from_kyi():
+    # 続36 WRONG_SOURCE: 確定馬体重は KYI 由来にしない（発走前は 0/空・DEAD）。TYB へ移譲。
+    from src.jrdb._augment import KYI_FEATURE_MAP
+    assert "kakutei_bataijuu" not in KYI_FEATURE_MAP
+    assert "jrdb_kakutei_bataijuu" not in KYI_FEATURE_MAP.values()
+
+
 def test_attach_empty_jrdb_is_safe():
     out = attach(_featured(), pd.DataFrame(), pd.DataFrame())
     assert "jrdb_kijun_odds" in out.columns

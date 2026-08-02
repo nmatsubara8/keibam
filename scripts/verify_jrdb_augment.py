@@ -101,6 +101,20 @@ def _load_augmented(args):
         # KYI(race_id,馬番→ketto) で base に ketto を補って attach 可能にする（本線統合でも要る配線）。
         _agreement_vs_base(kyi, base)      # 既知良好(adapter経路)の5列と scale/parse 一致を検証
         base = _ensure_ketto(base, kyi_raw)
+        # asof 結合の前提診断（history/soten が DEAD の原因切り分け）。date は robust パーサで判定
+        # （既定 pd.to_datetime は netkeiba の 'YYYY年MM月DD日' を全 NaT にする＝続31 DEAD 原因）。
+        import pandas as _pd
+        from src.jrdb._augment import _to_race_datetime
+        if "date" in base.columns:
+            naive = float(_pd.to_datetime(base["date"], errors="coerce").notna().mean())
+            robust = float(_to_race_datetime(base["date"]).notna().mean())
+        else:
+            naive = robust = 0.0
+        kcov = float(_pd.Series(base.get("ketto")).notna().mean()) if "ketto" in base.columns else 0.0
+        hk = set(hist["ketto"].astype(str)) if len(hist) else set()
+        bk = set(_pd.Series(base.get("ketto")).dropna().astype(str)) if "ketto" in base.columns else set()
+        print(f"  [asof前提] base date有効率 既定={naive:.3f}→robust={robust:.3f}  "
+              f"base ketto有効率={kcov:.3f}  ketto∩(base,hist)={len(bk & hk):,}")
         print(f"  [from-store] KYI jrdb列={len([c for c in kyi.columns if str(c).startswith('jrdb_')])} "
               f"history rows={len(hist):,} soten rows={len(soten):,} "
               f"base ketto={'あり' if 'ketto' in base.columns else 'なし'}")

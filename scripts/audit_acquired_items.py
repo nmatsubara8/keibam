@@ -20,20 +20,25 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # 取得項目の状態分類（ユーザ査読・続31）。「ブリッジ済」は誤解を招くため 7 状態＋時点クラスへ。
 #   MATERIALIZED          : featured に実在
+#   MATERIALIZED_RACE_CONTEXT: 実在するが race 内定数（馬間分散≈0・展開/予想の場コンテキスト）
 #   IMPLEMENTED_NOT_APPLIED: attach 実装はあるが本番 build で未適用（=現 artifact に無い）
 #   INGESTED_NOT_BRIDGED  : store 済だが featured へ橋渡し無し
+#   WRONG_SOURCE          : その source では観測できない（時点/取得元の契約違反）＝別 source へ移譲
 #   SOURCE_EMPTY / INGESTION_MISSING / HISTORICAL_ONLY / OUTCOME_ONLY
 # 時点クラス（feature contract 用）: direct_current / bet_time_contract / historical_only / outcome_only
 SOURCE_STATE = {
-    # KYI: 固定5列のみ MATERIALIZED、残り指数群は IMPLEMENTED_NOT_APPLIED（attach 未配線）
-    "KYI": ("MATERIALIZED(5)+IMPLEMENTED_NOT_APPLIED(残指数)", "direct_current",
-            "前日予想・指数。5列(idm/kishu_idx/joho_idx/kyakushitsu/kijun_odds)のみ本線注入"),
+    # KYI: 固定5列のみ本線 MATERIALIZED、残り指数群は standalone augment で実体化検証済（本線未配線）。
+    # pace_hms は race 内定数(MATERIALIZED_RACE_CONTEXT)、確定馬体重は WRONG_SOURCE(→TYB) で KYI から除外。
+    "KYI": ("MATERIALIZED(5)+IMPLEMENTED_NOT_APPLIED(残指数)+RACE_CONTEXT(pace_hms)", "direct_current",
+            "前日予想・指数。5列(idm/kishu_idx/joho_idx/kyakushitsu/kijun_odds)のみ本線注入。"
+            "pace_hms は場の展開予想=race内定数。確定馬体重は WRONG_SOURCE で除外(→TYB)"),
     "SED": ("IMPLEMENTED_NOT_APPLIED(prev_*/MySpeed)+OUTCOME_ONLY(当該走)", "historical_only",
-            "過去走の strictly-prior 集約のみ可。prev_deokure/soten MySpeed は attach 未配線"),
+            "過去走の strictly-prior 集約。続36 で asof の date パース(和暦表記)不備を修復＝実体化可能に"),
     "SKB": ("IMPLEMENTED_NOT_APPLIED(prev_trouble)", "historical_only",
-            "過去走特記(TROUBLE_TOKKI)。attach 未配線"),
+            "過去走特記(TROUBLE_TOKKI)。続36 で asof date 修復＝実体化可能(本線配線は別工程)"),
     "TYB": ("INGESTED_NOT_BRIDGED", "bet_time_contract",
-            "直前オッズ/パドック/馬体重(T-15)。bet 決定時刻 <= 配信時刻 の契約が必須"),
+            "直前オッズ/パドック/馬体重(T-15)。確定馬体重の正しい取得元。"
+            "bet 決定時刻 <= 配信時刻 の契約が必須"),
     "CYB": ("INGESTED_NOT_BRIDGED", "direct_current", "調教分析: 追切/仕上/調教評価/コメント"),
     "CHA": ("INGESTED_NOT_BRIDGED", "direct_current", "本追切: テン/中間/終いF＋各指数＋併せ結果"),
     "KKA": ("INGESTED_NOT_BRIDGED", "direct_current", "条件別着度数＋父/母父産駒連対率"),

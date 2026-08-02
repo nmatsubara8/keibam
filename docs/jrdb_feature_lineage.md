@@ -22,6 +22,26 @@ IMPLEMENTED_NOT_APPLIED（KYI 残指数 / SED prev_*・MySpeed / SKB prev_troubl
 INGESTED_NOT_BRIDGED（TYB/CYB/CHA/KKA/UKC/SRB/KAB/BAC）、
 HISTORICAL_ONLY（KSA/CSA 2026 のみ）、INGESTION_MISSING（KTA=0）、OUTCOME_ONLY（HJC）。
 
+## 続36 修復（standalone 実データ検証後の DEAD 列 lineage 修復）
+
+standalone augment を実データで検証し、**列実体化は成功（33 OK・0 ABSENT・既知5列 corr=1.0）**。
+残る「薄い/DEAD」10 列を分類し、性能評価でなく lineage を修復した:
+
+| 列 | 分類 | 根本原因 | 修復 |
+|---|---|---|---|
+| jrdb_pace_hms | MATERIALIZED_RACE_CONTEXT | 場の展開予想＝race 内定数（馬間分散≈0） | 「薄い」でなく正常。分類を訂正（DEAD 扱いしない） |
+| jrdb_kakutei_bataijuu | WRONG_SOURCE | 確定馬体重は発走約15分前に確定。KYI(前日〜当日朝)では 0/空 | KYI_FEATURE_MAP から**除去**。TYB(直前・T-15)の bataijuu へ移譲(bet_time_contract) |
+| prev_deokure / prev_trouble | HISTORY_ATTACH_FAILED | attach の asof 左キー `pd.to_datetime(featured.date)` が **netkeiba 和暦 'YYYY年MM月DD日' を全 NaT** 化→空結合 | `_to_race_datetime`(明示フォーマット検出)で堅牢化。ketto は (race_id,馬番)→KYI で補完 |
+| jrdb_ms_last/mean3/max5/ewm/trend/npast | HISTORY_PIPELINE_FAILED | 同上（同じ asof の date パース不備） | 同上。soten 生成関数・groupby は正常で、原因は左キー日付のみ |
+
+修復は `src/jrdb/_augment.py`（`_to_race_datetime` 追加＋両 asof で使用・kakutei 除去）。ISO 表記の
+既存テストも回帰維持（サンプル被覆で最良フォーマットを選ぶため '2020-02-01' もそのまま解ける）。
+
+**学習側 allowlist 関門**（`src/training/_feature_materialization.py::assert_training_allowlist`）:
+本線の特徴選択は denylist（`_DROP_FOR_TRAIN` 以外を全採用）なので、attach 配線後に新規実体化した
+JRDB 列が**黙って既存モデルへ混入**する。関門で (1) allowlist 未実体化=RuntimeError、(2) allowlist 外の
+jrdb_*/prev_* 混入=RuntimeError にし、本線統合の前に**明示決定**を強制する。B 凍結は 5 特徴のまま不変。
+
 ## lineage（38 実体化のための追跡表・repair の骨子）
 
 各特徴について次を一本化する: parser field → store column → augment 関数 → build 呼出し → join key →

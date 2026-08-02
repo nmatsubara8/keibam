@@ -10,9 +10,37 @@ featured は代理 horse_id を使わず (race_id,馬番)＋JRDB血統登録番�
 from __future__ import annotations
 
 import pandas as pd
+from pandas.api.types import is_datetime64_any_dtype
 
 from src.constants._feature_cols import MYSPEED_FEATURE_COLS
 from src.jrdb._parser import parse
+
+# featured の date 表記候補。netkeiba featured は 'YYYY年MM月DD日'（_adapter._ymd_to_jp）で、
+# pd.to_datetime の既定パーサはこれを **全て NaT** にする。history/soten の asof は left key を
+# この date から作るため、既定パースのままだと left が全 NaT → 空結合 → prev_*/jrdb_ms_* が
+# 全欠測になる（続31 で判明した history_attach/history_pipeline DEAD の根本原因）。
+_DATE_FORMATS = ("%Y年%m月%d日", "%Y/%m/%d", "%Y-%m-%d")
+
+
+def _to_race_datetime(values) -> pd.Series:
+    """featured の date 列を datetime へ堅牢化（日本語表記 'YYYY年MM月DD日' を含む）。
+
+    非 datetime のとき、先頭サンプルで最も被覆する明示フォーマットを検出してベクトル変換する
+    （大規模でも高速・日本語表記対応）。どれも当たらなければ既定パーサに委ねる。index は保持。
+    """
+    s = pd.Series(values)
+    if is_datetime64_any_dtype(s):
+        return s
+    sample = s.dropna().astype(str).head(200)
+    best_fmt, best_cov = None, 0.0
+    if len(sample):
+        for fmt in _DATE_FORMATS:
+            cov = float(pd.to_datetime(sample, format=fmt, errors="coerce").notna().mean())
+            if cov > best_cov:
+                best_fmt, best_cov = fmt, cov
+    if best_fmt is not None and best_cov >= 0.5:
+        return pd.to_datetime(s, format=best_fmt, errors="coerce")
+    return pd.to_datetime(s, errors="coerce")
 
 # raw MySpeed（素点履歴）の付与列。正本の列名・列順は constants に一元化（学習/推論の契約）。
 MYSPEED_COLS = list(MYSPEED_FEATURE_COLS)
@@ -45,7 +73,10 @@ KYI_FEATURE_MAP = {
     "dochu_juni": "jrdb_dochu_juni",
     "go3f_juni": "jrdb_go3f_juni",
     "goal_juni": "jrdb_goal_juni",
-    "kakutei_bataijuu": "jrdb_kakutei_bataijuu",
+    # 確定馬体重(kakutei_bataijuu) は **KYI 由来にしない**（続36 WRONG_SOURCE）。
+    # KYI(出馬表)は発走前夜〜当日朝の配布で、確定馬体重は発走約15分前(馬体重発表)に確定するため
+    # KYI 上は 0/空＝非欠測率≈0 の DEAD 列だった。正しい取得元は TYB(直前情報・T-15) の bataijuu。
+    # TYB を bet-time contract で本線へブリッジするまでは付与しない（INGESTED_NOT_BRIDGED）。
     "kokyu_flag": "jrdb_kokyu_flag",
     "start_idx": "jrdb_start_idx",
     "deokure_rate": "jrdb_deokure_rate",
@@ -283,7 +314,7 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
 
     # 前走トラブル: ketto × (年月日<今走) の直近を merge_asof(backward, exact不可)
     if history is not None and not history.empty and "ketto" in f.columns:
-        today = pd.to_datetime(f["date"], errors="coerce")
+        today = _to_race_datetime(f["date"])
         sub = pd.DataFrame({"_pos": f["_pos"], "ketto": f["ketto"], "_today": today})
         sub = sub.dropna(subset=["ketto", "_today"]).sort_values("_today")
         hist = history.sort_values("hist_date")
@@ -298,7 +329,7 @@ def attach(featured: pd.DataFrame, kyi: pd.DataFrame, history: pd.DataFrame,
     # raw MySpeed（素点履歴）: ketto × (過去日<今走) の直近走の trailing 集約を asof で貼る。
     # backward+exact不可 で今走を除外＝leak-safe（prev_trouble と同じ機構）。
     if soten is not None and not soten.empty and "ketto" in f.columns:
-        ms_today = pd.to_datetime(f["date"], errors="coerce")
+        ms_today = _to_race_datetime(f["date"])
         ms_sub = pd.DataFrame({"_pos": f["_pos"], "ketto": f["ketto"], "_today": ms_today})
         ms_sub = ms_sub.dropna(subset=["ketto", "_today"]).sort_values("_today")
         ms_hist = soten.sort_values("hist_date")
