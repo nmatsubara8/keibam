@@ -268,3 +268,25 @@ def test_h3b_lap_aptitude_shrink_and_default():
     assert abs(h3b_lap_aptitude(hist, k=0.0) - 0.3) < 1e-9   # 平均
     assert abs(h3b_lap_aptitude(hist, k=2.0) - 0.3 * (2 / 4)) < 1e-9  # n=2,k=2→半分
     assert h3b_lap_aptitude(pd.DataFrame({"_agari_pct": []})) == 0.0
+
+
+def test_assert_strictly_prior_passes_and_raises():
+    import pytest
+    from src.features._strictly_prior import assert_strictly_prior
+    hist = pd.DataFrame({"_d": pd.to_datetime(["2020-01-01", "2020-06-01"]),
+                         "race_id": ["A", "B"]})
+    # 正常: 全て target より前・target race_id 非含
+    ms = assert_strictly_prior(hist, "2021-01-01", "T", date_col="_d", race_id_col="race_id")
+    assert str(ms.date()) == "2020-06-01"
+    # 未来混入→raise
+    bad = pd.DataFrame({"_d": pd.to_datetime(["2020-01-01", "2021-06-01"]), "race_id": ["A", "B"]})
+    with pytest.raises(RuntimeError):
+        assert_strictly_prior(bad, "2021-01-01", "T", date_col="_d", race_id_col="race_id")
+    # target 自身混入→raise
+    same = pd.DataFrame({"_d": pd.to_datetime(["2020-01-01"]), "race_id": ["T"]})
+    with pytest.raises(RuntimeError):
+        assert_strictly_prior(same, "2021-01-01", "T", date_col="_d", race_id_col="race_id")
+    # 同日履歴→raise
+    sd = pd.DataFrame({"_d": pd.to_datetime(["2021-01-01"]), "race_id": ["X"]})
+    with pytest.raises(RuntimeError):
+        assert_strictly_prior(sd, "2021-01-01", "T", date_col="_d", race_id_col="race_id")

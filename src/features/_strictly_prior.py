@@ -52,6 +52,27 @@ def strictly_prior_runs(
     return runs[mask.to_numpy()]
 
 
+def assert_strictly_prior(hist, target_date, target_race_id, *, date_col="_d", race_id_col="race_id"):
+    """本番生成時の**全件**リーク assert（違反1件で RuntimeError）。300頭検査でなく各target行で使う。
+
+    検査: max(source_date) < target_date・target_race_id が hist に無い・同日(target_date)履歴=0。
+    hist は strictly_prior_runs 済のはずだが、それを信用せず最終ガードとして再検証する。返す
+    使用した最大 source_date（artifact 記録用・履歴空なら None）。純関数（例外送出のみ）。
+    """
+    import pandas as pd
+    if hist is None or len(hist) == 0:
+        return None
+    d = pd.to_datetime(hist[date_col], errors="coerce")
+    td = pd.to_datetime(target_date)
+    if (d >= td).any():
+        raise RuntimeError(f"H3 leak: source_date >= target_date（target={target_date}）")
+    if race_id_col in hist.columns and (hist[race_id_col].astype(str) == str(target_race_id)).any():
+        raise RuntimeError(f"H3 leak: target race_id {target_race_id} が履歴に混入")
+    if (d == td).any():
+        raise RuntimeError(f"H3 leak: 同日({target_date})履歴が存在")
+    return d.max()
+
+
 def has_leak(runs, target_date, *, target_race_id=None, date_col="date", race_id_col="race_id") -> bool:
     """runs に「現レース以降 or target 自身」が混ざっていれば True（テスト/監査用の逆検出）。"""
     import pandas as pd
