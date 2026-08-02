@@ -109,7 +109,7 @@ def _canary_npast(base, attached, soten):
         print("  [canary] 3走以上かつ soten 在の馬が無くスキップ")
         return
     k = cand[0]
-    mask = (kser == k).to_numpy()
+    mask = (kser == k).fillna(False).to_numpy(dtype=bool)   # nullable string の NA を False に
     idx = np.where(mask)[0]
     order = np.argsort(dser.to_numpy()[idx])
     idx = idx[order]
