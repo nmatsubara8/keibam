@@ -104,18 +104,40 @@ canary（jrdb_ms_npast が初走 NaN→1→2… 単調増加）と合わせ hist
 denylist を保ったまま既存モデルを不変にする唯一の方法は「新規列を default featured に載せず、
 消費を明示 allowlist の opt-in にする」こと。従って:
 
-- `DataSplitter(..., feature_allowlist=None)` を追加。**None（既定）は従来 denylist＝既存 B/P2/H3 は
-  byte 一致で不変**。allowlist を渡すと構築時に featured を `allowlist＋保護列(date/rank/着順/単勝/
-  horse_id/CORNER/leak列)` に絞り、以降の drop で残るのは allowlist のみ＝新規列は silent 混入しない。
-  指定列が featured に無ければ `assert_training_allowlist` で fail-closed。
+- `DataSplitter(..., feature_allowlist=None)` を追加。**None（既定）は従来 denylist＝legacy schema に
+  対する既存挙動を維持**（「byte 一致」は旧/新コードの学習行列・予測 artifact の hash を実比較した
+  ときのみ使う表現。現状は既存テスト green ＝ legacy schema での挙動維持）。allowlist を渡すと構築時に
+  featured を `allowlist＋保護列(date/rank/着順/単勝/horse_id/CORNER/leak列)` に絞り、以降の drop で
+  残るのは allowlist のみ＝新規列は silent 混入しない。指定列が無ければ fail-closed。
+- **augment artifact＋allowlist なしの拒否（続36-g・必須ガード）**: `feature_allowlist=None` は denylist
+  のため、完全 augment artifact を誤って渡すと新規37列が silent 混入する。`assert_no_unguarded_augment`
+  （`LEGACY_JRDB_COLUMNS`=既存5 / `JRDB_AUGMENT_ONLY_COLUMNS`=残り37）で「augment 専用列が在るのに
+  allowlist 未指定」を **RuntimeError で拒否**。DataSplitter 構築時に発火。純関数なので将来の
+  非 DataSplitter trainer 入口にも設置可。
 - 完全 augment(42列)は opt-in build（`scripts/jrdb_build_features.py`・別 pickle）で生成し、そこで
   `strictly_prior_join_report`＋`assert_strictly_prior` の全件 manifest を出力・検証（history/soten の
   未来/同日参照=0 を fail-closed 認定）。default 本線 featured の schema は不変（既存5のみ）。
+- **artifact 消費契約**（`build_training_provenance`）: 設定でなく **実際に学習へ入った列** を後日監査
+  できるよう `requested_feature_allowlist`（設定）と `resolved_training_features`（実結果）を分離記録し
+  `resolved_training_features_hash`（順序込み）＋`input_feature_schema_id` を刻む。DataSplitter は
+  `resolved_feature_columns`/`resolved_feature_hash` を公開。
 - 新規/研究モデルは feature_allowlist に「既存列＋採用する JRDB 列」を明示して opt-in。**B frozen は
   従来5特徴のまま**。欠測は一律0埋めせずモデル別規則を freeze（jrdb_nyukyu_days・history 初走 NaN 等）。
 
-これで「本線が42を通せる基盤＋既存モデル不変＋新規列の silent 混入阻止＋leak 全件証跡」が揃う。
-性能評価は行わない（新規列の予測価値は未接触 test tranche 開封前の事前登録の後で別途）。
+これで「本線が42を通せる基盤＋既存挙動維持＋新規列の silent 混入阻止（allowlist 未指定でも拒否）＋
+leak 全件証跡＋実消費列の hash 監査」が揃う。性能評価は行わない（新規列の予測価値は未接触 test tranche
+開封前の事前登録の後で別途）。
+
+## テスト網羅（続36-g ガード行列）
+
+| ケース | 期待 | テスト |
+|---|---|---|
+| legacy featured＋allowlist なし | 成功（従来挙動維持） | test_legacy_featured_denylist_ok |
+| augment featured＋allowlist なし | fail-closed | test_augment_featured_without_allowlist_fails_closed |
+| augment featured＋明示 allowlist | 指定列だけで成功 | test_allowlist_restricts_to_configured_features |
+| allowlist に無い列 | fail-closed | test_allowlist_missing_feature_fails_closed |
+| B 固定5列＋augment featured | 解決入力が厳密に5列 | test_b_five_columns_resolved_exactly_five |
+| resolved hash | 安定・順序込み | test_resolved_feature_hash_stable_and_order_sensitive / provenance |
 
 ## lineage（38 実体化のための追跡表・repair の骨子）
 

@@ -25,14 +25,23 @@ def _git_commit() -> Optional[str]:
 
 
 def build_training_provenance(index, *, jra_only=None, training_period=None,
-                              feature_contract_version=None) -> dict:
+                              feature_contract_version=None,
+                              requested_feature_allowlist=None,
+                              resolved_training_features=None,
+                              input_feature_schema_id=None) -> dict:
     """学習 index(race_id) から由来メタを作る。nar_rows は**実データ由来**（フラグ非依存）。
 
     返す dict:
       train_rows/train_races、nar_rows/nar_fraction（場コード30+＝地方を実測）、
       jra_only_effective（nar_rows==0＝データが実際にJRA限定か）、jra_only_flag（入力の記録のみ）、
       place_code_counts、training_period、feature_contract_version、git_commit。
+
+    続36-g: 「設定した allowlist」でなく **実際に学習へ入った列** を後から監査できるよう、
+      requested_feature_allowlist（入力設定）と resolved_training_features（実結果）を分けて記録し、
+      resolved_training_features_hash（順序込み）を刻む。input_feature_schema_id は artifact 由来。
     """
+    import hashlib
+
     import pandas as pd
 
     from src.constants._model_category import central_index_mask
@@ -41,6 +50,11 @@ def build_training_provenance(index, *, jra_only=None, training_period=None,
     mask = central_index_mask(rid) if n else []
     nar = int((~pd.Series(mask)).sum()) if n else 0
     places = rid.str[4:6]
+    resolved = list(resolved_training_features) if resolved_training_features is not None else None
+    resolved_hash = None
+    if resolved is not None:
+        resolved_hash = hashlib.sha256(
+            ",".join(str(c) for c in resolved).encode("utf-8")).hexdigest()[:16]
     return {
         "train_rows": int(n),
         "train_races": int(rid.nunique()),
@@ -51,6 +65,12 @@ def build_training_provenance(index, *, jra_only=None, training_period=None,
         "place_code_counts": dict(Counter(places).most_common()) if n else {},
         "training_period": training_period,
         "feature_contract_version": feature_contract_version,
+        # 学習入力の消費契約（設定 vs 実結果を分離して監査可能に）。
+        "requested_feature_allowlist": (list(requested_feature_allowlist)
+                                        if requested_feature_allowlist is not None else None),
+        "resolved_training_features": resolved,
+        "resolved_training_features_hash": resolved_hash,
+        "input_feature_schema_id": input_feature_schema_id,
         "git_commit": _git_commit(),
     }
 

@@ -25,6 +25,23 @@ def test_provenance_pure_jra():
     assert p["nar_rows"] == 0 and p["jra_only_effective"] is True
 
 
+def test_provenance_records_resolved_features_and_hash():
+    # 続36-g: 設定(allowlist)と実結果(resolved)を分けて記録し、resolved の hash を刻む。
+    idx = pd.Index(["202305010101", "202306010102"])
+    p = build_training_provenance(
+        idx, requested_feature_allowlist=["f1", "jrdb_idm"],
+        resolved_training_features=["f1", "jrdb_idm"], input_feature_schema_id="jrdb_augment_v1")
+    assert p["requested_feature_allowlist"] == ["f1", "jrdb_idm"]
+    assert p["resolved_training_features"] == ["f1", "jrdb_idm"]
+    assert isinstance(p["resolved_training_features_hash"], str)
+    assert len(p["resolved_training_features_hash"]) == 16
+    assert p["input_feature_schema_id"] == "jrdb_augment_v1"
+    # 既存呼び出し（新規引数なし）は None のまま＝後方互換。
+    q = build_training_provenance(idx)
+    assert q["resolved_training_features_hash"] is None
+    assert q["requested_feature_allowlist"] is None
+
+
 def test_assert_jra_only_fail_closed():
     ok = pd.Index(["202305010101", "202306010102"])
     assert assert_jra_only(ok) == 0                 # JRAのみ→通る

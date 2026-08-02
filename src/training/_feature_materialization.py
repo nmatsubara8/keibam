@@ -33,6 +33,29 @@ CONTEXT_JRDB = ("jrdb_pace_hms",)
 #   history を有効化した build で全欠測なら fail-closed（列は在るが結合が壊れている状態を検知）。
 HISTORY_JRDB = tuple(["prev_deokure", "prev_trouble"] + list(MYSPEED_COLS))
 
+# 既存本線が従来から注入していた 5 列（legacy schema）。これらは denylist 経路でも許容される。
+LEGACY_JRDB_COLUMNS = frozenset(REQUIRED_JRDB_MIN)
+# 完全 augment でのみ増える 37 列（legacy を除く EXPECTED 全体）。この列が featured に在るのに
+# feature_allowlist 未指定なら、denylist 経路で silent 混入する＝**拒否すべき状態**。
+JRDB_AUGMENT_ONLY_COLUMNS = frozenset(EXPECTED_JRDB_FULL) - LEGACY_JRDB_COLUMNS
+
+
+def assert_no_unguarded_augment(columns: Iterable[str], feature_allowlist) -> list:
+    """augment 専用列が在るのに allowlist 未指定なら fail-closed（denylist での silent 混入を拒否）。
+
+    完全 augment artifact を誤って従来 denylist 経路（feature_allowlist=None）へ渡すと、新規37列が
+    黙って学習へ入る。この関門で「augment 列を検出したが明示 allowlist が無い」を停止する。
+    DataSplitter だけでなく将来の trainer 入口にも置けるよう純関数にする。返り値: 検出した augment 列。
+    """
+    present = sorted(JRDB_AUGMENT_ONLY_COLUMNS & set(str(c) for c in columns))
+    if present and feature_allowlist is None:
+        raise RuntimeError(
+            "Augmented JRDB columns detected, but no explicit feature_allowlist was supplied. "
+            f"Refusing denylist-based training. 検出列={present[:10]}"
+            f"{' …' if len(present) > 10 else ''}"
+            "（完全 augment artifact を学習する時は feature_allowlist を必ず明示）。")
+    return present
+
 
 def assert_features_materialized(columns: Iterable[str], required: Iterable[str],
                                  *, optional: Iterable[str] = ()) -> list:

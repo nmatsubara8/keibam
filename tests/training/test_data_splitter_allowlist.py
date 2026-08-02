@@ -21,15 +21,47 @@ def _featured(n=40):
         "着順": [1 if i % 3 == 0 else 5 for i in range(n)],
         "単勝": np.linspace(2, 20, n),
         "f1": rs.rand(n), "f2": rs.rand(n),
-        "jrdb_idm": rs.rand(n),
-        "jrdb_ten_idx": rs.rand(n),   # 新規実体化列（allowlist 外なら混入しない）
+        # legacy 5列（denylist で許容される既存 schema）
+        "jrdb_idm": rs.rand(n), "jrdb_joho_idx": rs.rand(n), "jrdb_kijun_odds": rs.rand(n),
+        "jrdb_kishu_idx": rs.rand(n), "jrdb_kyakushitsu": rs.rand(n),
+        "jrdb_ten_idx": rs.rand(n),   # augment 専用列（allowlist 外なら混入しない）
     }, index=idx)
 
 
-def test_denylist_default_keeps_all_features():
-    d = DataSplitter(_featured(), 0.25, 0.25)
-    cols = set(d.X_train.columns)
-    assert {"f1", "f2", "jrdb_idm", "jrdb_ten_idx"} <= cols   # 従来どおり新規列も入る
+def _legacy_featured(n=40):
+    # legacy schema（既存5 JRDB のみ・augment 専用列なし）。従来経路が通ることの確認用。
+    df = _featured(n)
+    return df.drop(columns=["jrdb_ten_idx"])   # augment 専用列を除く（jrdb_idm は legacy）
+
+
+def test_legacy_featured_denylist_ok():
+    # legacy featured＋allowlist なし → 従来どおり成功（augment 専用列が無いので拒否されない）。
+    d = DataSplitter(_legacy_featured(), 0.25, 0.25)
+    assert {"f1", "f2", "jrdb_idm"} <= set(d.X_train.columns)
+
+
+def test_augment_featured_without_allowlist_fails_closed():
+    # augment featured（jrdb_ten_idx 等）＋allowlist なし → fail-closed（silent 混入拒否）。
+    with pytest.raises(RuntimeError, match="Refusing denylist-based training"):
+        DataSplitter(_featured(), 0.25, 0.25)
+
+
+def test_b_five_columns_resolved_exactly_five():
+    # B の固定5列 allowlist＋augment featured → 解決後の入力列が厳密に5列。
+    d = DataSplitter(_featured(), 0.25, 0.25,
+                     feature_allowlist=["jrdb_idm", "jrdb_joho_idx", "jrdb_kijun_odds",
+                                        "jrdb_kishu_idx", "jrdb_kyakushitsu"])
+    assert len(d.resolved_feature_columns) == 5
+    assert set(d.resolved_feature_columns) == {
+        "jrdb_idm", "jrdb_joho_idx", "jrdb_kijun_odds", "jrdb_kishu_idx", "jrdb_kyakushitsu"}
+
+
+def test_resolved_feature_hash_stable_and_order_sensitive():
+    d = DataSplitter(_featured(), 0.25, 0.25, feature_allowlist=["f1", "f2", "jrdb_idm"])
+    h = d.resolved_feature_hash
+    assert isinstance(h, str) and len(h) == 16
+    d2 = DataSplitter(_featured(), 0.25, 0.25, feature_allowlist=["f1", "f2", "jrdb_idm"])
+    assert d2.resolved_feature_hash == h        # 同じ解決列 → 同じ hash（artifact 照合用）
 
 
 def test_allowlist_restricts_to_configured_features():

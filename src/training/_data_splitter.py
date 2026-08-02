@@ -94,9 +94,15 @@ class DataSplitter:
             self.__featured_data = self.__downcast_floats(featured_data)
             self.__nn_raw = None
         self.__featured_data = self.__coerce_object_features(self.__featured_data)
+        # augment 専用37列が在るのに allowlist 未指定なら拒否（artifact を従来経路へ誤投入した
+        # ときの silent 混入を fail-closed で止める・続36-g）。legacy 5列だけなら従来どおり通す。
+        from src.training._feature_materialization import assert_no_unguarded_augment
+        assert_no_unguarded_augment(self.__featured_data.columns, feature_allowlist)
+        self.__feature_allowlist = None
         if feature_allowlist is not None:
             from src.training._feature_materialization import assert_training_allowlist
             allow = list(dict.fromkeys(str(c) for c in feature_allowlist))
+            self.__feature_allowlist = allow
             # 指定列が全て featured に在るか（未実体化なら停止）。jrdb_guard は下の restrict で担保。
             assert_training_allowlist(self.__featured_data.columns, allow, jrdb_guard=False)
             keep = [c for c in
@@ -293,6 +299,23 @@ class DataSplitter:
         if self.__y_test is None:
             self.__y_test = self.__test_data[self.__target]
         return pd.Series(self.__y_test)
+
+    @property
+    def feature_allowlist(self):
+        """指定された allowlist（None なら denylist 経路）。監査用。"""
+        return list(self.__feature_allowlist) if self.__feature_allowlist is not None else None
+
+    @property
+    def resolved_feature_columns(self):
+        """実際に学習入力へ入る列（drop 適用後）。設定でなく **実結果** を監査するための一次情報。"""
+        return list(self.X_train.columns)
+
+    @property
+    def resolved_feature_hash(self):
+        """resolved_feature_columns の順序込み hash（モデル artifact へ保存し後日照合する）。"""
+        import hashlib
+        payload = ",".join(str(c) for c in self.resolved_feature_columns)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     # ------------------------------------------------------------------
     # スタッキング用 3-way 分割
