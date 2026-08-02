@@ -81,7 +81,8 @@ def main() -> int:
     ap.add_argument("--n-boot", type=int, default=1000)
     ap.add_argument("--l2-beta", type=float, default=0.1)
     ap.add_argument("--mes", type=float, default=0.001,
-                    help="実用最小効果量(|ΔNLL| bit/race)。これ未満は有意でも不採用")
+                    help="運用上の最小実用効果量(|ΔNLL| bit/race)。これ未満は有意でも不採用。"
+                         "※結果を見た後に下げない（下げれば事後正当化になる）")
     args = ap.parse_args()
 
     feat = load_featured_data(args.featured) if args.featured else load_featured_data()
@@ -173,13 +174,13 @@ def main() -> int:
     from src.preprocessing._pace_state import evaluate_pz
     from src.simulation._model_compare import block_bootstrap_ci, race_nll
     folds = rolling_origin_folds(records, min_train_years=args.min_train_years)
-    pz_dl, pz_acc = [], []
+    pz_dl, pz_acc, pz_n = [], [], []
     dnll_vals, dnll_days = [], []
     for train, test, year in folds:
         params = fit_challenger(train)
         if params.get("pz") is None:
             continue
-        # レース単位 ΔNLL（挑戦−市場）と開催日（race_id[:8]）を収集
+        # レース単位 ΔNLL（挑戦−市場）と開催場×日（race_id[:10]=年+場+回+日）を収集
         for r in test:
             if r.get("winner") is None:
                 continue
@@ -188,7 +189,7 @@ def main() -> int:
             if not pb or not pc:
                 continue
             dnll_vals.append(race_nll(pc, r["winner"]) - race_nll(pb, r["winner"]))
-            dnll_days.append(str(r["race_id"])[:8])
+            dnll_days.append(str(r["race_id"])[:10])
         te_ids = features_all.index.intersection(pd.Index([r["race_id"] for r in test]))
         te_ids = te_ids.intersection(labels_all.index)
         if len(te_ids) == 0:
@@ -196,11 +197,16 @@ def main() -> int:
         pred = predict_pz(params["pz"], features_all.loc[te_ids])
         ev = evaluate_pz(pred, labels_all.loc[te_ids])
         if ev.get("n"):
-            pz_dl.append(ev["d_logloss"]); pz_acc.append(ev["accuracy"])
+            pz_dl.append(ev["d_logloss"]); pz_acc.append(ev["accuracy"]); pz_n.append(ev["n"])
             print(f"  {year:>6}  n={ev['n']:>6,}  Δlogloss={ev['d_logloss']:+.4f}  acc={ev['accuracy']:.3f}")
     if pz_dl:
-        print(f"  通算: Δlogloss平均={np.mean(pz_dl):+.4f}  acc平均={np.mean(pz_acc):.3f}"
-              f"（負=一様より予測器が情報を持つ／accは3クラス・偶然=0.33）")
+        tot = sum(pz_n)
+        micro_dl = sum(d * n for d, n in zip(pz_dl, pz_n, strict=False)) / tot
+        micro_acc = sum(a * n for a, n in zip(pz_acc, pz_n, strict=False)) / tot
+        print(f"  macro-year平均 : Δlogloss={np.mean(pz_dl):+.4f}  acc={np.mean(pz_acc):.3f}"
+              f"（各年を等重み）")
+        print(f"  micro(全OOS行加重): Δlogloss={micro_dl:+.4f}  acc={micro_acc:.3f}"
+              f"（2026は件数少・両方併記／負=一様より情報あり・偶然acc=0.33）")
 
     # ΔNLL の paired CI を3粒度で併記（レース単位 iid / 開催場×日 / 年）。同日相関を保存する
     # ブロックほど正直（やや広い）。主判定は 開催場×日 block bootstrap（LRT は参考）。
@@ -215,11 +221,13 @@ def main() -> int:
     nrace = pooled.get("n_races", 0)
     ll_mkt = -pooled.get("nll_base", float("nan")) * nrace
     ll_mix = -pooled.get("nll_chal", float("nan")) * nrace
-    print("\n[LRT/CI 監査]（CIは平均ΔNLLの検定=df非依存 / LRTは12β自由度を罰する別仮説）")
+    print("\n[LRT/CI 監査]（CIは平均ΔNLLの検定=df非依存 / LRTは12β構造全体の参照検定）")
     print(f"  n={nrace:,}  LL_market={ll_mkt:.3f}  LL_mixture={ll_mix:.3f}  "
-          f"LR_stat=2·n·ΔNLL={pooled.get('lrt_stat'):.3f}  df=12  LRT_p={_f(pooled.get('lrt_p'),'.4f')}")
-    print("  → CI<0（平均は僅かに改善）と LRT_p≈0.95（12βは複雑さに見合わない）は両立＝実装齟齬でない。"
-          "主判定は paired block bootstrap、LRT は複雑さ penalty の参考。")
+          f"LR_stat=2·(LL_mix−LL_mkt)=−2·n·ΔNLL={pooled.get('lrt_stat'):.3f}  df=12  "
+          f"LRT_p={_f(pooled.get('lrt_p'), '.4f')}")
+    print("  → CI<0（平均ΔNLLは僅かに改善・df非依存）と LRT_p≈0.95 は両立＝実装齟齬でない。"
+          "df=12 の参照分布では LR=5.12 は β構造全体を支持するほど大きくない（これは rolling-origin OOS "
+          "尤度差＝古典的 in-sample nested LRT とは区別）。主判定は paired block bootstrap、LRT は参考。")
 
     print(f"\n=== P(z)→Mixture-PL vs 市場（rolling-origin {res['n_folds']} folds）===")
     print(f"ΔNLL={_f(dn)}  ΔECE={_f(de)}  （年別 ΔNLL 下記・全て同符号なら方向は安定）")
