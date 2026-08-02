@@ -283,6 +283,13 @@ def _do_evaluate(args) -> int:
     if not test:
         print("2027 の test records が空（2027 未整備）。", file=sys.stderr)
         return 5
+    # standing protocol: final-test の clean 性を強制（burned 2025-26/重複/時系列違反を弾く）
+    from src.training._temporal_split import assert_clean_final_test
+    try:
+        assert_clean_final_test({r["year"] for r in train}, {FROZEN["test_year"]})
+    except ValueError as e:
+        print(f"[STOP] temporal-split 違反: {e}", file=sys.stderr)
+        return 6
     try:
         nar = assert_jra_only([r["race_id"] for r in test])
         print(f"[provenance] test JRA限定 nar_rows={nar}（fail-closed）")
