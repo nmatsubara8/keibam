@@ -101,8 +101,10 @@ def main() -> int:
     from src.simulation._rolling_origin import rolling_origin_compare, rolling_origin_folds
 
     ap = argparse.ArgumentParser(description="市場 vs 市場+残差ヘッド（事前登録・完全OOS）")
-    ap.add_argument("--features", required=True,
+    ap.add_argument("--features", default=None,
                     help="事前登録する特徴名（カンマ区切り・結果を見る前に固定すること）")
+    ap.add_argument("--list-features", action="store_true",
+                    help="featured の候補特徴名を出して終了（事前登録の前に実名を確認する）")
     ap.add_argument("--featured", default=None)
     ap.add_argument("--l2", type=float, default=1.0, help="残差ヘッドの L2（事前登録）")
     ap.add_argument("--mes", type=float, default=0.001, help="運用上の最小実用効果量（結果後に下げない）")
@@ -111,11 +113,34 @@ def main() -> int:
     ap.add_argument("--allow-nar", action="store_true", help="NAR も含める（既定は JRA 限定）")
     args = ap.parse_args()
 
-    feats_req = [c.strip() for c in args.features.split(",") if c.strip()]
     feat = load_featured_data(args.featured) if args.featured else load_featured_data()
     if feat is None or feat.empty:
         print("featured を読めません（ローカルで実行）", file=sys.stderr)
         return 2
+
+    if args.list_features:
+        import numpy as np
+        num = feat.select_dtypes(include=[np.number, "bool"]).columns
+        # 市場非依存の候補になりうる族を優先表示（オッズ/impl は直交でないため注記）
+        groups = {
+            "JRDB指数": [c for c in num if str(c).startswith("jrdb_")],
+            "予想(yoso)": [c for c in num if str(c).startswith("yoso_")],
+            "能力(elo/speed)": [c for c in num if str(c).startswith(("elo_", "speed_fig"))],
+            "適性(wet/dist/ground)": [c for c in num if any(k in str(c) for k in
+                                       ("wet_", "at_distance", "type_ground"))],
+            "斤量/馬体": [c for c in num if any(k in str(c) for k in ("kinryo", "体重", "斤量"))],
+        }
+        print(f"[featured 候補特徴]  全数値列 {len(num)}。市場非依存になりうる族（オッズ/impl は直交でない）:")
+        for g, cols in groups.items():
+            print(f"  [{g}] {cols[:20]}")
+        odds_like = [c for c in num if any(k in str(c) for k in ("単勝", "odds", "impl", "kijun_odds"))]
+        print(f"  [注意: 市場由来＝残差ヘッドに入れない] {odds_like[:20]}")
+        return 0
+
+    if not args.features:
+        print("--features を指定（先に --list-features で実名確認・結果を見る前に事前登録）", file=sys.stderr)
+        return 1
+    feats_req = [c.strip() for c in args.features.split(",") if c.strip()]
     records, feat_cols = build_residual_records(feat, feats_req, jra_only=not args.allow_nar)
     print(f"[事前登録] 特徴={feat_cols}  L2={args.l2}  MES={args.mes}  "
           f"JRA限定={not args.allow_nar}")
