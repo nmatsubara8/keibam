@@ -202,27 +202,44 @@ def main() -> int:
         print(f"  通算: Δlogloss平均={np.mean(pz_dl):+.4f}  acc平均={np.mean(pz_acc):.3f}"
               f"（負=一様より予測器が情報を持つ／accは3クラス・偶然=0.33）")
 
-    # 開催日 block bootstrap の ΔNLL 95%CI（同日相関を保存＝iid より正直）＋実用最小効果量ゲート
-    bb = block_bootstrap_ci(dnll_vals, dnll_days, n_boot=max(2000, args.n_boot))
-    print(f"\n[ΔNLL 開催日ブロックBootstrap] mean={bb['mean']:+.6f} "
-          f"95%CI[{bb['lo']:+.6f},{bb['hi']:+.6f}]  日数={bb['n_blocks']:,} n={bb['n']:,}")
+    # ΔNLL の paired CI を3粒度で併記（レース単位 iid / 開催場×日 / 年）。同日相関を保存する
+    # ブロックほど正直（やや広い）。主判定は 開催場×日 block bootstrap（LRT は参考）。
+    iid = block_bootstrap_ci(dnll_vals, list(range(len(dnll_vals))), n_boot=max(2000, args.n_boot))
+    daytrack = block_bootstrap_ci(dnll_vals, dnll_days, n_boot=max(2000, args.n_boot))
+    print("\n[ΔNLL paired Bootstrap 95%CI（粒度別）]  負=改善・主判定は 開催場×日")
+    print(f"  レース単位(iid)  mean={iid['mean']:+.6f}  CI[{iid['lo']:+.6f},{iid['hi']:+.6f}]  n={iid['n']:,}")
+    print(f"  開催場×日(block) mean={daytrack['mean']:+.6f}  CI[{daytrack['lo']:+.6f},"
+          f"{daytrack['hi']:+.6f}]  ブロック={daytrack['n_blocks']:,}")
+
+    # LRT/CI 監査: 両者が別仮説を測ることを数値で明示（不整合でない）。
+    nrace = pooled.get("n_races", 0)
+    ll_mkt = -pooled.get("nll_base", float("nan")) * nrace
+    ll_mix = -pooled.get("nll_chal", float("nan")) * nrace
+    print("\n[LRT/CI 監査]（CIは平均ΔNLLの検定=df非依存 / LRTは12β自由度を罰する別仮説）")
+    print(f"  n={nrace:,}  LL_market={ll_mkt:.3f}  LL_mixture={ll_mix:.3f}  "
+          f"LR_stat=2·n·ΔNLL={pooled.get('lrt_stat'):.3f}  df=12  LRT_p={_f(pooled.get('lrt_p'),'.4f')}")
+    print("  → CI<0（平均は僅かに改善）と LRT_p≈0.95（12βは複雑さに見合わない）は両立＝実装齟齬でない。"
+          "主判定は paired block bootstrap、LRT は複雑さ penalty の参考。")
 
     print(f"\n=== P(z)→Mixture-PL vs 市場（rolling-origin {res['n_folds']} folds）===")
-    print(f"ΔNLL={_f(dn)}  95%CI[{_f(lo)},{_f(hi)}]  ΔECE={_f(de)}  LRT_p={pooled.get('lrt_p')}")
-    print(f"  {'年':>6}{'n':>7}{'ΔNLL':>10}")
+    print(f"ΔNLL={_f(dn)}  ΔECE={_f(de)}  （年別 ΔNLL 下記・全て同符号なら方向は安定）")
     for f in res["folds"]:
         print(f"  {f['year']:>6}{f['n']:>7,}  {_f(f.get('d_nll'))}")
-    # 採否: 開催日ブロックCI上限<0（有意）かつ |効果量|≥MES（実用）かつ ECE 非悪化。
-    # 統計的有意性だけでは救済しない（微小効果量は不採用）。
-    sig = bb["hi"] < 0
-    practical = abs(bb["mean"]) >= args.mes
+
+    # 三段階判定: 統計的(開催場×日 CI上限<0) × 実用的(|ΔNLL|≥MES) × 較正(ECE非悪化)。
+    sig = daytrack["hi"] < 0
+    practical = abs(daytrack["mean"]) >= args.mes
     ece_ok = (de is None) or (de <= 5e-3)
-    ok = sig and practical and ece_ok
-    if sig and not practical:
-        print(f"  → 有意だが |ΔNLL|={abs(bb['mean']):.6f} < MES({args.mes}) ＝実用最小効果量未満で不採用。")
-    print("\n判定: " + ("✅ 採用候補（ブロックCI上限<0・|効果量|≥MES・ECE非悪化）" if ok
-                        else "❌ 不採用（市場アンカーを有意には超えない）") +
-          "。※事前登録＝pace-mixture のみ（residual head は別軸）。")
+    if sig and practical and ece_ok:
+        verdict = "✅ 本番採用候補（CI上限<0・|効果量|≥MES・ECE非悪化）"
+    elif sig and ece_ok:
+        verdict = (f"🟡 統計的改善のみ・shadow限定（CI上限<0 だが |ΔNLL|={abs(daytrack['mean']):.6f}"
+                   f" < MES({args.mes})＝実用効果量未達。本番採用しない）")
+    else:
+        verdict = "❌ 改善なし（CIが0を跨ぐ or ECE悪化）"
+    print(f"\n判定: {verdict}")
+    print("※ pace-mixture は事前登録どおりここで閉じる（状態数/境界/混合式の探索＝再探索は行わない）。"
+          "residual head は独立事前登録比較でのみ評価。")
     return 0
 
 
