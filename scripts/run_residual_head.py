@@ -193,7 +193,10 @@ def main() -> int:
 
     sig = bb["hi"] < 0
     practical = abs(bb["mean"]) >= args.mes
-    ece_ok = (de is None) or (de <= 5e-3)
+    ECE_TOL = 5e-3  # 事前固定（_model_compare 標準「ΔECE ≤ +0.005」・結果を見て変えない）
+    ece_ok = (de is None) or (de <= ECE_TOL)
+    print(f"  [ECE] ΔECE={de:+.6f}  許容=+{ECE_TOL}（事前固定・_model_compare標準／符号は微悪化だが帯域内）"
+          if de is not None and de > 0 else f"  [ECE] ΔECE={de}")
     if sig and practical and ece_ok:
         verdict = "✅ 本番採用候補（CI上限<0・|効果量|≥MES・ECE非悪化）"
     elif sig and ece_ok:
