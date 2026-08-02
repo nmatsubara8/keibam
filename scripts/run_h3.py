@@ -190,42 +190,65 @@ def build_h3_records(sed, kyi, featured, *, min_train_years=3):
     return out, audit
 
 
+FEATURE_SCALING = "fold_internal_global"   # 続22 freeze: 学習期間のみで mean/std（neutral-0 保持＋unit化）
+
+
+def _std_records(recs, feat_name, mu, sd):
+    """各 race dict の feats[h][feat_name] を (x−mu)/sd に置換した浅いコピーを返す（leak-safe適用）。"""
+    out = []
+    for r in recs:
+        feats = {h: {feat_name: (float(v.get(feat_name, 0.0)) - mu) / sd}
+                 for h, v in r["feats"].items()}
+        out.append({**r, "feats": feats})
+    return out
+
+
 def _eval_feature(records, feat_name, *, l2, min_train_years, n_boot, seed):
-    """market vs market+単一H3特徴 の rolling-origin OOS。返す (bb, pooled, folds)。"""
+    """market vs market+単一H3特徴（**fold内 global 標準化**）の rolling-origin OOS。返す (bb, pooled, folds)。
+
+    各 fold で学習期間の全馬行から mean/std を推定し train/test を標準化（leak-safe）。L2=1.0 に対し
+    unit スケールを与え検定力を確保。neutral-0 は mean≈0 のためほぼ保持。ΔECE/ΔNLL は手計算。
+    """
+    import numpy as np
     from src.policies._market_residual import market_probs
     from src.policies._residual_head import fit_residual_head, residual_win_probs
-    from src.simulation._model_compare import block_bootstrap_ci, race_nll
-    from src.simulation._rolling_origin import rolling_origin_compare, rolling_origin_folds
+    from src.simulation._model_compare import block_bootstrap_ci, ece, race_nll
+    from src.simulation._rolling_origin import rolling_origin_folds
 
-    def fit_b(_t):
-        return None
-
-    def prob_b(_p, r):
-        return market_probs(r["odds"])
-
-    def fit_c(train):
-        return fit_residual_head(train, [feat_name], l2=l2)
-
-    def prob_c(theta, r):
-        if not theta or all(v == 0 for v in theta.values()):
-            return market_probs(r["odds"])
-        return residual_win_probs(r["odds"], r["feats"], theta)
-
-    res = rolling_origin_compare(records, fit_b, prob_b, fit_c, prob_c,
-                                 min_train_years=min_train_years, k_extra_params=1, n_boot=n_boot,
-                                 seed=seed)
     dnll, blocks = [], []
-    for train, test, _y in rolling_origin_folds(records, min_train_years=min_train_years):
-        theta = fit_c(train)
-        for r in test:
-            if r.get("winner") is None:
+    fold_rows = []
+    pb_flat, pc_flat, y_flat = [], [], []
+    nll_b_all, nll_c_all = [], []
+    for train, test, year in rolling_origin_folds(records, min_train_years=min_train_years):
+        vals = np.array([float(f.get(feat_name, 0.0)) for r in train for f in r["feats"].values()],
+                        dtype=float)
+        mu = float(vals.mean()) if vals.size else 0.0
+        sd = float(vals.std()) if vals.size and vals.std() > 0 else 1.0     # 学習期間のみ
+        tr = _std_records(train, feat_name, mu, sd)
+        te = _std_records(test, feat_name, mu, sd)
+        theta = fit_residual_head(tr, [feat_name], l2=l2)
+        use_resid = bool(theta) and not all(v == 0 for v in theta.values())
+        fdn = []
+        for r in te:
+            w = r.get("winner")
+            if w is None:
                 continue
-            pb, pc = prob_b(None, r), prob_c(theta, r)
-            if pb and pc:
-                dnll.append(race_nll(pc, r["winner"]) - race_nll(pb, r["winner"]))
-                blocks.append(str(r["race_id"])[:10])
+            pb = market_probs(r["odds"])
+            pc = residual_win_probs(r["odds"], r["feats"], theta) if use_resid else pb
+            if not (pb and pc):
+                continue
+            nb, nc = race_nll(pb, w), race_nll(pc, w)
+            dnll.append(nc - nb); blocks.append(str(r["race_id"])[:10]); fdn.append(nc - nb)
+            nll_b_all.append(nb); nll_c_all.append(nc)
+            for h in pb:
+                pb_flat.append(float(pb[h])); pc_flat.append(float(pc.get(h, 0.0)))
+                y_flat.append(1 if h == w else 0)
+        fold_rows.append({"year": year, "n": len(fdn),
+                          "d_nll": float(np.mean(fdn)) if fdn else float("nan")})
     bb = block_bootstrap_ci(dnll, blocks, n_boot=max(2000, n_boot), seed=seed)
-    return bb, res["pooled"], res["folds"]
+    pooled = {"d_ece": ece(pc_flat, y_flat) - ece(pb_flat, y_flat) if pb_flat else None,
+              "d_nll": float(np.mean(nll_c_all) - np.mean(nll_b_all)) if nll_b_all else float("nan")}
+    return bb, pooled, fold_rows
 
 
 SOURCE_CONTRACT_VERSION = "H3-2026-08-02-c19"
@@ -330,6 +353,7 @@ def _do_audit(args) -> int:
         "n_target": audit["n_target"], "n_feature_rows": audit["n_feature_rows"],
         "n_records": len(records),
         "lambda": H3_SHRINK_K, "pace_calibration_alpha": ALPHA_DIRICHLET,
+        "feature_scaling": FEATURE_SCALING,
         "ato3f_valid_range": [THREE_F_MIN, THREE_F_MAX],
         "strictly_prior_violation_count": 0,
         "max_source_ymd": audit["max_source_ymd"],
