@@ -135,6 +135,11 @@ def build_kyi_from_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df[[c for c in keep if c in df.columns]].rename(columns=KYI_FEATURE_MAP)
     if "pace_yosou" in df.columns:
         out["jrdb_pace_hms"] = df["pace_yosou"].astype(str).str.strip().map(_HMS)
+    # JRDB 指数は全て数値。store 経路は SQLite 往復で str(arrow large_string)化するため数値へ強制
+    # （txt 経路は parse で既に数値＝冪等）。これが無いと jrdb_kijun_gap の除算等が str で落ちる。
+    for jc in KYI_FEATURE_MAP.values():
+        if jc in out.columns:
+            out[jc] = pd.to_numeric(out[jc], errors="coerce")
     # 結合キー dtype を正準化（store 経路は str・txt 経路は int で来るため統一）。
     if "race_id" in out.columns:
         out["race_id"] = out["race_id"].astype(str)

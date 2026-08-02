@@ -29,6 +29,38 @@ def _within_race_var_frac(feat, col):
     return float((nun > 1).mean()) if len(nun) else 0.0
 
 
+def _agreement_vs_base(kyi, base):
+    """store 由来 kyi と base(adapter経路・既知良好5列)を (race_id,馬番) で突合し scale/parse 一致を検証。
+
+    corr≈1 かつ median比≈1 なら store 経路の値は adapter と整合（本線統合で jrdb_idm 等が変質しない）。
+    median比が ~10/~0.1 等なら ZZ9.9 スケール差＝統合前に要修正（妥当性チェック）。
+    """
+    import numpy as np
+    import pandas as pd
+    from src.constants._results_cols import ResultsCols
+    overlap = [c for c in ("jrdb_idm", "jrdb_kijun_odds", "jrdb_kyakushitsu", "jrdb_joho_idx",
+                           "jrdb_kishu_idx") if c in base.columns and c in kyi.columns]
+    if not overlap:
+        print("  [値一致検証] base に既知列が無くスキップ。")
+        return
+    b = pd.DataFrame({"race_id": base.index.astype(str),
+                      "umaban": pd.to_numeric(base.get(ResultsCols.UMABAN), errors="coerce").astype("Int64")})
+    for c in overlap:
+        b[c + "_base"] = pd.to_numeric(base[c], errors="coerce").to_numpy()
+    m = b.merge(kyi[["race_id", "umaban", *overlap]], on=["race_id", "umaban"], how="inner")
+    print("  [値一致検証 store vs adapter既知5列]（corr≈1・median比≈1 が整合）")
+    for c in overlap:
+        x = pd.to_numeric(m[c + "_base"], errors="coerce")
+        y = pd.to_numeric(m[c], errors="coerce")
+        ok = x.notna() & y.notna()
+        if ok.sum() < 10:
+            print(f"    {c:<20} n={int(ok.sum())} 不足")
+            continue
+        corr = float(np.corrcoef(x[ok], y[ok])[0, 1])
+        ratio = float((y[ok] / x[ok].replace(0, np.nan)).median())
+        print(f"    {c:<20} n={int(ok.sum()):>7,} corr={corr:+.4f} median比(store/base)={ratio:.3f}")
+
+
 def _ensure_ketto(base, kyi_raw):
     """base featured に ketto が無ければ KYI(race_id,馬番→ketto) で補う（history/soten 結合用）。"""
     import pandas as pd
@@ -66,6 +98,7 @@ def _load_augmented(args):
         soten = build_soten_from_df(store.read("SED"))
         # history/soten は ketto で結合するが netkeiba featured は ketto を持たないことがある。
         # KYI(race_id,馬番→ketto) で base に ketto を補って attach 可能にする（本線統合でも要る配線）。
+        _agreement_vs_base(kyi, base)      # 既知良好(adapter経路)の5列と scale/parse 一致を検証
         base = _ensure_ketto(base, kyi_raw)
         print(f"  [from-store] KYI jrdb列={len([c for c in kyi.columns if str(c).startswith('jrdb_')])} "
               f"history rows={len(hist):,} soten rows={len(soten):,} "
