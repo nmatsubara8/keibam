@@ -4,9 +4,14 @@ featured 実データは無しで動く部分だけを検査する（帰属の a
 """
 from __future__ import annotations
 
+import numpy as np
+
 from scripts.run_voi_cmi import (
     CATEGORY_ORDER,
+    _effective_rank,
     _market_or_outcome,
+    _nonmissing_rate,
+    _within_race_var_fraction,
     resolve_membership,
 )
 
@@ -62,3 +67,63 @@ def test_empty_columns():
     m, overlaps = resolve_membership([])
     assert all(m[cat] == [] for cat in CATEGORY_ORDER)
     assert overlaps == {}
+
+
+# ---- 結果不変の診断ヘルパー -------------------------------------------------------------
+
+def test_nonmissing_rate():
+    assert _nonmissing_rate([1.0, 2.0, np.nan, 4.0]) == 0.75
+    assert _nonmissing_rate([np.nan, np.nan]) == 0.0
+    assert _nonmissing_rate([]) == 0.0
+
+
+def test_within_race_var_fraction_constant_is_zero():
+    # レース内定数（course_lap_length を模す）→ 分散あり率 0
+    vals = [5.0, 5.0, 5.0, 7.0, 7.0, 7.0]        # race A 全部5, race B 全部7
+    rids = ["A", "A", "A", "B", "B", "B"]
+    assert _within_race_var_fraction(vals, rids) == 0.0
+
+
+def test_within_race_var_fraction_varying_is_one():
+    vals = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    rids = ["A", "A", "A", "B", "B", "B"]
+    assert _within_race_var_fraction(vals, rids) == 1.0
+
+
+def test_within_race_var_fraction_mixed():
+    vals = [1.0, 2.0, 5.0, 5.0]                  # race A 変動, race B 定数
+    rids = ["A", "A", "B", "B"]
+    assert _within_race_var_fraction(vals, rids) == 0.5
+
+
+def test_within_race_var_fraction_nan_dropped():
+    vals = [1.0, np.nan, 3.0, 3.0]
+    rids = ["A", "A", "B", "B"]
+    # race A は有限値1つ→分散判定不可(除外), race B 定数→var 0 ⇒ 0/2
+    assert _within_race_var_fraction(vals, rids) == 0.0
+
+
+def test_effective_rank_independent_columns_full():
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(500, 3))
+    er = _effective_rank(X)
+    assert er["n_features"] == 3
+    assert er["numerical_rank"] == 3
+    assert er["effective_rank"] > 2.5          # ほぼ full
+
+
+def test_effective_rank_duplicate_column_drops():
+    rng = np.random.default_rng(1)
+    a = rng.normal(size=(500, 1))
+    b = rng.normal(size=(500, 1))
+    X = np.hstack([a, b, a])                     # 3列だが実質2次元（raw/z 重複を模す）
+    er = _effective_rank(X)
+    assert er["n_features"] == 3
+    assert er["numerical_rank"] == 2            # 数値rankは2に落ちる
+    assert er["effective_rank"] < 3.0
+    assert er["cond"] > 1e6                      # 共線→条件数が大
+
+
+def test_effective_rank_empty():
+    er = _effective_rank(np.zeros((0, 4)))
+    assert er["n_features"] == 4 and er["numerical_rank"] == 0

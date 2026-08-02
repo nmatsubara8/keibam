@@ -95,6 +95,64 @@ def _numeric_columns(feat):
     return [str(c) for c in feat.select_dtypes(include=[np.number, "bool"]).columns]
 
 
+# ---- 結果不変の診断（再検定でない・ΔNLL/Holm/CMI を一切変えない）------------------------------
+# 目的: 調教の近年限定性・ラップの構造的ゼロ・厩舎内の raw/z 重複を、再検定せずに確定する。
+
+def _nonmissing_rate(values) -> float:
+    """有限値の割合（欠測率の裏返し）。純関数。"""
+    import numpy as np
+    v = np.asarray(values, dtype=float)
+    return float(np.isfinite(v).mean()) if v.size else 0.0
+
+
+def _within_race_var_fraction(values, race_ids) -> float:
+    """レース内で分散>0 を持つレースの割合（＝馬間差を持つ特徴かの構造診断）。純関数。
+
+    course_lap_length のようなレース内定数は全レースで var=0 → 0.0 を返す（残差ヘッドに効かない）。
+    各レースは有限値2つ以上かつ分散>0 のとき「分散あり」と数える。
+    """
+    import numpy as np
+    from collections import defaultdict
+    v = np.asarray(values, dtype=float)
+    r = np.asarray(race_ids)
+    races: dict = defaultdict(list)
+    for val, rid in zip(v, r):
+        if np.isfinite(val):
+            races[rid].append(val)
+    if not races:
+        return 0.0
+    hit = sum(1 for vals in races.values() if len(vals) >= 2 and np.var(vals) > 0)
+    return hit / len(races)
+
+
+def _effective_rank(X) -> dict:
+    """設計行列の有効rank（raw/z 重複や共線性を再検定せず可視化）。純関数（Gram 経由）。
+
+    返す {n_features, numerical_rank(相対tol 1e-8), effective_rank(exp(entropy(特異値))∈[1,nf]), cond}。
+    厩舎の raw と _z（レース内z-score後に一致）は有効rankを名目より下げる＝冗長の直接証拠。
+    """
+    import numpy as np
+    X = np.asarray(X, dtype=float)
+    nf = int(X.shape[1]) if X.ndim == 2 else 0
+    empty = {"n_features": nf, "numerical_rank": 0, "effective_rank": 0.0, "cond": float("inf")}
+    if X.ndim != 2 or nf == 0:
+        return empty
+    X = X[np.isfinite(X).all(axis=1)]
+    if X.shape[0] < 2:
+        return empty
+    ev = np.clip(np.linalg.eigvalsh(X.T @ X), 0.0, None)
+    s = np.sqrt(ev)
+    s = s[s > 0]
+    if s.size == 0:
+        return empty
+    smax = float(s.max())
+    numerical = int((s > smax * 1e-8).sum())
+    p = s / s.sum()
+    eff = float(np.exp(-(p * np.log(p)).sum()))
+    return {"n_features": nf, "numerical_rank": numerical, "effective_rank": eff,
+            "cond": float(smax / s.min())}
+
+
 def _print_membership(membership, overlaps) -> None:
     print("=" * 78)
     print("[事前登録] カテゴリ→特徴の帰属（結果を見る前に固定・以下が pre-registration 記録）")
@@ -143,8 +201,11 @@ def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
 
     dnll, blocks = [], []
     r_oos, y_oos, m_oos = [], [], []
+    theta_norms: list[float] = []
     for train, test, _y in rolling_origin_folds(records, min_train_years=min_train_years):
         theta = fit_challenger(train)
+        theta_norms.append(
+            float(np.sqrt(sum(float(v) ** 2 for v in theta.values()))) if theta else 0.0)
         for r in test:
             if r.get("winner") is None:
                 continue
@@ -165,7 +226,59 @@ def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
         "pooled": res["pooled"], "folds": res["folds"], "n_folds": res["n_folds"],
         "bb": bb, "r_oos": np.asarray(r_oos), "y_oos": np.asarray(y_oos),
         "m_oos": np.asarray(m_oos),
+        "theta_norm_mean": float(np.mean(theta_norms)) if theta_norms else 0.0,
+        "theta_norm_last": float(theta_norms[-1]) if theta_norms else 0.0,
     }
+
+
+def source_diagnostics(feat, membership, active, *, jra_only=True) -> dict:
+    """カテゴリ×年度の非欠測率/最大unique/レース内分散あり率（raw featured 由来・結果不変）。
+
+    records（z-score後・欠測は0埋め済）でなく **raw featured** を読むので、調教の近年限定性
+    （2018-2023 の非欠測率≈0）・ラップの構造的ゼロ（分散あり率=0）を再検定せず確定できる。
+    返す {cat: {year: {nonmissing, max_unique, var_frac, n_rows, n_races}}}。
+    """
+    import numpy as np
+    import pandas as pd
+
+    rid = pd.Series(feat.index.astype(str), index=feat.index)
+    if jra_only:
+        mask = rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)}).to_numpy()
+    else:
+        mask = np.ones(len(feat), dtype=bool)
+    df = feat[mask]
+    rid = df.index.astype(str)
+    year = pd.Series(rid, index=df.index).str[:4]
+    out: dict = {}
+    for cat in active:
+        cols = [c for c in membership[cat] if c in df.columns]
+        per_year: dict = {}
+        for y in sorted(set(year)):
+            ysel = (year == y).to_numpy()
+            sub = df.loc[ysel]
+            rids = sub.index.astype(str).to_numpy()
+            nrows = int(len(sub))
+            if not cols or nrows == 0:
+                per_year[y] = {"nonmissing": 0.0, "max_unique": 0, "var_frac": 0.0,
+                               "n_rows": nrows, "n_races": len(set(rids))}
+                continue
+            nm = float(np.mean([_nonmissing_rate(pd.to_numeric(sub[c], errors="coerce"))
+                                for c in cols]))
+            uq = int(max(pd.to_numeric(sub[c], errors="coerce").dropna().nunique() for c in cols))
+            vf = float(max(_within_race_var_fraction(
+                pd.to_numeric(sub[c], errors="coerce").to_numpy(), rids) for c in cols))
+            per_year[y] = {"nonmissing": nm, "max_unique": uq, "var_frac": vf,
+                           "n_rows": nrows, "n_races": len(set(rids))}
+        out[cat] = per_year
+    return out
+
+
+def _design_matrix(records, cols):
+    """records（z-score後）から (行=馬, 列=特徴) の設計行列を積む（有効rank診断用）。"""
+    import numpy as np
+    rows = [[float(rec["feats"][h].get(c, 0.0)) for c in cols]
+            for rec in records for h in rec["feats"]]
+    return np.asarray(rows, dtype=float) if rows else np.zeros((0, len(cols)))
 
 
 def main() -> int:
@@ -298,6 +411,36 @@ def main() -> int:
         c = results[cat]["cmi"]
         print(f"{cat:<8}{c['mi']:>12.5f}{c['cmi']:>14.5f}{c['redundant']:>12.5f}{c['edge_ratio']:>12.3f}")
     print("  ※ CMI は情報量であり正しさではない。採用は上の Primary(ΔNLL×Holm×MES×ECE) のみで決める。")
+
+    # === 診断（結果不変・再検定でない）: カテゴリ×年度の source 健全性＋設計行列 rank＋係数ノルム ===
+    print("\n" + "=" * 78)
+    print("=== 診断（結果不変・ΔNLL/Holm/CMI を変えない）: source 健全性・共線性・係数ノルム ===")
+    diag = source_diagnostics(feat, membership, active, jra_only=not args.allow_nar)
+    print("  [カテゴリ×年度] 非欠測率 / 最大unique / レース内分散あり率（raw featured 由来）")
+    years = sorted({y for cat in active for y in diag.get(cat, {})})
+    hdr = "  " + f"{'カテゴリ':<8}" + "".join(f"{y:>18}" for y in years)
+    print(hdr)
+    for cat in active:
+        cells = []
+        for y in years:
+            d = diag[cat].get(y, {})
+            cells.append(f"{d.get('nonmissing', 0):.2f}/{d.get('max_unique', 0)}/"
+                         f"{d.get('var_frac', 0):.2f}")
+        print("  " + f"{cat:<8}" + "".join(f"{c:>18}" for c in cells))
+    print("  （凡例: 非欠測率=有限値割合 / 最大unique=カテゴリ内最多ユニーク値数 / "
+          "分散あり率=レース内で馬間差>0 のレース割合）")
+    print("\n  [設計行列 有効rank（raw/z 重複・共線性）＋ OOS係数ノルム]")
+    print(f"  {'カテゴリ':<8}{'n_feat':>7}{'数値rank':>9}{'有効rank':>10}{'cond':>12}"
+          f"{'‖θ‖平均':>11}{'‖θ‖最終':>11}")
+    for cat in active:
+        er = _effective_rank(_design_matrix(records, membership[cat]))
+        r = results[cat]
+        cond = er["cond"]
+        cond_s = f"{cond:>12.1f}" if cond != float("inf") else f"{'inf':>12}"
+        print(f"  {cat:<8}{er['n_features']:>7}{er['numerical_rank']:>9}{er['effective_rank']:>10.2f}"
+              f"{cond_s}{r.get('theta_norm_mean', 0):>11.4f}{r.get('theta_norm_last', 0):>11.4f}")
+    print("  ※ 有効rank≪n_feat＝raw/z 等の冗長（厩舎）。分散あり率0＝レース内定数で検定不能（ラップ）。")
+    print("    非欠測率が近年のみ高い＝coverage 依存の近年限定信号（調教評価_score）。")
 
     # === Secondary: 累積前進系列（市場+調教+…+脚質・参考のみ）===
     print("\n" + "=" * 78)
