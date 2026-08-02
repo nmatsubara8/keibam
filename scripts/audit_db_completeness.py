@@ -119,6 +119,34 @@ def race_stats_by_year(df, *, race_col="race_id", rank_col="着順") -> dict:
     return out
 
 
+def race_id_structure_by_year(df, *, race_col="race_id", years=None) -> dict:
+    """年別に race_id の 長さ分布・場コード分布・サンプル値 を返す純関数（分裂/形式変化の特定用）。
+
+    2025 で 1実レースが複数 race_id に分裂している疑いに対し、race_id 文字列そのものの構造
+    （長さ・場コード[4:6]・末尾・例）を年で比べ、どの桁が変わったかを見る。
+    """
+    import pandas as pd
+    if df is None or len(df) == 0 or race_col not in df.columns:
+        return {}
+    rid = df[race_col].astype(str)
+    yr = rid.str[:4]
+    out: dict = {}
+    for y in (years or sorted(yr.unique())):
+        r = rid[yr == y]
+        if r.empty:
+            continue
+        uniq = r.drop_duplicates()
+        lens = uniq.str.len().value_counts().to_dict()
+        places = uniq.str[4:6].value_counts().head(6).to_dict()
+        out[str(y)] = {
+            "n_rows": int(len(r)), "n_unique_race_id": int(uniq.nunique()),
+            "len_dist": {int(k): int(v) for k, v in lens.items()},
+            "place_top": {k: int(v) for k, v in places.items()},
+            "samples": uniq.head(4).tolist(),
+        }
+    return out
+
+
 def _fmt_pct(x):
     return "n/a" if x != x else f"{x:.2%}"
 
@@ -220,6 +248,15 @@ def main() -> int:
         if old:
             stub = sum(1 for v in old.values() if v["rows_per_race"] <= 1.1)
             print(f"    [pre-2015] {len(old)}年中 {stub}年が rows/race≈1（＝horse結果なしのstub・JRDB前）")
+
+    # race_id 構造の年比較（2023 正常年 vs 2025/2026 異常年）＝分裂の桁を特定
+    st = race_id_structure_by_year(res, years=["2023", "2024", "2025", "2026"]) if res is not None else {}
+    if st:
+        print("\n[race_id 構造 年比較]（長さ分布/場コード上位/例＝分裂した桁の特定）")
+        for y, s in st.items():
+            print(f"  {y}: rows={s['n_rows']:,} 一意race_id={s['n_unique_race_id']:,} "
+                  f"長さ={s['len_dist']} 場上位={s['place_top']}")
+            print(f"       例: {s['samples']}")
 
     if ri is not None and "race_id" in ri.columns:
         ys = year_span(ri["race_id"].astype(str).str[:4])

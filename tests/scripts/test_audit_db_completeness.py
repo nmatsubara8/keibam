@@ -71,3 +71,17 @@ def test_rank_consistency():
     assert rc["n_races"] == 2
     assert rc["one_winner_rate"] == 0.5          # R1 のみ1着1頭
     assert rc["rank_in_range_rate"] == 1.0       # 全 rank<=頭数
+
+
+def test_race_id_structure_by_year():
+    import pandas as pd
+    # 2023: 12桁 正常。2025: 一部が 14桁（分裂/形式変化の想定）
+    df = pd.DataFrame({"race_id": [
+        "202305010101", "202305010102",
+        "20250501010199", "2025050101019A", "202505010101",
+    ]})
+    st = ad.race_id_structure_by_year(df, years=["2023", "2025"])
+    assert st["2023"]["len_dist"] == {12: 2}
+    assert st["2025"]["len_dist"].get(14) == 2 and st["2025"]["len_dist"].get(12) == 1
+    assert st["2023"]["place_top"] == {"05": 2}
+    assert len(st["2025"]["samples"]) == 3
