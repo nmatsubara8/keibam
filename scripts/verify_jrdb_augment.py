@@ -168,6 +168,18 @@ def _load_augmented(args):
               f"base ketto={'あり' if 'ketto' in base.columns else 'なし'}")
         out = attach(base, kyi, hist, soten=soten)
         _canary_npast(base, out, soten)   # jrdb_ms_npast の行復元 canary（as-of の健全性）
+        # strictly-prior 全件 manifest（canary だけでなく全 target 行で未来/同日参照=0 を認定）。
+        from src.jrdb._leak_audit import assert_strictly_prior, strictly_prior_join_report
+        tgt = base[["ketto", "date"]] if {"ketto", "date"} <= set(base.columns) else base
+        for label, src in (("history", hist), ("soten", soten)):
+            rep = strictly_prior_join_report(tgt, src)
+            print(f"  [leak manifest {label}] target_rows={rep['target_rows']:,} "
+                  f"valid={rep['target_valid_rows']:,} feature_rows={rep['feature_rows']:,} "
+                  f"future={rep['future_reference_count']} same_day={rep['same_day_reference_count']} "
+                  f"exact={rep['exact_target_reference_count']} "
+                  f"dup_keys={rep['target_key_duplicates']:,} max_src={rep['max_source_date']} "
+                  f"leak_safe={rep['leak_safe']}")
+            assert_strictly_prior(rep, label=label)   # 未来/同日参照があれば fail-closed
         return out
     if args.augmented:
         p = Path(args.augmented)

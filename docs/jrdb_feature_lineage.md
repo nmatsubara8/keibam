@@ -70,6 +70,33 @@ all-rows と JRA2015+ eligible を分けて表示（0.830 は地方/2014以前�
 （+HISTORY）も実データで ✅（8列 semantic coverage 達成）。既存モデルへの新規列 silent 混入は
 `assert_training_allowlist` で阻止・**B frozen は従来5特徴のまま不変**。
 
+## 続36-e 認定確定（42-feature augment contract COMPLETED）＋残す証跡
+
+**JRDB 42-feature augment contract completed: 33 current horse-level active features、
+1 race-level context（jrdb_pace_hms）、8 strictly-prior history features。ABSENT/DEAD なし。**
+既存5列は corr=1.000/median比=1.000（555,128行・行数不変）、sentinel 異常なし、未実体化列なし。
+
+**認定範囲の限定（重要）**: 「完全 augment」とは**この 42 特徴契約**のこと。取得済みだが**未ブリッジ**の
+別ソース（CYB/CHA/TYB/KKA/UKC/SRB/KSA・CSA/KAB）は網羅していない（INGESTED_NOT_BRIDGED のまま）。
+これらは将来の別契約（各々 source×timestamp・bet_time_contract 等）として個別に配線・監査する。
+
+**strictly-prior leak 全件監査**（`src/jrdb/_leak_audit.py`・canary に加える manifest 証跡）:
+attach と同じ merge_asof(backward, allow_exact_matches=False) を正規化日付で再現し、全 target 行で
+`future_reference_count / same_day_reference_count / exact_target_reference_count = 0`、
+`max_source_date / target_rows / feature_rows / target_key_duplicates` を集計。verify --from-store が
+history/soten 双方でこの manifest を表示し、未来/同日参照があれば `assert_strictly_prior` で fail-closed。
+canary（jrdb_ms_npast が初走 NaN→1→2… 単調増加）と合わせ history のリーク安全性を正式認定。
+
+**本線統合時の学習側規則（freeze）**:
+- 既存 B: 従来の固定5特徴のみ。新規37列を silent 追加しない（`assert_training_allowlist` で強制）。
+- 新規モデル: config 指定特徴だけを使用。missing configured feature は fail-closed。
+- 欠測にも意味があるため（例 jrdb_nyukyu_days・history 初走 NaN）、一律ゼロ埋めせず**モデルごとの
+  欠測規則を freeze して記録**する（0 埋めは情報を潰す）。
+
+**研究上の結論**: これは**特徴生成基盤の完成**であり、新規 28 current＋8 history の**予測価値は未評価**。
+既存 B/P2/H3 は不変。新規特徴の検定は別仮説として、未接触 test tranche 開封前に 特徴集合・モデル・
+多重比較 family・MES・判定規則 を固定する（2027 を B と共有するなら B 含む全仮説を開封前に一括登録）。
+
 ## lineage（38 実体化のための追跡表・repair の骨子）
 
 各特徴について次を一本化する: parser field → store column → augment 関数 → build 呼出し → join key →
