@@ -1,9 +1,9 @@
-"""block_bootstrap_ci（開催日ブロック・ブートストラップ）の単体テスト。"""
+"""block_bootstrap_ci（開催日ブロック・ブートストラップ）＋ holm_correction の単体テスト。"""
 from __future__ import annotations
 
 import numpy as np
 
-from src.simulation._model_compare import block_bootstrap_ci
+from src.simulation._model_compare import block_bootstrap_ci, holm_correction
 
 
 def test_constant_values_zero_width_ci():
@@ -36,3 +36,54 @@ def test_block_bootstrap_wider_than_iid_when_intra_block_correlated():
 def test_empty():
     r = block_bootstrap_ci([], [], n_boot=10)
     assert r["n"] == 0 and r["n_blocks"] == 0
+
+
+def test_p_improve_strong_improvement_near_zero():
+    # 全ブロックが明確に負(改善)なら、mean≥0 の bootstrap 割合(p_improve)は 0 近傍
+    vals = np.full(200, -0.5)
+    blocks = np.repeat(np.arange(20), 10)
+    r = block_bootstrap_ci(vals, blocks, n_boot=1000, seed=0)
+    assert r["p_improve"] == 0.0
+
+
+def test_p_improve_no_improvement_near_one():
+    # 全ブロックが正(悪化)なら p_improve は 1 近傍
+    vals = np.full(200, 0.5)
+    blocks = np.repeat(np.arange(20), 10)
+    r = block_bootstrap_ci(vals, blocks, n_boot=1000, seed=0)
+    assert r["p_improve"] == 1.0
+
+
+def test_p_improve_symmetric_noise_near_half():
+    rng = np.random.default_rng(1)
+    vals = rng.normal(0.0, 1.0, 4000)
+    vals = vals - vals.mean()             # 標本平均を厳密に0へ（bootstrapは標本平均中心）
+    blocks = np.repeat(np.arange(400), 10)
+    r = block_bootstrap_ci(vals, blocks, n_boot=3000, seed=2)
+    assert 0.35 < r["p_improve"] < 0.65   # 平均0 付近は概ね半々
+
+
+def test_holm_orders_and_scales():
+    pairs = [("a", 0.01), ("b", 0.04), ("c", 0.03)]
+    out = holm_correction(pairs, alpha=0.05)
+    # 昇順に並ぶ
+    assert [o["name"] for o in out] == ["a", "c", "b"]
+    # 段階的 Bonferroni: a=0.01*3, c=max(0.03, 0.03*2)=0.06, b=max(0.06,0.04*1)=0.06
+    assert abs(out[0]["p_holm"] - 0.03) < 1e-12
+    assert abs(out[1]["p_holm"] - 0.06) < 1e-12
+    assert abs(out[2]["p_holm"] - 0.06) < 1e-12
+    assert out[0]["reject"] is True and out[1]["reject"] is False
+
+
+def test_holm_monotone_nondecreasing():
+    pairs = [("a", 0.001), ("b", 0.002), ("c", 0.9), ("d", 0.95), ("e", 0.99)]
+    out = holm_correction(pairs, alpha=0.05)
+    ph = [o["p_holm"] for o in out]
+    assert all(ph[i] <= ph[i + 1] + 1e-12 for i in range(len(ph) - 1))  # 単調非減少
+    assert all(p <= 1.0 for p in ph)                                     # 1 でクリップ
+
+
+def test_holm_clamps_at_one():
+    out = holm_correction([("a", 0.5), ("b", 0.6)], alpha=0.05)
+    assert all(o["p_holm"] <= 1.0 for o in out)
+    assert all(o["reject"] is False for o in out)

@@ -296,9 +296,35 @@ def block_bootstrap_ci(
         idx = rng.integers(0, nb, nb)
         cnt = bcnt[idx].sum()
         means[i] = bsum[idx].sum() / cnt if cnt > 0 else float("nan")
+    finite = means[np.isfinite(means)]
+    # 片側 p: H0「平均≥0（改善なし）」。ΔNLL は負=改善なので、mean≥0 の割合が大きいほど
+    # 「改善が無い」証拠。VOI/CMI の多重比較では、この片側 p を Holm 補正にかける。
+    p_improve = float(np.mean(finite >= 0.0)) if len(finite) else float("nan")
     return {
         "mean": float(v.mean()),
         "lo": float(np.nanpercentile(means, 100 * alpha / 2)),
         "hi": float(np.nanpercentile(means, 100 * (1 - alpha / 2))),
+        "p_improve": p_improve,
         "n": int(n), "n_blocks": int(nb),
     }
+
+
+def holm_correction(pairs: Sequence[tuple], *, alpha: float = 0.05) -> list:
+    """Holm–Bonferroni の逐次棄却で多重比較を補正する（family-wise error 制御）。
+
+    VOI/CMI の 5 カテゴリを同時検定すると、単純な α=0.05 では偽陽性が膨らむ。Holm は
+    p を昇順に並べ、i 番目（0-index）に (m−i) を掛ける段階的 Bonferroni で、Bonferroni より
+    検出力が高くかつ FWER を厳密に制御する。調整後 p は昇順で単調非減少に強制する。
+
+    pairs: [(name, p), ...]。返す [{name, p, p_holm, reject}]（p 昇順・reject は p_holm≤alpha）。
+    純関数。
+    """
+    items = sorted(((str(n), float(p)) for n, p in pairs), key=lambda t: t[1])
+    m = len(items)
+    out: list[dict] = []
+    running = 0.0
+    for i, (name, p) in enumerate(items):
+        adj = min(1.0, p * (m - i))
+        running = max(running, adj)  # 単調性を強制
+        out.append({"name": name, "p": p, "p_holm": running, "reject": running <= alpha})
+    return out
