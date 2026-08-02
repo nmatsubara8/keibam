@@ -138,6 +138,29 @@ def race_pace_balance(
     return m.groupby("race_id")["_bal"].agg(lambda s: float(s.mode().iloc[0]))
 
 
+# JRDB SED race_pace（実測レースペース H/M/S）→ z。H=ハイ(前傾)=fast, M=平均=normal, S=スロー=slow。
+_JRDB_PACE_TO_Z = {"H": "fast", "M": "normal", "S": "slow"}
+
+
+def label_pace_from_sed(sed: pd.DataFrame) -> pd.Series:
+    """JRDB SED の race_pace(H/M/S・実測) から教師ラベル z を作る（index=race_id）。
+
+    netkeiba の『ペース』文字列が無い JRDB 経路の正式ラベル源（race_pace は実測レースペースで
+    レース内一定＝出走馬行に同値なので race_id で最頻に畳む）。空白/未知コードは除外。
+    ラベルは事後情報で可（教師）。前3F/後3F(mae3f/ato3f)からの balance 版が必要なら別途。
+    """
+    if (sed is None or len(sed) == 0 or "race_pace" not in sed.columns
+            or "race_id" not in sed.columns):
+        return pd.Series(dtype=object)
+    d = sed[["race_id", "race_pace"]].copy()
+    d["race_id"] = d["race_id"].astype(str)
+    z = d["race_pace"].astype(str).str.strip().str.upper().map(_JRDB_PACE_TO_Z)
+    d = d.assign(_z=z).dropna(subset=["_z"])
+    if d.empty:
+        return pd.Series(dtype=object)
+    return d.groupby("race_id")["_z"].agg(lambda s: s.mode().iloc[0])
+
+
 def label_pace_states(
     balance: pd.Series, groups: pd.DataFrame | None = None
 ) -> pd.Series:

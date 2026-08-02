@@ -70,7 +70,8 @@ def main() -> int:
     from src.policies._market_residual import market_probs
     from src.policies._mixture_pl import fit_beta_fast, mixture_win_probs
     from src.preprocessing._pace_state import (
-        build_race_features, fit_pz, label_pace_states, predict_pz, pz_dict, race_pace_balance,
+        build_race_features, fit_pz, label_pace_from_sed, label_pace_states, predict_pz,
+        pz_dict, race_pace_balance,
     )
     from src.simulation._rolling_origin import rolling_origin_compare
 
@@ -88,18 +89,31 @@ def main() -> int:
     records = build_race_records(feat)
     print(f"[records] {len(records):,} レース（勝ち馬確定・3頭以上）")
 
-    # 発走前特徴（全レース・pre-race）と 教師ラベル z（結果由来・可）を一度だけ作る。
+    # 発走前特徴（全レース・pre-race）を一度だけ作る。
     features_all = build_race_features(feat)
-    hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
-    fk = pd.DataFrame({"race_id": feat.index.astype(str),
-                       "date": pd.to_numeric(feat.get("date"), errors="coerce")
-                       if "date" in feat.columns else None})
-    if "horse_id" in feat.columns:
-        fk["horse_id"] = feat["horse_id"].astype(str)
-    bal = race_pace_balance(fk.drop_duplicates("race_id"), hr) if hr is not None else pd.Series(dtype=float)
-    labels_all = label_pace_states(bal, _label_groups(features_all)) if not bal.empty else pd.Series(dtype=object)
-    print(f"[labels] ペースラベル付き {labels_all.notna().sum():,} レース"
-          f"（balance 復元 {len(bal):,}）")
+    # 教師ラベル z（結果由来・可）: JRDB SED の race_pace(H/M/S・実測) を主経路にする
+    # （netkeiba『ペース』文字列は JRDB 経路に無く 0 件になるため）。無ければ balance 版へフォールバック。
+    labels_all = pd.Series(dtype=object)
+    try:
+        from src.jrdb._store import JrdbStore
+        sed = JrdbStore().read("SED")
+        labels_all = label_pace_from_sed(sed)
+        print(f"[labels] SED race_pace(H/M/S) から {labels_all.notna().sum():,} レースに z を付与")
+    except Exception as e:  # noqa: BLE001
+        print(f"[labels] SED 読込失敗({e})→ netkeiba ペース balance にフォールバック", file=sys.stderr)
+    if labels_all.notna().sum() < 500:
+        hr = load_raw(LocalPaths.RAW_HORSE_RESULTS_PATH)
+        fk = pd.DataFrame({"race_id": feat.index.astype(str),
+                           "date": pd.to_numeric(feat.get("date"), errors="coerce")
+                           if "date" in feat.columns else None})
+        if "horse_id" in feat.columns:
+            fk["horse_id"] = feat["horse_id"].astype(str)
+        bal = race_pace_balance(fk.drop_duplicates("race_id"), hr) if hr is not None else pd.Series(dtype=float)
+        if not bal.empty:
+            labels_all = label_pace_states(bal, _label_groups(features_all))
+            print(f"[labels] balance フォールバックで {labels_all.notna().sum():,} レース（復元 {len(bal):,}）")
+    labels_all = labels_all.reindex([r["race_id"] for r in records]).dropna()
+    print(f"[labels] records と突合後 {len(labels_all):,} レースに z ラベル")
     if labels_all.notna().sum() < 500:
         print("  [警告] ラベル数が少なすぎます（horse_results の『ペース』列を確認）。", file=sys.stderr)
 
@@ -144,16 +158,18 @@ def main() -> int:
         min_train_years=args.min_train_years, k_extra_params=12, n_boot=args.n_boot,
     )
     pooled = res["pooled"]
+
+    def _f(v, spec="+.5f"):
+        return format(v, spec) if isinstance(v, (int, float)) else "n/a"
+    dn = pooled.get("d_nll")
+    lo = pooled.get("d_nll_lo", pooled.get("d_nll_ci_lo"))
+    hi = pooled.get("d_nll_hi", pooled.get("d_nll_ci_hi"))
+    de = pooled.get("d_ece")
     print(f"\n=== P(z)→Mixture-PL vs 市場（rolling-origin {res['n_folds']} folds）===")
-    print(f"ΔNLL={pooled.get('d_nll'):+.5f}  95%CI[{pooled.get('d_nll_lo'):+.5f},"
-          f"{pooled.get('d_nll_hi'):+.5f}]  ΔECE={pooled.get('d_ece'):+.5f}  "
-          f"LRT_p={pooled.get('lrt_p')}")
+    print(f"ΔNLL={_f(dn)}  95%CI[{_f(lo)},{_f(hi)}]  ΔECE={_f(de)}  LRT_p={pooled.get('lrt_p')}")
     print(f"  {'年':>6}{'n':>7}{'ΔNLL':>10}")
     for f in res["folds"]:
-        print(f"  {f['year']:>6}{f['n']:>7,}{f['d_nll']:>+10.5f}")
-    dn = pooled.get("d_nll")
-    lo, hi = pooled.get("d_nll_lo"), pooled.get("d_nll_hi")
-    de = pooled.get("d_ece")
+        print(f"  {f['year']:>6}{f['n']:>7,}  {_f(f.get('d_nll'))}")
     ok = (dn is not None and dn < 0 and hi is not None and hi < 0
           and de is not None and de <= 1e-4)
     print("\n判定: " + ("✅ 採用候補（ΔNLL<0・CI上限<0・ECE非悪化）" if ok

@@ -12,10 +12,26 @@ from src.constants._pace_states import PACE_STATES
 from src.preprocessing._pace_state import (
     build_race_features,
     evaluate_pz,
+    label_pace_from_sed,
     label_pace_states,
     parse_pace_string,
     race_pace_balance,
 )
+
+
+def test_label_pace_from_sed_hms():
+    # JRDB SED race_pace: H→fast, M→normal, S→slow。レース内一定＝race_id で畳む。
+    sed = pd.DataFrame({
+        "race_id": ["R1", "R1", "R1", "R2", "R2", "R3", "R4"],
+        "race_pace": ["H", "H", "H", "M", "M", "S", " "],   # R4 は空白→除外
+    })
+    z = label_pace_from_sed(sed)
+    assert z.loc["R1"] == "fast"
+    assert z.loc["R2"] == "normal"
+    assert z.loc["R3"] == "slow"
+    assert "R4" not in z.index                       # 空白コードは除外
+    # race_pace 列が無ければ空
+    assert label_pace_from_sed(pd.DataFrame({"race_id": ["R1"]})).empty
 
 
 def test_parse_pace_string():
