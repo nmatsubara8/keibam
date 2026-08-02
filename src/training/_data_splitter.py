@@ -70,9 +70,19 @@ class StackingSplitDegenerateError(ValueError):
 
 
 class DataSplitter:
-    def __init__(self, featured_data, test_size, valid_size, target_col: str = "rank") -> None:
+    # feature_allowlist を使うとき、drop されず残すべき非特徴の保護列（分割キー・目的変数・EV 用オッズ）。
+    __PROTECTED_FOR_ALLOWLIST = tuple(dict.fromkeys(
+        ["rank", *TARGET_LEAK_COLS, "date", "horse_id",
+         ResultsCols.TANSHO_ODDS, ResultsCols.RANK, HorseResultsCols.CORNER]))
+
+    def __init__(self, featured_data, test_size, valid_size, target_col: str = "rank",
+                 feature_allowlist=None) -> None:
         # target_col: 目的変数列。"rank"=複勝(top3, 既定) / "rank_win"=単勝(1着)。
         # Win ヘッドを学習するときは target_col="rank_win" を渡す。
+        # feature_allowlist: 明示指定すると学習入力を **その列だけ** に固定する（新規モデル向け）。
+        #   None（既定）は従来の denylist(_DROP_FOR_TRAIN)＝既存モデルは挙動不変。JRDB 実体化で
+        #   featured に新規列が増えても、allowlist 未指定モデルへ silent 混入しないための関門
+        #   （続36-f）。指定列が featured に無ければ fail-closed。
         self.__target = target_col
         # PreparedFeatures または plain DataFrame を受け付ける
         from src.preprocessing._prepared_features import PreparedFeatures
@@ -84,6 +94,16 @@ class DataSplitter:
             self.__featured_data = self.__downcast_floats(featured_data)
             self.__nn_raw = None
         self.__featured_data = self.__coerce_object_features(self.__featured_data)
+        if feature_allowlist is not None:
+            from src.training._feature_materialization import assert_training_allowlist
+            allow = list(dict.fromkeys(str(c) for c in feature_allowlist))
+            # 指定列が全て featured に在るか（未実体化なら停止）。jrdb_guard は下の restrict で担保。
+            assert_training_allowlist(self.__featured_data.columns, allow, jrdb_guard=False)
+            keep = [c for c in
+                    dict.fromkeys(allow + [target_col] + list(self.__PROTECTED_FOR_ALLOWLIST))
+                    if c in self.__featured_data.columns]
+            # allowlist + 保護列だけに絞る → 以降の drop(_DROP_FOR_TRAIN) で残るのは allowlist のみ。
+            self.__featured_data = self.__featured_data[keep]
 
         # スタッキング用
         self.__base_train: pd.DataFrame | None = None

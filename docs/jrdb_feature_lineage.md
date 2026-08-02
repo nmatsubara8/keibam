@@ -97,6 +97,26 @@ canary（jrdb_ms_npast が初走 NaN→1→2… 単調増加）と合わせ hist
 既存 B/P2/H3 は不変。新規特徴の検定は別仮説として、未接触 test tranche 開封前に 特徴集合・モデル・
 多重比較 family・MES・判定規則 を固定する（2027 を B と共有するなら B 含む全仮説を開封前に一括登録）。
 
+## 続36-f 本線配線（Task#22）＝既存モデル不変・allowlist opt-in・manifest 付き
+
+**設計判断**: 本線の学習入力は denylist（`_DROP_FOR_TRAIN` 以外を全採用）。よって 37 新規列を
+**default featured へ入れると既存 stacking モデルへ silent 混入し性能が変わる**（禁止事項）。既存
+denylist を保ったまま既存モデルを不変にする唯一の方法は「新規列を default featured に載せず、
+消費を明示 allowlist の opt-in にする」こと。従って:
+
+- `DataSplitter(..., feature_allowlist=None)` を追加。**None（既定）は従来 denylist＝既存 B/P2/H3 は
+  byte 一致で不変**。allowlist を渡すと構築時に featured を `allowlist＋保護列(date/rank/着順/単勝/
+  horse_id/CORNER/leak列)` に絞り、以降の drop で残るのは allowlist のみ＝新規列は silent 混入しない。
+  指定列が featured に無ければ `assert_training_allowlist` で fail-closed。
+- 完全 augment(42列)は opt-in build（`scripts/jrdb_build_features.py`・別 pickle）で生成し、そこで
+  `strictly_prior_join_report`＋`assert_strictly_prior` の全件 manifest を出力・検証（history/soten の
+  未来/同日参照=0 を fail-closed 認定）。default 本線 featured の schema は不変（既存5のみ）。
+- 新規/研究モデルは feature_allowlist に「既存列＋採用する JRDB 列」を明示して opt-in。**B frozen は
+  従来5特徴のまま**。欠測は一律0埋めせずモデル別規則を freeze（jrdb_nyukyu_days・history 初走 NaN 等）。
+
+これで「本線が42を通せる基盤＋既存モデル不変＋新規列の silent 混入阻止＋leak 全件証跡」が揃う。
+性能評価は行わない（新規列の予測価値は未接触 test tranche 開封前の事前登録の後で別途）。
+
 ## lineage（38 実体化のための追跡表・repair の骨子）
 
 各特徴について次を一本化する: parser field → store column → augment 関数 → build 呼出し → join key →

@@ -70,6 +70,21 @@ def main() -> int:
     print("featured へ付与（(race_id,馬番)結合＋前走チェーン）...")
     out = attach(featured, kyi, history, soten=soten)
 
+    # strictly-prior 全件 manifest（history/soten の as-of がリーク安全かを全 target 行で認定）。
+    # featured に ketto が無いと asof は空になる（本線ブリッジ要件）。ketto がある構成でのみ検査。
+    if {"ketto", "date"} <= set(featured.columns):
+        from src.jrdb._leak_audit import assert_strictly_prior, strictly_prior_join_report
+        tgt = featured[["ketto", "date"]]
+        for label, src in (("history", history), ("soten", soten)):
+            if src is None or getattr(src, "empty", True):
+                continue
+            rep = strictly_prior_join_report(tgt, src)
+            print(f"  [leak manifest {label}] target={rep['target_rows']:,} "
+                  f"feature_rows={rep['feature_rows']:,} future={rep['future_reference_count']} "
+                  f"same_day={rep['same_day_reference_count']} dup_keys={rep['target_key_duplicates']:,} "
+                  f"max_src={rep['max_source_date']} leak_safe={rep['leak_safe']}")
+            assert_strictly_prior(rep, label=label)   # 未来/同日参照は fail-closed
+
     jr_cols = ["jrdb_idm", "jrdb_kijun_odds", "jrdb_kijun_gap", "prev_deokure", "prev_trouble"]
     if args.with_myspeed:
         jr_cols += list(MYSPEED_COLS)
