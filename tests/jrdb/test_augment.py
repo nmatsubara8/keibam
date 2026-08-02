@@ -70,3 +70,38 @@ def test_attach_is_idempotent_no_xy_dupes():
     assert set(once.columns) == set(twice.columns)                        # 列集合は不変
     # 値も一度目と一致（再付与で壊れない）
     assert twice["jrdb_idm"].tolist() == once["jrdb_idm"].tolist()
+
+
+# df-native builders（store 経路・本線統合で再利用）のテスト
+def test_build_kyi_from_df():
+    import pandas as pd
+    from src.jrdb._augment import build_kyi_from_df
+    raw = pd.DataFrame({"race_id": ["R1"], "umaban": [1], "ketto": ["k"],
+                        "idm": [55.0], "kishu_idx": [50.0], "joho_idx": [48.0],
+                        "ten_idx": [30.0], "pace_yosou": ["H"]})
+    out = build_kyi_from_df(raw)
+    assert out["jrdb_idm"].iloc[0] == 55.0
+    assert out["jrdb_ten_idx"].iloc[0] == 30.0      # 従来 ABSENT だった指数も df から出る
+    assert out["jrdb_pace_hms"].iloc[0] == 1.0       # H→+1
+
+
+def test_build_history_from_dfs():
+    import pandas as pd
+    from src.jrdb._augment import build_history_from_dfs
+    sed = pd.DataFrame({"ketto": ["k"], "ymd": ["20250101"], "deokure": [3.0]})
+    skb = pd.DataFrame({"ketto": ["k"], "ymd": ["20250201"], "tokki1": ["955"],
+                        "tokki2": ["000"]})     # 955=進路なし(TROUBLE)
+    h = build_history_from_dfs(sed, skb)
+    assert set(h.columns) >= {"ketto", "hist_date", "prev_deokure", "prev_trouble"}
+    assert int(h[h["hist_date"] == pd.Timestamp("2025-01-01")]["prev_deokure"].iloc[0]) == 1
+    assert int(h[h["hist_date"] == pd.Timestamp("2025-02-01")]["prev_trouble"].iloc[0]) == 1
+
+
+def test_build_soten_from_df():
+    import pandas as pd
+    from src.jrdb._augment import MYSPEED_COLS, build_soten_from_df
+    sed = pd.DataFrame({"ketto": ["k", "k", "k"], "ymd": ["20240101", "20240201", "20240301"],
+                        "soten": [50.0, 60.0, 70.0]})
+    out = build_soten_from_df(sed)
+    assert set(MYSPEED_COLS) <= set(out.columns)
+    assert len(out) == 3 and out["jrdb_ms_npast"].max() == 3

@@ -127,49 +127,55 @@ SLOWSTART_TOKKI = {
 }
 
 
-def build_kyi(paths: list[str]) -> pd.DataFrame:
-    """複数 KYI を結合し (race_id, umaban) 単位で JRDB 指数群（jrdb_*）を返す。
-
-    KYI_FEATURE_MAP の全指数＋ペース予想 H/M/S を数値化した jrdb_pace_hms を含む。
-    """
-    dfs = [parse(p, "KYI") for p in paths]
-    df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-    if df.empty:
-        return df
+def build_kyi_from_df(df: pd.DataFrame) -> pd.DataFrame:
+    """パース済 KYI DataFrame → (race_id, umaban) 単位 jrdb_* 指数群（store 経路でも再利用）。"""
+    if df is None or df.empty:
+        return pd.DataFrame()
     keep = ["race_id", "umaban", "ketto", *KYI_FEATURE_MAP.keys()]
     out = df[[c for c in keep if c in df.columns]].rename(columns=KYI_FEATURE_MAP)
     if "pace_yosou" in df.columns:
-        out["jrdb_pace_hms"] = df["pace_yosou"].str.strip().map(_HMS)
+        out["jrdb_pace_hms"] = df["pace_yosou"].astype(str).str.strip().map(_HMS)
     return out
 
 
-def build_history(sed_paths: list[str], skb_paths: list[str]) -> pd.DataFrame:
-    """SED/SKB を結合し (ketto, 年月日=date) 単位の過去走トラブル指標を返す。
+def build_kyi(paths: list[str]) -> pd.DataFrame:
+    """複数 KYI(txt) を結合し (race_id, umaban) 単位で JRDB 指数群（jrdb_*）を返す。"""
+    dfs = [parse(p, "KYI") for p in paths]
+    df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+    return build_kyi_from_df(df)
 
-    列: ketto, hist_date, prev_deokure(0/1), prev_trouble(0/1)。
-    """
+
+def build_history_from_dfs(sed_df: pd.DataFrame, skb_df: pd.DataFrame) -> pd.DataFrame:
+    """パース済 SED/SKB → (ketto, hist_date) 単位の過去走トラブル指標（store 経路でも再利用）。"""
     frames = []
-    for p in sed_paths:
-        d = parse(p, "SED")
-        d = d[["ketto", "ymd", "deokure"]].copy()
+    if sed_df is not None and not sed_df.empty and {"ketto", "ymd", "deokure"} <= set(sed_df.columns):
+        d = sed_df[["ketto", "ymd", "deokure"]].copy()
         d["prev_deokure"] = (pd.to_numeric(d["deokure"], errors="coerce") > 0).astype(int)
         d["prev_trouble"] = 0
         frames.append(d[["ketto", "ymd", "prev_deokure", "prev_trouble"]])
-    for p in skb_paths:
-        d = parse(p, "SKB")
-        tk = [c for c in d.columns if c.startswith("tokki")]
-        trouble = d[tk].apply(lambda row: int(any(x in TROUBLE_TOKKI for x in row)), axis=1)
-        slowstart = d[tk].apply(lambda row: int(any(x in SLOWSTART_TOKKI for x in row)), axis=1)
-        frames.append(pd.DataFrame({"ketto": d["ketto"], "ymd": d["ymd"],
-                                    "prev_deokure": slowstart.to_numpy(),
-                                    "prev_trouble": trouble.to_numpy()}))
+    if skb_df is not None and not skb_df.empty:
+        tk = [c for c in skb_df.columns if str(c).startswith("tokki")]
+        if tk and {"ketto", "ymd"} <= set(skb_df.columns):
+            trouble = skb_df[tk].apply(lambda row: int(any(x in TROUBLE_TOKKI for x in row)), axis=1)
+            slow = skb_df[tk].apply(lambda row: int(any(x in SLOWSTART_TOKKI for x in row)), axis=1)
+            frames.append(pd.DataFrame({"ketto": skb_df["ketto"], "ymd": skb_df["ymd"],
+                                        "prev_deokure": slow.to_numpy(),
+                                        "prev_trouble": trouble.to_numpy()}))
     if not frames:
         return pd.DataFrame(columns=["ketto", "hist_date", "prev_deokure", "prev_trouble"])
     h = pd.concat(frames, ignore_index=True)
-    # 同一(ketto,ymd)の SED/SKB を集約（どちらかが立てば1）
     g = h.groupby(["ketto", "ymd"], as_index=False)[["prev_deokure", "prev_trouble"]].max()
     g["hist_date"] = pd.to_datetime(g["ymd"], format="%Y%m%d", errors="coerce")
     return g.dropna(subset=["hist_date"])[["ketto", "hist_date", "prev_deokure", "prev_trouble"]]
+
+
+def build_history(sed_paths: list[str], skb_paths: list[str]) -> pd.DataFrame:
+    """SED/SKB(txt) を結合し (ketto, hist_date) 単位の過去走トラブル指標を返す。"""
+    sed_df = pd.concat([parse(p, "SED") for p in sed_paths], ignore_index=True) \
+        if sed_paths else pd.DataFrame()
+    skb_df = pd.concat([parse(p, "SKB") for p in skb_paths], ignore_index=True) \
+        if skb_paths else pd.DataFrame()
+    return build_history_from_dfs(sed_df, skb_df)
 
 
 def build_soten_history(sed_paths: list[str]) -> pd.DataFrame:
@@ -188,22 +194,22 @@ def build_soten_history(sed_paths: list[str]) -> pd.DataFrame:
       - jrdb_ms_npast = その走までの走数（当該走含む＝asof後は今走前の過去走数）
     ※ scripts/myspeed_staged_gate.py::build_hist の shift(1) 定義と数値等価。
     """
-    frames = []
-    for p in sed_paths:
-        d = parse(p, "SED")
-        if not {"ketto", "ymd", "soten"} <= set(d.columns):
-            continue
-        s = d[["ketto", "ymd", "soten"]].copy()
-        s["soten"] = pd.to_numeric(s["soten"], errors="coerce")
-        frames.append(s)
-    if not frames:
+    sed_df = pd.concat([parse(p, "SED") for p in sed_paths], ignore_index=True) \
+        if sed_paths else pd.DataFrame()
+    return build_soten_from_df(sed_df)
+
+
+def build_soten_from_df(sed_df: pd.DataFrame) -> pd.DataFrame:
+    """パース済 SED → (ketto, hist_date) 単位の raw MySpeed 履歴集約（store 経路でも再利用）。"""
+    if sed_df is None or sed_df.empty or not {"ketto", "ymd", "soten"} <= set(sed_df.columns):
         return pd.DataFrame(columns=["ketto", "hist_date", *MYSPEED_COLS])
-    h = pd.concat(frames, ignore_index=True).dropna(subset=["ketto", "soten"])
+    h = sed_df[["ketto", "ymd", "soten"]].copy()
+    h["soten"] = pd.to_numeric(h["soten"], errors="coerce")
+    h = h.dropna(subset=["ketto", "soten"])
     h["hist_date"] = pd.to_datetime(h["ymd"], format="%Y%m%d", errors="coerce")
     h = h.dropna(subset=["hist_date"])
     if h.empty:
         return pd.DataFrame(columns=["ketto", "hist_date", *MYSPEED_COLS])
-    # 同一(ketto,日)の重複走は平均で1本化（競馬では非現実だが取込重複への保険）。
     h = h.groupby(["ketto", "hist_date"], as_index=False)["soten"].mean()
     return soten_history_aggregates(h)
 

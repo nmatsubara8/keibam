@@ -3,9 +3,10 @@
 続31 監査で「本線 featured は 5/43 実体化」。修復前に、**完全 augment が 38 特徴を正しく materialize
 するか**を性能を見ずに認定する（ユーザ選択: 既存 standalone をまず実データ検証）。
 
-2 経路:
-  --augmented PATH : jrdb_build_features.py が出力した featured+JRDB pickle を読む（推奨・standalone を直検証）
-  --jrdb-dir  DIR  : その場で augment を構築（build_kyi/build_history/build_soten_history/attach）して検証
+3 経路:
+  --from-store     : **JRDB store（既取込 SQLite）から augment を構築**して検証（推奨・raw txt 不要）
+  --augmented PATH : jrdb_build_features.py が出力した featured+JRDB pickle を読む
+  --jrdb-dir  DIR  : その場で raw txt を parse して augment を構築
 
 各 EXPECTED_JRDB_FULL 特徴について: 実在 / 非欠測率(JRA) / 年別 / sentinel率(-99.9/負) / race内分散>0率 /
 NaN・inf。加えて join 一致率（attach が featured 行にどれだけ値を付けたか）と asof 特徴の leak spot-check。
@@ -30,6 +31,21 @@ def _within_race_var_frac(feat, col):
 
 def _load_augmented(args):
     import pandas as pd
+    if args.from_store:
+        from app._model_eval import load_featured_data
+        from src.jrdb._augment import (attach, build_history_from_dfs, build_kyi_from_df,
+                                        build_soten_from_df)
+        from src.jrdb._store import JrdbStore
+        base = load_featured_data()
+        if base is None or base.empty:
+            raise RuntimeError("base featured を読めません")
+        store = JrdbStore()
+        kyi = build_kyi_from_df(store.read("KYI"))
+        hist = build_history_from_dfs(store.read("SED"), store.read("SKB"))
+        soten = build_soten_from_df(store.read("SED"))
+        print(f"  [from-store] KYI jrdb列={len([c for c in kyi.columns if str(c).startswith('jrdb_')])} "
+              f"history rows={len(hist):,} soten rows={len(soten):,}")
+        return attach(base, kyi, hist, soten=soten)
     if args.augmented:
         p = Path(args.augmented)
         if not p.exists():
@@ -48,7 +64,7 @@ def _load_augmented(args):
         hist = build_history(files["SED"], files["SKB"])
         soten = build_soten_history(files["SED"])
         return attach(base, kyi, hist, soten=soten)
-    raise RuntimeError("--augmented か --jrdb-dir のどちらかを指定")
+    raise RuntimeError("--from-store / --augmented / --jrdb-dir のいずれかを指定")
 
 
 def main() -> int:
@@ -59,6 +75,7 @@ def main() -> int:
                                                        assert_features_materialized)
 
     ap = argparse.ArgumentParser(description="JRDB 完全 augment 出力の feature-only 認定（性能を見ない）")
+    ap.add_argument("--from-store", action="store_true", help="JRDB store から augment 構築（raw txt 不要・推奨）")
     ap.add_argument("--augmented", default=None, help="jrdb_build_features.py 出力 pickle")
     ap.add_argument("--jrdb-dir", default=None, help="JRDB txt ディレクトリ（その場 augment）")
     args = ap.parse_args()
