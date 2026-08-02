@@ -10,6 +10,7 @@ from scripts.run_voi_cmi import (
     CATEGORY_ORDER,
     _effective_rank,
     _market_or_outcome,
+    _minmedmax,
     _nonmissing_rate,
     _within_race_var_fraction,
     resolve_membership,
@@ -124,6 +125,29 @@ def test_effective_rank_duplicate_column_drops():
     assert er["cond"] > 1e6                      # 共線→条件数が大
 
 
+def test_effective_rank_exact_collinear_cond_inf():
+    # 完全な重複列（厳密rank落ち）→ cond は inf（微小特異値を隠さず正直に報告）
+    a = np.arange(1.0, 101.0).reshape(-1, 1)
+    X = np.hstack([a, 2.0 * a])                  # 2列だが rank 1（厳密共線）
+    er = _effective_rank(X)
+    assert er["numerical_rank"] == 1
+    assert er["cond"] == float("inf")
+
+
 def test_effective_rank_empty():
     er = _effective_rank(np.zeros((0, 4)))
     assert er["n_features"] == 4 and er["numerical_rank"] == 0
+
+
+def test_minmedmax_basic():
+    assert _minmedmax([3.0, 1.0, 2.0]) == (1.0, 2.0, 3.0)
+
+
+def test_minmedmax_drops_nan_keeps_inf():
+    lo, med, hi = _minmedmax([1.0, float("nan"), float("inf")])
+    assert lo == 1.0 and hi == float("inf")     # nan除外・inf保持
+
+
+def test_minmedmax_all_nan():
+    lo, med, hi = _minmedmax([float("nan")])
+    assert lo != lo and med != med and hi != hi  # 全 nan

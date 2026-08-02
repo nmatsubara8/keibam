@@ -130,6 +130,8 @@ def _effective_rank(X) -> dict:
 
     返す {n_features, numerical_rank(相対tol 1e-8), effective_rank(exp(entropy(特異値))∈[1,nf]), cond}。
     厩舎の raw と _z（レース内z-score後に一致）は有効rankを名目より下げる＝冗長の直接証拠。
+    cond は**全特異値**（≈0 も含む）で smax/smin を取り、rank落ち時は inf（微小値を除外して有限に
+    見せない＝正直な条件数）。effective_rank/エントロピーだけ正の特異値で計算する。
     """
     import numpy as np
     X = np.asarray(X, dtype=float)
@@ -141,16 +143,17 @@ def _effective_rank(X) -> dict:
     if X.shape[0] < 2:
         return empty
     ev = np.clip(np.linalg.eigvalsh(X.T @ X), 0.0, None)
-    s = np.sqrt(ev)
-    s = s[s > 0]
-    if s.size == 0:
+    s_all = np.sqrt(ev)                       # nf 個（rank落ちは ≈0 を含む）
+    smax = float(s_all.max())
+    if smax <= 0:
         return empty
-    smax = float(s.max())
-    numerical = int((s > smax * 1e-8).sum())
-    p = s / s.sum()
+    numerical = int((s_all > smax * 1e-8).sum())
+    smin_all = float(s_all.min())
+    cond = float(smax / smin_all) if smin_all > 0 else float("inf")  # 微小値を隠さない
+    pos = s_all[s_all > 0]
+    p = pos / pos.sum()
     eff = float(np.exp(-(p * np.log(p)).sum()))
-    return {"n_features": nf, "numerical_rank": numerical, "effective_rank": eff,
-            "cond": float(smax / s.min())}
+    return {"n_features": nf, "numerical_rank": numerical, "effective_rank": eff, "cond": cond}
 
 
 def _print_membership(membership, overlaps) -> None:
@@ -202,10 +205,12 @@ def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
     dnll, blocks = [], []
     r_oos, y_oos, m_oos = [], [], []
     theta_norms: list[float] = []
+    fold_rank: list[dict] = []          # **fold毎**の学習行列 rank（pooled でなく実際の推定問題）
     for train, test, _y in rolling_origin_folds(records, min_train_years=min_train_years):
         theta = fit_challenger(train)
         theta_norms.append(
             float(np.sqrt(sum(float(v) ** 2 for v in theta.values()))) if theta else 0.0)
+        fold_rank.append(_effective_rank(_design_matrix(train, feat_cols)))
         for r in test:
             if r.get("winner") is None:
                 continue
@@ -225,7 +230,7 @@ def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
     return {
         "pooled": res["pooled"], "folds": res["folds"], "n_folds": res["n_folds"],
         "bb": bb, "r_oos": np.asarray(r_oos), "y_oos": np.asarray(y_oos),
-        "m_oos": np.asarray(m_oos),
+        "m_oos": np.asarray(m_oos), "fold_rank": fold_rank,
         "theta_norm_mean": float(np.mean(theta_norms)) if theta_norms else 0.0,
         "theta_norm_last": float(theta_norms[-1]) if theta_norms else 0.0,
     }
@@ -281,7 +286,18 @@ def _design_matrix(records, cols):
     return np.asarray(rows, dtype=float) if rows else np.zeros((0, len(cols)))
 
 
+def _minmedmax(xs):
+    """fold 横断の (最小, 中央, 最大)。nan は除外・inf は保持（条件数の rank落ちを隠さない）。"""
+    import numpy as np
+    a = np.asarray([x for x in xs if x == x], dtype=float)   # x==x で nan だけ除外
+    if a.size == 0:
+        return (float("nan"), float("nan"), float("nan"))
+    return float(np.min(a)), float(np.median(a)), float(np.max(a))
+
+
 def main() -> int:
+    import numpy as np
+
     from app._model_eval import load_featured_data
     from scripts.run_residual_head import build_residual_records
     from src.simulation._information import edge_decomposition
@@ -429,18 +445,31 @@ def main() -> int:
         print("  " + f"{cat:<8}" + "".join(f"{c:>18}" for c in cells))
     print("  （凡例: 非欠測率=有限値割合 / 最大unique=カテゴリ内最多ユニーク値数 / "
           "分散あり率=レース内で馬間差>0 のレース割合）")
-    print("\n  [設計行列 有効rank（raw/z 重複・共線性）＋ OOS係数ノルム]")
-    print(f"  {'カテゴリ':<8}{'n_feat':>7}{'数値rank':>9}{'有効rank':>10}{'cond':>12}"
-          f"{'‖θ‖平均':>11}{'‖θ‖最終':>11}")
+    print("\n  [設計行列 有効rank（fold毎の学習行列・pooled でない）: 中央値[最小,最大]]")
+    print(f"  {'カテゴリ':<8}{'n_feat':>7}{'数値rank(med[min,max])':>24}{'有効rank(med)':>14}{'cond(med)':>14}")
     for cat in active:
-        er = _effective_rank(_design_matrix(records, membership[cat]))
+        fr = results[cat].get("fold_rank", [])
+        nr = _minmedmax([f["numerical_rank"] for f in fr])
+        ef = _minmedmax([f["effective_rank"] for f in fr])
+        cd = _minmedmax([f["cond"] for f in fr])
+        cond_med = "inf" if cd[1] == float("inf") else f"{cd[1]:.1f}"
+        nf = fr[0]["n_features"] if fr else len(membership[cat])
+        print(f"  {cat:<8}{nf:>7}{f'{nr[1]:.0f}[{nr[0]:.0f},{nr[2]:.0f}]':>24}"
+              f"{ef[1]:>14.2f}{cond_med:>14}")
+    print("\n  [OOS 残差logit補正 Xθ の実効量（係数の大きさでなく“市場をどれだけ動かしたか”）]")
+    print(f"  {'カテゴリ':<8}{'n_feat':>7}{'‖θ‖平均':>11}{'‖θ‖/√nf':>11}{'std(Xθ)':>12}{'mean|Xθ|':>12}")
+    for cat in active:
         r = results[cat]
-        cond = er["cond"]
-        cond_s = f"{cond:>12.1f}" if cond != float("inf") else f"{'inf':>12}"
-        print(f"  {cat:<8}{er['n_features']:>7}{er['numerical_rank']:>9}{er['effective_rank']:>10.2f}"
-              f"{cond_s}{r.get('theta_norm_mean', 0):>11.4f}{r.get('theta_norm_last', 0):>11.4f}")
-    print("  ※ 有効rank≪n_feat＝raw/z 等の冗長（厩舎）。分散あり率0＝レース内定数で検定不能（ラップ）。")
-    print("    非欠測率が近年のみ高い＝coverage 依存の近年限定信号（調教評価_score）。")
+        nf = max(1, r.get("n_feat", 1))
+        ro = r["r_oos"]
+        std_x = float(np.std(ro)) if ro.size else 0.0
+        mabs_x = float(np.mean(np.abs(ro))) if ro.size else 0.0
+        tn = r.get("theta_norm_mean", 0.0)
+        print(f"  {cat:<8}{r.get('n_feat', 0):>7}{tn:>11.4f}{tn / (nf ** 0.5):>11.4f}"
+              f"{std_x:>12.5f}{mabs_x:>12.5f}")
+    print("  ※ 有効rank≪n_feat＋cond巨大/inf＝raw/z 等の冗長（厩舎）＝21自由度ぶんの独立情報でない。")
+    print("    分散あり率0＝レース内定数で検定不能（ラップ）。非欠測率が近年のみ高い＝coverage 依存（調教）。")
+    print("    std(Xθ) が小さい＝L2下でほぼ縮退し市場をほとんど動かしていない（多特徴でも効かない説明）。")
 
     # === Secondary: 累積前進系列（市場+調教+…+脚質・参考のみ）===
     print("\n" + "=" * 78)

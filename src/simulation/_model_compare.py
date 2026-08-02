@@ -297,11 +297,20 @@ def block_bootstrap_ci(
         cnt = bcnt[idx].sum()
         means[i] = bsum[idx].sum() / cnt if cnt > 0 else float("nan")
     finite = means[np.isfinite(means)]
-    # 片側 p: H0「平均≥0（改善なし）」。ΔNLL は負=改善なので、mean≥0 の割合が大きいほど
-    # 「改善が無い」証拠。VOI/CMI の多重比較では、この片側 p を Holm 補正にかける。
-    p_improve = float(np.mean(finite >= 0.0)) if len(finite) else float("nan")
+    obs = float(v.mean())
+    # 片側 bootstrap p 値（H0: μ_d=0, H1: μ_d<0＝改善）。**中心化した帰無分布**で検定する:
+    # bootstrap 平均を観測平均ぶん差し引いて μ=0 の帰無分布 t*_null=t*−obs を作り、観測平均 obs
+    # 以下（obs と同等以上に負＝同等以上に改善）の割合を数える（Davison–Hinkley の ASL）。
+    #   p = (1 + #{t*_null ≤ obs}) / (B+1) = (1 + #{t* ≤ 2·obs}) / (B+1)
+    # percentile 型 mean(t*≥0) と対称時は一致するが、非対称でも正しく、+1/(B+1) で p=0 を避ける。
+    # ΔNLL は負=改善なので、この p が小さいほど改善が有意。VOI/CMI では Holm 補正にかける。
+    if len(finite):
+        null_means = finite - obs                       # 帰無へ中心化（同一ブロック抽選から）
+        p_improve = float((1 + int(np.sum(null_means <= obs))) / (len(finite) + 1))
+    else:
+        p_improve = float("nan")
     return {
-        "mean": float(v.mean()),
+        "mean": obs,
         "lo": float(np.nanpercentile(means, 100 * alpha / 2)),
         "hi": float(np.nanpercentile(means, 100 * (1 - alpha / 2))),
         "p_improve": p_improve,

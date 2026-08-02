@@ -38,16 +38,16 @@ def test_empty():
     assert r["n"] == 0 and r["n_blocks"] == 0
 
 
-def test_p_improve_strong_improvement_near_zero():
-    # 全ブロックが明確に負(改善)なら、mean≥0 の bootstrap 割合(p_improve)は 0 近傍
+def test_p_improve_strong_improvement_small():
+    # 全ブロックが明確に負(改善)＝中心化帰無分布で観測平均以下は稀→p は小(≒下限 1/(B+1))
     vals = np.full(200, -0.5)
     blocks = np.repeat(np.arange(20), 10)
     r = block_bootstrap_ci(vals, blocks, n_boot=1000, seed=0)
-    assert r["p_improve"] == 0.0
+    assert 0.0 < r["p_improve"] < 0.01    # +1/(B+1) 補正で厳密0にはならない
 
 
 def test_p_improve_no_improvement_near_one():
-    # 全ブロックが正(悪化)なら p_improve は 1 近傍
+    # 全ブロックが正(悪化)なら p_improve は 1
     vals = np.full(200, 0.5)
     blocks = np.repeat(np.arange(20), 10)
     r = block_bootstrap_ci(vals, blocks, n_boot=1000, seed=0)
@@ -57,10 +57,45 @@ def test_p_improve_no_improvement_near_one():
 def test_p_improve_symmetric_noise_near_half():
     rng = np.random.default_rng(1)
     vals = rng.normal(0.0, 1.0, 4000)
-    vals = vals - vals.mean()             # 標本平均を厳密に0へ（bootstrapは標本平均中心）
+    vals = vals - vals.mean()             # 標本平均を厳密に0へ（帰無中心と一致）
     blocks = np.repeat(np.arange(400), 10)
     r = block_bootstrap_ci(vals, blocks, n_boot=3000, seed=2)
     assert 0.35 < r["p_improve"] < 0.65   # 平均0 付近は概ね半々
+
+
+def test_p_improve_single_block_negative_exact():
+    # 1ブロックのみ→全bootstrap標本が同一(=obs)→null_means=0。obs<0 なら
+    # #{0 ≤ obs}=0 → p=(1+0)/(B+1) 厳密。手計算で固定。
+    r = block_bootstrap_ci([-0.3, -0.2, -0.4], ["A", "A", "A"], n_boot=999, seed=0)
+    assert abs(r["p_improve"] - 1.0 / 1000.0) < 1e-12
+
+
+def test_p_improve_single_block_positive_exact():
+    # 1ブロック・obs>0 → #{0 ≤ obs}=B → p=(1+B)/(B+1)=1.0 厳密
+    r = block_bootstrap_ci([0.3, 0.2, 0.4], ["A", "A", "A"], n_boot=999, seed=0)
+    assert r["p_improve"] == 1.0
+
+
+def test_p_improve_matches_manual_centered_formula():
+    # 実装の p_improve が「中心化帰無 ≤ 観測平均」の式と一致することを、同一seedで再現して確認
+    rng = np.random.default_rng(7)
+    vals = rng.normal(-0.05, 1.0, 1000)
+    blocks = np.repeat(np.arange(100), 10)
+    r = block_bootstrap_ci(vals, blocks, n_boot=1500, seed=11)
+    # 同一手順を手で再現（block_bootstrap_ci と同じ重み付き平均・同一seed）
+    v = np.asarray(vals, float)
+    uniq, inv = np.unique(np.asarray(blocks), return_inverse=True)
+    nb = len(uniq)
+    bsum = np.bincount(inv, weights=v, minlength=nb)
+    bcnt = np.bincount(inv, minlength=nb).astype(float)
+    g = np.random.default_rng(11)
+    means = np.empty(1500)
+    for i in range(1500):
+        idx = g.integers(0, nb, nb)
+        means[i] = bsum[idx].sum() / bcnt[idx].sum()
+    obs = v.mean()
+    expected = (1 + int(np.sum((means - obs) <= obs))) / (1500 + 1)
+    assert abs(r["p_improve"] - expected) < 1e-12
 
 
 def test_holm_orders_and_scales():
