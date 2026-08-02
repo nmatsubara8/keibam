@@ -185,3 +185,6 @@ data/jrdb_target_samples/
 docs/jrdb_target_file_profiles.json
 docs/jrdb_target_links.json
 data/jrdb_target/seiseki_vs_sed.json
+
+# H3 監査 manifest（実行 artifact・データ由来の集計/ハッシュを含むためコミットしない）
+artifacts/
