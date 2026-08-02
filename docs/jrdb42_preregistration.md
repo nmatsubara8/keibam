@@ -64,4 +64,12 @@ manifest に刻む（＝凍結の時刻印）。以後は特徴集合・L2・前
 
 - 2025-2026 = burned（評価に使うと証拠が焼ける）。2027 = reserved・未発生。prospective(2026後半) = 蓄積中。
 - 従って「今すぐ数値」は **in-sample / development(2015-2024) 内部 CV の参考値**（独立証拠でない）としてのみ
-  可能。希望があれば非証拠の参考ハーネスを別途用意する（selection の域を出ないと明記）。
+  可能。参考ハーネス `scripts/run_jrdb42_insample_reference.py` を用意（rolling-origin・train=[2015,eval)・
+  test=eval・2025+ は `assert_selection_only_on_known` で fail-closed・features=41/l2=1.0 と凍結一致）:
+
+  ```
+  python scripts/run_jrdb42_insample_reference.py --featured data/featured_jrdb.pkl
+  ```
+
+  出力は fold 別 ΔNLL＋全 fold プールの block-bootstrap CI（nats/race）。**⚠非証拠**（selection 域・
+  過適合を含みうる）。ここで良く見えても freeze 仕様（特徴/L2/判定規則）は変えない。採否は 2027 で一度だけ。

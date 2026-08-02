@@ -194,7 +194,9 @@ def fit_and_eval(train, test, feat_cols, *, l2, n_boot, seed):
     bb = block_bootstrap_ci(dnll, blocks, n_boot=b_used, seed=seed)
     return {"bb": bb, "d_ece": ece(pc_flat, y_flat) - ece(pb_flat, y_flat) if pb_flat else None,
             "theta": theta, "xw": np.asarray(xw, dtype=float), "by_venue": by_venue,
-            "b_used": b_used, "n_dnll": len(dnll)}
+            "b_used": b_used, "n_dnll": len(dnll),
+            # 生の per-race ΔNLL と block ラベル（fold 横断でプールして 1 度だけ CI を取る参考用途）。
+            "dnll": dnll, "blocks": blocks}
 
 
 def _load_featured(path):
