@@ -156,6 +156,10 @@ JOKEN_TO_CLASS = {
     "10": "2勝クラス", "15": "3勝クラス", "16": "3勝クラス",
     "A1": "新馬", "A2": "未勝利", "A3": "未勝利", "OP": "オープン",
 }
+# JRDB グレードコード → race_class（重賞/L を joken=OP の上に細分）。JRDB 標準コード表:
+# 1=G1 2=G2 3=G3 4=重賞(グレード無) 5=特別 6=L。実データ分布(G1 4885<G2 6282<G3 12374・特別最多)と
+# 整合。5(特別)は joken=オープン のときのみ「オープン特別」に細分（条件特別は元クラス維持）。
+GRADE_TO_CLASS = {"1": "G1", "2": "G2", "3": "G3", "6": "リステッド"}
 
 
 def _col(d: pd.DataFrame, name: str) -> pd.Series:
@@ -252,7 +256,12 @@ def build_raw_race_info(sed: pd.DataFrame) -> pd.DataFrame:
     # strip→zfill(2) で正規化してから引く（"要検証" の取りこぼしを機械的に減らす）。
     joken_raw = _col(d, "joken").astype(str).str.strip()
     joken_norm = joken_raw.where(~joken_raw.str.fullmatch(r"\d+"), joken_raw.str.zfill(2))
-    out["race_class"] = joken_norm.map(JOKEN_TO_CLASS).to_numpy()
+    rc = joken_norm.map(JOKEN_TO_CLASS)
+    # grade で graded/listed を上書き（G1/G2/G3/リステッド）。特別×オープン→オープン特別。
+    grade = _col(d, "grade").astype(str).str.strip()
+    rc = rc.where(~grade.isin(GRADE_TO_CLASS), grade.map(GRADE_TO_CLASS))
+    rc = rc.mask((grade == "5") & (rc == "オープン"), "オープン特別")
+    out["race_class"] = rc.to_numpy()
     # [充足監査] race_class が大半 NaN なら joken コード表(JOKEN_TO_CLASS)が実データと不一致の疑い。
     # featured の race_class 一族(level/one-hot/TE)全滅の直接原因になるため本番ビルドで可視化する。
     nonnull = float(pd.Series(out["race_class"]).notna().mean()) if len(out) else 0.0
