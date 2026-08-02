@@ -29,6 +29,26 @@ def _within_race_var_frac(feat, col):
     return float((nun > 1).mean()) if len(nun) else 0.0
 
 
+def _ensure_ketto(base, kyi_raw):
+    """base featured に ketto が無ければ KYI(race_id,馬番→ketto) で補う（history/soten 結合用）。"""
+    import pandas as pd
+    from src.constants._results_cols import ResultsCols
+    if "ketto" in base.columns:
+        return base
+    km = kyi_raw[["race_id", "umaban", "ketto"]].copy()
+    km["race_id"] = km["race_id"].astype(str)
+    km["umaban"] = pd.to_numeric(km["umaban"], errors="coerce").astype("Int64")
+    km = km.dropna(subset=["umaban"]).drop_duplicates(["race_id", "umaban"])
+    b = base.copy()
+    b["_rid"] = b.index.astype(str)
+    b["_uma"] = pd.to_numeric(b.get(ResultsCols.UMABAN), errors="coerce").astype("Int64")
+    merged = b.merge(km, left_on=["_rid", "_uma"], right_on=["race_id", "umaban"], how="left")
+    merged.index = base.index
+    base = base.copy()
+    base["ketto"] = merged["ketto"].to_numpy()
+    return base
+
+
 def _load_augmented(args):
     import pandas as pd
     if args.from_store:
@@ -40,11 +60,16 @@ def _load_augmented(args):
         if base is None or base.empty:
             raise RuntimeError("base featured を読めません")
         store = JrdbStore()
-        kyi = build_kyi_from_df(store.read("KYI"))
+        kyi_raw = store.read("KYI")
+        kyi = build_kyi_from_df(kyi_raw)
         hist = build_history_from_dfs(store.read("SED"), store.read("SKB"))
         soten = build_soten_from_df(store.read("SED"))
+        # history/soten は ketto で結合するが netkeiba featured は ketto を持たないことがある。
+        # KYI(race_id,馬番→ketto) で base に ketto を補って attach 可能にする（本線統合でも要る配線）。
+        base = _ensure_ketto(base, kyi_raw)
         print(f"  [from-store] KYI jrdb列={len([c for c in kyi.columns if str(c).startswith('jrdb_')])} "
-              f"history rows={len(hist):,} soten rows={len(soten):,}")
+              f"history rows={len(hist):,} soten rows={len(soten):,} "
+              f"base ketto={'あり' if 'ketto' in base.columns else 'なし'}")
         return attach(base, kyi, hist, soten=soten)
     if args.augmented:
         p = Path(args.augmented)

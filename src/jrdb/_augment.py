@@ -135,6 +135,11 @@ def build_kyi_from_df(df: pd.DataFrame) -> pd.DataFrame:
     out = df[[c for c in keep if c in df.columns]].rename(columns=KYI_FEATURE_MAP)
     if "pace_yosou" in df.columns:
         out["jrdb_pace_hms"] = df["pace_yosou"].astype(str).str.strip().map(_HMS)
+    # 結合キー dtype を正準化（store 経路は str・txt 経路は int で来るため統一）。
+    if "race_id" in out.columns:
+        out["race_id"] = out["race_id"].astype(str)
+    if "umaban" in out.columns:
+        out["umaban"] = pd.to_numeric(out["umaban"], errors="coerce").astype("Int64")
     return out
 
 
