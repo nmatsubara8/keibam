@@ -18,37 +18,45 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# featured へブリッジ済みの source（L4 の裏返し）
-BRIDGED_TO_FEATURED = {
-    "KYI": "jrdb_*(指数群)+jrdb_pace_hms+jrdb_kijun_gap",
-    "SED": "prev_deokure/soten MySpeed(jrdb_ms_*)",
-    "SKB": "prev_trouble(特記TROUBLE_TOKKI)",
-}
-# 保存済だが featured へ未ブリッジ（latent・網羅性の伸びしろ）
-UNBRIDGED_NOTE = {
-    "TYB": "直前オッズ/パドック指数/馬体重（発走15分前）",
-    "CYB": "調教分析: 追切指数/仕上指数/調教量評価/調教評価/コメント",
-    "CHA": "本追切: テン/中間/終いF＋各指数＋併せ結果",
-    "KKA": "条件別着度数(24群×1-2-3-着外)＋父/母父産駒連対率",
-    "UKC": "馬マスタ: 毛色/系統コード/生産者/産地",
-    "SRB": "ハロンタイム18/コーナー位置取り/トラックバイアス/ペースアップ位置",
-    "KAB": "開催: 天候/芝ダ馬場状態/馬場差/草丈/降水量",
-    "BAC": "番組: 賞金/発走時刻/馬券発売フラグ（race_info 供給）",
-    "KSA": "騎手マスタ: 年別/通算 平地・障害成績",
-    "CSA": "調教師マスタ: 年別/通算成績",
-    "KTA": "登録馬(馬番確定前): IDM/脚質/距離適性/前走リンク",
-    "HJC": "払戻(return 側・featured 特徴ではない)",
+# 取得項目の状態分類（ユーザ査読・続31）。「ブリッジ済」は誤解を招くため 7 状態＋時点クラスへ。
+#   MATERIALIZED          : featured に実在
+#   IMPLEMENTED_NOT_APPLIED: attach 実装はあるが本番 build で未適用（=現 artifact に無い）
+#   INGESTED_NOT_BRIDGED  : store 済だが featured へ橋渡し無し
+#   SOURCE_EMPTY / INGESTION_MISSING / HISTORICAL_ONLY / OUTCOME_ONLY
+# 時点クラス（feature contract 用）: direct_current / bet_time_contract / historical_only / outcome_only
+SOURCE_STATE = {
+    # KYI: 固定5列のみ MATERIALIZED、残り指数群は IMPLEMENTED_NOT_APPLIED（attach 未配線）
+    "KYI": ("MATERIALIZED(5)+IMPLEMENTED_NOT_APPLIED(残指数)", "direct_current",
+            "前日予想・指数。5列(idm/kishu_idx/joho_idx/kyakushitsu/kijun_odds)のみ本線注入"),
+    "SED": ("IMPLEMENTED_NOT_APPLIED(prev_*/MySpeed)+OUTCOME_ONLY(当該走)", "historical_only",
+            "過去走の strictly-prior 集約のみ可。prev_deokure/soten MySpeed は attach 未配線"),
+    "SKB": ("IMPLEMENTED_NOT_APPLIED(prev_trouble)", "historical_only",
+            "過去走特記(TROUBLE_TOKKI)。attach 未配線"),
+    "TYB": ("INGESTED_NOT_BRIDGED", "bet_time_contract",
+            "直前オッズ/パドック/馬体重(T-15)。bet 決定時刻 <= 配信時刻 の契約が必須"),
+    "CYB": ("INGESTED_NOT_BRIDGED", "direct_current", "調教分析: 追切/仕上/調教評価/コメント"),
+    "CHA": ("INGESTED_NOT_BRIDGED", "direct_current", "本追切: テン/中間/終いF＋各指数＋併せ結果"),
+    "KKA": ("INGESTED_NOT_BRIDGED", "direct_current", "条件別着度数＋父/母父産駒連対率"),
+    "UKC": ("INGESTED_NOT_BRIDGED", "direct_current", "馬マスタ: 毛色/系統/生産者/産地(静的)"),
+    "SRB": ("INGESTED_NOT_BRIDGED", "historical_only", "ハロンタイム/コーナー位置/バイアス(過去走集約)"),
+    "KAB": ("INGESTED_NOT_BRIDGED", "direct_current", "開催: 天候/馬場状態/馬場差/草丈/降水量"),
+    "BAC": ("INGESTED_NOT_BRIDGED", "direct_current", "番組: 賞金/発走時刻/馬券発売フラグ"),
+    "HJC": ("OUTCOME_ONLY", "outcome_only", "払戻(return 側・特徴でない)"),
+    "KSA": ("HISTORICAL_ONLY(2026のみ)", "direct_current", "騎手master。今週分のみ＝時系列履歴不足(KZA要)"),
+    "CSA": ("HISTORICAL_ONLY(2026のみ)", "direct_current", "調教師master。今週分のみ(CZA要)"),
+    "KTA": ("INGESTION_MISSING(0行)", "direct_current", "登録馬。未取込＝file/glob/parser/store を要確認"),
 }
 
 
 def _l1_layout_validity():
     import src.jrdb._layouts as L
     print("=" * 88)
-    print("[L1] 仕様妥当性: JRDB 形式のオフセット境界＋取得 byte 率（データ不要）")
+    print("[L1] 仕様妥当性: JRDB 形式のオフセット境界＋**定義byte被覆率**（=parser がrecord内の")
+    print("     何byteをフィールド定義しているか。取得率/正解率ではない）。データ不要")
     RL = L.RECORD_LEN
     dict_layouts = ["KYI", "SED", "TYB", "CYB", "CHA", "KKA", "UKC", "SRB",
                     "KSA", "CSA", "KTA", "BAC", "KAB", "SKB"]
-    print(f"  {'型':<5}{'reclen':>7}{'項目':>5}{'max終端':>8}{'境界':>8}{'取得byte率':>10}")
+    print(f"  {'型':<5}{'reclen':>7}{'項目':>5}{'max終端':>8}{'境界':>8}{'定義byte被覆':>11}")
     over = []
     for t in dict_layouts:
         lay = getattr(L, t)
@@ -67,7 +75,8 @@ def _l1_layout_validity():
     print(f"  {'HJC':<5}{RL['HJC']:>7}{len(L.HJC_GROUPS):>5}{hj:>8}"
           f"{('OK' if hj <= RL['HJC'] else 'OVER'):>8}{'(券種繰返)':>10}")
     print(f"  → 境界違反: {over if over else 'なし（全形式 record 長内）'}")
-    print("  ※ 取得 byte 率が低い形式（KYI~59%/TYB~51%/SKB~9%）は未 parse バイトが残る（下記 L4 と併読）。")
+    print("  ※ 定義byte被覆率が低い形式（KYI~59%/TYB~51%/SKB~9%）は未 parse 領域が残る。SKB 9% は必要な")
+    print("    特記コードのみを意図 parse なら異常でない（未利用領域に有用項目がある可能性の指標）。")
 
 
 def _load_store():
@@ -145,17 +154,19 @@ def _l3_featured():
           f"＋MySpeed {len(MYSPEED_COLS)}＋prev_*）")
 
 
-def _l4_unbridged():
+def _l4_utilization():
     from src.jrdb._store import RECORD_TYPES
     print("\n" + "=" * 88)
-    print("[L4] 未ブリッジ（保存済だが featured へ橋渡し無し＝latent 信号・網羅性の伸びしろ）")
-    print("  [ブリッジ済]")
-    for k, v in BRIDGED_TO_FEATURED.items():
-        print(f"    {k}: {v}")
-    print("  [未ブリッジ（ingested-but-unused）]")
+    print("[L4] source 利用状態（7状態＋時点クラス。『ブリッジ済』は L3 と矛盾するため廃止）")
+    print(f"  {'型':<5}{'状態':<42}{'時点クラス':<18}説明")
     for rt in RECORD_TYPES:
-        if rt not in BRIDGED_TO_FEATURED:
-            print(f"    {rt}: {UNBRIDGED_NOTE.get(rt, '?')}")
+        st, timing, note = SOURCE_STATE.get(rt, ("?", "?", "?"))
+        print(f"  {rt:<5}{st:<42}{timing:<18}{note}")
+    print("  凡例: MATERIALIZED=featured実在 / IMPLEMENTED_NOT_APPLIED=attach実装済だが本番build未適用 /")
+    print("        INGESTED_NOT_BRIDGED=store済・未橋渡し / HISTORICAL_ONLY=今週分のみ /")
+    print("        INGESTION_MISSING=未取込 / OUTCOME_ONLY=レース後。時点=direct_current/bet_time_contract/")
+    print("        historical_only/outcome_only（同名 ten_idx/agari_idx が KYI(予想)とSED(実測)に両在＝")
+    print("        列名でなく source×timestamp で時点判定し feature contract に持たせる）。")
 
 
 def main() -> int:
@@ -168,7 +179,7 @@ def main() -> int:
         _l3_featured()
     except Exception as e:  # noqa: BLE001
         print(f"[L3] スキップ: {e}", file=sys.stderr)
-    _l4_unbridged()
+    _l4_utilization()
     print("\n" + "=" * 88)
     print("[総括] L1 妥当性はここで判定。L2-L3 の実体化・sentinel と L4 の未ブリッジは"
           "ローカル実行で認定（定義≠実体化＝DEAD/ABSENT を最優先で確認）。")
