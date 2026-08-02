@@ -49,14 +49,16 @@ python scripts/run_jrdb42_confirm.py --evaluate --featured data/featured_jrdb.pk
     --audit-manifest artifacts/jrdb42_2027_audit.json
 ```
 
-## freeze 前にユーザ確定が要る2点
+## freeze 決定（2026-08-02・ユーザ確定済み）
 
-1. **features**: 上記 41 列でよいか（相関の高い juni 群を絞る等の部分集合にするか）。
-2. **L2**: 既定 1.0。development_known(2015-2024) の内部 CV で選ぶなら、`assert_selection_only_on_known`
-   で選択年を検証し、選定値を freeze 前に manifest へ記録（結果〔2025+〕で選ばない）。
+1. **features = 41 列すべて**（CURRENT_ACTIVE 33＋HISTORY 8）で確定。部分集合にはしない
+   （L2 が collinearity を吸収するため、市場直交情報の有無を最も広く検定する）。仮説は1本（family m=2）。
+2. **L2 = 1.0 に事前コミット**で確定（B と同 regime・結果を見ずに固定・researcher 自由度ゼロ）。
+   development CV による L2 選定は**行わない**。
 
-この2点を確定して最初の `--audit-only` を実行した時点の commit を `freeze_commit` として凍結する。
-以後は特徴集合・L2・前処理・判定規則を変えない。
+この2点は結果を見ずに確定済み。最初の `--audit-only` を実行した時点の commit を `freeze_commit` として
+manifest に刻む（＝凍結の時刻印）。以後は特徴集合・L2・前処理・判定規則を変えない。ハーネス
+`scripts/run_jrdb42_confirm.py` の `FROZEN` は既にこの決定（features=41・l2=1.0）と一致している。
 
 ## 現時点で clean 数値が出ない理由（明示）
 
