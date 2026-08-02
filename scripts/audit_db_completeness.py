@@ -199,16 +199,27 @@ def main() -> int:
     if res is not None and "着順" in res.columns:
         vc = res["着順"].astype(str).value_counts().head(12)
         print("  着順 生値 上位:", {k: int(v) for k, v in vc.items()})
-    # 年別 1着1頭率＋rows/race（近年が高率なら学習対象は健全・古年疎は benign）
+    # 年別 1着1頭率＋rows/race（全race_info）と、JRA限定（場コード01-10＝モデル対象）の両方。
+    # NAR/出馬表stub が混じると全体は下がるが、JRA限定が高率なら学習対象は健全と確定できる。
     ys = race_stats_by_year(res) if res is not None else {}
+    jra = None
+    if res is not None and "race_id" in res.columns:
+        pc = res["race_id"].astype(str).str[4:6]
+        jra = race_stats_by_year(res[pc.isin({f"{i:02d}" for i in range(1, 11)})])
     if ys:
-        print("  [年別] 1着1頭率 / rows_per_race（抜粋: 最古・境界・近年）")
-        keys = sorted(ys)
-        show = keys[:2] + [k for k in ("2014", "2015", "2019", "2023", "2025", "2026") if k in ys]
-        for y in sorted(set(show)):
+        print("  [年別] 全race_info（JRA+NAR+stub） / JRA限定(場01-10)  1着1頭率・rows/race")
+        for y in sorted(k for k in ys if k >= "2015"):   # 近年（学習対象域）を全表示
             s = ys[y]
-            print(f"    {y}: races={s['n_races']:>6,}  rows/race={s['rows_per_race']:>4}  "
-                  f"1着1頭率={_fmt_pct(s['one_winner_rate'])}")
+            j = (jra or {}).get(y, {})
+            jtxt = (f"JRA: races={j['n_races']:>5,} rows/race={j['rows_per_race']:>4} "
+                    f"1着1頭率={_fmt_pct(j['one_winner_rate'])}") if j else "JRA: —"
+            print(f"    {y}: 全 races={s['n_races']:>6,} rows/race={s['rows_per_race']:>4} "
+                  f"1着1頭率={_fmt_pct(s['one_winner_rate'])}  |  {jtxt}")
+        # 古年 stub の確認（1行/race＝horse結果なし）
+        old = {y: ys[y] for y in ys if y < "2015"}
+        if old:
+            stub = sum(1 for v in old.values() if v["rows_per_race"] <= 1.1)
+            print(f"    [pre-2015] {len(old)}年中 {stub}年が rows/race≈1（＝horse結果なしのstub・JRDB前）")
 
     if ri is not None and "race_id" in ri.columns:
         ys = year_span(ri["race_id"].astype(str).str[:4])
