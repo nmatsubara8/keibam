@@ -63,17 +63,20 @@ def test_p_improve_symmetric_noise_near_half():
     assert 0.35 < r["p_improve"] < 0.65   # 平均0 付近は概ね半々
 
 
-def test_p_improve_single_block_negative_exact():
-    # 1ブロックのみ→全bootstrap標本が同一(=obs)→null_means=0。obs<0 なら
-    # #{0 ≤ obs}=0 → p=(1+0)/(B+1) 厳密。手計算で固定。
-    r = block_bootstrap_ci([-0.3, -0.2, -0.4], ["A", "A", "A"], n_boot=999, seed=0)
-    assert abs(r["p_improve"] - 1.0 / 1000.0) < 1e-12
+def test_single_block_rejected():
+    # 1ブロックは再標本化分布が退化して推論不能＝ValueError（最小pを「強い証拠」と誤認しない）
+    import pytest
+    with pytest.raises(ValueError):
+        block_bootstrap_ci([-0.3, -0.2, -0.4], ["A", "A", "A"], n_boot=999)
 
 
-def test_p_improve_single_block_positive_exact():
-    # 1ブロック・obs>0 → #{0 ≤ obs}=B → p=(1+B)/(B+1)=1.0 厳密
-    r = block_bootstrap_ci([0.3, 0.2, 0.4], ["A", "A", "A"], n_boot=999, seed=0)
-    assert r["p_improve"] == 1.0
+def test_two_blocks_allowed_but_warns():
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")               # <30 ブロックは警告を出す
+        import pytest
+        with pytest.raises(UserWarning):
+            block_bootstrap_ci([-0.3, -0.2, 0.1, 0.2], ["A", "A", "B", "B"], n_boot=200)
 
 
 def test_p_improve_matches_manual_centered_formula():

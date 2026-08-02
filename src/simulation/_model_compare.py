@@ -272,22 +272,43 @@ def block_bootstrap_ci(
     seed: int = 0,
     alpha: float = 0.05,
 ) -> dict:
-    """ブロック・ブートストラップで平均の CI を出す（同一ブロック内の相関を保存）。
+    """ブロック・ブートストラップで平均の CI と片側 ASL を出す（同一ブロック内の相関を保存）。
 
     レース単位 iid リサンプルは、同一開催日のレースが馬場/天候を共有して相関するため分散を
-    過小評価する。ブロック（例: 開催日 race_id[:8]）ごと復元抽出し、抽出ブロックの生値を
-    プールして平均を取る（ブロックサイズ差も正しく反映＝重み付き平均を厳密計算）。
+    過小評価する。ブロック（例: 開催場×日 race_id[:10]）ごと復元抽出し、抽出ブロックの生値を
+    プールして平均を取る。
 
-    返す {mean, lo, hi, n, n_blocks}。純関数（numpy のみ）。
+    **estimand（推定対象）は race-weighted＝全レース等重みの平均**。抽出ブロック内の全レースを
+    連結し「レース差の総和 / レース総数」で平均するため、大開催日ブロックはレース数ぶん強く効く
+    （ブロック平均を先に作って等重み化する block-weighted とは別物・そちらは採らない）。obs も
+    v.mean()＝レース等重み平均で、中心化 t*−obs は「各レース差を obs で引いてからブロック再標本化」
+    と代数的に同一（obs は定数ゆえ平均から括り出せる）。
+
+    片側 p（p_improve）: H0 μ_d=0, H1 μ_d<0（改善）。中心化帰無分布 t*_null=t*−obs を作り
+    ASL=(1+#{t*_null≤obs})/(B+1)=(1+#{t*≤2·obs})/(B+1)（Davison–Hinkley）。percentile 型
+    mean(t*≥0) と対称時は一致するが**非対称な bootstrap 分布にも対応**し、+1/(B+1) で p=0 を避ける。
+    仮定なしではない: (1)開催場×日が妥当な依存単位, (2)ブロック間が弱依存, (3)ブロック集合が期間を
+    代表, (4)bootstrap が平均 ΔNLL の標本分布を近似—を前提とする。
+
+    **1ブロックでは再標本化分布が退化して推論不能**（obs<0 でも p は最小値になるが「強い証拠」でなく
+    退化）。nb<2 は ValueError、nb<30 は警告。返す {mean,lo,hi,p_improve,n,n_blocks}。純関数。
     """
     v = np.asarray(values, dtype=float)
     b = np.asarray(blocks)
     n = len(v)
     if n == 0:
         return {"mean": float("nan"), "lo": float("nan"), "hi": float("nan"),
-                "n": 0, "n_blocks": 0}
+                "p_improve": float("nan"), "n": 0, "n_blocks": 0}
     uniq, inv = np.unique(b, return_inverse=True)
     nb = len(uniq)
+    if nb < 2:
+        raise ValueError(
+            f"block bootstrap は 2 ブロック以上が必要（nb={nb}）。1ブロックでは再標本化分布が"
+            "退化して推論不能（obs<0 でも最小 p になるが強い証拠でなく退化）。")
+    if nb < 30:
+        import warnings
+        warnings.warn(f"block bootstrap: ブロック数 {nb} が少なく推論が不安定な可能性",
+                      stacklevel=2)
     bsum = np.bincount(inv, weights=v, minlength=nb)
     bcnt = np.bincount(inv, minlength=nb).astype(float)
     rng = np.random.default_rng(seed)
@@ -295,15 +316,9 @@ def block_bootstrap_ci(
     for i in range(n_boot):
         idx = rng.integers(0, nb, nb)
         cnt = bcnt[idx].sum()
-        means[i] = bsum[idx].sum() / cnt if cnt > 0 else float("nan")
+        means[i] = bsum[idx].sum() / cnt if cnt > 0 else float("nan")   # race-weighted 平均
     finite = means[np.isfinite(means)]
-    obs = float(v.mean())
-    # 片側 bootstrap p 値（H0: μ_d=0, H1: μ_d<0＝改善）。**中心化した帰無分布**で検定する:
-    # bootstrap 平均を観測平均ぶん差し引いて μ=0 の帰無分布 t*_null=t*−obs を作り、観測平均 obs
-    # 以下（obs と同等以上に負＝同等以上に改善）の割合を数える（Davison–Hinkley の ASL）。
-    #   p = (1 + #{t*_null ≤ obs}) / (B+1) = (1 + #{t* ≤ 2·obs}) / (B+1)
-    # percentile 型 mean(t*≥0) と対称時は一致するが、非対称でも正しく、+1/(B+1) で p=0 を避ける。
-    # ΔNLL は負=改善なので、この p が小さいほど改善が有意。VOI/CMI では Holm 補正にかける。
+    obs = float(v.mean())                                # レース等重み平均（estimand）
     if len(finite):
         null_means = finite - obs                       # 帰無へ中心化（同一ブロック抽選から）
         p_improve = float((1 + int(np.sum(null_means <= obs))) / (len(finite) + 1))

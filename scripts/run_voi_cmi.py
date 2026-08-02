@@ -126,12 +126,13 @@ def _within_race_var_fraction(values, race_ids) -> float:
 
 
 def _effective_rank(X) -> dict:
-    """設計行列の有効rank（raw/z 重複や共線性を再検定せず可視化）。純関数（Gram 経由）。
+    """設計行列の有効rank（raw/z 重複や共線性を再検定せず可視化）。純関数（**直接SVD**）。
 
-    返す {n_features, numerical_rank(相対tol 1e-8), effective_rank(exp(entropy(特異値))∈[1,nf]), cond}。
+    返す {n_features, numerical_rank, effective_rank(exp(entropy(特異値))∈[1,nf]), cond}。
     厩舎の raw と _z（レース内z-score後に一致）は有効rankを名目より下げる＝冗長の直接証拠。
-    cond は**全特異値**（≈0 も含む）で smax/smin を取り、rank落ち時は inf（微小値を除外して有限に
-    見せない＝正直な条件数）。effective_rank/エントロピーだけ正の特異値で計算する。
+    Gram(X.T@X)は条件数を二乗し微小特異値の数値誤差を拡大するため、QR で (nf×nf) に縮約してから
+    **X の特異値を直接** SVD で得る（QR は数値安定・特異値は不変）。rank は matrix_rank と同じ
+    既定 tol（smax·max(m,n)·eps）で数え、rank<min(m,n) なら cond=inf（微小値を隠さない正直な条件数）。
     """
     import numpy as np
     X = np.asarray(X, dtype=float)
@@ -140,17 +141,18 @@ def _effective_rank(X) -> dict:
     if X.ndim != 2 or nf == 0:
         return empty
     X = X[np.isfinite(X).all(axis=1)]
-    if X.shape[0] < 2:
+    m = X.shape[0]
+    if m < 2:
         return empty
-    ev = np.clip(np.linalg.eigvalsh(X.T @ X), 0.0, None)
-    s_all = np.sqrt(ev)                       # nf 個（rank落ちは ≈0 を含む）
-    smax = float(s_all.max())
-    if smax <= 0:
+    r = np.linalg.qr(X, mode="r") if m >= nf else X      # QR で nf×nf に縮約（特異値不変）
+    s = np.linalg.svd(r, compute_uv=False)               # X の特異値を直接（Gram を作らない）
+    if s.size == 0 or float(s[0]) <= 0:
         return empty
-    numerical = int((s_all > smax * 1e-8).sum())
-    smin_all = float(s_all.min())
-    cond = float(smax / smin_all) if smin_all > 0 else float("inf")  # 微小値を隠さない
-    pos = s_all[s_all > 0]
+    smax = float(s[0])
+    tol = smax * max(X.shape) * np.finfo(float).eps      # np.linalg.matrix_rank と同じ既定 tol
+    numerical = int((s > tol).sum())
+    cond = float(smax / s[-1]) if numerical >= len(s) and s[-1] > 0 else float("inf")
+    pos = s[s > 0]
     p = pos / pos.sum()
     eff = float(np.exp(-(p * np.log(p)).sum()))
     return {"n_features": nf, "numerical_rank": numerical, "effective_rank": eff, "cond": cond}
