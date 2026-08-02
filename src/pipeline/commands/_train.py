@@ -183,6 +183,9 @@ def _retrain(args: argparse.Namespace) -> None:
         if featured_data.empty:
             logger.error("[retrain] --jra-only 後の学習データが空です（race_id 形式不一致の可能性）")
             return
+        # fail-closed: フラグが立っていても実データに NAR が残っていれば止める（フィルタ破損検出）。
+        from src.training._provenance import assert_jra_only
+        assert_jra_only(featured_data.index)
     else:
         # 充足監査: NAR(地方・場コード30-88)が混在していると 2024-2025 に不完全な stub
         # （1レース数頭・着順欠落）が入り race 文脈を壊す。既定は除外しないため警告する。

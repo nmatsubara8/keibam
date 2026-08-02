@@ -29,6 +29,8 @@ class KeibaAI:
         self.feature_contract_: FeatureContract | None = None
         # 学習データの日付範囲(min,max)。評価/学習の時間重なり(リーク)を機械的に assert するため保存。
         self.training_data_period_: tuple[str, str] | None = None
+        # 学習由来(JRA限定か・NAR行数・場コード分布・git commit 等)。artifact 単体で由来を証明する。
+        self.training_provenance_: dict | None = None
         self._tuned_base_models_config: Any = None  # tune_per_model 探索後の完成 config（書き戻し用）
 
     @property
@@ -70,6 +72,14 @@ class KeibaAI:
                 self.training_data_period_ = (str(d.min().date()), str(d.max().date()))
         except Exception:  # noqa: BLE001
             self.training_data_period_ = None
+        # 学習由来(provenance): 実データ(X_train の race_id)から NAR 行を実測して刻む。
+        # 「この artifact は本当に JRA 限定で学習されたか」を後から artifact 単体で回答可能にする。
+        try:
+            from src.training._provenance import build_training_provenance
+            self.training_provenance_ = build_training_provenance(
+                X_train.index, training_period=self.training_data_period_)
+        except Exception:  # noqa: BLE001
+            self.training_provenance_ = None
 
     def train_with_tuning(self, tuning_config=None):
         """
