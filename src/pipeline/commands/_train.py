@@ -183,6 +183,18 @@ def _retrain(args: argparse.Namespace) -> None:
         if featured_data.empty:
             logger.error("[retrain] --jra-only 後の学習データが空です（race_id 形式不一致の可能性）")
             return
+    else:
+        # 充足監査: NAR(地方・場コード30-88)が混在していると 2024-2025 に不完全な stub
+        # （1レース数頭・着順欠落）が入り race 文脈を壊す。既定は除外しないため警告する。
+        from src.constants._model_category import central_index_mask
+
+        nar_frac = float(1.0 - central_index_mask(featured_data.index).mean())
+        if nar_frac > 0.02:
+            logger.warning(
+                "[retrain] 学習データに NAR(地方) が %.1f%% 混在。NAR は netkeiba/JRDB で不完全な "
+                "stub になりレース内特徴を壊す恐れ。中央のみで学習するなら --jra-only を付けること。",
+                nar_frac * 100,
+            )
 
     # --no-odds-features: オッズ由来の派生特徴（単勝_log・市場歪み overlay 等）を学習から
     # 除外する。マーケット・エコー検証（r̂ が市場の写しでないかの A/B）用。Place/Win 両ヘッドに
