@@ -140,6 +140,45 @@ def _data_gate_2027(featured, records):
     return checks, (len(blockers) == 0), blockers
 
 
+def fit_and_eval(train, test, feat_cols, *, l2, n_boot, seed):
+    """freeze 期(train)で一度だけ学習し未見期(test)で固定評価（係数不変）。共有評価コア。
+
+    返す {bb, d_ece, theta, xw, by_venue, b_used}。market vs market+残差の race-weighted ΔNLL・
+    開催場×日 block・centered ASL。純度: fit/predict は既存の検証済関数。
+    """
+    import numpy as np
+    from src.policies._market_residual import market_probs
+    from src.policies._residual_head import fit_residual_head, residual_predict, residual_win_probs
+    from src.simulation._model_compare import block_bootstrap_ci, ece, race_nll
+
+    theta = fit_residual_head(train, feat_cols, l2=l2)
+    use = bool(theta) and not all(v == 0 for v in theta.values())
+    dnll, blocks, xw = [], [], []
+    pb_flat, pc_flat, y_flat = [], [], []
+    by_venue = {}
+    for r in test:
+        w = r.get("winner")
+        if w is None:
+            continue
+        pb = market_probs(r["odds"])
+        pc = residual_win_probs(r["odds"], r["feats"], theta) if use else pb
+        if not (pb and pc):
+            continue
+        d = race_nll(pc, w) - race_nll(pb, w)
+        dnll.append(d); blocks.append(str(r["race_id"])[:10])
+        by_venue.setdefault(str(r["race_id"])[4:6], []).append(d)
+        for _h, fv in r["feats"].items():
+            xw.append(residual_predict(fv, theta) if use else 0.0)
+        for h in pb:
+            pb_flat.append(float(pb[h])); pc_flat.append(float(pc.get(h, 0.0)))
+            y_flat.append(1 if h == w else 0)
+    b_used = max(2000, n_boot)
+    bb = block_bootstrap_ci(dnll, blocks, n_boot=b_used, seed=seed)
+    return {"bb": bb, "d_ece": ece(pc_flat, y_flat) - ece(pb_flat, y_flat) if pb_flat else None,
+            "theta": theta, "xw": np.asarray(xw, dtype=float), "by_venue": by_venue,
+            "b_used": b_used, "n_dnll": len(dnll)}
+
+
 def _load_featured(path):
     from app._model_eval import load_featured_data
     feat = load_featured_data(path) if path else load_featured_data()
@@ -236,36 +275,10 @@ def _do_evaluate(args) -> int:
         print(f"[FAIL-CLOSED] {e}", file=sys.stderr)
         return 4
 
-    # 2026 末までで一度だけ学習・2027 で固定評価（係数は test 中に変えない）
-    theta = fit_residual_head(train, feat_cols, l2=FROZEN["l2"])
-    use = bool(theta) and not all(v == 0 for v in theta.values())
-    dnll, blocks, xw = [], [], []
-    pb_flat, pc_flat, y_flat = [], [], []
-    nb_all, nc_all = [], []
-    by_venue = {}
-    for r in test:
-        w = r.get("winner")
-        if w is None:
-            continue
-        pb = market_probs(r["odds"])
-        pc = residual_win_probs(r["odds"], r["feats"], theta) if use else pb
-        if not (pb and pc):
-            continue
-        nb, nc = race_nll(pb, w), race_nll(pc, w)
-        d = nc - nb
-        dnll.append(d); blocks.append(str(r["race_id"])[:10])
-        nb_all.append(nb); nc_all.append(nc)
-        by_venue.setdefault(str(r["race_id"])[4:6], []).append(d)
-        for h, fv in r["feats"].items():
-            xw.append(residual_predict(fv, theta) if use else 0.0)
-        for h in pb:
-            pb_flat.append(float(pb[h])); pc_flat.append(float(pc.get(h, 0.0)))
-            y_flat.append(1 if h == w else 0)
-    b_used = max(2000, args.n_boot)
-    bb = block_bootstrap_ci(dnll, blocks, n_boot=b_used, seed=args.seed)
-    d_ece = ece(pc_flat, y_flat) - ece(pb_flat, y_flat) if pb_flat else None
-    xw = np.asarray(xw, dtype=float)
-
+    # freeze 期まで一度だけ学習・未見期で固定評価（係数は test 中に変えない）
+    res = fit_and_eval(train, test, feat_cols, l2=FROZEN["l2"], n_boot=args.n_boot, seed=args.seed)
+    bb, d_ece, theta, xw, by_venue = res["bb"], res["d_ece"], res["theta"], res["xw"], res["by_venue"]
+    b_used = res["b_used"]
     v = verdict(bb["mean"], bb["hi"], d_ece)
     print(f"\n=== Primary（2027 test・{len(test):,} races・venue×日 block・m=1・B={b_used:,}/seed={args.seed}）===")
     print(f"  最小到達可能 p=1/(B+1)={1.0/(b_used+1):.2e}  estimand=race-weighted 平均ΔNLL(nats/race)")
