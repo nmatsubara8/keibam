@@ -241,9 +241,29 @@ def _raw_source_probe(featured_horse_ids=None):
                 print(f"   race_class 非欠測率(年別・直近): {by_y.tail(8).to_dict()}")
             except Exception:  # noqa: BLE001
                 pass
+            # 名前テキストからの回復可能性: race_class が NaN の行の race名/条件から classify_race_class で
+            # どれだけ race_class を復元できるか（＝SED 追加なしのコード側 backfill が有効か）を測る。
+            name_cols = [c for c in ("race_name", "レース名", "race_condition", "race_condition_raw")
+                         if c in ri.columns]
+            if name_cols:
+                try:
+                    from src.constants._master import classify_race_class
+                    na_mask = ri["race_class"].isna()
+                    txt = ri.loc[na_mask, name_cols[0]].astype(str)
+                    other = ri.loc[na_mask, name_cols[1]].astype(str) if len(name_cols) > 1 else None
+                    rec = txt.map(lambda s: classify_race_class(s) is not None)
+                    if other is not None:
+                        rec = rec | other.map(lambda s: classify_race_class(s) is not None)
+                    print(f"   [回復可能性] NaN {int(na_mask.sum()):,}行の名前({name_cols[0]})から "
+                          f"classify_race_class で復元可 {rec.mean():.1%}（SED追加なしで backfill 可能な割合）")
+                except Exception as e:  # noqa: BLE001
+                    print(f"   [回復可能性] 判定失敗: {e}", file=sys.stderr)
+            else:
+                print(f"   [回復可能性] race_info に名前列(race_name/レース名/race_condition)なし → "
+                      f"名前 backfill 不可。列: {[c for c in ri.columns][:15]}")
             if nn < 0.5:
-                print("   → 【Branch A】race_info の race_class が上流で NA＝jrdb_fill を --mode overwrite で全年再適用"
-                      "→ rebuild-featured。fill(追加のみ)では既存行は書き換わらない。")
+                print("   → 【Branch A】race_info の race_class が上流で NA。名前復元可なら code側 backfill、"
+                      "不可なら 2024-2025 の JRDB SED 追加 ingest→overwrite 再fill→rebuild。")
             else:
                 print("   → 【Branch B】race_info には race_class が入っている＝featured 生成側(FE鎖/TE/one-hot)で"
                       "落ちている。add_race_class_level とマージ経路を追う必要あり。")
