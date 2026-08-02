@@ -222,6 +222,34 @@ def _raw_source_probe(featured_horse_ids=None):
     else:
         print("\n  raw peds.pkl を読めず＝sire/damsire は SOURCE_MISSING（血統ソース未取得。_scrape_html_ped で取得案件）")
 
+    # race_class: featured の race_class 一族が DEAD のとき、原因が race_info(上流)か featured生成(下流)かを
+    # 直接切り分ける。race_info.pkl の race_class 充足を年別に見る（Branch A: 上流NA / Branch B: 下流欠落）。
+    ri = _load(getattr(LocalPaths, "RAW_RACE_INFO_PATH", ""))
+    if ri is not None and not ri.empty:
+        has = "race_class" in ri.columns
+        print(f"\n  raw race_info.pkl: shape={ri.shape}  race_class列={has}")
+        if has:
+            rc = ri["race_class"]
+            nn = float(rc.notna().mean())
+            vc = rc.value_counts(dropna=False).head(8).to_dict()
+            print(f"   race_class 全体 非欠測={nn:.1%}  値分布(上位)={vc}")
+            rid = (ri.index.astype(str) if ri.index.name == "race_id"
+                   else ri.get("race_id", pd.Series(index=ri.index)).astype(str))
+            try:
+                by_y = ri.assign(_y=pd.Series(rid, index=ri.index).str[:4]) \
+                         .groupby("_y")["race_class"].apply(lambda s: round(float(s.notna().mean()), 3))
+                print(f"   race_class 非欠測率(年別・直近): {by_y.tail(8).to_dict()}")
+            except Exception:  # noqa: BLE001
+                pass
+            if nn < 0.5:
+                print("   → 【Branch A】race_info の race_class が上流で NA＝jrdb_fill を --mode overwrite で全年再適用"
+                      "→ rebuild-featured。fill(追加のみ)では既存行は書き換わらない。")
+            else:
+                print("   → 【Branch B】race_info には race_class が入っている＝featured 生成側(FE鎖/TE/one-hot)で"
+                      "落ちている。add_race_class_level とマージ経路を追う必要あり。")
+        else:
+            print("   → race_info に race_class 列が無い＝上流生成の問題。")
+
     # guide: course_guide_master.csv（手入力 course_guide.csv からの生成物）。無ければ全 NaN。
     gm = getattr(LocalPaths, "COURSE_GUIDE_MASTER_PATH", "")
     gsrc = getattr(LocalPaths, "COURSE_GUIDE_PATH", "")
