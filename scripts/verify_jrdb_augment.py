@@ -43,8 +43,9 @@ def _agreement_vs_base(kyi, base):
     if not overlap:
         print("  [値一致検証] base に既知列が無くスキップ。")
         return
-    b = pd.DataFrame({"race_id": base.index.astype(str),
-                      "umaban": pd.to_numeric(base.get(ResultsCols.UMABAN), errors="coerce").astype("Int64")})
+    b = pd.DataFrame({"race_id": base.index.astype(str).to_numpy(),
+                      "umaban": pd.to_numeric(base.get(ResultsCols.UMABAN),
+                                              errors="coerce").astype("Int64").to_numpy()})
     for c in overlap:
         b[c + "_base"] = pd.to_numeric(base[c], errors="coerce").to_numpy()
     m = b.merge(kyi[["race_id", "umaban", *overlap]], on=["race_id", "umaban"], how="inner")
