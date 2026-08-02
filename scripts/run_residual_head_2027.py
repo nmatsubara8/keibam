@@ -27,6 +27,9 @@ FROZEN = {
     "mes_dnll": 0.001,              # nats/race（自然対数）
     "ece_tolerance": 0.005,
     "test_year": 2027,
+    "reserved_test_start": 2027,       # standing protocol: reserved 窓の開始
+    "consumed_test_years": [],         # 評価後に 2027 を consumed へ移す（ledger 状態）
+    "test_tranche_status": "reserved",  # reserved → evaluated → consumed
     "bootstrap_blocks": "venue_x_date",   # race_id[:10]
     "bootstrap_repetitions": 20000,
     "bootstrap_seed": 0,
@@ -286,7 +289,9 @@ def _do_evaluate(args) -> int:
     # standing protocol: final-test の clean 性を強制（burned 2025-26/重複/時系列違反を弾く）
     from src.training._temporal_split import assert_clean_final_test
     try:
-        assert_clean_final_test({r["year"] for r in train}, {FROZEN["test_year"]})
+        assert_clean_final_test({r["year"] for r in train}, {FROZEN["test_year"]},
+                                reserved_test_start=FROZEN["reserved_test_start"],
+                                consumed_test_years=FROZEN["consumed_test_years"])
     except ValueError as e:
         print(f"[STOP] temporal-split 違反: {e}", file=sys.stderr)
         return 6
