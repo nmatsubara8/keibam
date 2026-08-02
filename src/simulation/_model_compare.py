@@ -262,3 +262,43 @@ def compare_models(
         # 事前定義の成功条件: 改善・有意・較正非悪化（ROI は別途 evaluate_pnl で確認）
         "success": bool(d_nll < 0 and significant and d_ece <= 0.005),
     }
+
+
+def block_bootstrap_ci(
+    values: Sequence[float],
+    blocks: Sequence,
+    *,
+    n_boot: int = 2000,
+    seed: int = 0,
+    alpha: float = 0.05,
+) -> dict:
+    """ブロック・ブートストラップで平均の CI を出す（同一ブロック内の相関を保存）。
+
+    レース単位 iid リサンプルは、同一開催日のレースが馬場/天候を共有して相関するため分散を
+    過小評価する。ブロック（例: 開催日 race_id[:8]）ごと復元抽出し、抽出ブロックの生値を
+    プールして平均を取る（ブロックサイズ差も正しく反映＝重み付き平均を厳密計算）。
+
+    返す {mean, lo, hi, n, n_blocks}。純関数（numpy のみ）。
+    """
+    v = np.asarray(values, dtype=float)
+    b = np.asarray(blocks)
+    n = len(v)
+    if n == 0:
+        return {"mean": float("nan"), "lo": float("nan"), "hi": float("nan"),
+                "n": 0, "n_blocks": 0}
+    uniq, inv = np.unique(b, return_inverse=True)
+    nb = len(uniq)
+    bsum = np.bincount(inv, weights=v, minlength=nb)
+    bcnt = np.bincount(inv, minlength=nb).astype(float)
+    rng = np.random.default_rng(seed)
+    means = np.empty(n_boot)
+    for i in range(n_boot):
+        idx = rng.integers(0, nb, nb)
+        cnt = bcnt[idx].sum()
+        means[i] = bsum[idx].sum() / cnt if cnt > 0 else float("nan")
+    return {
+        "mean": float(v.mean()),
+        "lo": float(np.nanpercentile(means, 100 * alpha / 2)),
+        "hi": float(np.nanpercentile(means, 100 * (1 - alpha / 2))),
+        "n": int(n), "n_blocks": int(nb),
+    }

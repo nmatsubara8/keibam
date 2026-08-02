@@ -80,6 +80,8 @@ def main() -> int:
     ap.add_argument("--min-train-years", type=int, default=3)
     ap.add_argument("--n-boot", type=int, default=1000)
     ap.add_argument("--l2-beta", type=float, default=0.1)
+    ap.add_argument("--mes", type=float, default=0.001,
+                    help="実用最小効果量(|ΔNLL| bit/race)。これ未満は有意でも不採用")
     args = ap.parse_args()
 
     feat = load_featured_data(args.featured) if args.featured else load_featured_data()
@@ -166,15 +168,27 @@ def main() -> int:
     lo, hi = ci if isinstance(ci, (tuple, list)) and len(ci) == 2 else (None, None)
     de = pooled.get("d_ece")
 
-    # P(z) 自体の OOS 品質（β が効くかとは独立に、予測器が情報を持つか）を fold 別に測る。
+    # P(z) 自体の OOS 品質＋レース単位 ΔNLL を fold 別に収集（開催日 block bootstrap CI 用）。
     print("\n[P(z) OOS 品質]（学習P(z) vs 一様 の Δlogloss・負=情報あり）")
     from src.preprocessing._pace_state import evaluate_pz
+    from src.simulation._model_compare import block_bootstrap_ci, race_nll
     folds = rolling_origin_folds(records, min_train_years=args.min_train_years)
-    pz_dl, pz_acc, pz_n = [], [], 0
+    pz_dl, pz_acc = [], []
+    dnll_vals, dnll_days = [], []
     for train, test, year in folds:
         params = fit_challenger(train)
         if params.get("pz") is None:
             continue
+        # レース単位 ΔNLL（挑戦−市場）と開催日（race_id[:8]）を収集
+        for r in test:
+            if r.get("winner") is None:
+                continue
+            pb = prob_baseline(None, r)
+            pc = prob_challenger(params, r)
+            if not pb or not pc:
+                continue
+            dnll_vals.append(race_nll(pc, r["winner"]) - race_nll(pb, r["winner"]))
+            dnll_days.append(str(r["race_id"])[:8])
         te_ids = features_all.index.intersection(pd.Index([r["race_id"] for r in test]))
         te_ids = te_ids.intersection(labels_all.index)
         if len(te_ids) == 0:
@@ -182,21 +196,31 @@ def main() -> int:
         pred = predict_pz(params["pz"], features_all.loc[te_ids])
         ev = evaluate_pz(pred, labels_all.loc[te_ids])
         if ev.get("n"):
-            pz_dl.append(ev["d_logloss"]); pz_acc.append(ev["accuracy"]); pz_n += ev["n"]
+            pz_dl.append(ev["d_logloss"]); pz_acc.append(ev["accuracy"])
             print(f"  {year:>6}  n={ev['n']:>6,}  Δlogloss={ev['d_logloss']:+.4f}  acc={ev['accuracy']:.3f}")
     if pz_dl:
         print(f"  通算: Δlogloss平均={np.mean(pz_dl):+.4f}  acc平均={np.mean(pz_acc):.3f}"
               f"（負=一様より予測器が情報を持つ／accは3クラス・偶然=0.33）")
+
+    # 開催日 block bootstrap の ΔNLL 95%CI（同日相関を保存＝iid より正直）＋実用最小効果量ゲート
+    bb = block_bootstrap_ci(dnll_vals, dnll_days, n_boot=max(2000, args.n_boot))
+    print(f"\n[ΔNLL 開催日ブロックBootstrap] mean={bb['mean']:+.6f} "
+          f"95%CI[{bb['lo']:+.6f},{bb['hi']:+.6f}]  日数={bb['n_blocks']:,} n={bb['n']:,}")
 
     print(f"\n=== P(z)→Mixture-PL vs 市場（rolling-origin {res['n_folds']} folds）===")
     print(f"ΔNLL={_f(dn)}  95%CI[{_f(lo)},{_f(hi)}]  ΔECE={_f(de)}  LRT_p={pooled.get('lrt_p')}")
     print(f"  {'年':>6}{'n':>7}{'ΔNLL':>10}")
     for f in res["folds"]:
         print(f"  {f['year']:>6}{f['n']:>7,}  {_f(f.get('d_nll'))}")
-    ok = bool(pooled.get("success")) or (
-        dn is not None and dn < 0 and hi is not None and hi < 0
-        and de is not None and de <= 1e-4)
-    print("\n判定: " + ("✅ 採用候補（ΔNLL<0・CI上限<0・ECE非悪化）" if ok
+    # 採否: 開催日ブロックCI上限<0（有意）かつ |効果量|≥MES（実用）かつ ECE 非悪化。
+    # 統計的有意性だけでは救済しない（微小効果量は不採用）。
+    sig = bb["hi"] < 0
+    practical = abs(bb["mean"]) >= args.mes
+    ece_ok = (de is None) or (de <= 5e-3)
+    ok = sig and practical and ece_ok
+    if sig and not practical:
+        print(f"  → 有意だが |ΔNLL|={abs(bb['mean']):.6f} < MES({args.mes}) ＝実用最小効果量未満で不採用。")
+    print("\n判定: " + ("✅ 採用候補（ブロックCI上限<0・|効果量|≥MES・ECE非悪化）" if ok
                         else "❌ 不採用（市場アンカーを有意には超えない）") +
           "。※事前登録＝pace-mixture のみ（residual head は別軸）。")
     return 0
