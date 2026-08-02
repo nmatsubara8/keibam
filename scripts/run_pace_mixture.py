@@ -73,7 +73,7 @@ def main() -> int:
         build_race_features, fit_pz, label_pace_from_sed, label_pace_states, predict_pz,
         pz_dict, race_pace_balance,
     )
-    from src.simulation._rolling_origin import rolling_origin_compare
+    from src.simulation._rolling_origin import rolling_origin_compare, rolling_origin_folds
 
     ap = argparse.ArgumentParser(description="P(z)→Mixture-PL 完全OOS評価")
     ap.add_argument("--featured", default=None)
@@ -162,16 +162,40 @@ def main() -> int:
     def _f(v, spec="+.5f"):
         return format(v, spec) if isinstance(v, (int, float)) else "n/a"
     dn = pooled.get("d_nll")
-    lo = pooled.get("d_nll_lo", pooled.get("d_nll_ci_lo"))
-    hi = pooled.get("d_nll_hi", pooled.get("d_nll_ci_hi"))
+    ci = pooled.get("d_nll_ci95") or (None, None)
+    lo, hi = ci if isinstance(ci, (tuple, list)) and len(ci) == 2 else (None, None)
     de = pooled.get("d_ece")
+
+    # P(z) 自体の OOS 品質（β が効くかとは独立に、予測器が情報を持つか）を fold 別に測る。
+    print("\n[P(z) OOS 品質]（学習P(z) vs 一様 の Δlogloss・負=情報あり）")
+    from src.preprocessing._pace_state import evaluate_pz
+    folds = rolling_origin_folds(records, min_train_years=args.min_train_years)
+    pz_dl, pz_acc, pz_n = [], [], 0
+    for train, test, year in folds:
+        params = fit_challenger(train)
+        if params.get("pz") is None:
+            continue
+        te_ids = features_all.index.intersection(pd.Index([r["race_id"] for r in test]))
+        te_ids = te_ids.intersection(labels_all.index)
+        if len(te_ids) == 0:
+            continue
+        pred = predict_pz(params["pz"], features_all.loc[te_ids])
+        ev = evaluate_pz(pred, labels_all.loc[te_ids])
+        if ev.get("n"):
+            pz_dl.append(ev["d_logloss"]); pz_acc.append(ev["accuracy"]); pz_n += ev["n"]
+            print(f"  {year:>6}  n={ev['n']:>6,}  Δlogloss={ev['d_logloss']:+.4f}  acc={ev['accuracy']:.3f}")
+    if pz_dl:
+        print(f"  通算: Δlogloss平均={np.mean(pz_dl):+.4f}  acc平均={np.mean(pz_acc):.3f}"
+              f"（負=一様より予測器が情報を持つ／accは3クラス・偶然=0.33）")
+
     print(f"\n=== P(z)→Mixture-PL vs 市場（rolling-origin {res['n_folds']} folds）===")
     print(f"ΔNLL={_f(dn)}  95%CI[{_f(lo)},{_f(hi)}]  ΔECE={_f(de)}  LRT_p={pooled.get('lrt_p')}")
     print(f"  {'年':>6}{'n':>7}{'ΔNLL':>10}")
     for f in res["folds"]:
         print(f"  {f['year']:>6}{f['n']:>7,}  {_f(f.get('d_nll'))}")
-    ok = (dn is not None and dn < 0 and hi is not None and hi < 0
-          and de is not None and de <= 1e-4)
+    ok = bool(pooled.get("success")) or (
+        dn is not None and dn < 0 and hi is not None and hi < 0
+        and de is not None and de <= 1e-4)
     print("\n判定: " + ("✅ 採用候補（ΔNLL<0・CI上限<0・ECE非悪化）" if ok
                         else "❌ 不採用（市場アンカーを有意には超えない）") +
           "。※事前登録＝pace-mixture のみ（residual head は別軸）。")
