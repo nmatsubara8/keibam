@@ -456,12 +456,26 @@ def _do_evaluate(args) -> int:
         de_s = f"{de:+.6f}" if isinstance(de, float) else "n/a"
         print(f"  {fn:<6}{bb['mean']:>+13.6f}{ci:>26}{h.get('p', float('nan')):>9.4f}"
               f"{h.get('p_holm', float('nan')):>9.4f}{de_s:>11}{verdict:>16}")
+    # 内部値（±0.000000 表示の下の実値を科学表記で残す＝再現記録の完成・表示精度の修正のみ）
+    print("\n  --- 内部値（科学表記）---")
+    for fn in ("h3a", "h3b"):
+        bb, pooled = results[fn]["bb"], results[fn]["pooled"]
+        de = pooled.get("d_ece")
+        de_s = f"{de:.3e}" if isinstance(de, float) else "n/a"
+        print(f"  [{fn}] ΔNLL={bb['mean']:.3e}  CI[{bb['lo']:.3e},{bb['hi']:.3e}]  "
+              f"ΔECE={de_s}  p={bb.get('p_improve', float('nan')):.4f}")
     print("\n  --- fold 別 ΔNLL ---")
     for fn in ("h3a", "h3b"):
         cells = [f"{f['year']}:{f['d_nll']:+.5f}" if isinstance(f.get("d_nll"), float)
                  else f"{f['year']}:n/a" for f in results[fn]["folds"]]
         print(f"  [{fn}] {'  '.join(cells)}")
-    print("\n[境界] 2018-2026 は探索的OOS（P2結果を見て発案）。結果を見て hard化/λ/窓/前後半差/合成を")
+    tyears = sorted({f["year"] for f in results["h3a"]["folds"]})
+    ryears = sorted({r["year"] for r in records})
+    warm = [y for y in ryears if y < (tyears[0] if tyears else 9999)]
+    print(f"\n[評価期間] warm-up/初期学習={warm}  test folds={tyears}  "
+          f"records pool={ryears[0] if ryears else '?'}-{ryears[-1] if ryears else '?'}"
+          f"（{len(records):,}レース・全てが test 観測ではない）")
+    print("[境界] 探索的 rolling-origin OOS（P2結果を見て発案）。結果を見て hard化/λ/窓/前後半差/合成を")
     print("        同期間で再試行しない＝多重探索。採用候補は未見期間(2027 or freeze後 prospective)で確認。")
     print("        B frozen 残差ヘッドは無変更で別レーン。合成は別仮説。")
     return 0
