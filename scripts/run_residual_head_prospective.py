@@ -97,26 +97,42 @@ def _gate(train, test, meta, featured):
     from src.constants._results_cols import ResultsCols
     rids = [r["race_id"] for r in test]
     nar = int((~pd.Series(central_index_mask(pd.Index(rids).astype(str)))).sum()) if rids else 0
-    # 1着1頭率（test records は build 時に winner 確定・3頭以上）
     winner_ok = all(r.get("winner") is not None for r in test)
-    cov = {c: round(float(pd.to_numeric(featured.get(c), errors="coerce").notna().mean()), 4)
-           if c in featured.columns else None for c in FROZEN["features"]}
+    # coverage は **train窓 vs test窓の相対**で見る（絶対閾値でなく・自然に部分的な wet_rel_rank を罰しない）。
+    # 凍結特徴は B で検証済＝欠測は残差ヘッドが z-score→0 で処理。ここで見るのは新期間の**取込断絶**のみ。
+    fidx = pd.Series(featured.index.astype(str))
+    tr_rids = {r["race_id"] for r in train}
+    te_rids = {r["race_id"] for r in test}
+    tr_mask = fidx.isin(tr_rids).to_numpy()
+    te_mask = fidx.isin(te_rids).to_numpy()
+    cov_tr, cov_te, regress = {}, {}, []
+    for c in FROZEN["features"]:
+        if c not in featured.columns:
+            cov_tr[c] = cov_te[c] = None
+            regress.append(c)
+            continue
+        col = pd.to_numeric(featured[c], errors="coerce")
+        cov_tr[c] = round(float(col[tr_mask].notna().mean()), 4) if tr_mask.any() else None
+        cov_te[c] = round(float(col[te_mask].notna().mean()), 4) if te_mask.any() else None
+        if te_mask.any() and cov_tr[c] and cov_te[c] is not None and cov_te[c] < 0.5 * cov_tr[c]:
+            regress.append(c)   # 新期間で coverage が学習期の半分未満＝取込断絶の疑い
     checks = {"freeze_date": FROZEN["freeze_date"], **meta, "nar_rows": nar,
               "min_test_races_trigger": FROZEN["min_test_races"],
               "trigger_reached": meta["n_test"] >= FROZEN["min_test_races"],
               "time_order_ok": bool(meta["max_train_date"] and meta["min_test_date"]
                                     and meta["max_train_date"] < meta["min_test_date"]),
-              "all_test_have_winner": winner_ok, "feature_coverage": cov}
+              "all_test_have_winner": winner_ok,
+              "feature_coverage_train": cov_tr, "feature_coverage_test": cov_te}
     blockers = []
     if not checks["trigger_reached"]:
         blockers.append(f"未見レース {meta['n_test']} < trigger {FROZEN['min_test_races']}"
                         "（貯まるまで evaluate 不可＝shadow 蓄積中）")
     if nar != 0:
         blockers.append(f"NAR {nar}")
-    if not checks["time_order_ok"]:
+    if meta["n_test"] > 0 and not checks["time_order_ok"]:
         blockers.append("train max date >= test min date（時系列違反）")
-    if any(v is None or v < 0.5 for v in cov.values()):
-        blockers.append(f"凍結特徴 coverage 不足 {cov}")
+    if regress:
+        blockers.append(f"凍結特徴の新期間 coverage 断絶（train比0.5未満）: {regress}")
     return checks, (len(blockers) == 0), blockers
 
 

@@ -115,10 +115,25 @@ def _data_gate_2027(featured, records):
     win_per_race = pd.DataFrame({"r": r27.to_numpy(), "w": (rank == 1).to_numpy()}).groupby("r")["w"].sum()
     winner_rate = float((win_per_race == 1).mean()) if len(win_per_race) else 0.0
     checks["winner_1of1_rate"] = round(winner_rate, 5)
-    # 特徴 coverage（凍結特徴）
-    cov = {c: round(float(pd.to_numeric(f27.get(c), errors="coerce").notna().mean()), 4)
-           if c in f27.columns else None for c in FROZEN["features"]}
-    checks["feature_coverage_2027"] = cov
+    # 特徴 coverage は **2027 vs pre-2027 の相対**で見る（絶対閾値でなく・自然に部分的な wet_rel_rank を
+    # 罰しない）。凍結特徴は B で検証済＝欠測は残差ヘッドが処理。ここで見るのは 2027 の**取込断絶**のみ。
+    fidx = pd.Series(featured.index.astype(str))
+    fy = pd.to_numeric(fidx.str[:4], errors="coerce")
+    pre_mask = ((fy < FROZEN["test_year"]) & fidx.str[4:6].isin(
+        {f"{i:02d}" for i in range(1, 11)})).to_numpy()
+    cov27, covpre, regress = {}, {}, []
+    for c in FROZEN["features"]:
+        if c not in featured.columns:
+            cov27[c] = covpre[c] = None
+            regress.append(c)
+            continue
+        col = pd.to_numeric(featured[c], errors="coerce")
+        cov27[c] = round(float(col[is2027].notna().mean()), 4)
+        covpre[c] = round(float(col[pre_mask].notna().mean()), 4) if pre_mask.any() else None
+        if covpre[c] and cov27[c] < 0.5 * covpre[c]:
+            regress.append(c)
+    checks["feature_coverage_2027"] = cov27
+    checks["feature_coverage_pre2027"] = covpre
     # training max year < test min year（year 粒度で保証）
     train_years = sorted({int(r["year"]) for r in records if r["year"] and r["year"] < FROZEN["test_year"]})
     checks["train_years"] = train_years
@@ -133,8 +148,8 @@ def _data_gate_2027(featured, records):
         blockers.append(f"1着1頭率 {winner_rate:.4f} < {MIN_WINNER_RATE}")
     if not checks["train_max_year_lt_test"]:
         blockers.append("training max year >= test year（時系列違反）")
-    if any(v is None or (v is not None and v < 0.5) for v in cov.values()):
-        blockers.append(f"凍結特徴の 2027 coverage 不足 {cov}")
+    if regress:
+        blockers.append(f"凍結特徴の 2027 coverage 断絶（pre-2027比0.5未満）: {regress}")
     if checks["n_records_2027"] < 100:
         blockers.append(f"2027 の評価 records {checks['n_records_2027']} が少なすぎ")
     return checks, (len(blockers) == 0), blockers
