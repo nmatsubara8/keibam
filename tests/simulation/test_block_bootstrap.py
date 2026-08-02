@@ -125,3 +125,18 @@ def test_holm_clamps_at_one():
     out = holm_correction([("a", 0.5), ("b", 0.6)], alpha=0.05)
     assert all(o["p_holm"] <= 1.0 for o in out)
     assert all(o["reject"] is False for o in out)
+
+
+def test_holm_family_m5_with_source_missing_padding():
+    # 事前登録5カテゴリの family を維持: 検定できた4つ + SOURCE_MISSING を p=1.0 で帳簿。
+    # m=5 でも 脚質(0.007×5=0.035)・調教(0.009×4=0.036) は棄却、厩舎(0.0375×3=0.1125) は非棄却。
+    pairs = [("脚質", 0.007), ("調教", 0.009), ("厩舎", 0.0375), ("ラップ", 1.0), ("ペース", 1.0)]
+    out = holm_correction(pairs, alpha=0.05)
+    by = {o["name"]: o for o in out}
+    assert by["脚質"]["reject"] is True
+    assert by["調教"]["reject"] is True
+    assert by["厩舎"]["reject"] is False
+    assert by["ラップ"]["reject"] is False and by["ペース"]["reject"] is False
+    # p=1.0 の帳簿は他カテゴリの棄却を弱めない（末尾に来るだけ）
+    assert abs(by["脚質"]["p_holm"] - 0.035) < 1e-9
+    assert abs(by["調教"]["p_holm"] - 0.036) < 1e-9

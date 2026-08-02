@@ -172,12 +172,13 @@ def _print_membership(membership, overlaps) -> None:
     print("=" * 78)
 
 
-def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
+def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot, seed=0):
     """1カテゴリの OOS ΔNLL(開催場×日 block) と CMI 用 OOS (r,y,m) を返す。
 
     market(θ≡0) vs market+category-residual を rolling-origin で回し、テスト各レースの
     per-race ΔNLL とブロック(race_id[:10]) を集める。同時に CMI 用に、テスト馬ごとの
     残差ヘッド出力 r・勝敗 y・市場implied m を OOS で貯める（副次のCMI推定に使う）。
+    block bootstrap は全カテゴリ同一の (B, seed) で再現性を担保する。
     """
     import numpy as np
 
@@ -202,7 +203,7 @@ def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
 
     res = rolling_origin_compare(
         records, fit_baseline, prob_baseline, fit_challenger, prob_challenger,
-        min_train_years=min_train_years, k_extra_params=len(feat_cols), n_boot=n_boot)
+        min_train_years=min_train_years, k_extra_params=len(feat_cols), n_boot=n_boot, seed=seed)
 
     dnll, blocks = [], []
     r_oos, y_oos, m_oos = [], [], []
@@ -228,11 +229,12 @@ def _category_dnll(records, feat_cols, *, l2, min_train_years, n_boot):
                 r_oos.append(residual_predict(feats_h, theta) if theta else 0.0)
                 y_oos.append(1 if h == r["winner"] else 0)
                 m_oos.append(float(q[h]))
-    bb = block_bootstrap_ci(dnll, blocks, n_boot=max(2000, n_boot))
+    b_used = max(2000, n_boot)
+    bb = block_bootstrap_ci(dnll, blocks, n_boot=b_used, seed=seed)
     return {
         "pooled": res["pooled"], "folds": res["folds"], "n_folds": res["n_folds"],
         "bb": bb, "r_oos": np.asarray(r_oos), "y_oos": np.asarray(y_oos),
-        "m_oos": np.asarray(m_oos), "fold_rank": fold_rank,
+        "m_oos": np.asarray(m_oos), "fold_rank": fold_rank, "b_used": b_used, "seed": seed,
         "theta_norm_mean": float(np.mean(theta_norms)) if theta_norms else 0.0,
         "theta_norm_last": float(theta_norms[-1]) if theta_norms else 0.0,
     }
@@ -316,7 +318,9 @@ def main() -> int:
     ap.add_argument("--l2", type=float, default=1.0, help="残差ヘッドL2（事前登録・全カテゴリ共通）")
     ap.add_argument("--mes", type=float, default=1e-3, help="最小実用効果量（結果後に下げない）")
     ap.add_argument("--min-train-years", type=int, default=3)
-    ap.add_argument("--n-boot", type=int, default=2000)
+    ap.add_argument("--n-boot", type=int, default=2000,
+                    help="block bootstrap 反復 B（全カテゴリ共通・最終台帳用に増やすなら固定Bで一度限り）")
+    ap.add_argument("--seed", type=int, default=0, help="bootstrap seed（全カテゴリ共通・再現性）")
     ap.add_argument("--allow-nar", action="store_true", help="NAR も含める（既定は JRA 限定）")
     args = ap.parse_args()
 
@@ -375,20 +379,33 @@ def main() -> int:
     for cat in active:
         cols = membership[cat]
         r = _category_dnll(records, cols, l2=args.l2,
-                           min_train_years=args.min_train_years, n_boot=args.n_boot)
+                           min_train_years=args.min_train_years, n_boot=args.n_boot, seed=args.seed)
         ed = edge_decomposition(r["r_oos"], r["y_oos"], r["m_oos"]) \
             if len(r["r_oos"]) else {"mi": float("nan"), "cmi": float("nan"),
                                      "redundant": float("nan"), "edge_ratio": float("nan")}
         results[cat] = {**r, "cmi": ed, "n_feat": len(cols)}
 
-    # Holm 補正（5=有効カテゴリ数 の片側 p_improve に対して・family-wise error 制御）
+    # Holm 補正は **事前登録 5 カテゴリ** の family で行う（検定できた数に縮めない）。
+    # SOURCE_MISSING / 検定不能カテゴリは「検定した」ことにせず、多重補正の帳簿上のみ p=1.0 を置く
+    # （非棄却で family を保つ・事前登録との対応が明瞭で最も保守的）。
+    not_tested = [c for c in CATEGORY_ORDER if c not in active]
     pairs = [(cat, results[cat]["bb"].get("p_improve", float("nan"))) for cat in active]
-    holm = holm_correction(pairs, alpha=0.05)
+    pairs += [(cat, 1.0) for cat in not_tested]     # p=1.0 帳簿（NOT TESTED・検定したことにしない）
+    holm = holm_correction(pairs, alpha=0.05)       # m=5（事前登録どおり）
     holm_by_cat = {h["name"]: h for h in holm}
 
-    ECE_TOL = 5e-3  # 事前固定（_model_compare 標準・結果を見て変えない）
+    b_used = results[active[0]].get("b_used", max(2000, args.n_boot))
+    min_p = 1.0 / (b_used + 1)
+    nblocks = results[active[0]]["bb"].get("n_blocks", 0)
     print("\n" + "=" * 78)
-    print("=== Primary: カテゴリ別 市場+残差 vs 市場（OOS ΔNLL・開催場×日 block・Holm補正）===")
+    print("=== Bootstrap 再現性（全カテゴリ共通・固定）===")
+    print(f"  反復 B={b_used:,}  seed={args.seed}  ブロック数={nblocks:,}  "
+          f"最小到達可能 p=1/(B+1)={min_p:.2e}  estimand=race-weighted 平均ΔNLL")
+    if min_p > 5e-3:
+        print(f"  [注意] 最小到達可能 p({min_p:.2e}) が大きい＝Monte Carlo 誤差が p≈0.007-0.01 帯に影響し得る。"
+              f"最終台帳は --n-boot を増やし固定B/seedで一度だけ再計算（特徴/モデルは不変）。")
+    print("\n" + "=" * 78)
+    print("=== Primary: カテゴリ別 市場+残差 vs 市場（OOS ΔNLL・開催場×日 block・Holm補正 m=5 事前登録）===")
     print(f"{'カテゴリ':<8}{'n_feat':>7}{'ΔNLL(mean)':>13}{'95%CI':>26}{'p':>9}{'p_Holm':>9}{'判定':>16}")
     for cat in active:
         bb = results[cat]["bb"]
@@ -407,6 +424,12 @@ def main() -> int:
         ci = f"[{bb['lo']:+.6f},{bb['hi']:+.6f}]"
         print(f"{cat:<8}{results[cat]['n_feat']:>7}{bb['mean']:>+13.6f}{ci:>26}"
               f"{h.get('p', float('nan')):>9.4f}{h.get('p_holm', float('nan')):>9.4f}{verdict:>16}")
+    for cat in not_tested:      # 事前登録だが検定不能（SOURCE_MISSING）＝family維持で p=1.0 帳簿
+        h = holm_by_cat.get(cat, {})
+        print(f"{cat:<8}{0:>7}{'—':>13}{'NOT TESTED/SOURCE_MISSING':>26}"
+              f"{h.get('p', 1.0):>9.4f}{h.get('p_holm', 1.0):>9.4f}{'NOT TESTED':>16}")
+    print(f"  ※ Holm family=事前登録5カテゴリ（m=5）。NOT TESTED は検定せず p=1.0 を帳簿に置くだけ"
+          f"（非棄却で family を保つ）。有効={active} / 未検定={not_tested}")
 
     print("\n--- fold 別 ΔNLL（特定年だけ効く不安定性の確認）---")
     for cat in active:
