@@ -74,20 +74,21 @@ def build_h3_records(sed, kyi, featured, *, min_train_years=3):
     sp = sp.sort_values(["ketto", "_d"])
     hist_by_ketto = {k: g.reset_index(drop=True) for k, g in sp.groupby("ketto")}
 
-    # target（featured eligible）＋ SED から ketto/ymd を (race_id,馬番) で引く
-    rid = featured.index.astype(str)
+    # target（featured eligible）＋ SED から ketto/ymd を (race_id,馬番) で引く。
+    # .to_numpy() で index を剥がし race_id を純粋な列にする（index/列の曖昧回避）。
+    rid = featured.index.astype(str).to_numpy()
+    rid_s = pd.Series(rid)
     tgt = pd.DataFrame({
         "race_id": rid,
-        "umaban": pd.to_numeric(featured.get(ResultsCols.UMABAN), errors="coerce"),
-        "odds": pd.to_numeric(featured.get(ResultsCols.TANSHO_ODDS), errors="coerce"),
-        "rank": pd.to_numeric(featured.get(ResultsCols.RANK), errors="coerce"),
-        "year": pd.to_numeric(pd.Series(rid).str[:4], errors="coerce").to_numpy(),
-        "place": pd.Series(rid).str[4:6].to_numpy(),
+        "umaban": pd.to_numeric(featured.get(ResultsCols.UMABAN), errors="coerce").to_numpy(),
+        "odds": pd.to_numeric(featured.get(ResultsCols.TANSHO_ODDS), errors="coerce").to_numpy(),
+        "rank": pd.to_numeric(featured.get(ResultsCols.RANK), errors="coerce").to_numpy(),
+        "year": pd.to_numeric(rid_s.str[:4], errors="coerce").to_numpy(),
+        "place": rid_s.str[4:6].to_numpy(),
     })
     elig = (tgt["year"] >= 2015) & tgt["place"].isin(JRA_PLACES) & tgt["umaban"].notna()
     tgt = tgt[elig.to_numpy()].copy()
     # SED から (race_id,馬番)->(ketto,_d) を引く
-    sed_key = sp.rename(columns={"_rid": "race_id"})
     sedm = sed.copy()
     rid_c = "race_id" if "race_id" in sedm.columns else "race_key"
     sedm["race_id"] = sedm[rid_c].astype(str)
@@ -95,7 +96,9 @@ def build_h3_records(sed, kyi, featured, *, min_train_years=3):
     sedm["ketto"] = sedm["ketto"].astype(str)
     ymd = "ymd" if "ymd" in sedm.columns else "date"
     sedm["_d"] = pd.to_datetime(sedm[ymd].astype(str), errors="coerce", format="%Y%m%d")
-    key2 = sedm[["race_id", "umaban", "ketto", "_d"]].drop_duplicates(["race_id", "umaban"])
+    key2 = (sedm[["race_id", "umaban", "ketto", "_d"]]
+            .rename(columns={"_d": "sdate"})     # itertuples は先頭_の列名を壊すので valid 名へ
+            .drop_duplicates(["race_id", "umaban"]))
     tgt = tgt.merge(key2, on=["race_id", "umaban"], how="inner")
 
     years = sorted(y for y in tgt["year"].dropna().unique())
@@ -122,9 +125,9 @@ def build_h3_records(sed, kyi, featured, *, min_train_years=3):
         hist = hist_by_ketto.get(row.ketto)
         h3a = h3b = 0.0
         if hist is not None and len(hist):
-            prior = hist[(hist["_d"] < row._d) & (hist["_rid"] != row.race_id)]
+            prior = hist[(hist["_d"] < row.sdate) & (hist["_rid"] != row.race_id)]
             if len(prior):
-                ms = assert_strictly_prior(prior, row._d, row.race_id,
+                ms = assert_strictly_prior(prior, row.sdate, row.race_id,
                                            date_col="_d", race_id_col="_rid")
                 audit["n_leak_assert"] += 1
                 if ms is not None and (max_src is None or ms > max_src):
