@@ -394,6 +394,7 @@ def main() -> int:
     holm = holm_correction(pairs, alpha=0.05)       # m=5（事前登録どおり）
     holm_by_cat = {h["name"]: h for h in holm}
 
+    ECE_TOL = 5e-3  # 事前固定（_model_compare 標準・結果を見て変えない）
     b_used = results[active[0]].get("b_used", max(2000, args.n_boot))
     min_p = 1.0 / (b_used + 1)
     nblocks = results[active[0]]["bb"].get("n_blocks", 0)
