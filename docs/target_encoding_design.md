@@ -115,6 +115,24 @@ JRDB42 の NLL 確認や既確定結論には触れない。ベースライン�
 5. **sire/damsire materialize = 凍結前に監査必須**（`scripts/audit_pedigree_keys.py`）。存在確認前に「4主効果」を
    primary 固定できない。母父欠損が多くても**都合よく外さず**、凍結前に対象集合を改訂する。**←未完了**
 
+## sire/damsire 監査結果（2026-08-02・凍結ブロッカー）
+
+`audit_pedigree_keys.py`（669,034行）の結果: featured の sire/damsire 系 **12 列はすべて派生特徴
+（sire_win_rate 等）で 100% 空（非欠損=0.000・unique=0）**。**raw な父/母父 ID 列は存在しない**。
+つまり **pedigree は TE キーとして使えない**（父・母父の両方＝母父だけの欠損問題ではない）。raw 父/母父は
+**UKC(馬マスタ) store にあるが featured へ未ブリッジ（INGESTED_NOT_BRIDGED）**。
+
+→ **凍結ブロック**。Level1 の種牡馬/母父、Level2 の 種牡馬×距離帯/種牡馬×芝ダ は現状の featured では組めない。
+ユーザ規約（都合よく外さず対象集合を凍結前に改訂）に従い、次のいずれかを選ぶ:
+
+- **(A) UKC materialization を先に**（別作業）: UKC の父/母父 ID を featured へブリッジ（値を見ずに変換規則・
+  品質基準を先に固定）→ 再監査 → **4主効果＋pedigree 交互作用の FULL bundle** で凍結。
+- **(B) 対象集合を改訂して先行**: pedigree を除いた **騎手/調教師（主効果）＋騎手×場/調教師×クラス（交互作用）**
+  で凍結・実装し、pedigree は UKC 配線後に**別スレッドで追加**（本 TE スレッドの結果からは切り離す）。
+
+いずれも jockey_id/trainer_id の品質（非欠損・馬内変化＝騎手は乗替りで変わるのが正常・正規キーが数値ID）を
+`audit_pedigree_keys.py` 再実行で確認してから確定する（騎手/調教師は「馬内不変」でなく「レース時点で確定」を見る）。
+
 ## sire/damsire 品質監査（凍結条件3・要ローカル）
 
 `scripts/audit_pedigree_keys.py --featured data/featured_jrdb.pkl` で最低限:

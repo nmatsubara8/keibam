@@ -12,9 +12,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-# 父/母父を指す可能性のある列名の手がかり（UKC/netkeiba 由来の揺れを広く拾う）。
+# TE キー候補の手がかり（父/母父＋騎手/調教師/馬主）。raw ID 列 と 派生特徴(win_rate 等)の両方を拾う。
 _KEYS = ("sire", "damsire", "father", "bms", "broodmare", "f_blood", "m_father",
-         "父", "母父", "種牡馬", "血統")
+         "父", "母父", "種牡馬", "血統",
+         "jockey", "trainer", "owner", "騎手", "調教師", "馬主", "kishu", "chokyo")
+# 派生特徴（TE の raw キーでない）を見分ける手がかり。これらは「キー」でなく既存の集約列。
+_DERIVED_HINTS = ("_rate", "_avg", "_recent", "_z", "率", "平均", "_count", "_n")
 
 
 def main() -> int:
@@ -43,8 +46,12 @@ def main() -> int:
     rid = pd.Series(df.index.astype(str))
     year = pd.to_numeric(rid.str[:4], errors="coerce")
     horse = df["horse_id"] if "horse_id" in df.columns else None
-    print(f"  候補列 {len(cand)}: {cand}")
-    print(f"\n  {'列':<22}{'dtype':>10}{'非欠損':>8}{'unique':>9}{'馬内不変率':>10}{'正規キー':>8}")
+    raw = [c for c in cand if not any(h in str(c).lower() or h in str(c) for h in _DERIVED_HINTS)]
+    derived = [c for c in cand if c not in raw]
+    print(f"  候補列 {len(cand)}（raw キー候補 {len(raw)} / 派生特徴 {len(derived)}）")
+    print(f"    raw キー候補: {raw if raw else 'なし'}")
+    print(f"    派生特徴（TE の raw キーでない）: {derived}")
+    print(f"\n  {'列':<26}{'種別':>6}{'dtype':>9}{'非欠損':>8}{'unique':>9}{'馬内不変率':>10}{'正規キー':>8}")
     for c in cand:
         s = df[c]
         nonnull = float(s.notna().mean())
@@ -58,7 +65,8 @@ def main() -> int:
         num_frac = float(pd.to_numeric(s, errors="coerce").notna().mean())
         canon = "数値ID" if num_frac >= 0.9 else ("名称" if num_frac <= 0.1 else "混在")
         st = f"{stable:.3f}" if stable == stable else "n/a"
-        print(f"  {str(c):<22}{str(s.dtype):>10}{nonnull:>8.3f}{nun:>9,}{st:>10}{canon:>8}")
+        kind = "raw" if c in raw else "派生"
+        print(f"  {str(c):<26}{kind:>6}{str(s.dtype):>9}{nonnull:>8.3f}{nun:>9,}{st:>10}{canon:>8}")
 
     # 年別非欠損（取込断絶の検知）
     print("\n  [年別 非欠損率]")
