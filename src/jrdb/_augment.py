@@ -186,6 +186,30 @@ def build_kyi(paths: list[str]) -> pd.DataFrame:
     return build_kyi_from_df(df)
 
 
+def ensure_ketto(base: pd.DataFrame, kyi_raw: pd.DataFrame) -> pd.DataFrame:
+    """base featured に ketto が無ければ KYI(race_id,馬番→ketto) で補う（history/soten asof 結合の前提）。
+
+    netkeiba featured は血統登録番号(ketto)を持たないため、これが無いと attach の history/soten
+    asof が `"ketto" in f.columns` False で丸ごと空になる（続36 DEAD の一因）。store/txt 両経路の
+    完全 augment build で必須の配線。既に ketto があればそのまま返す。純関数（copy して返す）。
+    """
+    from src.constants._results_cols import ResultsCols
+    if "ketto" in base.columns:
+        return base
+    km = kyi_raw[["race_id", "umaban", "ketto"]].copy()
+    km["race_id"] = km["race_id"].astype(str)
+    km["umaban"] = pd.to_numeric(km["umaban"], errors="coerce").astype("Int64")
+    km = km.dropna(subset=["umaban"]).drop_duplicates(["race_id", "umaban"])
+    b = base.copy()
+    b["_rid"] = b.index.astype(str)
+    b["_uma"] = pd.to_numeric(b.get(ResultsCols.UMABAN), errors="coerce").astype("Int64")
+    merged = b.merge(km, left_on=["_rid", "_uma"], right_on=["race_id", "umaban"], how="left")
+    merged.index = base.index
+    out = base.copy()
+    out["ketto"] = merged["ketto"].to_numpy()
+    return out
+
+
 def build_history_from_dfs(sed_df: pd.DataFrame, skb_df: pd.DataFrame) -> pd.DataFrame:
     """パース済 SED/SKB → (ketto, hist_date) 単位の過去走トラブル指標（store 経路でも再利用）。"""
     frames = []

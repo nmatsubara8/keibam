@@ -101,6 +101,18 @@ def test_attach_non_contiguous_index_still_joins_history():
     assert pd.isna(out.loc[100]["prev_trouble"])        # 初走は前走なし
 
 
+def test_ensure_ketto_bridges_and_is_noop_when_present():
+    from src.jrdb._augment import ensure_ketto
+    base = pd.DataFrame({"馬番": [1, 1], "date": ["2020-02-01", "2020-03-01"]},
+                        index=["202005010101", "202005010201"])
+    bridged = ensure_ketto(base, _kyi().iloc[[0, 2]].copy())
+    assert bridged["ketto"].tolist() == ["20170001", "20170001"]   # KYI(race_id,馬番)→ketto
+    assert list(bridged.index) == list(base.index)                 # index 保持
+    # 既に ketto があれば no-op（上書きしない）
+    already = base.copy(); already["ketto"] = ["X", "Y"]
+    assert ensure_ketto(already, _kyi())["ketto"].tolist() == ["X", "Y"]
+
+
 def test_kakutei_bataijuu_not_from_kyi():
     # 続36 WRONG_SOURCE: 確定馬体重は KYI 由来にしない（発走前は 0/空・DEAD）。TYB へ移譲。
     from src.jrdb._augment import KYI_FEATURE_MAP

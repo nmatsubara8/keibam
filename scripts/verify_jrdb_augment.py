@@ -62,26 +62,6 @@ def _agreement_vs_base(kyi, base):
         print(f"    {c:<20} n={int(ok.sum()):>7,} corr={corr:+.4f} median比(store/base)={ratio:.3f}")
 
 
-def _ensure_ketto(base, kyi_raw):
-    """base featured に ketto が無ければ KYI(race_id,馬番→ketto) で補う（history/soten 結合用）。"""
-    import pandas as pd
-    from src.constants._results_cols import ResultsCols
-    if "ketto" in base.columns:
-        return base
-    km = kyi_raw[["race_id", "umaban", "ketto"]].copy()
-    km["race_id"] = km["race_id"].astype(str)
-    km["umaban"] = pd.to_numeric(km["umaban"], errors="coerce").astype("Int64")
-    km = km.dropna(subset=["umaban"]).drop_duplicates(["race_id", "umaban"])
-    b = base.copy()
-    b["_rid"] = b.index.astype(str)
-    b["_uma"] = pd.to_numeric(b.get(ResultsCols.UMABAN), errors="coerce").astype("Int64")
-    merged = b.merge(km, left_on=["_rid", "_uma"], right_on=["race_id", "umaban"], how="left")
-    merged.index = base.index
-    base = base.copy()
-    base["ketto"] = merged["ketto"].to_numpy()
-    return base
-
-
 def _canary_npast(base, attached, soten):
     """1頭を canary に、jrdb_ms_npast が過去走数として単調増加するかを target 側で確認する。
 
@@ -127,7 +107,7 @@ def _load_augmented(args):
     if args.from_store:
         from app._model_eval import load_featured_data
         from src.jrdb._augment import (attach, build_history_from_dfs, build_kyi_from_df,
-                                        build_soten_from_df)
+                                        build_soten_from_df, ensure_ketto)
         from src.jrdb._store import JrdbStore
         base = load_featured_data()
         if base is None or base.empty:
@@ -140,7 +120,7 @@ def _load_augmented(args):
         # history/soten は ketto で結合するが netkeiba featured は ketto を持たないことがある。
         # KYI(race_id,馬番→ketto) で base に ketto を補って attach 可能にする（本線統合でも要る配線）。
         _agreement_vs_base(kyi, base)      # 既知良好(adapter経路)の5列と scale/parse 一致を検証
-        base = _ensure_ketto(base, kyi_raw)
+        base = ensure_ketto(base, kyi_raw)
         # asof 結合の前提診断（history/soten が DEAD の原因切り分け）。date は robust パーサで判定
         # （既定 pd.to_datetime は netkeiba の 'YYYY年MM月DD日' を全 NaT にする＝続31 DEAD 原因）。
         import pandas as _pd
