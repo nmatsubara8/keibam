@@ -14,18 +14,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def _within_race_var_frac(sub, col):
-    import pandas as pd
-    s = pd.to_numeric(sub[col], errors="coerce")
-    nun = s.groupby(sub.index).nunique(dropna=True)
-    return float((nun > 1).mean()) if len(nun) else 0.0
-
-
 def main() -> int:
     import numpy as np
     import pandas as pd
     from app._model_eval import load_featured_data
+    from src.constants._model_category import central_index_mask
     from src.constants._results_cols import ResultsCols
+    from src.training._feature_materialization import within_race_var_frac
 
     ap = argparse.ArgumentParser(description="1特徴の年別＋fresh/artifact parity 診断（分類確定用）")
     ap.add_argument("--col", required=True, help="診断する列（例 jrdb_kokyu_flag）")
@@ -44,10 +39,8 @@ def main() -> int:
         print(f"[エラー] {col} が {args.featured} に無い", file=sys.stderr)
         return 2
 
-    rid = pd.Series(feat.index.astype(str))
-    year = pd.to_numeric(rid.str[:4], errors="coerce")
-    jra = rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)})
-    sel = (jra & (year >= args.min_year)).to_numpy()
+    year = pd.to_numeric(pd.Series(feat.index.astype(str)).str[:4], errors="coerce")
+    sel = central_index_mask(feat.index) & (year >= args.min_year).to_numpy()
     fj = feat[sel]
     yj = pd.to_numeric(pd.Series(fj.index.astype(str)).str[:4], errors="coerce").to_numpy()
 
@@ -59,7 +52,7 @@ def main() -> int:
         c = pd.to_numeric(sub[col], errors="coerce")
         nun = int(c.nunique(dropna=True))
         nz = float((c.fillna(0) != 0).mean()) if len(c) else 0.0
-        vf = _within_race_var_frac(sub, col)
+        vf = within_race_var_frac(sub[col], sub.index)
         vc = c.value_counts(dropna=True).head(3).to_dict()
         vc = {round(float(k), 3): int(v) for k, v in vc.items()}
         print(f"  {y:>6}{len(sub):>9,}{nun:>14}{nz:>9.3f}{vf:>13.3f}  {vc}")

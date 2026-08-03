@@ -313,9 +313,8 @@ class DataSplitter:
     @property
     def resolved_feature_hash(self):
         """resolved_feature_columns の順序込み hash（モデル artifact へ保存し後日照合する）。"""
-        import hashlib
-        payload = ",".join(str(c) for c in self.resolved_feature_columns)
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+        from src.training._feature_materialization import feature_list_hash
+        return feature_list_hash(self.resolved_feature_columns)
 
     # ------------------------------------------------------------------
     # スタッキング用 3-way 分割

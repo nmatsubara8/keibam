@@ -135,9 +135,11 @@ def _l3_featured(path=None):
     import numpy as np
     import pandas as pd
     from app._model_eval import load_featured_data
+    from src.constants._model_category import central_index_mask
     from src.training._feature_materialization import (CONTEXT_JRDB, CURRENT_ACTIVE_JRDB,
                                                        EXPECTED_JRDB_FULL, HISTORY_JRDB,
-                                                       TEMPORALLY_DEAD_JRDB)
+                                                       TEMPORALLY_DEAD_JRDB, classify_jrdb_feature,
+                                                       materialization_verdict, within_race_var_frac)
     print("\n" + "=" * 88)
     tag = f"（--featured {path}）" if path else "（default 本線 featured）"
     print(f"[L3] featured 実体化: 定義 JRDB 特徴が featured に実在するか{tag}・3契約で判定（定義≠実体化）")
@@ -145,24 +147,17 @@ def _l3_featured(path=None):
     if feat is None or feat.empty:
         print("  featured を読めません（ローカルで実行・--featured data/featured_jrdb.pkl も可）。")
         return
-    rid = pd.Series(feat.index.astype(str))
-    year = pd.to_numeric(rid.str[:4], errors="coerce")
-    jra = rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)})
-    recent = (jra & (year >= 2020)).to_numpy()          # 直近 JRA で materialization を見る
-
-    def _klass(c):
-        return "CONTEXT" if c in CONTEXT_JRDB else ("HISTORY" if c in HISTORY_JRDB else "ACTIVE")
-
-    def _vf(col):                                        # race 内で >1 値を持つ割合（馬間分散有率）
-        s = col.groupby(feat.index[recent]).nunique(dropna=True)
-        return float((s > 1).mean()) if len(s) else 0.0
+    year = pd.to_numeric(pd.Series(feat.index.astype(str)).str[:4], errors="coerce")
+    recent = central_index_mask(feat.index) & (year >= 2020).to_numpy()   # 直近 JRA で実体化を見る
+    recent_ids = feat.index[recent]
+    good_tokens = {"ACTIVE": "OK", "CONTEXT": "CTX_OK", "HISTORY": "HIST_OK"}
 
     absent, fails = [], {"ACTIVE": [], "CONTEXT": [], "HISTORY": []}
     n_ok = {"ACTIVE": 0, "CONTEXT": 0, "HISTORY": 0}
     tdead = []
     print(f"  {'特徴':<24}{'群':>8}{'実在':>5}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'判定':>10}")
     for c in EXPECTED_JRDB_FULL:
-        kl = _klass(c)
+        kl = classify_jrdb_feature(c)
         if c not in feat.columns:
             absent.append(c)
             print(f"  {c:<24}{kl:>8}{'無':>5}{'—':>8}{'—':>9}{'—':>9}{'ABSENT':>10}")
@@ -170,26 +165,19 @@ def _l3_featured(path=None):
         col = pd.to_numeric(feat.loc[recent, c], errors="coerce")
         nm = float(col.notna().mean()) if len(col) else 0.0
         sent = float((col <= -99).mean()) if len(col) else 0.0
-        vf = _vf(col)
+        vf = within_race_var_frac(col, recent_ids)
         if c in TEMPORALLY_DEAD_JRDB:
             # 診断確定済み: 近年定数化＝test 期 inert。ACTIVE 未達に数えず既知として別計上。
             tdead.append(c)
             print(f"  {c:<24}{kl:>8}{'有':>5}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{'TDEAD':>10}")
             continue
-        if kl == "ACTIVE":
-            v = "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
-            good = v == "OK"
-        elif kl == "CONTEXT":
-            v = "CTX_OK" if (nm >= 0.3 and sent < 0.2) else ("DEAD" if nm < 0.02 else "薄い")
-            good = v == "CTX_OK"
-        else:
-            v = "HIST_OK" if nm > 0.02 else "DEAD"
-            good = v == "HIST_OK"
+        v = materialization_verdict(kl, nm, sent, vf)
+        good = v == good_tokens[kl]
         n_ok[kl] += int(good)
         if not good:
             fails[kl].append(c)
         print(f"  {c:<24}{kl:>8}{'有':>5}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{v:>10}")
-    act_tdead = [c for c in tdead if _klass(c) == "ACTIVE"]
+    act_tdead = [c for c in tdead if classify_jrdb_feature(c) == "ACTIVE"]
     print(f"\n  [3契約] CURRENT_ACTIVE {n_ok['ACTIVE']} active"
           f"{f'＋{len(act_tdead)} temporally_dead' if act_tdead else ''}/{len(CURRENT_ACTIVE_JRDB)}"
           f"  CONTEXT {n_ok['CONTEXT']}/{len(CONTEXT_JRDB)}"

@@ -25,8 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.run_jrdb42_confirm import FROZEN as J41  # noqa: E402
-from scripts.run_jrdb42_insample_reference import rolling_folds  # noqa: E402
 from scripts.run_residual_head_2027 import FROZEN as B5  # noqa: E402
+from src.training._temporal_split import filter_selection_domain, rolling_folds  # noqa: E402
 
 
 def _pick(probs, odds, winner):
@@ -45,7 +45,6 @@ def main() -> int:
     from src.policies._market_residual import market_probs
     from src.policies._residual_head import fit_residual_head, residual_win_probs
     from src.simulation._model_compare import block_bootstrap_ci
-    from src.training._temporal_split import assert_selection_only_on_known
 
     ap = argparse.ArgumentParser(
         description="市場/ B5 / J41 の同一fold paired ROI 比較（非証拠診断）")
@@ -67,13 +66,7 @@ def main() -> int:
     from scripts.run_residual_head import build_residual_records
     union = sorted(set(J41["features"]) | set(B5["features"]))
     records, feat_cols = build_residual_records(feat, union, jra_only=True)
-    dev = [r for r in records if r["year"] and 2015 <= int(r["year"]) <= 2024]
-    used_years = sorted({int(r["year"]) for r in dev})
-    try:
-        assert_selection_only_on_known(used_years)
-    except ValueError as e:
-        print(f"[STOP] selection 域外の年が混入: {e}", file=sys.stderr)
-        return 6
+    dev, used_years = filter_selection_domain(records)   # 2015-2024 のみ・2025+ fail-closed
     b_cols = [c for c in B5["features"] if c in feat_cols]
     j_cols = [c for c in J41["features"] if c in feat_cols]
     miss_b = [c for c in B5["features"] if c not in feat_cols]
@@ -84,6 +77,9 @@ def main() -> int:
     if not folds:
         print("[STOP] fold が作れない。", file=sys.stderr)
         return 3
+    by_year: dict = {}
+    for r in dev:
+        by_year.setdefault(int(r["year"]), []).append(r)
     print(f"[設定] B5={len(b_cols)}列(l2={B5['l2']})  J41={len(j_cols)}列(l2={J41['l2']})  "
           f"folds={[(f'{min(t)}-{max(t)}', e) for t, e in folds]}  ⚠最終単勝で精算(近似)")
 
@@ -92,8 +88,8 @@ def main() -> int:
     pay_m, pay_b, pay_j = [], [], []
     agree_mj, agree_bj, changed_mj = [], [], []
     for tr_years, ey in folds:
-        train = [r for r in dev if int(r["year"]) in set(tr_years)]
-        test = [r for r in dev if int(r["year"]) == ey]
+        train = [r for y in tr_years for r in by_year.get(y, [])]
+        test = by_year.get(ey, [])
         if not test:
             continue
         th_b = fit_residual_head(train, b_cols, l2=B5["l2"])

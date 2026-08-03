@@ -102,9 +102,11 @@ def _data_gate(featured, records):
     import pandas as pd
     from src.constants._model_category import central_index_mask
     from src.constants._results_cols import ResultsCols
+    from src.training._feature_materialization import missing_frozen_hint
 
     rid = pd.Series(featured.index.astype(str))
     y = pd.to_numeric(rid.str[:4], errors="coerce")
+    jra = central_index_mask(featured.index)
     is_test = (y == FROZEN["test_year"]).to_numpy()
     ft = featured[is_test]
     checks = {"test_year": FROZEN["test_year"], "n_rows_test": int(len(ft))}
@@ -116,11 +118,9 @@ def _data_gate(featured, records):
     missing = [c for c in FROZEN["features"] if c not in featured.columns]
     checks["missing_features"] = missing
     if missing:
-        hint = ("（jrdb_ms_* は MySpeed＝jrdb_build_features.py に --with-myspeed を付けて再 build）"
-                if any(str(c).startswith("jrdb_ms_") for c in missing)
-                else "（完全 augment build を先に実行）")
-        blockers.append(f"凍結特徴が featured に未実体化 {len(missing)} 列{hint}: " + str(missing[:8]))
-    nar = int((~pd.Series(central_index_mask(pd.Index(ft.index).astype(str)))).sum())
+        blockers.append(f"凍結特徴が featured に未実体化 {len(missing)} 列{missing_frozen_hint(missing)}: "
+                        + str(missing[:8]))
+    nar = int((~central_index_mask(ft.index)).sum())
     checks["nar_rows"] = nar
     if nar != 0:
         blockers.append(f"NAR {nar} 行（JRA限定違反）")
@@ -132,9 +132,7 @@ def _data_gate(featured, records):
     if winner_rate < MIN_WINNER_RATE:
         blockers.append(f"1着1頭率 {winner_rate:.4f} < {MIN_WINNER_RATE}")
     # 特徴 coverage の 2027 vs pre-2027 相対断絶（絶対閾値でなく取込断絶のみ）
-    fy = pd.to_numeric(rid.str[:4], errors="coerce")
-    pre = ((fy < FROZEN["test_year"]) & rid.str[4:6].isin(
-        {f"{i:02d}" for i in range(1, 11)})).to_numpy()
+    pre = ((y < FROZEN["test_year"]) & jra).to_numpy()
     regress = []
     for c in FROZEN["features"]:
         if c not in featured.columns:
@@ -161,7 +159,7 @@ def _do_audit(args) -> int:
     print(f"JRDB42 confirmation 監査（--audit-only・{FROZEN['hypothesis_id']}・性能を見ない）")
     from scripts.run_residual_head_2027 import _data_fingerprint, _load_featured
     feat = _load_featured(args.featured)
-    records, feat_cols = _build_records(feat)
+    records, _ = _build_records(feat)          # feat_cols は audit では未使用
     checks, passed, blockers = _data_gate(feat, records)
     manifest = {
         **FROZEN,

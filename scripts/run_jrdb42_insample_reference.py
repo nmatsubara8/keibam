@@ -17,30 +17,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.run_jrdb42_confirm import FROZEN  # noqa: E402
-
-
-def rolling_folds(years, first_eval_year):
-    """development_known 内の rolling-origin fold 列を返す [(train_years, eval_year), ...]。
-
-    train=[2015, eval_year) の全既知年、test=eval_year。**全 fold で eval_year<=2024**（selection 域）。
-    純関数（年集合のみ）。
-    """
-    ys = sorted({int(y) for y in years if 2015 <= int(y) <= 2024})
-    folds = []
-    for ey in ys:
-        if ey < first_eval_year:
-            continue
-        tr = [y for y in ys if y < ey]
-        if tr:
-            folds.append((tr, ey))
-    return folds
+from src.training._temporal_split import filter_selection_domain, rolling_folds  # noqa: E402
 
 
 def main() -> int:
     import numpy as np
     from scripts.run_residual_head_2027 import _load_featured, fit_and_eval
     from src.simulation._model_compare import block_bootstrap_ci
-    from src.training._temporal_split import assert_selection_only_on_known
+    from src.training._feature_materialization import missing_frozen_hint
 
     ap = argparse.ArgumentParser(
         description="JRDB42 in-sample 参考値（development 2015-2024 rolling-origin・非証拠）")
@@ -61,35 +45,28 @@ def main() -> int:
     from scripts.run_jrdb42_confirm import _build_records
     records, feat_cols = _build_records(feat)
 
-    # 2025 以降を completely 排除（selection 域のみ）。record 年で fail-closed。
-    dev_records = [r for r in records if r["year"] and 2015 <= int(r["year"]) <= 2024]
-    used_years = sorted({int(r["year"]) for r in dev_records})
-    try:
-        assert_selection_only_on_known(used_years)
-    except ValueError as e:
-        print(f"[STOP] selection 域外の年が混入: {e}", file=sys.stderr)
-        return 6
+    dev_records, used_years = filter_selection_domain(records)   # 2015-2024 のみ・2025+ fail-closed
     missing = [c for c in FROZEN["features"] if c not in feat.columns]
     if missing:
-        hint = ("（jrdb_ms_* は MySpeed＝jrdb_build_features.py に **--with-myspeed** を付けて再 build）"
-                if any(str(c).startswith("jrdb_ms_") for c in missing)
-                else "（完全 augment build を先に実行）")
-        print(f"[STOP] 凍結特徴が featured に未実体化 {len(missing)} 列{hint}: {missing[:8]}",
-              file=sys.stderr)
+        print(f"[STOP] 凍結特徴が featured に未実体化 {len(missing)} 列{missing_frozen_hint(missing)}: "
+              f"{missing[:8]}", file=sys.stderr)
         return 3
 
     folds = rolling_folds(used_years, args.first_eval_year)
     if not folds:
         print(f"[STOP] fold が作れない（used_years={used_years}）。", file=sys.stderr)
         return 3
+    by_year: dict = {}
+    for r in dev_records:
+        by_year.setdefault(int(r["year"]), []).append(r)
     print(f"[設定] features={len(FROZEN['features'])} l2={FROZEN['l2']} "
           f"folds={[(f'{min(tr)}-{max(tr)}', ey) for tr, ey in folds]}")
 
     all_dnll, all_blocks, fold_means = [], [], []
     print(f"\n  {'eval年':>6}{'train年数':>9}{'test races':>11}{'ΔNLL(nats)':>13}{'95%CI':>26}")
     for tr_years, ey in folds:
-        train = [r for r in dev_records if int(r["year"]) in set(tr_years)]
-        test = [r for r in dev_records if int(r["year"]) == ey]
+        train = [r for y in tr_years for r in by_year.get(y, [])]
+        test = by_year.get(ey, [])
         if not test:
             continue
         res = fit_and_eval(train, test, feat_cols, l2=FROZEN["l2"], n_boot=args.n_boot, seed=args.seed)

@@ -21,14 +21,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def _within_race_var_frac(feat, col):
-    """race(index)内で col が >1 値を持つレース割合（＝馬間分散あり率）。"""
-    import pandas as pd
-    s = pd.to_numeric(feat[col], errors="coerce")
-    nun = s.groupby(feat.index).nunique(dropna=True)
-    return float((nun > 1).mean()) if len(nun) else 0.0
-
-
 def _agreement_vs_base(kyi, base):
     """store 由来 kyi と base(adapter経路・既知良好5列)を (race_id,馬番) で突合し scale/parse 一致を検証。
 
@@ -115,8 +107,9 @@ def _load_augmented(args):
         store = JrdbStore()
         kyi_raw = store.read("KYI")
         kyi = build_kyi_from_df(kyi_raw)
-        hist = build_history_from_dfs(store.read("SED"), store.read("SKB"))
-        soten = build_soten_from_df(store.read("SED"))
+        sed = store.read("SED")        # SED は一度だけ読み history/soten で共有（全表 SELECT の重複回避）
+        hist = build_history_from_dfs(sed, store.read("SKB"))
+        soten = build_soten_from_df(sed)
         # history/soten は ketto で結合するが netkeiba featured は ketto を持たないことがある。
         # KYI(race_id,馬番→ketto) で base に ketto を補って attach 可能にする（本線統合でも要る配線）。
         _agreement_vs_base(kyi, base)      # 既知良好(adapter経路)の5列と scale/parse 一致を検証
@@ -132,10 +125,10 @@ def _load_augmented(args):
             naive = robust = 0.0
         # ketto 有効率は all-rows と JRA2015+ eligible を分けて表示（地方/2014以前は分母外＝誤解防止）。
         if "ketto" in base.columns:
+            from src.constants._model_category import central_index_mask
             kall = float(_pd.Series(base["ketto"]).notna().mean())
-            _rid = _pd.Series(base.index.astype(str))
-            _elig = (_rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)})
-                     & (_pd.to_numeric(_rid.str[:4], errors="coerce") >= 2015)).to_numpy()
+            _yr = _pd.to_numeric(_pd.Series(base.index.astype(str)).str[:4], errors="coerce")
+            _elig = central_index_mask(base.index) & (_yr >= 2015).to_numpy()
             kelig = float(_pd.Series(base["ketto"]).notna().to_numpy()[_elig].mean()) if _elig.any() else 0.0
         else:
             kall = kelig = 0.0
@@ -186,10 +179,14 @@ def main() -> int:
     import numpy as np
     import pandas as pd
     from app._model_eval import load_featured_data
+    from src.constants._model_category import central_index_mask
     from src.training._feature_materialization import (CONTEXT_JRDB, CURRENT_ACTIVE_JRDB,
                                                        EXPECTED_JRDB_FULL, HISTORY_JRDB,
                                                        REQUIRED_JRDB_MIN,
-                                                       assert_features_materialized)
+                                                       assert_features_materialized,
+                                                       classify_jrdb_feature,
+                                                       materialization_verdict,
+                                                       within_race_var_frac)
 
     ap = argparse.ArgumentParser(description="JRDB 完全 augment 出力の feature-only 認定（性能を見ない）")
     ap.add_argument("--from-store", action="store_true", help="JRDB store から augment 構築（raw txt 不要・推奨）")
@@ -208,9 +205,8 @@ def main() -> int:
     base_cols = set(base.columns) if base is not None else set()
 
     rid = pd.Series(feat.index.astype(str))
-    jra = rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)})
     year = pd.to_numeric(rid.str[:4], errors="coerce")
-    sel = (jra & (year >= 2015)).to_numpy()
+    sel = (central_index_mask(feat.index) & (year >= 2015).to_numpy())
     fj = feat[sel]
 
     newcols = [c for c in EXPECTED_JRDB_FULL if c not in base_cols]
@@ -220,18 +216,11 @@ def main() -> int:
           f"CONTEXT {len(CONTEXT_JRDB)}＋HISTORY {len(HISTORY_JRDB)}・既存5は ACTIVE に含む）")
 
     # 列を3群に割り当てて群別の判定基準で認定する（「列が在るだけで全欠測でも PASS」を防ぐ）。
-    def _klass(c):
-        if c in CONTEXT_JRDB:
-            return "CONTEXT"
-        if c in HISTORY_JRDB:
-            return "HISTORY"
-        return "ACTIVE"
-
     stats = {}                     # c -> (nm, sent, vf, verdict, klass)
     absent = []
     print(f"\n  {'特徴':<24}{'群':>8}{'実在':>4}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'新規':>5}{'判定':>8}")
     for c in EXPECTED_JRDB_FULL:
-        kl = _klass(c)
+        kl = classify_jrdb_feature(c)
         newly = "新" if c not in base_cols else "既"
         if c not in feat.columns:
             absent.append(c)
@@ -240,14 +229,9 @@ def main() -> int:
         col = pd.to_numeric(fj[c], errors="coerce")
         nm = float(col.notna().mean()) if len(col) else 0.0
         sent = float((col <= -99).mean()) if len(col) else 0.0
-        vf = _within_race_var_frac(fj, c)
+        vf = within_race_var_frac(fj[c], fj.index)
         inf = int(np.isinf(col.to_numpy(dtype=float, na_value=np.nan)).sum())
-        if kl == "ACTIVE":         # presence + coverage + race分散
-            v = "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
-        elif kl == "CONTEXT":      # presence + coverage（race分散は要求しない＝全馬共通で正常）
-            v = "CTX_OK" if (nm >= 0.3 and sent < 0.2) else ("DEAD" if nm < 0.02 else "薄い")
-        else:                      # HISTORY: semantic coverage（過去走ゼロで NaN は正常・全欠測は失敗）
-            v = "HIST_OK" if nm > 0.02 else "DEAD"
+        v = materialization_verdict(kl, nm, sent, vf)
         stats[c] = (nm, sent, vf, v, kl)
         flag = "!inf" if inf else ""
         print(f"  {c:<24}{kl:>8}{'有':>4}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{newly:>5}{v:>8}{flag}")

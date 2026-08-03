@@ -118,3 +118,51 @@ def assert_training_allowlist(featured_columns: Iterable[str], allowlist: Iterab
                 "（denylist 経路で既存モデルへ silent 混入する恐れ。使うなら allowlist へ明示追加、"
                 "使わないなら featured 生成時に落とす）。")
     return [c for c in allow if c in cols]
+
+
+# ── 実体化監査の共有ヘルパ（verify/audit/diagnose の重複を一元化・続37 refactor）────────────
+def classify_jrdb_feature(col) -> str:
+    """JRDB 特徴の群を返す: CONTEXT / HISTORY / ACTIVE（純関数・群集合の単一定義元）。"""
+    c = str(col)
+    if c in CONTEXT_JRDB:
+        return "CONTEXT"
+    if c in HISTORY_JRDB:
+        return "HISTORY"
+    return "ACTIVE"
+
+
+def materialization_verdict(group: str, nm: float, sent: float, vf: float) -> str:
+    """群別の実体化判定トークン（純関数）。ACTIVE=OK/薄い/DEAD, CONTEXT=CTX_OK, HISTORY=HIST_OK。
+
+    ACTIVE: presence+coverage+race分散、CONTEXT: presence+coverage（分散不問）、
+    HISTORY: semantic coverage（過去走ゼロの NaN は正常・全欠測のみ DEAD）。
+    """
+    if group == "ACTIVE":
+        return "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
+    if group == "CONTEXT":
+        return "CTX_OK" if (nm >= 0.3 and sent < 0.2) else ("DEAD" if nm < 0.02 else "薄い")
+    return "HIST_OK" if nm > 0.02 else "DEAD"
+
+
+def missing_frozen_hint(missing) -> str:
+    """未実体化列リストから actionable ヒント（jrdb_ms_* は --with-myspeed 要）を返す。純関数。"""
+    if any(str(c).startswith("jrdb_ms_") for c in missing):
+        return "（jrdb_ms_* は MySpeed＝jrdb_build_features.py に --with-myspeed を付けて再 build）"
+    return "（完全 augment build を先に実行）"
+
+
+def within_race_var_frac(series, race_ids) -> float:
+    """race(race_ids)内で series が >1 の相異値を持つレース割合＝馬間分散あり率（純関数）。
+
+    verify/audit/diagnose で三重定義されていた groupby(index).nunique()>1 を一元化。
+    """
+    import pandas as pd  # noqa: PLC0415
+    s = pd.to_numeric(pd.Series(list(series)), errors="coerce")
+    nun = s.groupby(pd.Series(list(race_ids)).to_numpy()).nunique(dropna=True)
+    return float((nun > 1).mean()) if len(nun) else 0.0
+
+
+def feature_list_hash(cols) -> str:
+    """特徴列リストの順序込み短縮 hash（学習入力の実消費列を artifact 間で照合する単一定義元）。"""
+    import hashlib  # noqa: PLC0415
+    return hashlib.sha256(",".join(str(c) for c in cols).encode("utf-8")).hexdigest()[:16]

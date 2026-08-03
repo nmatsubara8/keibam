@@ -54,12 +54,14 @@ def strictly_prior_join_report(target: pd.DataFrame, source: pd.DataFrame, *,
                       direction="backward", allow_exact_matches=False)
     matched = m["_sdate"].notna()
     trep["feature_rows"] = int(matched.sum())
-    trep["history_source_references_checked"] = int(matched.sum())
+    # 参照数＝付いた参照の件数（feature_rows と同義・manifest の名称用にエイリアス）。
+    trep["history_source_references_checked"] = trep["feature_rows"]
     sd = m.loc[matched, "_sdate"]
     td = m.loc[matched, "_today"]
     trep["future_reference_count"] = int((sd > td).sum())
+    # exact 同日＝allow_exact_matches=False で除外されるべき参照。same_day と同義（別名で残す）。
     trep["same_day_reference_count"] = int((sd == td).sum())
-    trep["exact_target_reference_count"] = int((sd == td).sum())
+    trep["exact_target_reference_count"] = trep["same_day_reference_count"]
     trep["leak_safe"] = bool(trep["future_reference_count"] == 0
                              and trep["same_day_reference_count"] == 0)
     return trep

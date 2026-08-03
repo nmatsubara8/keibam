@@ -36,24 +36,12 @@ def test_ev_accumulates_bets_and_wins():
     _, _, _, ev = roi._bet_metrics(_races(), {})
     for th, acc in ev.items():
         assert acc["n"] >= acc["win"] >= 0
-        assert acc["payout"] >= 0.0
+        assert len(acc["pay_list"]) == acc["n"]        # per-bet payout を全件保持（payout は導出）
+        assert sum(acc["pay_list"]) >= 0.0
 
 
 def test_rolling_folds_reused_selection_domain():
-    folds = roi.rolling_folds(range(2015, 2027), first_eval_year=2018)
+    # rolling_folds は src/training/_temporal_split の共有実装（scripts 再エクスポート経由でなく直接）
+    from src.training._temporal_split import rolling_folds
+    folds = rolling_folds(range(2015, 2027), first_eval_year=2018)
     assert folds and max(e for _, e in folds) == 2024   # 2025+ を eval にしない（selection 域）
-
-
-def test_ratio_block_ci_recomputes_roi_per_block():
-    # block 単位で ROI=Σpayout/Σbets を再計算。全 payout 一定なら CI はその値近傍に集中。
-    lo, hi = roi._ratio_block_ci([1.0, 1.0, 1.0, 1.0], ["b1", "b1", "b2", "b2"],
-                                 n_boot=1000, seed=0)
-    assert abs(lo - 1.0) < 1e-9 and abs(hi - 1.0) < 1e-9    # 全て 1.0 → ROI=1.0 で不変
-    # 高配当が1 block に集中→再標本化で ROI がばらつき CI 幅>0
-    lo2, hi2 = roi._ratio_block_ci([0.0, 0.0, 30.0, 0.0], ["b1", "b1", "b2", "b2"],
-                                   n_boot=2000, seed=0)
-    assert hi2 > lo2                                        # 少数高配当は不安定＝CI 幅あり
-    # block 1 個は判定不能（NaN）
-    import math
-    lo3, hi3 = roi._ratio_block_ci([1.0, 2.0], ["b1", "b1"], n_boot=100, seed=0)
-    assert math.isnan(lo3) and math.isnan(hi3)

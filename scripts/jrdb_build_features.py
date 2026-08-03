@@ -59,8 +59,9 @@ def main() -> int:
         kyi_raw = store.read("KYI")
         kyi = build_kyi_from_df(kyi_raw)
         kyi_for_ketto = kyi_raw
-        history = build_history_from_dfs(store.read("SED"), store.read("SKB"))
-        soten = build_soten_from_df(store.read("SED")) if args.with_myspeed else None
+        sed = store.read("SED")        # SED は一度だけ読み history/soten で共有（全表 SELECT の重複回避）
+        history = build_history_from_dfs(sed, store.read("SKB"))
+        soten = build_soten_from_df(sed) if args.with_myspeed else None
     else:
         from src.jrdb._extract import extract_dir
         by_type = extract_dir(args.jrdb_dir, args.extract_to)  # .lzh/.zip 透過展開

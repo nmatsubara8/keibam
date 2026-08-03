@@ -40,21 +40,17 @@ def build_training_provenance(index, *, jra_only=None, training_period=None,
       requested_feature_allowlist（入力設定）と resolved_training_features（実結果）を分けて記録し、
       resolved_training_features_hash（順序込み）を刻む。input_feature_schema_id は artifact 由来。
     """
-    import hashlib
-
     import pandas as pd
 
     from src.constants._model_category import central_index_mask
+    from src.training._feature_materialization import feature_list_hash
     rid = pd.Series(pd.Index(index).astype(str)).str.replace(r"\.0$", "", regex=True)
     n = len(rid)
     mask = central_index_mask(rid) if n else []
     nar = int((~pd.Series(mask)).sum()) if n else 0
     places = rid.str[4:6]
     resolved = list(resolved_training_features) if resolved_training_features is not None else None
-    resolved_hash = None
-    if resolved is not None:
-        resolved_hash = hashlib.sha256(
-            ",".join(str(c) for c in resolved).encode("utf-8")).hexdigest()[:16]
+    resolved_hash = feature_list_hash(resolved) if resolved is not None else None
     return {
         "train_rows": int(n),
         "train_races": int(rid.nunique()),

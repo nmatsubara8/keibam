@@ -79,6 +79,36 @@ def assert_selection_only_on_known(selection_years) -> bool:
     return True
 
 
+def filter_selection_domain(records):
+    """records を development_known(2015-2024) に絞り (dev, used_years) を返す（純関数）。
+
+    非証拠 参照ハーネス（in-sample/ROI/paired）が selection 域だけで rolling-origin する共通前処理。
+    2025+ は除外し、残った年が development_known であることを assert（fail-closed）。records は
+    `{"year": int|None, ...}` の dict 列（build_residual_records 出力）を想定。
+    """
+    dev = [r for r in records if r.get("year") and 2015 <= int(r["year"]) <= 2024]
+    used_years = sorted({int(r["year"]) for r in dev})
+    assert_selection_only_on_known(used_years)
+    return dev, used_years
+
+
+def rolling_folds(years, first_eval_year):
+    """development_known 内の rolling-origin fold 列 [(train_years, eval_year), ...] を返す（純関数）。
+
+    train=[2015, eval_year) の全既知年、test=eval_year。全 fold で eval_year<=2024（selection 域）。
+    非証拠 参照ハーネス（NLL/ROI/paired）で共有。
+    """
+    ys = sorted({int(y) for y in years if 2015 <= int(y) <= 2024})
+    folds = []
+    for ey in ys:
+        if ey < first_eval_year:
+            continue
+        tr = [y for y in ys if y < ey]
+        if tr:
+            folds.append((tr, ey))
+    return folds
+
+
 def assert_clean_final_test(train_years, test_years, *,
                             reserved_test_start: int = UNTOUCHED_TEST_MIN,
                             consumed_test_years=()) -> bool:
