@@ -121,42 +121,67 @@ def _l2_store():
         print(f"  {rt:<5}{len(df):>10,}{rid:>8}{ket:>7}{yr:>16}")
 
 
-def _l3_featured():
+def _l3_featured(path=None):
     import numpy as np
     import pandas as pd
     from app._model_eval import load_featured_data
-    from src.jrdb._augment import JRDB_COLS, KYI_FEATURE_MAP, MYSPEED_COLS
+    from src.training._feature_materialization import (CONTEXT_JRDB, CURRENT_ACTIVE_JRDB,
+                                                       EXPECTED_JRDB_FULL, HISTORY_JRDB)
     print("\n" + "=" * 88)
-    print("[L3] featured 実体化: 定義された JRDB 特徴が featured に**実在**するか（定義≠実体化）")
-    feat = load_featured_data()
+    tag = f"（--featured {path}）" if path else "（default 本線 featured）"
+    print(f"[L3] featured 実体化: 定義 JRDB 特徴が featured に実在するか{tag}・3契約で判定（定義≠実体化）")
+    feat = load_featured_data(path) if path else load_featured_data()
     if feat is None or feat.empty:
-        print("  featured を読めません（ローカルで実行）。")
+        print("  featured を読めません（ローカルで実行・--featured data/featured_jrdb.pkl も可）。")
         return
     rid = pd.Series(feat.index.astype(str))
     year = pd.to_numeric(rid.str[:4], errors="coerce")
     jra = rid.str[4:6].isin({f"{i:02d}" for i in range(1, 11)})
-    recent = jra & (year >= 2020)                      # 直近 JRA で materialization を見る
-    expected = list(dict.fromkeys(list(KYI_FEATURE_MAP.values())
-                    + ["jrdb_pace_hms", "jrdb_kijun_gap"] + list(MYSPEED_COLS)
-                    + ["prev_deokure", "prev_trouble"]))
-    present, absent, dead = [], [], []
-    print(f"  {'特徴':<26}{'実在':>5}{'非欠測(2020+JRA)':>16}{'sentinel率':>10}{'判定':>8}")
-    for c in expected:
+    recent = (jra & (year >= 2020)).to_numpy()          # 直近 JRA で materialization を見る
+
+    def _klass(c):
+        return "CONTEXT" if c in CONTEXT_JRDB else ("HISTORY" if c in HISTORY_JRDB else "ACTIVE")
+
+    def _vf(col):                                        # race 内で >1 値を持つ割合（馬間分散有率）
+        s = col.groupby(feat.index[recent]).nunique(dropna=True)
+        return float((s > 1).mean()) if len(s) else 0.0
+
+    absent, fails = [], {"ACTIVE": [], "CONTEXT": [], "HISTORY": []}
+    n_ok = {"ACTIVE": 0, "CONTEXT": 0, "HISTORY": 0}
+    print(f"  {'特徴':<24}{'群':>8}{'実在':>5}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'判定':>8}")
+    for c in EXPECTED_JRDB_FULL:
+        kl = _klass(c)
         if c not in feat.columns:
             absent.append(c)
-            print(f"  {c:<26}{'無':>5}{'—':>16}{'—':>10}{'ABSENT':>8}")
+            print(f"  {c:<24}{kl:>8}{'無':>5}{'—':>8}{'—':>9}{'—':>9}{'ABSENT':>8}")
             continue
-        col = pd.to_numeric(feat.loc[recent.to_numpy(), c], errors="coerce")
+        col = pd.to_numeric(feat.loc[recent, c], errors="coerce")
         nm = float(col.notna().mean()) if len(col) else 0.0
-        sent = float((col <= -99).mean()) if len(col) else 0.0   # -99.9 等 JRDB fill
-        verdict = "OK" if nm >= 0.5 and sent < 0.2 else ("DEAD" if nm < 0.05 else "薄い")
-        (present if verdict == "OK" else dead).append(c)
-        print(f"  {c:<26}{'有':>5}{nm:>15.3f}{sent:>10.3f}{verdict:>8}")
-    print(f"\n  実体化 OK={len(present)}  薄い/DEAD={len(dead)}  ABSENT(列なし)={len(absent)}")
+        sent = float((col <= -99).mean()) if len(col) else 0.0
+        vf = _vf(col)
+        if kl == "ACTIVE":
+            v = "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
+            good = v == "OK"
+        elif kl == "CONTEXT":
+            v = "CTX_OK" if (nm >= 0.3 and sent < 0.2) else ("DEAD" if nm < 0.02 else "薄い")
+            good = v == "CTX_OK"
+        else:
+            v = "HIST_OK" if nm > 0.02 else "DEAD"
+            good = v == "HIST_OK"
+        n_ok[kl] += int(good)
+        if not good:
+            fails[kl].append(c)
+        print(f"  {c:<24}{kl:>8}{'有':>5}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{v:>8}")
+    print(f"\n  [3契約] CURRENT_ACTIVE {n_ok['ACTIVE']}/{len(CURRENT_ACTIVE_JRDB)}"
+          f"  CONTEXT {n_ok['CONTEXT']}/{len(CONTEXT_JRDB)}"
+          f"  HISTORY {n_ok['HISTORY']}/{len(HISTORY_JRDB)}  ABSENT={len(absent)}"
+          f"  / EXPECTED={len(EXPECTED_JRDB_FULL)}")
+    for grp, cs in fails.items():
+        if cs:
+            print(f"  [{grp} 未達] {cs}")
     if absent:
-        print(f"  [ABSENT] 定義されているが featured に無い（attach 未適用の疑い）: {absent}")
-    print(f"  ※ 定義総数={len(expected)}（KYI_FEATURE_MAP {len(KYI_FEATURE_MAP)}＋pace_hms/kijun_gap"
-          f"＋MySpeed {len(MYSPEED_COLS)}＋prev_*）")
+        print(f"  [ABSENT] 定義あるが featured に無い（default は 5列のみが正常・完全 augment は "
+              f"--featured data/featured_jrdb.pkl を指定）: {absent[:12]}{' …' if len(absent) > 12 else ''}")
 
 
 def _l4_utilization():
@@ -175,13 +200,19 @@ def _l4_utilization():
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="JRDB データ項目監査（L1 byte / L2 store / L3 featured / L4 source）")
+    ap.add_argument("--featured", default=None,
+                    help="L3 の対象 featured pickle（既定=本線 featured。完全 augment は "
+                         "data/featured_jrdb.pkl を指定＝42列を監査）")
+    args = ap.parse_args()
     _l1_layout_validity()
     try:
         _l2_store()
     except Exception as e:  # noqa: BLE001
         print(f"[L2] スキップ: {e}", file=sys.stderr)
     try:
-        _l3_featured()
+        _l3_featured(args.featured)
     except Exception as e:  # noqa: BLE001
         print(f"[L3] スキップ: {e}", file=sys.stderr)
     _l4_utilization()
