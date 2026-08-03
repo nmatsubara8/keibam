@@ -88,3 +88,33 @@ class TestGuideInteraction:
         out = add_interaction_features(df)
         # 前有利コース(+1): 前馬(leg=0)→+1（好相性）, 差し馬(leg=1)→−1（不利）
         assert out["style_guide_fit"].tolist() == [1.0, -1.0]
+
+
+class TestCoverageGuard:
+    def _results(self, course_len):
+        return pd.DataFrame(
+            {"開催": pd.array([5, 5], dtype="Int64"), "race_type": ["芝", "芝"],
+             "course_len": course_len},
+            index=pd.Index(["a", "b"], name="race_id"),
+        )
+
+    def test_require_coverage_raises_when_low(self, tmp_path):
+        gm = load_course_guide_master(_seed(tmp_path))
+        # 距離が master に無い(9999)→一致率0→require_coverage 指定で fail-closed
+        r = self._results([9999, 9999])
+        try:
+            add_course_guide_features(r, gm, require_coverage=0.9)
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "coverage too low" in str(e)
+
+    def test_require_coverage_passes_when_high(self, tmp_path):
+        gm = load_course_guide_master(_seed(tmp_path))
+        out = add_course_guide_features(self._results([14, 24]), gm, require_coverage=0.9)
+        assert out["guide_run_style_bias"].iloc[0] == 1.0   # 一致率>=0.9→通過(両行 master 有)
+
+    def test_default_no_guard_backward_compatible(self, tmp_path):
+        gm = load_course_guide_master(_seed(tmp_path))
+        # require_coverage 未指定は従来どおり（低一致でも raise しない）
+        out = add_course_guide_features(self._results([9999, 9999]), gm)
+        assert out["guide_run_style_bias"].isna().all()

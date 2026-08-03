@@ -52,11 +52,16 @@ def load_course_guide_master(path: str) -> pd.DataFrame:
     return df
 
 
-def add_course_guide_features(results: pd.DataFrame, guide_master: pd.DataFrame) -> pd.DataFrame:
+def add_course_guide_features(results: pd.DataFrame, guide_master: pd.DataFrame,
+                              *, require_coverage: float | None = None) -> pd.DataFrame:
     """results に guide_<attr> 属性列を付与して返す（他 add_* factor と同じ純関数流儀）。
 
     キー: 開催 × race_type × 距離[m]。guide_master が空/キー欠損なら guide_* 列を NaN で
     生成（学習/ライブの列パリティを保つ）。距離固有のため 100m 粒度で結合する。
+
+    require_coverage を渡すと（例 0.90）、**guide_master が非空なのに join 一致率がそれ未満**の
+    ときに RuntimeError（＝master 生成漏れ/キー不整合を silent NaN のまま成功扱いにしない）。
+    既定 None は従来どおり（guide 未整備の環境でも動く）＝後方互換。build で 0.90 を渡すのが推奨。
     """
     out = results.copy()
     feat_cols = [f"guide_{c}" for c in COURSE_GUIDE_VALUE_COLS]
@@ -80,4 +85,11 @@ def add_course_guide_features(results: pd.DataFrame, guide_master: pd.DataFrame)
 
     for c in feat_cols:
         out[c] = merged[c].to_numpy() if c in merged.columns else float("nan")
+    if require_coverage is not None and feat_cols:
+        match_rate = float(out[feat_cols[0]].notna().mean()) if len(out) else 0.0
+        if match_rate < require_coverage:
+            raise RuntimeError(
+                f"course guide join coverage too low: {match_rate:.1%} < {require_coverage:.0%}"
+                "（course_guide_master.csv の生成漏れ or 開催×race_type×距離 キー不整合を疑う。"
+                "scripts/scrape_course_master.py を実行し master を再生成せよ）。")
     return out
