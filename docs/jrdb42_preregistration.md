@@ -83,6 +83,25 @@ bootstrap CI 下限が**安定して >0** のときのみ。CI が 0 を跨ぐ/�
 **用語**: これらは "in-sample" でなく **development rolling-origin OOF reference**（各評価年は過去年のみで
 学習＝out-of-fold）。ただし設計が development を見た後ゆえ独立証拠でない、の注意書きは維持。
 
+## ROI 仮説の判定＝登録せずクローズ（2026-08-02・非証拠 paired 診断の結果）
+
+`run_jrdb42_paired_roi_reference.py`（development OOF・24,184レース・本命1点）:
+
+| 比較 | ΔROI | 95%CI(venue×日 block) | 判定 |
+|---|---|---|---|
+| J41 − market | +0.0026 | [−0.0024, +0.0076] | 0 を跨ぐ＝有意差なし |
+| J41 − B5 | +0.0039 | [−0.0007, +0.0085] | 0 を跨ぐ＝有意差なし |
+| 変更レースのみ(n=596) | +0.1057 | [−0.0965, +0.3040] | 0 を大きく跨ぐ＝ノイズ |
+
+絶対 ROI は market 0.790 / B5 0.789 / J41 0.793＝全て控除後に張り付き赤字。選択馬一致率は
+vs market 0.975 / vs B5 0.976（J41 はほぼ市場本命を追従）。**事前登録ルール（ΔROI CI 下限が安定して
+>0 のときだけ登録）に照らし、全比較で CI が 0 を跨ぐため ROI 仮説は 2027 family に登録せずクローズ**。
+
+- これは NLL の `JRDB42_RESIDUAL_2027_CONFIRM`（2027 queued）を**変えない**。ROI と NLL は別問題（較正/
+  情報量が改善しても win-bet ROI が控除を超えるとは限らない）。NLL 確認は予定どおり 2027 で一度だけ。
+- 非証拠診断ゆえ「ROI がゼロと**証明**」ではなく「clean な ROI 試験を登録するに足る in-sample 増分が
+  無い」。将来 bet-time(TYB) 契約や未ブリッジ source で見込みが出れば、その時に別途事前登録する。
+
 ## kokyu_flag parity は解決済み（41-col / artifact 上 40 列が変動）
 
 `diagnose_feature.py` で確定: saved vs fresh の (race_id,馬番) **値一致率=1.0000**＝差は未解決でなく解決
