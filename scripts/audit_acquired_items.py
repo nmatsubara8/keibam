@@ -26,30 +26,40 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 #   WRONG_SOURCE          : その source では観測できない（時点/取得元の契約違反）＝別 source へ移譲
 #   SOURCE_EMPTY / INGESTION_MISSING / HISTORICAL_ONLY / OUTCOME_ONLY
 # 時点クラス（feature contract 用）: direct_current / bet_time_contract / historical_only / outcome_only
+# 二軸表示（続37）: 同じ source でも「completed 完全 augment artifact の状態」と「default 本線
+# featured の状態」は異なる（前者=42列実体化、後者=既存5列のみ）。同じ列に書くと矛盾に見えるため
+# (artifact_status, default_status, timing, note) の4項で分離する。
 SOURCE_STATE = {
-    # KYI: 固定5列のみ本線 MATERIALIZED、残り指数群は standalone augment で実体化検証済（本線未配線）。
-    # pace_hms は race 内定数(MATERIALIZED_RACE_CONTEXT)、確定馬体重は WRONG_SOURCE(→TYB) で KYI から除外。
-    "KYI": ("MATERIALIZED(5)+IMPLEMENTED_NOT_APPLIED(残指数)+RACE_CONTEXT(pace_hms)", "direct_current",
-            "前日予想・指数。5列(idm/kishu_idx/joho_idx/kyakushitsu/kijun_odds)のみ本線注入。"
-            "pace_hms は場の展開予想=race内定数。確定馬体重は WRONG_SOURCE で除外(→TYB)"),
-    "SED": ("IMPLEMENTED_NOT_APPLIED(prev_*/MySpeed)+OUTCOME_ONLY(当該走)", "historical_only",
-            "過去走の strictly-prior 集約。続36 で asof の date パース(和暦表記)不備を修復＝実体化可能に"),
-    "SKB": ("IMPLEMENTED_NOT_APPLIED(prev_trouble)", "historical_only",
-            "過去走特記(TROUBLE_TOKKI)。続36 で asof date 修復＝実体化可能(本線配線は別工程)"),
-    "TYB": ("INGESTED_NOT_BRIDGED", "bet_time_contract",
-            "直前オッズ/パドック/馬体重(T-15)。確定馬体重の正しい取得元。"
-            "bet 決定時刻 <= 配信時刻 の契約が必須"),
-    "CYB": ("INGESTED_NOT_BRIDGED", "direct_current", "調教分析: 追切/仕上/調教評価/コメント"),
-    "CHA": ("INGESTED_NOT_BRIDGED", "direct_current", "本追切: テン/中間/終いF＋各指数＋併せ結果"),
-    "KKA": ("INGESTED_NOT_BRIDGED", "direct_current", "条件別着度数＋父/母父産駒連対率"),
-    "UKC": ("INGESTED_NOT_BRIDGED", "direct_current", "馬マスタ: 毛色/系統/生産者/産地(静的)"),
-    "SRB": ("INGESTED_NOT_BRIDGED", "historical_only", "ハロンタイム/コーナー位置/バイアス(過去走集約)"),
-    "KAB": ("INGESTED_NOT_BRIDGED", "direct_current", "開催: 天候/馬場状態/馬場差/草丈/降水量"),
-    "BAC": ("INGESTED_NOT_BRIDGED", "direct_current", "番組: 賞金/発走時刻/馬券発売フラグ"),
-    "HJC": ("OUTCOME_ONLY", "outcome_only", "払戻(return 側・特徴でない)"),
-    "KSA": ("HISTORICAL_ONLY(2026のみ)", "direct_current", "騎手master。今週分のみ＝時系列履歴不足(KZA要)"),
-    "CSA": ("HISTORICAL_ONLY(2026のみ)", "direct_current", "調教師master。今週分のみ(CZA要)"),
-    "KTA": ("INGESTION_MISSING(0行)", "direct_current", "登録馬。未取込＝file/glob/parser/store を要確認"),
+    "KYI": ("MATERIALIZED(33 active+1 context)", "MATERIALIZED(既存5のみ)", "direct_current",
+            "前日予想・指数。完全augmentで current 33+pace_hms 実体化。default本線は5列のみ・残りopt-in。"
+            "確定馬体重は WRONG_SOURCE で除外(→TYB)"),
+    "SED": ("MATERIALIZED_HISTORY(prev_deokure/MySpeed)", "NOT_APPLIED", "historical_only",
+            "過去走の strictly-prior 集約(prev_deokure/jrdb_ms_*)。完全augmentで実体化・leak_safe 認定"),
+    "SKB": ("MATERIALIZED_HISTORY(prev_trouble)", "NOT_APPLIED", "historical_only",
+            "過去走特記(TROUBLE_TOKKI)→prev_trouble。完全augmentで実体化"),
+    "TYB": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "bet_time_contract",
+            "直前オッズ/パドック/馬体重(T-15)。確定馬体重の正しい取得元。bet時刻<=配信時刻の契約が必須"),
+    "CYB": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "direct_current",
+            "調教分析: 追切/仕上/調教評価/コメント"),
+    "CHA": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "direct_current",
+            "本追切: テン/中間/終いF＋各指数＋併せ結果"),
+    "KKA": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "direct_current",
+            "条件別着度数＋父/母父産駒連対率"),
+    "UKC": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "direct_current",
+            "馬マスタ: 毛色/系統/生産者/産地(静的)"),
+    "SRB": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "historical_only",
+            "ハロンタイム/コーナー位置/バイアス(過去走集約)"),
+    "KAB": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "direct_current",
+            "開催: 天候/馬場状態/馬場差/草丈/降水量"),
+    "BAC": ("INGESTED_NOT_BRIDGED", "INGESTED_NOT_BRIDGED", "direct_current",
+            "番組: 賞金/発走時刻/馬券発売フラグ"),
+    "HJC": ("OUTCOME_ONLY", "OUTCOME_ONLY", "outcome_only", "払戻(return 側・特徴でない)"),
+    "KSA": ("HISTORICAL_ONLY(2026のみ)", "HISTORICAL_ONLY(2026のみ)", "direct_current",
+            "騎手master。今週分のみ＝時系列履歴不足(KZA要)"),
+    "CSA": ("HISTORICAL_ONLY(2026のみ)", "HISTORICAL_ONLY(2026のみ)", "direct_current",
+            "調教師master。今週分のみ(CZA要)"),
+    "KTA": ("INGESTION_MISSING(0行)", "INGESTION_MISSING(0行)", "direct_current",
+            "登録馬。未取込＝file/glob/parser/store を要確認"),
 }
 
 
@@ -187,16 +197,22 @@ def _l3_featured(path=None):
 def _l4_utilization():
     from src.jrdb._store import RECORD_TYPES
     print("\n" + "=" * 88)
-    print("[L4] source 利用状態（7状態＋時点クラス。『ブリッジ済』は L3 と矛盾するため廃止）")
-    print(f"  {'型':<5}{'状態':<42}{'時点クラス':<18}説明")
+    print("[L4] source 利用状態（二軸: selected artifact 完全augment vs default 本線 featured・時点クラス）")
+    print(f"  {'型':<5}{'selected artifact':<34}{'default featured':<24}{'時点クラス':<18}")
     for rt in RECORD_TYPES:
-        st, timing, note = SOURCE_STATE.get(rt, ("?", "?", "?"))
-        print(f"  {rt:<5}{st:<42}{timing:<18}{note}")
-    print("  凡例: MATERIALIZED=featured実在 / IMPLEMENTED_NOT_APPLIED=attach実装済だが本番build未適用 /")
+        row = SOURCE_STATE.get(rt)
+        if not row:
+            print(f"  {rt:<5}{'?':<34}{'?':<24}{'?':<18}")
+            continue
+        art, deft, timing, note = row
+        print(f"  {rt:<5}{art:<34}{deft:<24}{timing:<18}")
+        print(f"        └ {note}")
+    print("\n  凡例: MATERIALIZED=featured実在 / MATERIALIZED_HISTORY=strictly-prior 過去走集約を実体化 /")
+    print("        NOT_APPLIED=default本線には未適用(完全augment artifactにはある) /")
     print("        INGESTED_NOT_BRIDGED=store済・未橋渡し / HISTORICAL_ONLY=今週分のみ /")
-    print("        INGESTION_MISSING=未取込 / OUTCOME_ONLY=レース後。時点=direct_current/bet_time_contract/")
-    print("        historical_only/outcome_only（同名 ten_idx/agari_idx が KYI(予想)とSED(実測)に両在＝")
-    print("        列名でなく source×timestamp で時点判定し feature contract に持たせる）。")
+    print("        INGESTION_MISSING=未取込 / OUTCOME_ONLY=レース後・WRONG_SOURCE=取得元違い。")
+    print("  ※ selected artifact=data/featured_jrdb.pkl（完全augment・42列）、default=本線featured（既存5列）。")
+    print("    同名 ten_idx/agari_idx が KYI(予想)とSED(実測)に両在＝列名でなく source×timestamp で時点判定。")
 
 
 def main() -> int:
