@@ -60,6 +60,13 @@ python scripts/run_jrdb42_confirm.py --evaluate --featured data/featured_jrdb.pk
 manifest に刻む（＝凍結の時刻印）。以後は特徴集合・L2・前処理・判定規則を変えない。ハーネス
 `scripts/run_jrdb42_confirm.py` の `FROZEN` は既にこの決定（features=41・l2=1.0）と一致している。
 
+### 注記: jrdb_kokyu_flag は TEMPORALLY_DEAD だが 41 に残す（inert）
+
+`diagnose_feature.py` で確定: jrdb_kokyu_flag は 2015-2018 に変動（{0,1,2}・race内分散≈0.34）するが
+**2020 以降は全行 0（saved/fresh parity=1.0＝データ自体が定数化）**。test(2027) 期は定数ゆえ market
+residual head では within-race 相殺で **θ 寄与≈0＝inert**（リーク/有害でない）。データを見て凍結列を
+削ると selection 汚染になるため、**41 のまま維持**する（`TEMPORALLY_DEAD_JRDB` に登録し監査は既知扱い）。
+
 ## 現時点で clean 数値が出ない理由（明示）
 
 - 2025-2026 = burned（評価に使うと証拠が焼ける）。2027 = reserved・未発生。prospective(2026後半) = 蓄積中。

@@ -33,6 +33,11 @@ CONTEXT_JRDB = ("jrdb_pace_hms",)
 #   history を有効化した build で全欠測なら fail-closed（列は在るが結合が壊れている状態を検知）。
 HISTORY_JRDB = tuple(["prev_deokure", "prev_trouble"] + list(MYSPEED_COLS))
 
+# TEMPORALLY_DEAD: 過去は変動したが近年 JRDB が定数化（0）した列。診断で確定したもののみ列挙。
+#   jrdb_kokyu_flag: 2015-2018 は {0,1,2}・race内分散≈0.34 だが 2020+ は全行 0（saved/fresh parity=1.0）。
+#   → test(2027) 期は定数ゆえ residual head で θ 寄与≈0＝inert（リーク/有害でない）。freeze は 41 維持。
+TEMPORALLY_DEAD_JRDB = frozenset({"jrdb_kokyu_flag"})
+
 # 既存本線が従来から注入していた 5 列（legacy schema）。これらは denylist 経路でも許容される。
 LEGACY_JRDB_COLUMNS = frozenset(REQUIRED_JRDB_MIN)
 # 完全 augment でのみ増える 37 列（legacy を除く EXPECTED 全体）。この列が featured に在るのに

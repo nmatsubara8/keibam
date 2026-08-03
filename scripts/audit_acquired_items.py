@@ -136,7 +136,8 @@ def _l3_featured(path=None):
     import pandas as pd
     from app._model_eval import load_featured_data
     from src.training._feature_materialization import (CONTEXT_JRDB, CURRENT_ACTIVE_JRDB,
-                                                       EXPECTED_JRDB_FULL, HISTORY_JRDB)
+                                                       EXPECTED_JRDB_FULL, HISTORY_JRDB,
+                                                       TEMPORALLY_DEAD_JRDB)
     print("\n" + "=" * 88)
     tag = f"（--featured {path}）" if path else "（default 本線 featured）"
     print(f"[L3] featured 実体化: 定義 JRDB 特徴が featured に実在するか{tag}・3契約で判定（定義≠実体化）")
@@ -158,17 +159,23 @@ def _l3_featured(path=None):
 
     absent, fails = [], {"ACTIVE": [], "CONTEXT": [], "HISTORY": []}
     n_ok = {"ACTIVE": 0, "CONTEXT": 0, "HISTORY": 0}
-    print(f"  {'特徴':<24}{'群':>8}{'実在':>5}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'判定':>8}")
+    tdead = []
+    print(f"  {'特徴':<24}{'群':>8}{'実在':>5}{'非欠測':>8}{'sentinel':>9}{'分散有率':>9}{'判定':>10}")
     for c in EXPECTED_JRDB_FULL:
         kl = _klass(c)
         if c not in feat.columns:
             absent.append(c)
-            print(f"  {c:<24}{kl:>8}{'無':>5}{'—':>8}{'—':>9}{'—':>9}{'ABSENT':>8}")
+            print(f"  {c:<24}{kl:>8}{'無':>5}{'—':>8}{'—':>9}{'—':>9}{'ABSENT':>10}")
             continue
         col = pd.to_numeric(feat.loc[recent, c], errors="coerce")
         nm = float(col.notna().mean()) if len(col) else 0.0
         sent = float((col <= -99).mean()) if len(col) else 0.0
         vf = _vf(col)
+        if c in TEMPORALLY_DEAD_JRDB:
+            # 診断確定済み: 近年定数化＝test 期 inert。ACTIVE 未達に数えず既知として別計上。
+            tdead.append(c)
+            print(f"  {c:<24}{kl:>8}{'有':>5}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{'TDEAD':>10}")
+            continue
         if kl == "ACTIVE":
             v = "OK" if (nm >= 0.3 and sent < 0.2 and vf > 0.1) else ("DEAD" if nm < 0.02 else "薄い")
             good = v == "OK"
@@ -181,11 +188,15 @@ def _l3_featured(path=None):
         n_ok[kl] += int(good)
         if not good:
             fails[kl].append(c)
-        print(f"  {c:<24}{kl:>8}{'有':>5}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{v:>8}")
-    print(f"\n  [3契約] CURRENT_ACTIVE {n_ok['ACTIVE']}/{len(CURRENT_ACTIVE_JRDB)}"
+        print(f"  {c:<24}{kl:>8}{'有':>5}{nm:>8.3f}{sent:>9.3f}{vf:>9.3f}{v:>10}")
+    act_tdead = [c for c in tdead if _klass(c) == "ACTIVE"]
+    print(f"\n  [3契約] CURRENT_ACTIVE {n_ok['ACTIVE']} active"
+          f"{f'＋{len(act_tdead)} temporally_dead' if act_tdead else ''}/{len(CURRENT_ACTIVE_JRDB)}"
           f"  CONTEXT {n_ok['CONTEXT']}/{len(CONTEXT_JRDB)}"
           f"  HISTORY {n_ok['HISTORY']}/{len(HISTORY_JRDB)}  ABSENT={len(absent)}"
           f"  / EXPECTED={len(EXPECTED_JRDB_FULL)}")
+    if tdead:
+        print(f"  [TEMPORALLY_DEAD（近年定数化・test 期 inert・freeze は維持）] {tdead}")
     for grp, cs in fails.items():
         if cs:
             print(f"  [{grp} 未達] {cs}")
