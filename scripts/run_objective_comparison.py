@@ -174,12 +174,25 @@ def main() -> int:
     print("\n[年別再現性] fold 別 ΔLogLoss(RACE_SOFTMAX_CE−BINARY) の符号:")
     signs = [float(np.mean(a) - np.mean(b)) for a, b in zip(nll["RACE_SOFTMAX_CE"], nll["BINARY"])]
     neg = sum(1 for s in signs if s < 0)
-    print(f"  改善(負) {neg}/{len(signs)} fold（過半 {'○' if neg * 2 > len(signs) else '×'}）  "
+    year_ok = neg * 2 > len(signs)
+    print(f"  改善(負) {neg}/{len(signs)} fold（過半 {'○' if year_ok else '×'}）  "
           f"fold別={[round(s, 4) for s in signs]}")
 
+    # 昇格候補の集計（PRIMARY は CI 上限<0 & MES & 年別過半、SECONDARY は Holm reject & ΔLogLoss<0）。
+    qualifiers = []
+    if prim_ok and year_ok:
+        qualifiers.append("RACE_SOFTMAX_CE")
+    qualifiers += [a for a in ("LAMBDARANK", "XENDCG")
+                   if holm[a]["reject"] and sec[a]["mean"] < 0]
+
     print("\n" + "=" * 92)
-    print("⚠ selection（development）＝採否確定でない。有望目的が出たら features/objective/hyperparam/seed/")
-    print("  温度手順を凍結し 2027 reserved tranche で一度だけ確認（Holm 更新）。ROI は非証拠で別途。")
+    if qualifiers:
+        print(f"[判定] dev で有望＝{qualifiers}。features/objective/hyperparam/seed/温度手順を凍結し "
+              "2027 reserved tranche で一度だけ確認（Holm 更新）。ROI は非証拠で別途。")
+    else:
+        print("[判定] **昇格候補なし**＝どの目的も binary を上回らない。現行 production の BINARY を維持し、")
+        print("  この目的関数比較は development 段階でクローズ。**2027 reserved tranche は消費せず、確認対象に")
+        print("  登録しない（有望目的なし・事前登録なし）**。ROI は非証拠ゆえ判断を覆すのに使わない。")
     return 0
 
 

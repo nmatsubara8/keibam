@@ -138,8 +138,18 @@ B/JRDB42 と 2027 を共有するなら **開封前に family へ一括追加**�
 監督が疎**なため（理論的メトリック整合より1レースの教師量が効いた）。(3) `log q` を全 arm が使い絶対 LogLoss は
 市場水準に張り付く。**選択判断は決定的（tranche 非消費）**。B/JRDB42 の凍結・既確定結論は不変。
 
+相対的な予測尤度の悪化（幾何平均尤度）: RACE_SOFTMAX_CE 約0.32% / LAMBDARANK 約7.9% / XENDCG 約16.9%。
+
+**確定記録（正式文言）**:
+> development_known 2015–2024、purged walk-forward 7 folds において、純 race-softmax CE、LambdaRank、
+> XE-NDCG はいずれも binary LightGBM を上回らなかった。Primary race-softmax CE は paired block-bootstrap
+> CI 全域で悪化し、年別符号も 6/7 folds で悪化した。目的関数変更仮説を棄却し、production binary objective
+> を維持する。reserved tranche は消費せず、2027 確認対象にも登録しない。**今回は有望目的なし・事前登録なし。**
+
 任意の未実施 ablation（graded relevance で LambdaRank に順位全体を学習させる／±市場／±相対変換）は、
-primary の問い（勝者確率 LogLoss で ranking が binary を超えるか）が **否**で決したため、必要時のみ。
+primary の問い（勝者確率 LogLoss で ranking が binary を超えるか）が **否**で決したため、追加探索は不要。
+時系列 OOF Target Encoding は本比較とは**独立した新規仮説**であり、本陰性結果を受けた hyperparam/graded
+label の追加探索とは別（進めるなら別途スコープ）。
 
 ## スコープ外（別実験）
 
