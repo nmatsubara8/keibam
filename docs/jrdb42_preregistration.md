@@ -67,6 +67,29 @@ manifest に刻む（＝凍結の時刻印）。以後は特徴集合・L2・前
 residual head では within-race 相殺で **θ 寄与≈0＝inert**（リーク/有害でない）。データを見て凍結列を
 削ると selection 汚染になるため、**41 のまま維持**する（`TEMPORALLY_DEAD_JRDB` に登録し監査は既知扱い）。
 
+## ROI（的中率/回収率）の位置づけ（続37-f 参照ハーネス後）
+
+ROI は NLL とは**別仮説**。development OOF 参照（`run_jrdb42_roi_insample_reference.py`・
+`run_jrdb42_paired_roi_reference.py`）は**非証拠**（selection 設計が 2015-2024 を見た後・過適合含みうる・
+最終単勝で選択と精算する楽観的近似＝購入時オッズでない）。作業上の帰無参照は「**既検証経路では実用的な
+控除超過を確認していない＝回収率≈控除後(≈0.8)**」（市場の半強効率性を証明した訳ではない・未ブリッジ
+source/映像等は未検証）。
+
+**ROI family を 2027 に登録する条件**: 市場本命/B5 との同一fold paired 比較で ΔROI の venue×日 block
+bootstrap CI 下限が**安定して >0** のときのみ。CI が 0 を跨ぐ/下回るなら **登録せず閉じる**。登録する場合も
+選択/精算を bet-time(TYB) スナップショットへ切替必須（`feature_available_at <= bet_decision_at`・
+`selection_odds = bet時点オッズ`・`settlement = 確定払戻`）。
+
+**用語**: これらは "in-sample" でなく **development rolling-origin OOF reference**（各評価年は過去年のみで
+学習＝out-of-fold）。ただし設計が development を見た後ゆえ独立証拠でない、の注意書きは維持。
+
+## kokyu_flag parity は解決済み（41-col / artifact 上 40 列が変動）
+
+`diagnose_feature.py` で確定: saved vs fresh の (race_id,馬番) **値一致率=1.0000**＝差は未解決でなく解決
+（旧「fresh 0.129」は JRA2015+ 集計 vf で、2015-2018 の変動を含むだけ・2020+ は saved/fresh とも 0）。
+よって freeze 前の parity blocker は無い。正式表記は「**41-column model（artifact 上 40 列が変動・
+jrdb_kokyu_flag は 2020+ 定数＝test 期 inert）**」。
+
 ## 現時点で clean 数値が出ない理由（明示）
 
 - 2025-2026 = burned（評価に使うと証拠が焼ける）。2027 = reserved・未発生。prospective(2026後半) = 蓄積中。
