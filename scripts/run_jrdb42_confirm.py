@@ -116,8 +116,10 @@ def _data_gate(featured, records):
     missing = [c for c in FROZEN["features"] if c not in featured.columns]
     checks["missing_features"] = missing
     if missing:
-        blockers.append(f"凍結特徴が featured に未実体化 {len(missing)} 列"
-                        "（完全 augment build を先に実行）: " + str(missing[:8]))
+        hint = ("（jrdb_ms_* は MySpeed＝jrdb_build_features.py に --with-myspeed を付けて再 build）"
+                if any(str(c).startswith("jrdb_ms_") for c in missing)
+                else "（完全 augment build を先に実行）")
+        blockers.append(f"凍結特徴が featured に未実体化 {len(missing)} 列{hint}: " + str(missing[:8]))
     nar = int((~pd.Series(central_index_mask(pd.Index(ft.index).astype(str)))).sum())
     checks["nar_rows"] = nar
     if nar != 0:

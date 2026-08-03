@@ -71,8 +71,11 @@ def main() -> int:
         return 6
     missing = [c for c in FROZEN["features"] if c not in feat.columns]
     if missing:
-        print(f"[STOP] 凍結特徴が featured に未実体化 {len(missing)} 列（完全 augment build を先に）: "
-              f"{missing[:8]}", file=sys.stderr)
+        hint = ("（jrdb_ms_* は MySpeed＝jrdb_build_features.py に **--with-myspeed** を付けて再 build）"
+                if any(str(c).startswith("jrdb_ms_") for c in missing)
+                else "（完全 augment build を先に実行）")
+        print(f"[STOP] 凍結特徴が featured に未実体化 {len(missing)} 列{hint}: {missing[:8]}",
+              file=sys.stderr)
         return 3
 
     folds = rolling_folds(used_years, args.first_eval_year)
