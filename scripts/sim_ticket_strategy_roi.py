@@ -269,6 +269,25 @@ def _strategy_line(name, per_bt, per_race):
     }
 
 
+def select_bet_or_skip(tr_rows, s0_line, *, min_bets=100):
+    """train 戦略行から採用戦略を選ぶ（純関数）。**proven edge が無ければ賭けない(S0)**。
+
+    賭ける規律: 点数十分(min_bets 以上)の**賭ける**戦略のうち除最大ROI 最大を候補にし、それが
+    **除最大ROI≥1.0 かつ CI下限>1.0（統計的に黒字）** を満たすときだけ採用。満たさなければ S0_skip
+    （負けの中で一番マシな券を買うより、賭けない＝資金保全が最適）。返す (選択行, 理由文字列)。
+
+    続37-i: 従来は max(roi_ex) で「負けの中で最良」の券を必ず選び S0 を選べなかった欠陥を修正。
+    """
+    elig = [r for r in tr_rows if r["n_bets"] >= min_bets and r["name"] != "S0_skip"]
+    best_bet = max(elig, key=lambda r: r["roi_ex"]) if elig else None
+    if best_bet is not None and best_bet["roi_ex"] >= 1.0 and best_bet["ci_lo"] > 1.0:
+        return best_bet, (f"train 除最大ROI {best_bet['roi_ex']:.1%}・"
+                          f"CI下限 {best_bet['ci_lo']:.2f}>1＝proven edge")
+    tip = (f"最良 {best_bet['name']} でも train CI下限 {best_bet['ci_lo']:.2f}≤1"
+           if best_bet else "十分な点数の戦略なし")
+    return s0_line, f"{tip}＝proven edge 無し→賭けない"
+
+
 def _print_table(rows):
     print(f"{'戦略':<22}{'点数':>8}{'的中率':>8}{'ROI':>8}{'除最大':>8}"
           f"{'CI下限':>8}{'CI上限':>8}{'年+/計':>8}")
@@ -1063,22 +1082,24 @@ def main() -> int:
             continue
         tr_res, *_ = _run_strategies(featured.loc[tr_order], tr_order, ret_src, strategies, **kw)
         tr_rows = [_strategy_line(n, pb, pr) for n, (pb, pr) in tr_res.items()]
-        # 過去年での選択規準: 除最大ROI 最大（フロック依存を避ける）かつ点数十分
-        elig = [r for r in tr_rows if r["n_bets"] >= 100] or tr_rows
-        best = max(elig, key=lambda r: r["roi_ex"])
+        s0_line = _strategy_line("S0_skip", *tr_res["S0_skip"])
+        best, reason = select_bet_or_skip(tr_rows, s0_line)
         te_res, *_ = _run_strategies(featured.loc[te_order], te_order, ret_src,
                                      {best["name"]: strategies[best["name"]]}, **kw)
         te_line = _strategy_line(best["name"], *te_res[best["name"]])
         picks.append((tr, te, best, te_line))
-        print(f"  {tr}→{te}: 選択『{best['name']}』(train除最大ROI {best['roi_ex']:.1%}) → "
+        print(f"  {tr}→{te}: 選択『{best['name']}』（{reason}） → "
               f"test ROI {te_line['roi']:.1%} / 除最大 {te_line['roi_ex']:.1%} / "
               f"CI[{te_line['ci_lo']:.2f},{te_line['ci_hi']:.2f}]")
     if picks:
-        te_roi = [p[3]["roi_ex"] for p in picks]
-        pos = sum(1 for v in te_roi if v >= 1.0)
-        print(f"\n翌年評価: 除最大ROI が黒字(≥1.0)の年 {pos}/{len(picks)}。"
-              "過半かつ CI 下限>1 の年があってはじめて『買い方に持続エッジ』の候補。"
-              "そうでなければ、これも市場効率の壁の再確認。")
+        n_bet = sum(1 for p in picks if p[2]["name"] != "S0_skip")
+        n_skip = len(picks) - n_bet
+        pos = sum(1 for p in picks if p[2]["name"] != "S0_skip"
+                  and p[3]["ci_lo"] > 1.0)
+        print(f"\n翌年評価: 賭けた年 {n_bet}/{len(picks)}（S0で見送り {n_skip}）・そのうち test CI下限>1 の年 "
+              f"{pos}。**proven edge が無いため見送り(S0)が選ばれるのが正しい挙動**＝負ける券を買うより"
+              "資金保全が最適。CI下限>1 の年が過半で初めて『買い方に持続エッジ』の候補。"
+              "それ以外は市場効率の壁の再確認。")
     return 0
 
 
