@@ -117,6 +117,30 @@ B/JRDB42 と 2027 を共有するなら **開封前に family へ一括追加**�
 - **新規配線が要る本質部分**: (a) `LGBMRanker`（lambdarank/rank_xendcg・group=race）、(b) **RACE_SOFTMAX_CE
   の custom `fobj`**（レース内 softmax・g=p−y・h=p(1−p)）、(c) ranker score の **OOF temperature** 推定。
 
+## 結果＝クローズ（2026-08-02・development walk-forward・どの目的も binary を上回らず）
+
+`run_objective_comparison.py`（development 2015-2024・24,226 races・7 fold・winner-only・較正後）:
+
+| arm | LogLoss(nats/race) | NDCG@1 | NDCG@3 | ΔLogLoss vs BINARY（block bootstrap paired 95%CI） |
+|---|---|---|---|---|
+| **BINARY** | **1.91339** | **0.4347** | **0.5437** | — |
+| RACE_SOFTMAX_CE | 1.91663 | 0.4330 | 0.5427 | **+0.00324** [+0.0003,+0.0062]（有意に**劣化**） |
+| LAMBDARANK | 1.98910 | 0.4221 | 0.5334 | +0.07571 [+0.0686,+0.0828]（Holm reject=False） |
+| XENDCG | 2.06969 | 0.4336 | 0.5419 | +0.15630 [+0.1481,+0.1644]（Holm reject=False） |
+
+- **PRIMARY**（RACE_SOFTMAX_CE−BINARY）は CI 全域>0＝改善でなく有意な劣化、年別改善 1/7 fold（過半×）。**不採用**。
+- **SECONDARY**（LambdaRank/XENDCG）はいずれも大幅劣化・Holm reject=False。**不採用**。
+- **結論**: この estimand（勝者確率）・特徴集合では、ranking/listwise 目的は **binary を LogLoss でも NDCG でも
+  上回らない**。2027 へ昇格する arm は無し＝**目的関数比較はクローズ・現行 production の binary を追認**。
+
+**示唆**: (1) binary は NDCG でも最良＝ranking 特化が順位品質でも勝てない。(2) RACE_SOFTMAX_CE≒binary で
+僅かに劣るのは、pointwise binary が**全馬に教師信号**を持つのに対し listwise winner-only は**1レース1正例で
+監督が疎**なため（理論的メトリック整合より1レースの教師量が効いた）。(3) `log q` を全 arm が使い絶対 LogLoss は
+市場水準に張り付く。**選択判断は決定的（tranche 非消費）**。B/JRDB42 の凍結・既確定結論は不変。
+
+任意の未実施 ablation（graded relevance で LambdaRank に順位全体を学習させる／±市場／±相対変換）は、
+primary の問い（勝者確率 LogLoss で ranking が binary を超えるか）が **否**で決したため、必要時のみ。
+
 ## スコープ外（別実験）
 
 - **時系列 OOF Target Encoding**（騎手×場・種牡馬×距離）：有望だが feature-engineering の別軸。本比較の
