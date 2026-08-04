@@ -45,6 +45,17 @@ class TestYearCoverage:
         assert yc[2021] == 0.5
 
 
+class TestDuplicateIndexRobustness:
+    def test_year_coverage_survives_duplicate_index(self):
+        idx = pd.Index(["r1", "r1", "r2"], name="race_id")
+        feat = pd.DataFrame({"horse_id": ["1", "2", "3"], "_yr": [2020, 2020, 2021]},
+                            index=idx)
+        peds = pd.Series(["1"])
+        yc = year_coverage(feat, peds, id_col="horse_id", year_col="_yr")
+        assert yc[2020] == 0.5
+        assert yc[2021] == 0.0
+
+
 class TestPedsIntegrity:
     def test_duplicates_and_conflict(self):
         peds = pd.DataFrame({

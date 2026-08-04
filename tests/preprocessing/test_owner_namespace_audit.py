@@ -91,6 +91,24 @@ class TestBridgeViaHorseInfo:
         assert r["bridge_success_rate"] == 0.5   # hX は horse_info に無い
 
 
+class TestDuplicateIndexRobustness:
+    def test_year_join_and_bridge_survive_duplicate_race_id_index(self):
+        # featured は race_id index が馬数分重複する → reindex crash しないこと
+        idx = pd.Index(["r1", "r1", "r2", "r2"], name="race_id")
+        feat = pd.DataFrame({"horse_id": ["h1", "h2", "h1", "h3"],
+                             "owner_id": ["10506", "544", "10506", "8492"],
+                             "_yr": [2020, 2020, 2021, 2021]}, index=idx)
+        py = pd.DataFrame({"entity_id": ["494800"], "year": [2019]})
+        hinfo = pd.DataFrame({"owner_id": ["494800", "486800", "999999"]},
+                             index=pd.Index(["h1", "h2", "h3"], name="horse_id"))
+        # どちらも例外を投げず dict を返す
+        r1 = year_join_coverage(feat, py, id_col="owner_id", year_col="_yr")
+        assert r1["rows"] == 4
+        r2 = bridge_via_horse_info(feat, hinfo, py, year_col="_yr")
+        assert r2["rows"] == 4
+        assert r2["bridge_success_rate"] == 1.0
+
+
 class TestResultsOwnerTemporal:
     def test_variability_flags_racetime_owner(self):
         # 同一馬で年により results.owner_id が変わる＝race-time 馬主の可能性

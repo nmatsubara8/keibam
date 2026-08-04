@@ -62,7 +62,8 @@ def coverage(feat_ids: pd.Series, peds_ids: pd.Series) -> dict:
 def year_coverage(feat: pd.DataFrame, peds_ids: pd.Series, *, id_col: str,
                   year_col: str) -> dict:
     """featured 側レース年ごとの peds 一致率（部分取得が特定世代に偏っていないか）。"""
-    f = feat[[id_col, year_col]].copy()
+    # featured の index は race_id が重複するため位置基準へ振り直す
+    f = feat[[id_col, year_col]].copy().reset_index(drop=True)
     ids = _as_str(f[id_col].astype("object"))
     f = f.loc[ids.index]
     f[id_col] = ids

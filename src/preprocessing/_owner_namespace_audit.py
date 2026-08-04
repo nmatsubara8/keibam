@@ -84,14 +84,15 @@ def year_join_coverage(feat: pd.DataFrame, py: pd.DataFrame, *, id_col: str,
     as_of_lag=1 は「レース年-1 の年度別成績を as-of で結合」を意味する。
     ID だけの一致で死んでいるのか、年 join で死んでいるのかを切り分ける。
     """
-    f = feat[[id_col, year_col]].copy()
+    # featured の index は race_id が馬数分重複するため、位置基準に振り直してから正規化する
+    f = feat[[id_col, year_col]].copy().reset_index(drop=True)
     f[id_col] = _nonnull_str(f[id_col].astype("object"))
     f = f.dropna(subset=[id_col, year_col])
     f[year_col] = pd.to_numeric(f[year_col], errors="coerce")
     f = f.dropna(subset=[year_col])
     f[year_col] = f[year_col].astype(int)
 
-    p = py[[py_id_col, py_year_col]].copy()
+    p = py[[py_id_col, py_year_col]].copy().reset_index(drop=True)
     pid = _nonnull_str(p[py_id_col].astype("object"))
     p = p.loc[pid.index]
     p[py_id_col] = pid
@@ -175,7 +176,7 @@ def bridge_via_horse_info(feat: pd.DataFrame, hinfo: pd.DataFrame, py: pd.DataFr
     hmap = hmap.drop_duplicates(subset=[hid_col]).set_index(hid_col)[hinfo_owner_col]
     hmap = hmap.map(lambda v: str(v).strip().replace(".0", "") if pd.notna(v) else v)
 
-    f = feat[[hid_col, year_col]].copy()
+    f = feat[[hid_col, year_col]].copy().reset_index(drop=True)
     f[hid_col] = _nonnull_str(f[hid_col].astype("object"))
     f = f.dropna(subset=[hid_col])
     n = len(f)
@@ -189,7 +190,7 @@ def bridge_via_horse_info(feat: pd.DataFrame, hinfo: pd.DataFrame, py: pd.DataFr
     bridged_match = float(f["_db_owner"].dropna().isin(id_set).mean()) if f["_db_owner"].notna().any() else 0.0
 
     # 前年込み最終 join（行重み）
-    p = py[[py_id_col, py_year_col]].copy()
+    p = py[[py_id_col, py_year_col]].copy().reset_index(drop=True)
     p[py_id_col] = _nonnull_str(p[py_id_col].astype("object"))
     p = p.dropna(subset=[py_id_col])
     p[py_year_col] = pd.to_numeric(p[py_year_col], errors="coerce")
