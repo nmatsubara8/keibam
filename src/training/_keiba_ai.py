@@ -8,6 +8,7 @@ from src.policies._bet_policy import AbstractBetPolicy
 from src.policies._score_policy import AbstractScorePolicy
 
 from ._data_splitter import DataSplitter
+from ._feature_contract import FeatureContract
 from ._model_wrapper import ModelWrapper
 
 
@@ -23,6 +24,8 @@ class KeibaAI:
         self.peds_processor = None  # PedsProcessor with fitted encoders (serialized with model for inference)
         self.nn_scaler = None  # NnFeatureScaler with fitted StandardScaler (serialized with model for inference)
         self.feature_names_: list[str] | None = None  # 学習時の列順序（推論時の列整合用）
+        # 学習時の特徴量契約（列名・順序・dtype）。推論時の列ずれ・欠落を検出する。
+        self.feature_contract_: FeatureContract | None = None
         self._tuned_base_models_config: Any = None  # tune_per_model 探索後の完成 config（書き戻し用）
 
     @property
@@ -60,12 +63,19 @@ class KeibaAI:
         """
         self.__model_wrapper.tune_hyper_params(self.__datasets, tuning_config=tuning_config)
         self.__model_wrapper.train(self.__datasets)
+        self._capture_feature_contract(self.__datasets.X_train)
 
     def train_without_tuning(self):
         """
         ハイパーパラメータチューニングをスキップして訓練させる。
         """
         self.__model_wrapper.train(self.__datasets)
+        self._capture_feature_contract(self.__datasets.X_train)
+
+    def _capture_feature_contract(self, frame: pd.DataFrame) -> None:
+        """学習器へ渡した正典 DataFrame の列契約をモデルと一緒に保存する。"""
+        self.feature_names_ = list(frame.columns)
+        self.feature_contract_ = FeatureContract.from_frame(frame)
 
     def train_with_stacking(self, meta_ratio=0.3, with_tuning=True, tuning_config=None, base_models_config=None):
         """スタッキング+Isotonic 較正の Layer1 パイプラインを実行する。
@@ -250,7 +260,8 @@ class KeibaAI:
             self.__datasets.X_calib,
             self.__datasets.y_calib.values,
         )
-        self.feature_names_ = list(self.__datasets.X_base_train.columns)
+        # base 学習器は X_base_train を .values（位置ベース）で消費するため、この順序が正典。
+        self._capture_feature_contract(self.__datasets.X_base_train)
 
         # base LightGBM の特徴量重要度を ModelWrapper に反映（特徴量重要度ページ用）
         try:
@@ -326,16 +337,24 @@ class KeibaAI:
         score_policyを元に、馬の「勝ちやすさスコア」を計算する。
         train_with_stacking 済みの場合は較正済みスタッキングモデルを使用する。
 
-        feature_names_ が保存されている場合はライブ推論時の列不一致を自動修正する:
-        - 不足列は 0 埋め、余分な列は無視。
+        特徴量契約が保存されている新モデルでは、ライブ推論入力の不足列を既定で
+        fail-fast にする。``KEIBA_LENIENT_FEATURES=1`` の明示時だけ従来の 0 埋めへ
+        退避できる。列順は常に学習時へ揃え、余分な列は無視する。
+
+        特徴量契約を持たない旧モデルは、後方互換のため feature_names_ による従来の
+        0 埋め整列を継続する。
         - score_policy が必要とする 枠番・馬番・単勝 等の非特徴量列は X から保持。
         """
         import logging as _log
+        import os as _os
         _logger = _log.getLogger(__name__)
         model = self._calibrated_model if self._calibrated_model is not None else self.__model_wrapper.lgb_model
 
-        # feature_names_ が保存済みでない旧モデルは datasets から補完する
-        feature_names: list[str] | None = getattr(self, "feature_names_", None)
+        contract = getattr(self, "feature_contract_", None)
+        feature_names: list[str] | None = (
+            list(contract.names) if contract is not None else getattr(self, "feature_names_", None)
+        )
+        # feature_names_ も保存されていない旧モデルは datasets から補完する
         if feature_names is None:
             try:
                 feature_names = list(self.__datasets.X_base_train.columns)
@@ -343,16 +362,26 @@ class KeibaAI:
             except Exception:
                 pass
 
-        # feature_names_ が保存済みの場合: 列を学習時の順序・セットに揃える
         if feature_names is not None:
             from src.policies._score_policy import META_COLS
+            from src.training._feature_contract import require_present
             # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
             meta_cols = [c for c in META_COLS if c in X.columns]
             feat_cols = [c for c in feature_names if c not in meta_cols]
+            lenient = _os.environ.get("KEIBA_LENIENT_FEATURES", "").strip().lower() not in ("", "0", "false")
+            missing = require_present(
+                feat_cols,
+                X.columns,
+                # 契約のない旧モデルは従来挙動を維持する。
+                lenient=lenient or contract is None,
+            )
             X_feat = X.reindex(columns=feat_cols, fill_value=0)
-            missing = [c for c in feat_cols if c not in X.columns]
             if missing:
-                _logger.warning("calc_score: %d 列が X に存在しないため 0 で補完: %s ...", len(missing), missing[:5])
+                _logger.warning(
+                    "calc_score: %d 列を 0 で補完（lenient/旧モデル）: %s ...",
+                    len(missing),
+                    missing[:5],
+                )
             X = pd.concat([X[[c for c in meta_cols if c in X.columns]], X_feat], axis=1)
 
         return score_policy.calc(model, X)
