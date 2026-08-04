@@ -23,24 +23,20 @@ class FeatureContractError(ValueError):
     """特徴量契約の不一致（不足列・dtype 不一致等）。学習=推論の乖離を fail-fast で止める。"""
 
 
-def require_present(
-    names, columns, *, lenient: bool = False, schema_hash: str | None = None
-) -> list:
-    """names（学習時の特徴量列）のうち columns に無い列を返す。
+def require_present(names, columns, *, lenient: bool = False) -> list[str]:
+    """学習時の特徴量が推論入力にすべて存在することを検証する。
 
-    lenient=False（既定 strict）で不足があれば FeatureContractError を送出し、
-    「不足列を 0 埋めして静かに誤予測する」事故を fail-fast で止める。lenient=True なら
-    不足リストを返すだけ（呼出側が 0 埋め等に退避）。schema_hash は診断用（任意）。
+    既定は fail-fast。移行期間などで ``lenient=True`` を明示した場合だけ、
+    不足列を返して呼び出し側の補完処理を許可する。
     """
-    present = {str(c) for c in columns}
-    missing = [str(c) for c in names if str(c) not in present]
+    expected = [str(name) for name in names]
+    present = {str(column) for column in columns}
+    missing = [name for name in expected if name not in present]
     if missing and not lenient:
         tail = " …" if len(missing) > 20 else ""
-        note = f" schema={schema_hash}" if schema_hash else ""
         raise FeatureContractError(
-            f"推論入力に学習時の特徴量が {len(missing)}/{len(list(names))} 列不足しています: "
-            f"{missing[:20]}{tail}{note}。学習=推論の列不一致（列名変更/未生成）を fail-fast で停止"
-            "（0 埋めによる静かな誤予測を防止）。意図的なら環境変数 KEIBA_LENIENT_FEATURES=1 で退避可。"
+            f"推論入力に学習時の特徴量が {len(missing)}/{len(expected)} 列不足しています: "
+            f"{missing[:20]}{tail}。学習=推論の列不一致を fail-fast で停止しました。"
         )
     return missing
 
@@ -100,8 +96,11 @@ class FeatureContract:
         return out
 
     def _apply_dtypes(self, out: pd.DataFrame, *, check: bool, coerce: bool) -> None:
+        dtypes = self.dtypes
+        if dtypes is None:
+            return
         mismatches = []
-        for name, want_dt in zip(self.names, self.dtypes, strict=True):
+        for name, want_dt in zip(self.names, dtypes, strict=True):
             cur = str(out[name].dtype)
             if cur == want_dt:
                 continue

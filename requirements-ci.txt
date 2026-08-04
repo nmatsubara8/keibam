@@ -11,6 +11,7 @@ dill
 scikit-learn
 lightgbm
 optuna
+optuna-integration[lightgbm]
 lxml
 html5lib
 pyarrow

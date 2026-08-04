@@ -20,20 +20,16 @@ def _train_frame():
 
 
 def test_require_present_strict_raises_on_missing():
-    # 既定 strict: 学習時特徴量が推論入力に不足 → fail-fast（0埋め誤予測を防止）
-    with pytest.raises(FeatureContractError) as ei:
-        require_present(["a", "b", "c"], ["a", "c"], lenient=False)
-    assert "不足" in str(ei.value) and "b" in str(ei.value)
+    with pytest.raises(FeatureContractError, match="不足"):
+        require_present(["a", "b", "c"], ["a", "c"])
 
 
 def test_require_present_lenient_returns_missing():
-    # lenient: 送出せず不足リストを返す（呼出側が0埋めに退避）
-    missing = require_present(["a", "b", "c"], ["a", "c"], lenient=True)
-    assert missing == ["b"]
+    assert require_present(["a", "b", "c"], ["a", "c"], lenient=True) == ["b"]
 
 
-def test_require_present_ok_when_all_present():
-    assert require_present(["a", "b"], ["b", "a", "extra"], lenient=False) == []
+def test_require_present_ignores_extra_and_order():
+    assert require_present(["a", "b"], ["extra", "b", "a"]) == []
 
 
 def test_align_reorders_to_contract_order():
@@ -103,3 +99,105 @@ def test_keiba_ai_imports_feature_contract():
     # 実際の学習時採録（feature_contract_ の設定）は本番学習パスで検証する。
     import src.training._keiba_ai as ka
     assert ka.FeatureContract is FeatureContract
+
+
+def _bare_keiba_ai(*, contract, feature_names=None):
+    """重い学習をせず calc_score の列契約だけを検証する最小オブジェクト。"""
+    from types import SimpleNamespace
+
+    from src.training._keiba_ai import KeibaAI
+
+    ai = object.__new__(KeibaAI)
+    ai._calibrated_model = object()
+    ai._KeibaAI__model_wrapper = SimpleNamespace(lgb_model=object())
+    ai.feature_contract_ = contract
+    ai.feature_names_ = feature_names
+    return ai
+
+
+class _ReturningPolicy:
+    def calc(self, model, X):
+        return X
+
+
+class _TrainingWrapper:
+    def __init__(self):
+        self.trained = False
+        self.tuned = False
+
+    def train(self, datasets):
+        self.trained = True
+
+    def tune_hyper_params(self, datasets, tuning_config=None):
+        self.tuned = True
+
+
+def _bare_training_ai():
+    from types import SimpleNamespace
+
+    from src.training._keiba_ai import KeibaAI
+
+    ai = object.__new__(KeibaAI)
+    ai._KeibaAI__datasets = SimpleNamespace(X_train=_train_frame())
+    ai._KeibaAI__model_wrapper = _TrainingWrapper()
+    ai.feature_names_ = None
+    ai.feature_contract_ = None
+    return ai
+
+
+def test_train_without_tuning_captures_contract():
+    ai = _bare_training_ai()
+
+    ai.train_without_tuning()
+
+    assert ai._KeibaAI__model_wrapper.trained is True
+    assert ai.feature_contract_ == FeatureContract.from_frame(_train_frame())
+    assert ai.feature_names_ == ["a", "b", "c"]
+
+
+def test_train_with_tuning_captures_contract():
+    ai = _bare_training_ai()
+
+    ai.train_with_tuning(tuning_config={"n_trials": 1})
+
+    assert ai._KeibaAI__model_wrapper.tuned is True
+    assert ai._KeibaAI__model_wrapper.trained is True
+    assert ai.feature_contract_ == FeatureContract.from_frame(_train_frame())
+
+
+def test_calc_score_contract_reorders_and_drops_extra():
+    contract = FeatureContract.from_frame(_train_frame())
+    ai = _bare_keiba_ai(contract=contract)
+    incoming = _train_frame()[["c", "a", "b"]].assign(extra=9)
+
+    out = ai.calc_score(incoming, _ReturningPolicy())
+
+    assert list(out.columns) == ["a", "b", "c"]
+    assert np.array_equal(out.values, _train_frame().values)
+
+
+def test_calc_score_contract_missing_is_fail_fast(monkeypatch):
+    monkeypatch.delenv("KEIBA_LENIENT_FEATURES", raising=False)
+    ai = _bare_keiba_ai(contract=FeatureContract.from_frame(_train_frame()))
+
+    with pytest.raises(FeatureContractError, match="不足"):
+        ai.calc_score(_train_frame().drop(columns="b"), _ReturningPolicy())
+
+
+def test_calc_score_lenient_mode_zero_fills_missing(monkeypatch):
+    monkeypatch.setenv("KEIBA_LENIENT_FEATURES", "1")
+    ai = _bare_keiba_ai(contract=FeatureContract.from_frame(_train_frame()))
+
+    out = ai.calc_score(_train_frame().drop(columns="b"), _ReturningPolicy())
+
+    assert list(out.columns) == ["a", "b", "c"]
+    assert np.array_equal(out["b"].to_numpy(), np.zeros(2))
+
+
+def test_calc_score_legacy_model_keeps_zero_fill(monkeypatch):
+    monkeypatch.delenv("KEIBA_LENIENT_FEATURES", raising=False)
+    ai = _bare_keiba_ai(contract=None, feature_names=["a", "b", "c"])
+
+    out = ai.calc_score(_train_frame().drop(columns="b"), _ReturningPolicy())
+
+    assert np.array_equal(out["b"].to_numpy(), np.zeros(2))

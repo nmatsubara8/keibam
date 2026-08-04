@@ -22,7 +22,7 @@ def test_strictly_past_and_same_date_block_excluded():
     got = te.tolist()
     # J: d1=履歴なし(NaN), d2=過去{1}=1.0, d3×2=過去{1,0}=0.5(同日互いを含めない), d4=過去{1,0,1,1}=0.75
     expected = [np.nan, 1.0, 0.5, 0.5, 0.75, np.nan]
-    for e, g in zip(expected, got):
+    for e, g in zip(expected, got, strict=True):
         assert (np.isnan(e) and np.isnan(g)) or abs(e - g) < 1e-9
 
 
@@ -58,15 +58,39 @@ def test_smoothing_pulls_sparse_categories_harder():
 
 
 def test_no_history_rows_fall_back_to_global_prior():
-    """履歴ゼロの行は全体 prior（＝過去全体平均）になる（NaN ではなく安全な既定）。"""
+    """履歴ゼロの行は、利用可能なら厳密過去の全体 prior を使う。"""
     d = pd.DataFrame({
         "e": ["X", "Y", "Y"],
         "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
         "_win": [1, 0, 1],
     })
     te = expanding_target_encode(d, ["e"], "_win", alpha=10.0)
-    # 行1(Y d2): Y は履歴なし → smoothed = prior_glob（d2 より前の全体平均 = {行0=1} = 1.0）
+    # 行1(Y d2): Y は履歴なし → prior_glob（d2 より前の全体平均 = {行0=1} = 1.0）
     assert abs(te.iloc[1] - 1.0) < 1e-9
+
+
+def test_cold_start_does_not_depend_on_future_labels():
+    """最古日の TE は後日の目的変数を変えても不変（全期間平均リークの回帰防止）。"""
+    base = pd.DataFrame({
+        "e": ["A", "A", "A"],
+        "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
+        "_win": [1.0, 0.0, 0.0],
+    })
+    flipped = base.copy()
+    flipped.loc[1:, "_win"] = 1.0
+
+    before = expanding_target_encode(base, ["e"], "_win", alpha=10.0, cold_start_prior=0.25)
+    after = expanding_target_encode(flipped, ["e"], "_win", alpha=10.0, cold_start_prior=0.25)
+
+    assert before.iloc[0] == after.iloc[0] == 0.25
+
+
+def test_explicit_global_prior_overrides_cold_start():
+    d = pd.DataFrame({"e": ["A"], "date": ["2024-01-01"], "_win": [1.0]})
+
+    te = expanding_target_encode(d, ["e"], "_win", alpha=10.0, global_prior=0.4)
+
+    assert te.iloc[0] == 0.4
 
 
 def test_context_keys_filter_history():
