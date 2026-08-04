@@ -122,7 +122,7 @@ def _auc(scores: list[tuple[float, int]]) -> float | None:
     # 順位法: 昇順 rank 平均で U を算出（同値は平均順位）。
     allv = sorted((s, y) for s, y in scores)
     ranks = _avg_ranks([s for s, _ in allv])
-    rank_sum_pos = sum(r for r, (_, y) in zip(ranks, allv) if y == 1)
+    rank_sum_pos = sum(r for r, (_, y) in zip(ranks, allv, strict=False) if y == 1)
     n_pos, n_neg = len(pos), len(neg)
     u = rank_sum_pos - n_pos * (n_pos + 1) / 2.0
     return u / (n_pos * n_neg)

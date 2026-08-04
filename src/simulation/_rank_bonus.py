@@ -47,7 +47,7 @@ def build_rank_z(rank_df, *, code_col: str = "person_code", rank_col: str = "ran
     sd = float(d[rank_col].std(ddof=0))
     sd = sd if sd > 0 else 1.0
     out: dict = {}
-    for code, r in zip(d[code_col].astype(str), d[rank_col]):
+    for code, r in zip(d[code_col].astype(str), d[rank_col], strict=False):
         nid = (code_to_id or {}).get(code)
         key = str(nid) if nid is not None else code
         out[key] = (float(r) - mu) / sd
