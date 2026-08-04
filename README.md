@@ -126,8 +126,8 @@ python -m mypy --config-file pyproject.toml
 lint-imports
 ```
 
-期待結果の目安: pytest は **750+ 件 pass**（torch 未導入で 4 件 / ネットワーク必須 1 件が skip）、
-ruff / mypy は **clean**、import-linter は **4 contracts kept**。
+期待結果の目安: pytest は **1,900+ 件 pass**（torch・実データ・実モデル・ネットワーク等が
+必要なテストは環境に応じて skip）、ruff / mypy は **clean**、import-linter は **4 contracts kept**。
 
 主な検証カバレッジ:
 
@@ -392,6 +392,11 @@ UI の「成績・設定」ページからも編集可能）。
 | `use_predicted_odds` | オッズ力学モデルの予測確定オッズで EV を計算（既定 false） |
 
 ログは標準で stdout、必要に応じてファイル出力（`src.constants._logging_config.setup_logging`）。
+
+学習済みモデルには学習時の特徴量名・列順・dtype を `FeatureContract` として保存する。
+推論入力に学習時の列が不足する場合は、列ずれによる誤予測を防ぐため既定で停止する。
+旧モデルとの緊急互換が必要な場合のみ `KEIBA_LENIENT_FEATURES=1` で不足列の 0 埋めへ
+退避できるが、警告を確認して特徴量生成側を修正すること。
 
 ### 生成物の置き場所
 

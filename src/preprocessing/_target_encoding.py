@@ -40,13 +40,15 @@ def expanding_target_encode(
     date_col: str = "date",
     alpha: float = 20.0,
     global_prior: float | None = None,
+    cold_start_prior: float = 0.0,
 ) -> pd.Series:
     """各行について、``keys`` を共有する **厳密に過去（date<自分）** の ``target`` 平均を
     スムージングして返す（df.index に整列）。
 
     smoothed = (Σ_past target + α·prior) / (n_past + α)
       - prior: ``global_prior`` 指定時はその定数。None なら **過去のみの expanding 全体平均**
-        （日付単位・厳密過去）。履歴が全く無い行は smoothed = prior（＝全体平均）になる。
+        （日付単位・厳密過去）。履歴が全く無い行は、未来ラベルを参照しない固定値
+        ``cold_start_prior`` を使う。
       - α: スムージング強度（大きいほど全体平均へ強く引く。少数カテゴリのブレ抑制）。
 
     Parameters
@@ -54,6 +56,8 @@ def expanding_target_encode(
     keys : entity（+context）列。例 ["jockey_id"] / ["jockey_id","race_type"]
     target : 数値化可能な目的変数列（0/1 でも連続でも可）。
     date_col : 日付列（datetime 変換可能）。
+    cold_start_prior : 過去データが一件もない時だけ使う、データ非依存の事前値。
+        目的変数に適した値が既知なら呼び出し側で明示する。
     """
     if not keys:
         raise ValueError("keys は1つ以上必要です")
@@ -75,11 +79,12 @@ def expanding_target_encode(
         gg = d.groupby(date_col)[target].agg(_s="sum", _c="count").sort_index()
         gcs = gg["_s"].cumsum().shift(1)
         gcc = gg["_c"].cumsum().shift(1)
-        prior_glob_by_date = (gcs / gcc)
-        overall = float(d[target].mean())
-        prior_glob_by_date = prior_glob_by_date.fillna(overall)  # 最初の日付は全体平均で代替
+        prior_glob_by_date = gcs / gcc
+        # 最古日には過去の観測が存在しない。全期間平均で埋めると未来ラベルが
+        # 混入するため、データ非依存の cold-start prior だけを使用する。
+        prior_glob_by_date = prior_glob_by_date.fillna(float(cold_start_prior))
         gmap = prior_glob_by_date.to_dict()
-        prior["_pglob"] = prior[date_col].map(gmap).fillna(overall)
+        prior["_pglob"] = prior[date_col].map(gmap).fillna(float(cold_start_prior))
     else:
         prior["_pglob"] = float(global_prior)
 
