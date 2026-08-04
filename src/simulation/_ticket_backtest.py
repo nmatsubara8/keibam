@@ -448,7 +448,7 @@ def portfolio_metrics(rows: list[tuple], *, race_order: list | None = None,
     payouts = sorted((r[3] for r in rows), reverse=True)
     races = {r[0] for r in rows}
     groups: dict = {}
-    for rid, bt, stake, ret in rows:
+    for _rid, bt, stake, ret in rows:
         g = BET_GROUP.get(bt, bt)
         d = groups.setdefault(g, {"stake": 0.0, "returned": 0.0, "n_bets": 0, "n_hits": 0,
                                   "max_return": 0.0})

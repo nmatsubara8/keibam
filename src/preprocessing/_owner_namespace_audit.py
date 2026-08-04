@@ -23,7 +23,7 @@ join がほぼ死ぬ（実測一致率〜5.7%）問題を、**ID 空間の不一
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from typing import Iterable, Optional
+from typing import Iterable
 
 import pandas as pd
 
@@ -101,13 +101,13 @@ def year_join_coverage(feat: pd.DataFrame, py: pd.DataFrame, *, id_col: str,
     p[py_year_col] = p[py_year_col].astype(int)
 
     id_set = set(p[py_id_col])
-    id_year_set = set(zip(p[py_id_col], p[py_year_col]))
+    id_year_set = set(zip(p[py_id_col], p[py_year_col], strict=False))
     n = len(f)
     if n == 0:
         return {"rows": 0, "id_match_rate": 0.0, "id_and_year_match_rate": 0.0}
     id_hits = f[id_col].isin(id_set)
     want_year = f[year_col] - as_of_lag
-    iy_hits = [(i, y) in id_year_set for i, y in zip(f[id_col], want_year)]
+    iy_hits = [(i, y) in id_year_set for i, y in zip(f[id_col], want_year, strict=False)]
     return {
         "rows": int(n),
         "id_match_rate": float(id_hits.mean()),
@@ -125,7 +125,7 @@ def name_id_consistency(names: Iterable, ids: Iterable) -> dict:
     name_to_ids: dict = defaultdict(set)
     id_to_names: dict = defaultdict(set)
     pairs = 0
-    for nm, oid in zip(names, ids):
+    for nm, oid in zip(names, ids, strict=False):
         norm = normalize_breeder_name(nm)
         s = str(oid).strip()
         if not norm or not s or s.lower() == "nan":
@@ -195,10 +195,10 @@ def bridge_via_horse_info(feat: pd.DataFrame, hinfo: pd.DataFrame, py: pd.DataFr
     p = p.dropna(subset=[py_id_col])
     p[py_year_col] = pd.to_numeric(p[py_year_col], errors="coerce")
     p = p.dropna(subset=[py_year_col])
-    iy_set = set(zip(p[py_id_col], p[py_year_col].astype(int)))
+    iy_set = set(zip(p[py_id_col], p[py_year_col].astype(int), strict=False))
     yr = pd.to_numeric(f[year_col], errors="coerce")
     ok = [(o in id_set) and pd.notna(y) and (o, int(y) - as_of_lag) in iy_set
-          for o, y in zip(f["_db_owner"], yr)]
+          for o, y in zip(f["_db_owner"], yr, strict=False)]
     f["_final"] = ok
     final_rate = float(pd.Series(ok).mean())
     per_year = {int(k): round(float(v), 4)

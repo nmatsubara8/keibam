@@ -360,8 +360,10 @@ class KeibaAI:
         train_with_stacking 済みの場合は較正済みスタッキングモデルを使用する。
 
         列契約（#24）: 学習時に確定した特徴量列を推論入力に厳密に要求する。
-        - 既定 strict: 不足列があれば FeatureContractError で停止（0 埋めの静かな誤予測を防止）。
-        - 逃げ道: 環境変数 KEIBA_LENIENT_FEATURES=1 で従来どおり 0 埋め＋警告に退避。
+        - 既定 strict（契約を持つ新モデル）: 不足列があれば FeatureContractError で停止
+          （0 埋めの静かな誤予測を防止）。
+        - 後方互換: 契約を持たない旧モデル（contract is None）は従来どおり 0 埋め＋警告に退避。
+        - 逃げ道: 環境変数 KEIBA_LENIENT_FEATURES=1 でも 0 埋め＋警告に退避。
         - 列順は学習時に固定（位置ベース predict の安全）。余分な列は無視。
         - score_policy が必要とする 枠番・馬番・単勝 等の非特徴量列は X から保持。
         """
@@ -385,15 +387,14 @@ class KeibaAI:
         if feature_names is not None:
             from src.policies._score_policy import META_COLS
             from src.training._feature_contract import require_present
-            from src.pipeline._eval_stamp import feature_schema_hash
             # score_policy が参照する非特徴量列（枠番・馬番・単勝など）は X に残す必要がある
             meta_cols = [c for c in META_COLS if c in X.columns]
             feat_cols = [c for c in feature_names if c not in meta_cols]
-            lenient = _os.environ.get("KEIBA_LENIENT_FEATURES", "").strip().lower() not in ("", "0", "false")
-            # 既定 strict: 不足列は require_present が FeatureContractError で停止。lenient なら不足リスト。
-            missing = require_present(feat_cols, X.columns, lenient=lenient,
-                                      schema_hash=feature_schema_hash(feat_cols))
-            if missing:  # ここに来るのは lenient のときだけ
+            env_lenient = _os.environ.get("KEIBA_LENIENT_FEATURES", "").strip().lower() not in ("", "0", "false")
+            # 契約を持つ新モデルは既定 strict（不足列で FeatureContractError 停止）。契約を持たない
+            # 旧モデル（contract is None）のみ後方互換で 0 埋めへ退避。KEIBA_LENIENT_FEATURES=1 でも退避。
+            missing = require_present(feat_cols, X.columns, lenient=env_lenient or contract is None)
+            if missing:  # ここに来るのは lenient（env 指定 or 旧モデル）のときだけ
                 _logger.warning("calc_score: %d 列を 0 で補完(lenient・要注意): %s ...", len(missing), missing[:5])
             X_feat = X.reindex(columns=feat_cols, fill_value=0)  # 列順固定＋余分列 drop
             X = pd.concat([X[[c for c in meta_cols if c in X.columns]], X_feat], axis=1)
