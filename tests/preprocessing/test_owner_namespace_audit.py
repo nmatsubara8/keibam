@@ -5,7 +5,8 @@ from __future__ import annotations
 import pandas as pd
 
 from src.preprocessing._owner_namespace_audit import (
-    exact_match, id_space_profile, name_id_consistency, unmatched_top, year_join_coverage,
+    bridge_via_horse_info, exact_match, id_space_profile, name_id_consistency,
+    results_owner_temporal_variability, unmatched_top, year_join_coverage,
 )
 
 
@@ -63,6 +64,41 @@ class TestNameIdConsistency:
     def test_normalization_absorbs_spacing(self):
         r = name_id_consistency(["ノーザンファーム 勇払郡", "ノーザンファーム"], ["1", "1"])
         assert r["id_alias_spread"] == 0   # 所在地サフィックス除去で同名化
+
+
+class TestBridgeViaHorseInfo:
+    def test_bridge_recovers_when_results_space_wrong(self):
+        # results.owner_id は別空間だが horse_info.owner_id(db) 経由で py と繋がる
+        feat = pd.DataFrame({"horse_id": ["h1", "h2"], "owner_id": ["000031", "000031"],
+                             "_yr": [2020, 2021]})
+        hinfo = pd.DataFrame({"owner_id": ["494800", "486800"]},
+                             index=pd.Index(["h1", "h2"], name="horse_id"))
+        py = pd.DataFrame({"entity_id": ["494800", "486800"], "year": [2019, 2020]})
+        r = bridge_via_horse_info(feat, hinfo, py, year_col="_yr")
+        assert r["bridge_success_rate"] == 1.0
+        assert r["bridged_id_match_rate"] == 1.0
+        assert r["final_join_rate_incl_prior_year"] == 1.0   # 2020→2019, 2021→2020 とも有
+        assert r["horses_with_multiple_owner_in_horse_info"] == 0
+        assert r["horse_info_is_static_master"] is True
+
+    def test_bridge_miss_when_horse_absent(self):
+        feat = pd.DataFrame({"horse_id": ["h1", "hX"], "owner_id": ["1", "1"],
+                             "_yr": [2020, 2020]})
+        hinfo = pd.DataFrame({"owner_id": ["494800"]},
+                             index=pd.Index(["h1"], name="horse_id"))
+        py = pd.DataFrame({"entity_id": ["494800"], "year": [2019]})
+        r = bridge_via_horse_info(feat, hinfo, py, year_col="_yr")
+        assert r["bridge_success_rate"] == 0.5   # hX は horse_info に無い
+
+
+class TestResultsOwnerTemporal:
+    def test_variability_flags_racetime_owner(self):
+        # 同一馬で年により results.owner_id が変わる＝race-time 馬主の可能性
+        feat = pd.DataFrame({"horse_id": ["h1", "h1", "h2"],
+                             "owner_id": ["000031", "000099", "000031"]})
+        r = results_owner_temporal_variability(feat)
+        assert r["horses_with_multiple_results_owner"] == 1
+        assert r["horses"] == 2
 
 
 class TestUnmatchedTop:

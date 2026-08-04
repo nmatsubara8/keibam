@@ -145,6 +145,94 @@ def name_id_consistency(names: Iterable, ids: Iterable) -> dict:
     }
 
 
+def bridge_via_horse_info(feat: pd.DataFrame, hinfo: pd.DataFrame, py: pd.DataFrame, *,
+                          year_col: str, hid_col: str = "horse_id",
+                          hinfo_owner_col: str = "owner_id",
+                          py_id_col: str = "entity_id", py_year_col: str = "year",
+                          as_of_lag: int = 1) -> dict:
+    """horse_id → horse_info.owner_id(db 空間) → person_yearly.entity_id の橋を測る。
+
+    行(results 行)重み付けで、bridge 成功率・bridged ID 一致率・前年込み最終 join 率・年別を返す。
+    ユニーク ID 一致率だけだと大口馬主偏りを見落とすため、必ず行ベースで測る。
+    """
+    if hid_col not in feat.columns:
+        return {"error": f"featured に {hid_col} 列なし"}
+    # horse_id -> db owner_id
+    hi = hinfo.copy()
+    if hinfo_owner_col not in hi.columns:
+        return {"error": f"horse_info に {hinfo_owner_col} 列なし"}
+    if hid_col in hi.columns:
+        hmap = hi[[hid_col, hinfo_owner_col]].copy()
+    else:
+        hmap = pd.DataFrame({hid_col: list(hi.index),
+                             hinfo_owner_col: hi[hinfo_owner_col].to_numpy()})
+    hmap = hmap.reset_index(drop=True)
+    hmap[hid_col] = _nonnull_str(hmap[hid_col].astype("object"))
+    hmap = hmap.dropna(subset=[hid_col])
+    # horse 単位で owner が一意か（=静的「現在馬主」か）
+    per_horse = hmap.groupby(hid_col)[hinfo_owner_col].nunique(dropna=True)
+    horses_multi_owner = int((per_horse > 1).sum())
+    hmap = hmap.drop_duplicates(subset=[hid_col]).set_index(hid_col)[hinfo_owner_col]
+    hmap = hmap.map(lambda v: str(v).strip().replace(".0", "") if pd.notna(v) else v)
+
+    f = feat[[hid_col, year_col]].copy()
+    f[hid_col] = _nonnull_str(f[hid_col].astype("object"))
+    f = f.dropna(subset=[hid_col])
+    n = len(f)
+    if n == 0:
+        return {"error": "featured 有効行 0"}
+    f["_db_owner"] = f[hid_col].map(hmap)
+    bridge_success = float(f["_db_owner"].notna().mean())
+
+    py_ids = _nonnull_str(py[py_id_col].astype("object")) if py_id_col in py.columns else pd.Series([], dtype=str)
+    id_set = set(py_ids)
+    bridged_match = float(f["_db_owner"].dropna().isin(id_set).mean()) if f["_db_owner"].notna().any() else 0.0
+
+    # 前年込み最終 join（行重み）
+    p = py[[py_id_col, py_year_col]].copy()
+    p[py_id_col] = _nonnull_str(p[py_id_col].astype("object"))
+    p = p.dropna(subset=[py_id_col])
+    p[py_year_col] = pd.to_numeric(p[py_year_col], errors="coerce")
+    p = p.dropna(subset=[py_year_col])
+    iy_set = set(zip(p[py_id_col], p[py_year_col].astype(int)))
+    yr = pd.to_numeric(f[year_col], errors="coerce")
+    ok = [(o in id_set) and pd.notna(y) and (o, int(y) - as_of_lag) in iy_set
+          for o, y in zip(f["_db_owner"], yr)]
+    f["_final"] = ok
+    final_rate = float(pd.Series(ok).mean())
+    per_year = {int(k): round(float(v), 4)
+                for k, v in f.assign(_y=yr).dropna(subset=["_y"]).groupby(
+                    f.assign(_y=yr).dropna(subset=["_y"])["_y"].astype(int))["_final"].mean().items()}
+    return {
+        "rows": int(n),
+        "bridge_success_rate": bridge_success,           # (3) horse_id→horse_info hit
+        "bridged_id_match_rate": bridged_match,           # (4) bridged owner→py 一致
+        "final_join_rate_incl_prior_year": final_rate,    # (5) 前年込み最終
+        "per_year_final": per_year,                        # (6)
+        "horses_with_multiple_owner_in_horse_info": horses_multi_owner,  # (7) 競合
+        "horse_info_is_static_master": horses_multi_owner == 0,
+    }
+
+
+def results_owner_temporal_variability(feat: pd.DataFrame, *, hid_col: str = "horse_id",
+                                       owner_col: str = "owner_id") -> dict:
+    """同一 horse の results.owner_id が年で変わるか（=race-time 馬主 か static か）の手掛かり。
+
+    variability が高い→results.owner_id は「レース当時馬主」で時系列的に正しい可能性。
+    → 静的 horse_info.owner_id ブリッジは時点誤りを入れる恐れ（code-map 修正の方が安全）。
+    """
+    if hid_col not in feat.columns or owner_col not in feat.columns:
+        return {"error": "horse_id/owner_id 列なし"}
+    g = feat[[hid_col, owner_col]].dropna()
+    g[owner_col] = g[owner_col].astype(str).str.replace(r"\.0$", "", regex=True)
+    per_horse = g.groupby(hid_col)[owner_col].nunique()
+    return {
+        "horses": int(len(per_horse)),
+        "horses_with_multiple_results_owner": int((per_horse > 1).sum()),
+        "share_multi": round(float((per_horse > 1).mean()), 4) if len(per_horse) else 0.0,
+    }
+
+
 def unmatched_top(left: pd.Series, right: pd.Series, top: int = 30) -> list:
     """right に無い left ID を出現回数つき上位で返す（原因調査の手掛かり）。"""
     lvals = _nonnull_str(left)

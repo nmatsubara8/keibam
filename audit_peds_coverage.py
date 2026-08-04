@@ -109,17 +109,36 @@ def main() -> int:
     for hid in unmatched_examples(feat["horse_id"], peds_id, args.top):
         print(f"  {hid!r}")
 
-    # 判定ヒント
+    # 判定（順に評価すると混乱しない）
     ex = coverage(feat["horse_id"], peds_id)
     ucov = ex["exact"]["unique_coverage"]
     ncov = ex["numeric_normalized"]["unique_coverage"]
-    print("\n=== 判定ヒント ===")
-    if ucov < 0.01 and ncov > 0.5:
-        print("  → 正規化で大幅改善＝KEY_MISMATCH(leading zero/dtype)。規則を設計書へ固定後に materialize。")
-    elif max(ucov, ncov) < 0.02:
-        print("  → 正規化後も交差ほぼ0＝別キー(血統登録番号 vs horse_id)か SOURCE_PARTIAL。全期間再取得が要る。")
+    integ = peds_integrity(peds, id_col="horse_id",
+                           sire_col=args.sire_col if args.sire_col in peds.columns else None,
+                           damsire_col=args.damsire_col if args.damsire_col in peds.columns else None)
+    sire_nn = integ.get("sire_nonnull_rate")
+    conflict = (integ.get("sire_conflicting_horses", 0) or 0) + \
+        (integ.get("damsire_conflicting_horses", 0) or 0)
+    matched_uniq = ex["numeric_normalized"]["matched_unique"]
+    print("\n=== 判定 ===")
+    if ucov < 0.01 and ncov > 0.1:
+        print(f"  → KEY_FORMAT_MISMATCH（exact≈0・正規化で {ncov:.3f} へ上昇＝leading zero/dtype）。"
+              "正規化規則を設計書へ固定してから materialize。")
+    elif matched_uniq <= 900 and max(ucov, ncov) < 0.05:
+        print(f"  → SOURCE_PARTIAL（正規化後も一致 {matched_uniq} 頭前後＝peds.pkl が部分取得）。"
+              "全期間の血統再取得まで本番投入不可。")
+    elif max(ucov, ncov) >= 0.5 and sire_nn is not None and sire_nn < 0.05:
+        print("  → PROCESSOR_OR_MATERIALIZE_FAILURE（overlap 十分だが sire/damsire がほぼ NaN）。"
+              "peds_processor/履歴集約側の不具合。")
+    elif conflict > 0:
+        print(f"  → SOURCE_CONFLICT（同一 horse に父/母父の複数値 {conflict} 頭）。ソース整合の解決が先。")
     else:
-        print(f"  → 交差 unique_coverage(exact={ucov:.3f}, norm={ncov:.3f})。世代偏りは年別 coverage を参照。")
+        print(f"  → overlap unique_coverage(exact={ucov:.3f}, norm={ncov:.3f}, matched={matched_uniq})。"
+              "年別 coverage で世代/開催偏りを確認（部分ソースは『血統』でなく『取得済みか』を学ぶ）。")
+    if yc:
+        yrs = sorted(yc)
+        print(f"  年別 coverage: 最古={yrs[0]}:{yc[yrs[0]]:.3f} 最新={yrs[-1]}:{yc[yrs[-1]]:.3f}"
+              f"（特定世代/開催偏りに注意）")
     return 0
 
 

@@ -26,7 +26,8 @@ import pandas as pd  # noqa: E402
 
 from src.constants._local_paths import LocalPaths  # noqa: E402
 from src.preprocessing._owner_namespace_audit import (  # noqa: E402
-    exact_match, id_space_profile, name_id_consistency, unmatched_top, year_join_coverage,
+    bridge_via_horse_info, exact_match, id_space_profile, name_id_consistency,
+    results_owner_temporal_variability, unmatched_top, year_join_coverage,
 )
 
 
@@ -116,11 +117,25 @@ def main() -> int:
             exact_match(hinfo["owner_id"], py["entity_id"]))
 
     # --- 年 join を ID とは分離して測る（現行キーで） ---
+    feat2 = feat.copy()
+    feat2["_yr"] = _featured_year(feat2)
     if not py.empty and "owner_id" in feat.columns:
-        feat2 = feat.copy()
-        feat2["_yr"] = _featured_year(feat2)
         _pp("年 join 分離 (results.owner_id)",
             year_join_coverage(feat2, py, id_col="owner_id", year_col="_yr"))
+
+    # --- horse_id → horse_info.owner_id → person_yearly ブリッジ（行重み・前年込み・年別・競合） ---
+    if not py.empty and not hinfo.empty:
+        _pp("ブリッジ (horse_id→horse_info.owner_id→person_yearly)",
+            bridge_via_horse_info(feat2, hinfo, py, year_col="_yr"))
+
+    # --- results.owner_id の時点依存性（race-time 馬主 か static か） ---
+    _pp("results.owner_id 時系列変動(馬内で年により変わるか)",
+        results_owner_temporal_variability(feat))
+    if not hinfo.empty and "owner_id" in hinfo.columns:
+        _hid = "horse_id" if "horse_id" in hinfo.columns else hinfo.index.name or "index"
+        print(f"  ※ horse_info は馬マスタ(1馬1行想定)＝owner_id は『現在/最終馬主』の疑い。"
+              f"静的ブリッジは過去年へ現在馬主を適用する時点誤りに注意（bridge の "
+              f"horses_with_multiple_owner_in_horse_info と併読）。")
 
     # --- 名前照合（horse_info 側のみ可能。person_yearly は名前列を持たない） ---
     print("\n=== 名前照合の可否 ===")

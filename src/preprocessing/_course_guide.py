@@ -97,10 +97,46 @@ def add_course_guide_features(results: pd.DataFrame, guide_master: pd.DataFrame,
     for c in feat_cols:
         out[c] = merged[c].to_numpy() if c in merged.columns else float("nan")
     if require_coverage is not None and feat_cols:
-        match_rate = float(out[feat_cols[0]].notna().mean()) if len(out) else 0.0
-        if match_rate < require_coverage:
+        rpt = _guide_coverage_report(keyed, out[feat_cols[0]])
+        if rpt["coverage"] < require_coverage:
             raise RuntimeError(
-                f"course guide join coverage too low: {match_rate:.1%} < {require_coverage:.0%}"
-                "（course_guide_master.csv の生成漏れ or 開催×race_type×距離 キー不整合を疑う。"
-                "scripts/scrape_course_master.py を実行し master を再生成せよ）。")
+                f"course guide join coverage too low: {rpt['coverage']:.1%} < {require_coverage:.0%}\n"
+                f"  内訳: total={rpt['total_rows']:,} eligible(JRA 芝/ダート)={rpt['eligible_rows']:,} "
+                f"complete_key={rpt['complete_key_rows']:,} matched={rpt['matched_rows']:,}\n"
+                f"  unmatched key top: {rpt['unmatched_key_top']}\n"
+                "（分母=適格かつキー完全な行。course_guide_master.csv の生成漏れ or "
+                "開催×race_type×距離 キー不整合を疑う。scripts/scrape_course_master.py を実行）。")
     return out
+
+
+# JRA 開催コード（01 札幌 … 10 小倉）。地方(NAR)は 5x 台・海外は別体系で guide 対象外。
+_JRA_PLACE_CODES = frozenset(f"{i:02d}" for i in range(1, 11))
+# guide が定義される馬場（障害=障 はコース形状ガイド対象外）。
+_GUIDE_RACE_TYPES = frozenset({"芝", "ダート"})
+
+
+def _guide_coverage_report(keyed: pd.DataFrame, matched_col: pd.Series) -> dict:
+    """guide coverage を「適格(JRA・芝/ダート)かつキー完全な行」を分母に算出する。
+
+    地方/海外/障害/キー欠損/距離不定 は分母から除外（正常でも 90% を割らせないため）。
+    """
+    total = int(len(keyed))
+    eligible_mask = (keyed["place_code"].isin(_JRA_PLACE_CODES)
+                     & keyed["race_type"].isin(_GUIDE_RACE_TYPES))
+    complete_mask = eligible_mask & keyed["place_code"].notna() & \
+        keyed["race_type"].notna() & keyed["course_len_m"].notna()
+    complete = int(complete_mask.sum())
+    matched_vals = pd.Series(matched_col).to_numpy()
+    matched_mask = complete_mask.to_numpy() & pd.notna(matched_vals)
+    matched = int(matched_mask.sum())
+    # 未一致キーの上位（complete だが matched でない）
+    unmatched = keyed[complete_mask.to_numpy() & ~pd.notna(matched_vals)]
+    top = [tuple(x) for x in unmatched[COURSE_GUIDE_KEY_COLS].value_counts().head(10).index]
+    return {
+        "total_rows": total,
+        "eligible_rows": int(eligible_mask.sum()),
+        "complete_key_rows": complete,
+        "matched_rows": matched,
+        "coverage": (matched / complete) if complete else 0.0,
+        "unmatched_key_top": top,
+    }
