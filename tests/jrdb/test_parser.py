@@ -20,10 +20,17 @@ def _kyi_record() -> bytes:
     _put(r, 55, " 45.0")       # IDM
     _put(r, 96, " 12.3")       # 基準オッズ
     _put(r, 101, " 3")         # 基準人気
+    _put(r, 172, "テスト騎手")   # 騎手名（全角）
+    _put(r, 184, "550")        # 負担重量（55.0kg）
+    _put(r, 188, "テスト師")     # 調教師名
+    _put(r, 324, "3")          # 枠番
+    _put(r, 327, "1")          # 総合印
+    _put(r, 346, "  1000")     # 獲得賞金
     # 第11版で追加した指数群（展開予想・休養明け等）— spec 位置での照合用
     _put(r, 359, "120.5")      # テン指数
     _put(r, 364, "118.0")      # ペース指数
     _put(r, 379, "H")          # ペース予想 H/M/S
+    _put(r, 453, " 4")         # テン指数順位
     _put(r, 570, " 21")        # 入厩何日前
     return bytes(r) + b"\r\n"
 
@@ -34,9 +41,22 @@ def _sed_record() -> bytes:
     _put(r, 9, "07")           # 馬番
     _put(r, 11, "06102843")
     _put(r, 19, "20080913")    # 年月日
+    _put(r, 27, "テスト馬")     # 馬名
+    _put(r, 63, "1800")        # 距離
+    _put(r, 67, "2")           # 芝ダ障害（ダート）
+    _put(r, 131, "16")         # 頭数
     _put(r, 141, " 3")         # 着順
+    _put(r, 148, "550")        # 斤量 55.0kg
+    _put(r, 151, "テスト騎手")   # 騎手名
+    _put(r, 181, " 2")         # 確定単勝人気
     _put(r, 195, "  5")        # 出遅
     _put(r, 201, "  8")        # 不利
+    _put(r, 309, " 4")         # コーナー順位1
+    _put(r, 323, "01234")      # 騎手コード
+    _put(r, 333, "480")        # 馬体重
+    _put(r, 342, "0000350")    # 単勝払戻
+    _put(r, 356, " 4800")      # 本賞金
+    _put(r, 371, "1540")       # 発走時間
     return bytes(r) + b"\r\n"
 
 
@@ -48,6 +68,291 @@ def _skb_record() -> bytes:
     _put(r, 19, "20020908")
     _put(r, 27, "387332")      # 特記1=387(不利), 特記2=332
     return bytes(r) + b"\r\n"
+
+
+def _cyb_record() -> bytes:
+    r = bytearray(b" " * 94)   # データ 94 + CRLF 2 = レコード長 96
+    _put(r, 1, "02152201")     # race_key -> 201502020201
+    _put(r, 9, "03")           # 馬番
+    _put(r, 14, "01")          # 坂路 有
+    _put(r, 20, "01")          # 芝 有
+    _put(r, 30, "58 ")         # 追切指数（ZZ9・左詰め既知バグを模擬）
+    _put(r, 33, " 62")         # 仕上指数
+    _put(r, 36, "A")           # 調教量評価
+    _put(r, 86, "1")           # 調教評価 ◎
+    _put(r, 87, "55 ")         # 一週前追切指数
+    return bytes(r) + b"\r\n"
+
+
+def _cha_record() -> bytes:
+    r = bytearray(b" " * 62)   # データ 62 + CRLF 2 = レコード長 64
+    _put(r, 1, "02152201")     # race_key -> 201502020201
+    _put(r, 9, "05")           # 馬番
+    _put(r, 11, "水")          # 曜日
+    _put(r, 13, "20150710")    # 調教年月日
+    _put(r, 24, "1")           # 追切種類 一杯
+    _put(r, 29, "135")         # テンＦ
+    _put(r, 35, "118")         # 終いＦ
+    _put(r, 47, " 62")         # 追切指数
+    _put(r, 50, "1")           # 併せ結果 先着
+    return bytes(r) + b"\r\n"
+
+
+def test_parse_cha(tmp_path):
+    p = tmp_path / "CHA080913.txt"
+    p.write_bytes(_cha_record())
+    df = parse(str(p), "CHA")
+    assert df.loc[0, "race_id"] == "201502020201"
+    assert df.loc[0, "umaban"] == 5
+    assert df.loc[0, "youbi"] == "水"
+    assert df.loc[0, "chokyo_ymd"] == "20150710"
+    # 部分別ハロンタイム・指数（数値化）
+    assert df.loc[0, "ten_f"] == 135
+    assert df.loc[0, "shimai_f"] == 118
+    assert df.loc[0, "oikiri_idx"] == 62
+    assert df.loc[0, "oikiri_shurui"] == 1
+    assert df.loc[0, "awase_kekka"] == "1"
+
+
+def _hjc_record() -> bytes:
+    r = bytearray(b" " * 442)   # データ 442 + CRLF 2 = レコード長 444
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "07")            # 単勝1 馬番
+    _put(r, 11, "0000350")      # 単勝1 払戻
+    _put(r, 108, "0107")        # 馬連1 組合せ 1-7
+    _put(r, 112, "00001230")    # 馬連1 払戻
+    _put(r, 342, "010203")      # 三連単1 組合せ
+    _put(r, 348, "000123450")   # 三連単1 払戻
+    return bytes(r) + b"\r\n"
+
+
+def test_parse_hjc(tmp_path):
+    p = tmp_path / "HJC150712.txt"
+    p.write_bytes(_hjc_record())
+    df = parse(str(p), "HJC")
+    assert len(df) == 1
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"
+    # 組合せはゼロ埋め文字列、払戻は数値
+    assert row["tansho_combo1"] == "07" and row["tansho_pay1"] == 350
+    assert row["umaren_combo1"] == "0107" and row["umaren_pay1"] == 1230
+    assert row["sanrentan_combo1"] == "010203" and row["sanrentan_pay1"] == 123450
+    # 券種ごとの列数（OCC）が揃っている
+    assert "fukusho_pay5" in df.columns and "wide_pay7" in df.columns
+
+
+def test_parse_srb(tmp_path):
+    r = bytearray(b" " * 850)   # 852 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "124")           # ハロンタイム1 = 12.4s（0.1秒単位）
+    _put(r, 12, "118")          # ハロンタイム2
+    _put(r, 63, "3,7,1")        # 1コーナー位置取り
+    _put(r, 319, "2")           # ペースアップ位置
+    _put(r, 343, "好時計")       # レースコメント
+    p = tmp_path / "SRB150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "SRB")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"     # レース単位（umaban なし）
+    assert "umaban" not in df.columns
+    assert row["harontime1"] == 124 and row["harontime2"] == 118
+    assert row["pace_up_pos"] == 2
+    assert row["corner1_pos"].strip() == "3,7,1"
+    assert row["race_comment"].strip() == "好時計"
+
+
+def test_parse_kka(tmp_path):
+    r = bytearray(b" " * 322)   # 324 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "04")            # 馬番
+    _put(r, 11, "  5")          # JRA 1着数
+    _put(r, 14, "  3")          # JRA 2着数
+    _put(r, 17, "  2")          # JRA 3着数
+    _put(r, 20, " 10")          # JRA 着外数
+    _put(r, 287, "55")          # 父馬産駒芝連対率
+    p = tmp_path / "KKA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KKA")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201" and row["umaban"] == 4
+    assert row["jra_1chaku"] == 5 and row["jra_2chaku"] == 3
+    assert row["jra_3chaku"] == 2 and row["jra_chakugai"] == 10
+    assert row["sire_shiba_rentai"] == 55
+
+
+def test_parse_ukc(tmp_path):
+    r = bytearray(b" " * 290)   # 292 - CRLF
+    _put(r, 1, "13103588")      # 血統登録番号
+    _put(r, 9, "テスト馬")
+    _put(r, 45, "1")            # 性別 牡
+    _put(r, 50, "父馬テスト")
+    _put(r, 158, "20120315")    # 生年月日
+    _put(r, 277, "1101")        # 父系統コード
+    p = tmp_path / "UKC150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "UKC")
+    row = df.iloc[0]
+    assert row["ketto"] == "13103588"       # マスタ（馬キー）
+    assert row["bamei"] == "テスト馬"
+    assert row["sex_code"] == 1
+    assert row["birth_ymd"] == "20120315"   # 日付は文字列のまま
+    assert row["sire_keito_code"] == 1101
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+
+
+def test_parse_ksa(tmp_path):
+    r = bytearray(b" " * 270)   # 272 - CRLF
+    _put(r, 1, "01234")         # 騎手コード
+    _put(r, 6, "0")             # 登録抹消フラグ（現役）
+    _put(r, 15, "テスト騎手")    # 騎手名
+    _put(r, 63, "2")            # 所属コード（関西）
+    _put(r, 68, "19800101")     # 生年月日
+    _put(r, 80, "1")            # 見習い区分
+    _put(r, 81, "05678")        # 所属厩舎（調教師コード）
+    _put(r, 134, " 12")         # 本年リーディング
+    _put(r, 137, "100")         # 本年平地1着数
+    _put(r, 200, "1234")        # 通算平地1着数（5桁 ZZZZ9）
+    p = tmp_path / "KSA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KSA")
+    row = df.iloc[0]
+    assert row["kishu_code"] == "01234"          # マスタ主キー（文字列・ゼロ保持）
+    assert row["kishu_name"].strip() == "テスト騎手"
+    assert row["shozoku_code"] == 2
+    assert row["birth_ymd"] == "19800101"        # 日付は文字列
+    assert row["minarai_kubun"] == 1
+    assert row["shozoku_chokyoshi_code"] == "05678"  # リンクコードは文字列
+    assert row["honnen_leading"] == 12
+    assert row["honnen_heichi_1chaku"] == 100
+    assert row["tsusan_heichi_1chaku"] == 1234
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+
+
+def test_parse_csa(tmp_path):
+    r = bytearray(b" " * 270)   # 272 - CRLF
+    _put(r, 1, "05678")         # 調教師コード
+    _put(r, 6, "0")             # 現役
+    _put(r, 15, "テスト師")      # 調教師名
+    _put(r, 63, "1")            # 所属（関東）
+    _put(r, 68, "19700202")     # 生年月日
+    _put(r, 128, "  8")         # 本年リーディング（CSA は 6byte 前詰め）
+    _put(r, 131, " 50")         # 本年平地1着数
+    _put(r, 194, "  987")       # 通算平地1着数
+    p = tmp_path / "CSA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "CSA")
+    row = df.iloc[0]
+    assert row["chokyoshi_code"] == "05678"
+    assert row["chokyoshi_name"].strip() == "テスト師"
+    assert row["shozoku_code"] == 1
+    assert row["birth_ymd"] == "19700202"
+    assert row["honnen_leading"] == 8
+    assert row["honnen_heichi_1chaku"] == 50
+    assert row["tsusan_heichi_1chaku"] == 987
+    assert "minarai_kubun" not in df.columns      # CSA に見習い区分は無い
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+
+
+def test_parse_kta(tmp_path):
+    r = bytearray(b" " * 386)   # 388 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 49, "13103588")     # 血統登録番号（PK の一部）
+    _put(r, 57, "テスト馬")      # 馬名
+    _put(r, 93, "1")            # 性別 牡
+    _put(r, 97, "テスト騎手")    # 騎手名
+    _put(r, 109, "550")         # 負担重量 55.0kg
+    _put(r, 129, " 45.0")       # IDM
+    _put(r, 270, "01234")       # 騎手コード（KSA リンク）
+    _put(r, 280, "  1500")      # 獲得賞金
+    _put(r, 342, "120.5")       # テン指数
+    _put(r, 377, "2")           # データ区分（想定確定）
+    p = tmp_path / "KTA150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KTA")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"     # レースキー変換
+    assert row["ketto"] == "13103588"           # 馬番でなく血統登録番号が PK
+    assert "umaban" not in df.columns
+    assert row["bamei"] == "テスト馬"
+    assert row["sex_code"] == 1
+    assert row["kishu_name"].strip() == "テスト騎手"
+    assert row["futan_juryo"] == 550
+    assert row["idm"] == 45.0
+    assert row["kishu_code"] == "01234"         # リンクコードは文字列
+    assert row["kakutoku_shokin"] == 1500
+    assert row["ten_idx"] == 120.5
+    assert row["data_kubun"] == "2"
+
+
+def test_parse_bac(tmp_path):
+    r = bytearray(b" " * 182)   # 184 - CRLF
+    _put(r, 1, "02152201")      # race_key -> 201502020201
+    _put(r, 9, "20150712")      # 年月日
+    _put(r, 17, "1540")         # 発走時間
+    _put(r, 21, "1800")         # 距離
+    _put(r, 25, "1")            # 芝ダ障害 芝
+    _put(r, 26, "1")            # 右左 右
+    _put(r, 37, "テストステークス")  # レース名
+    _put(r, 95, "16")           # 頭数
+    _put(r, 126, " 4800")       # 1着賞金
+    _put(r, 161, "1111111100000000")  # 馬券発売フラグ（単複枠馬連馬単ワイド3複3単=発売）
+    _put(r, 177, "3")           # WIN5フラグ
+    p = tmp_path / "BAC150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "BAC")
+    row = df.iloc[0]
+    assert row["race_id"] == "201502020201"     # レース単位（馬番なし）
+    assert "umaban" not in df.columns
+    assert row["ymd"] == "20150712"
+    assert row["kyori"] == 1800
+    assert row["shiba_dirt"] == 1
+    assert row["toushuu"] == 16
+    assert row["shokin1"] == 4800
+    assert row["race_name"].strip() == "テストステークス"
+    assert row["baken_hatsubai_flag"] == "1111111100000000"  # byte列は文字列保持
+    assert row["win5_flag"] == 3
+
+
+def test_parse_kab(tmp_path):
+    r = bytearray(b" " * 70)   # 72 - CRLF
+    _put(r, 1, "021522")       # 開催キー 場02 年15 回2 日2 → kaisai_id 2015020202
+    _put(r, 7, "20150712")     # 年月日
+    _put(r, 16, "日")           # 曜日
+    _put(r, 18, "函館")         # 場名
+    _put(r, 22, "1")           # 天候コード
+    _put(r, 23, "10")          # 芝馬場状態コード
+    _put(r, 25, "2")           # 芝馬場状態内（良）
+    _put(r, 41, "20")          # ダ馬場状態コード
+    _put(r, 52, "2")           # 芝種類（洋芝）
+    p = tmp_path / "KAB150712.txt"
+    p.write_bytes(bytes(r) + b"\r\n")
+    df = parse(str(p), "KAB")
+    row = df.iloc[0]
+    assert row["kaisai_id"] == "2015020202"     # race_id[:10] と突合できる開催ID
+    assert "race_id" not in df.columns and "umaban" not in df.columns
+    assert row["ymd"] == "20150712"
+    assert row["tenko_code"] == 1
+    assert row["shiba_baba_code"] == 10
+    assert row["shiba_baba_uchi"] == 2
+    assert row["dirt_baba_code"] == 20
+    assert row["shiba_shurui"] == "2"           # コード(X)は文字列保持
+    assert row["basho_name"].strip() == "函館"
+
+
+def test_parse_cyb(tmp_path):
+    p = tmp_path / "CYB080913.txt"
+    p.write_bytes(_cyb_record())
+    df = parse(str(p), "CYB")
+    assert df.loc[0, "race_id"] == "201502020201"
+    assert df.loc[0, "umaban"] == 3
+    # 主要な調教シグナル（数値化・左詰めバグは strip で吸収）
+    assert df.loc[0, "oikiri_idx"] == 58
+    assert df.loc[0, "shiage_idx"] == 62
+    assert df.loc[0, "isshumae_oikiri_idx"] == 55
+    # コード系（文字列のまま）
+    assert df.loc[0, "chokyo_ryo_hyoka"] == "A"
+    assert df.loc[0, "chokyo_hyoka"] == "1"
+    assert df.loc[0, "course_saka"] == 1 and df.loc[0, "course_shiba"] == 1
 
 
 def test_parse_kyi(tmp_path):
@@ -65,6 +370,14 @@ def test_parse_kyi(tmp_path):
     assert df.loc[0, "pace_idx"] == 118.0
     assert df.loc[0, "pace_yosou"] == "H"
     assert df.loc[0, "nyukyu_days"] == 21
+    # 第11版レイアウト拡充で追加した項目（人/賞金/枠/印/順位）
+    assert df.loc[0, "kishu_name"].strip() == "テスト騎手"
+    assert df.loc[0, "chokyoshi_name"].strip() == "テスト師"
+    assert df.loc[0, "futan_juryo"] == 550
+    assert df.loc[0, "wakuban"] == "3"
+    assert df.loc[0, "mark_sougou"] == "1"
+    assert df.loc[0, "kakutoku_shokin"] == 1000
+    assert df.loc[0, "ten_juni"] == 4
 
 
 def test_build_kyi_feature_columns(tmp_path):
@@ -92,6 +405,20 @@ def test_parse_sed_trouble_fields(tmp_path):
     assert df.loc[0, "chakujun"] == 3
     assert df.loc[0, "deokure"] == 5     # 出遅
     assert df.loc[0, "furi"] == 8        # 不利
+    # 第4版a 拡充フィールド（raw_results 供給）
+    assert df.loc[0, "bamei"] == "テスト馬"
+    assert df.loc[0, "kyori"] == 1800
+    assert df.loc[0, "shiba_dirt"] == "2"    # 芝ダ障害コードは文字列保持（アダプタで芝/ダに）
+    assert df.loc[0, "toushuu"] == 16
+    assert df.loc[0, "futan_juryo"] == 550
+    assert df.loc[0, "kishu_name"].strip() == "テスト騎手"
+    assert df.loc[0, "kakutei_ninki"] == 2
+    assert df.loc[0, "corner1"] == 4
+    assert df.loc[0, "kishu_code"] == "01234"     # コードは文字列
+    assert df.loc[0, "bataijuu"] == 480
+    assert df.loc[0, "tansho_payoff"] == 350
+    assert df.loc[0, "honshokin"] == 4800
+    assert df.loc[0, "hassou_time"] == 1540
 
 
 def test_parse_skb_tokki(tmp_path):

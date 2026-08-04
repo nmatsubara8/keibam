@@ -1,7 +1,10 @@
 """カテゴリ分類ロジック（全国/地方 × 芝/ダート/障害）のテスト。"""
 
 from src.constants._master import Master
+import pandas as pd
+
 from src.constants._model_category import ALL_CATEGORIES
+from src.constants._model_category import central_index_mask
 from src.constants._model_category import CATEGORY_LABELS
 from src.constants._model_category import COMBINED
 from src.constants._model_category import ORG_CENTRAL
@@ -88,3 +91,19 @@ def test_every_categorize_result_is_in_all_categories():
     for org_id in ("202405010101", "202444010101"):
         for rt in (Master.RACE_TYPE_TURF, Master.RACE_TYPE_DIRT, Master.RACE_TYPE_HURDLE):
             assert categorize(org_id, rt) in ALL_CATEGORIES
+
+
+def test_central_index_mask_selects_jra_only():
+    # 05=東京(JRA), 10=小倉(JRA), 44=地方, 65=海外, 桁不足
+    idx = pd.Index(["202405010101", "202410010101", "202444010101",
+                    "202465010101", "abc"])
+    mask = central_index_mask(idx)
+    assert mask.tolist() == [True, True, False, False, False]
+    # 空 index でも落ちない
+    assert central_index_mask(pd.Index([])).tolist() == []
+
+
+def test_central_index_mask_strips_float_suffix():
+    # float 由来の ".0" が付いた race_id でも場コードを正しく読む
+    idx = pd.Index(["202405010101.0", "202444010101.0"])
+    assert central_index_mask(idx).tolist() == [True, False]

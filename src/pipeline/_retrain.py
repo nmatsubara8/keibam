@@ -173,6 +173,18 @@ class RetrainJob:
         dict : version, trained_at, n_races, use_stacking, auc_test。
         """
         vname = vname or version_name()
+
+        # 目的変数リーク列が featured に混入していたら警告（モデル入力からは DROP リストで
+        # 除外されるが、生成源＝特徴量パイプライン側で作らない/落とすべき）。
+        from src.constants._results_cols import TARGET_LEAK_COLS
+
+        _leaks = [c for c in TARGET_LEAK_COLS if c in getattr(featured_data, "columns", [])]
+        if _leaks:
+            logger.warning(
+                "[retrain] featured_data に目的変数リーク列 %s を検出。モデル入力からは除外されるが、"
+                "生成源（特徴量パイプライン）で作らない/落とすべき。", _leaks,
+            )
+
         ai = self._factory.create(
             featured_data,
             test_size=self._cfg.test_size,

@@ -230,6 +230,12 @@ def _backtest(args: argparse.Namespace) -> None:
         rid = featured.index.astype(str)
         featured = featured[rid.str[:4].isin(yset)]
         logger.info("[backtest] 評価対象を年 %s に絞り込み: %d 行", sorted(yset), len(featured))
+    if getattr(args, "jra_only", False):
+        from src.constants._model_category import central_index_mask
+
+        before = len(featured)
+        featured = featured[central_index_mask(featured.index)]
+        logger.info("[backtest] --jra-only: 中央(JRA)のみ %d→%d 行", before, len(featured))
     if featured.empty:
         logger.error("[backtest] 対象レースがありません（年フィルタが厳しすぎる可能性）")
         return

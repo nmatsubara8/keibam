@@ -197,6 +197,10 @@ class NnWinModel:
         # Early Stopping 用の内部検証ホールドアウト分割（時系列順は呼び出し側で担保済み）
         n = len(x_full)
         n_val = int(n * self._val_ratio) if self._val_ratio > 0 else 0
+        # 検証ホールドアウトは有無どちらもあり得るため Optional[Tensor] を明示
+        # （else 分岐の None 代入が型不整合にならないように）。
+        x_val: torch.Tensor | None
+        y_val: torch.Tensor | None
         if n_val > 0 and n - n_val > 0:
             x_tr, y_tr = x_full[: n - n_val], y_full[: n - n_val]
             x_val, y_val = x_full[n - n_val :], y_full[n - n_val :]
@@ -250,15 +254,16 @@ class NnWinModel:
             train_loss_sum = 0.0
             train_batches = 0
             for start in range(0, n_tr, self._batch_size):
-                idx = perm[start : start + self._batch_size]
+                # ndarray の idx（部分標本化・188行）と型が衝突しないよう別名にする（torch Tensor）。
+                batch_idx = perm[start : start + self._batch_size]
                 # BatchNorm1d は batch サイズ 1 だと分散計算で失敗するためスキップ
-                if len(idx) <= 1:
+                if len(batch_idx) <= 1:
                     continue
                 opt.zero_grad()
-                logits = self._net(x_tr[idx])
-                loss = loss_fn(logits, y_tr[idx])
+                logits = self._net(x_tr[batch_idx])
+                loss = loss_fn(logits, y_tr[batch_idx])
                 if w_tr is not None:
-                    loss = (loss * w_tr[idx]).mean()
+                    loss = (loss * w_tr[batch_idx]).mean()
                 loss.backward()
                 opt.step()
                 train_loss_sum += float(loss.detach())

@@ -71,6 +71,33 @@ class BetPolicyFukusho:
         return _threshold_umaban_judge(score_table, threshold, "fukusho")
 
 
+class BetPolicyFukushoHonmei:
+    """複勝・本命集中（損失最小化の運用点）。各レースで score 上位 top_n 頭のみ複勝で賭ける。
+
+    本プロジェクトの探索結論（公開＋半公開データを線形/非線形/相互作用/ABM構造まで検証）:
+    市場に対する情報優位は実在するが控除（~20-25%）を超えず、**tradeable エッジは無い**
+    （複勝 realizable ROI ≈ 0.90 < 1、単勝 ~0.85、盲目全張り ~0.80）。本ポリシーは「勝つ」
+    戦略ではなく、**負けを最小化する運用点**——複勝で最も信頼度の高い本命に集中し、
+    残り（および min_score 未満の低信頼レース）は見送る。top_n=1 が最も損失が小さく、
+    増やすほど的中は上がるが回収率は控除へ回帰する。score は place（top3）確率を渡す前提。
+    """
+
+    @staticmethod
+    def judge(score_table: pd.DataFrame, min_score: float = 0.0, top_n: int = 1) -> dict:
+        """min_score 以上の信頼度を持つレースで、score 上位 top_n 頭のみ複勝で賭ける。
+
+        min_score は「見送りの閾値」（既存 UI の threshold と互換：低信頼レースを捨てる）。
+        top_n は本命集中度（既定 1＝最も損失が小さい）。
+        """
+        tbl = score_table[score_table["score"] >= min_score]
+        if tbl.empty:
+            return {}
+        picks = (tbl.sort_values("score", ascending=False, kind="stable")
+                 .groupby(level=0, sort=False).head(max(1, int(top_n))))
+        bet_df = picks.groupby(level=0)[ResultsCols.UMABAN].apply(list).to_frame()
+        return bet_df.rename(columns={ResultsCols.UMABAN: "fukusho"}).T.to_dict()
+
+
 class BetPolicyWakurenBox:
     """thresholdを超えた馬の枠に枠連BOXで賭ける戦略（wakuban_flag を併用）。"""
 

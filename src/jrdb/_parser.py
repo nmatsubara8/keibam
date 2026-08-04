@@ -5,19 +5,50 @@ race_key はレースキー→race_id に変換し、(race_id, umaban) を featu
 """
 from __future__ import annotations
 
+import logging
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from src.jrdb import _layouts as L
+from src.jrdb._keys import kaisai_key_to_kaisai_id
 from src.jrdb._keys import race_key_to_race_id
+
+logger = logging.getLogger(__name__)
+
+# レコード長の許容差（レコード末 CRLF/LF の有無で ±2 程度ぶれるため）。これを超える
+# 乖離はフォーマット版差の疑い（オフセットがずれて値が壊れる）。
+_LEN_TOLERANCE = 2
 
 
 def _records(path: str) -> list[bytes]:
     raw = Path(path).read_bytes()
     sep = b"\r\n" if b"\r\n" in raw else b"\n"
     return [r for r in raw.split(sep) if r.strip()]
+
+
+def dominant_record_length(records: list[bytes]) -> int:
+    """最頻レコード長（バイト）。records が空なら 0。"""
+    if not records:
+        return 0
+    return Counter(len(r) for r in records).most_common(1)[0][0]
+
+
+def check_record_length(path: str, record_type: str, *, tolerance: int = _LEN_TOLERANCE):
+    """レコード長が仕様（RECORD_LEN）と ±tolerance 内か検査する。
+
+    Returns
+    -------
+    (ok, dominant, expected) : ok は許容内か（仕様未知/空ファイルは True 扱い）。
+    """
+    rt = record_type.upper()
+    expected = L.RECORD_LEN.get(rt)
+    dom = dominant_record_length(_records(path))
+    if expected is None or dom == 0:
+        return True, dom, expected
+    return abs(dom - expected) <= tolerance, dom, expected
 
 
 def _slice(rec: bytes, start1: int, length: int) -> str:
@@ -29,14 +60,55 @@ def _num(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series.str.strip().replace("", np.nan), errors="coerce")
 
 
+def _parse_hjc(recs: list[bytes]) -> pd.DataFrame:
+    """HJC 払戻（レース単位・券種繰り返し）を DataFrame にする。
+
+    列: race_id, および券種ごとに {prefix}_combo{i} / {prefix}_pay{i}
+    （例 tansho_combo1/tansho_pay1 … sanrentan_combo6/sanrentan_pay6）。
+    組合せ（馬番/枠番の連結）はゼロ埋めを保つため文字列、払戻金は数値化する。
+    """
+    rows: list[dict] = []
+    for r in recs:
+        row: dict[str, object] = {"race_id": race_key_to_race_id(_slice(r, 1, 8))}
+        for prefix, start, occ, clen, plen in L.HJC_GROUPS:
+            unit = clen + plen
+            for i in range(occ):
+                base = start + i * unit
+                row[f"{prefix}_combo{i + 1}"] = _slice(r, base, clen).strip()
+                row[f"{prefix}_pay{i + 1}"] = _slice(r, base + clen, plen).strip()
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    # 払戻金列を数値化（組合せ列はゼロ埋め保持のため文字列のまま）。
+    pay_cols = [c for c in df.columns if "_pay" in c]
+    for c in pay_cols:
+        df[c] = pd.to_numeric(df[c].replace("", np.nan), errors="coerce")
+    return df
+
+
 def parse(path: str, record_type: str) -> pd.DataFrame:
     """JRDBファイルを DataFrame にする。record_type ∈ {'KYI','SED','SKB'}。
 
     共通列: race_id（変換済）, umaban（int）, ketto。加えて record_type 別の項目。
     """
     rt = record_type.upper()
-    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB}[rt]
     recs = _records(path)
+    # フォーマット版差の検知: レコード長が仕様と大きく乖離したら警告（オフセットずれで
+    # 値が壊れ得る）。取込側（JrdbStore）は既定でこのファイルをスキップする。
+    _ok, _dom, _exp = check_record_length(path, rt)
+    if not _ok:
+        logger.warning(
+            "[jrdb-parse] %s(%s): レコード長 %d が仕様 %d と乖離。フォーマット版が異なる可能性→"
+            "オフセットずれで値が壊れる恐れ（古い年度パック等）。", rt, Path(path).name, _dom, _exp,
+        )
+    if not recs:
+        return pd.DataFrame()  # 空ファイル/有効レコード無し → 空（store.upsert は空を no-op 扱い）
+    if rt == "HJC":
+        return _parse_hjc(recs)  # レース単位・券種繰り返しの専用経路
+
+    layout = {"KYI": L.KYI, "SED": L.SED, "SKB": L.SKB, "TYB": L.TYB, "CYB": L.CYB,
+              "CHA": L.CHA, "KKA": L.KKA, "UKC": L.UKC, "SRB": L.SRB,
+              "KSA": L.KSA, "CSA": L.CSA, "KTA": L.KTA, "BAC": L.BAC,
+              "KAB": L.KAB}[rt]
     cols: dict[str, list] = {name: [] for name in layout}
     repeats = L.SKB_REPEAT if rt == "SKB" else {}
     rep_cols: dict[str, list] = {}
@@ -57,28 +129,100 @@ def parse(path: str, record_type: str) -> pd.DataFrame:
             rep_cols[name].append(_slice(r, s, ln).strip())
 
     df = pd.DataFrame({**cols, **rep_cols})
-    df["race_id"] = df["race_key"].map(race_key_to_race_id)
-    df["umaban"] = _num(df["umaban"]).astype("Int64")
+    # race_key / umaban は形式により無い（UKC 等のマスタは 血統登録番号 単位）→ 条件分岐。
+    if "race_key" in df.columns:
+        df["race_id"] = df["race_key"].map(race_key_to_race_id)
+    if "umaban" in df.columns:
+        df["umaban"] = _num(df["umaban"]).astype("Int64")
     if "ketto" in df.columns:  # TYB 等は血統登録番号を持たない
         df["ketto"] = df["ketto"].str.strip()
+    if "kaisai_key" in df.columns:  # KAB 開催データ（レース単位でなく開催単位）
+        df["kaisai_id"] = df["kaisai_key"].map(kaisai_key_to_kaisai_id)
+    for _code in ("kishu_code", "chokyoshi_code"):  # KSA/CSA マスタの主キー
+        if _code in df.columns:
+            df[_code] = df[_code].str.strip()
 
     # 数値項目（pace_yosou=H/M/S は文字なので除外・後段でコード化）
     numeric = {
         "KYI": ["idm", "kishu_idx", "joho_idx", "sougou_idx", "rotation",
-                "kijun_odds", "kijun_ninki", "kijun_fukuodds", "ninki_idx",
+                "kijun_odds", "kijun_ninki", "kijun_fukuodds", "kijun_fuku_ninki",
+                "tokutei_honmei", "tokutei_taikou", "tokutei_tanana",
+                "tokutei_renka", "tokutei_kesi", "sougou_honmei", "sougou_taikou",
+                "sougou_tanana", "sougou_renka", "sougou_kesi", "ninki_idx",
                 "chokyo_idx", "kyusha_idx", "chokyo_yajirushi", "kyusha_hyoka",
-                "kishu_kitai_rentai", "gekiso_idx", "class_code",
+                "kishu_kitai_rentai", "gekiso_idx", "class_code", "futan_juryo",
+                "kakutoku_shokin", "shutoku_shokin", "joken_class",
                 "ten_idx", "pace_idx", "agari_idx", "ichi_idx",
-                "dochu_juni", "go3f_juni", "goal_juni", "kakutei_bataijuu",
-                "kokyu_flag", "start_idx", "deokure_rate", "manken_idx",
-                "kishu_tansho", "kishu_3nai", "nyukyu_days"],
-        "SED": ["chakujun", "kakutei_tansho", "idm", "deokure", "ichidori",
-                "furi", "mae_furi", "naka_furi", "ato_furi", "bataijuu",
-                "kakutei_fukusho_shita", "odds_10_tansho", "odds_10_fukusho"],
+                "dochu_juni", "dochu_sa", "go3f_juni", "go3f_sa",
+                "goal_juni", "goal_sa", "kakutei_bataijuu", "kakutei_bataijuu_zougen",
+                "gekiso_juni", "ls_juni", "ten_juni", "pace_juni",
+                "agari_juni", "ichi_juni", "kokyu_flag", "start_idx",
+                "deokure_rate", "manken_idx", "kishu_tansho", "kishu_3nai",
+                "nyukyu_nsoume", "nyukyu_days"],
+        # 数値の実量のみ数値化。コード（種別/条件/記号/馬場状態/天候等）・名称・
+        # タイム(複合)・馬体重増減(符号)は生文字列のまま（アダプタで変換）。
+        "SED": ["kyori", "toushuu", "chakujun", "ijo_kubun", "futan_juryo",
+                "kakutei_tansho", "kakutei_ninki", "idm", "soten", "babasa",
+                "pace", "deokure", "ichidori", "furi", "mae_furi", "naka_furi",
+                "ato_furi", "race_furi", "ten_idx", "agari_idx", "pace_idx",
+                "race_p_idx", "chaku1_time_sa", "mae3f_time", "ato3f_time",
+                "kakutei_fukusho_shita", "odds_10_tansho", "odds_10_fukusho",
+                "corner1", "corner2", "corner3", "corner4", "mae3f_sa",
+                "ato3f_sa", "bataijuu", "tansho_payoff", "fukusho_payoff",
+                "honshokin", "shutokushokin", "hassou_time"],
         "SKB": [],
         "TYB": ["idm", "kishu_idx", "joho_idx", "odds_idx", "paddock_idx",
                 "sougou_idx", "bagu_change", "ashimoto_info", "torikeshi",
                 "tansho_odds", "fukusho_odds", "bataijuu"],
+        "CYB": ["oikiri_idx", "shiage_idx", "isshumae_oikiri_idx", "isshumae_oikiri_course",
+                "course_saka", "course_wood", "course_dirt", "course_shiba",
+                "course_pool", "course_shou", "course_poly"],
+        "CHA": ["kaisuu", "oikiri_shurui", "oi_jotai", "noriyaku", "chokyo_f",
+                "ten_f", "naka_f", "shimai_f", "ten_f_idx", "naka_f_idx",
+                "shimai_f_idx", "oikiri_idx", "awase_oikiri_shurui", "awase_nenrei"],
+        # KKA: 着度数（4値×23群）+ その他（連対率/平均距離）を全て数値化。
+        "KKA": [k for k in L.KKA if k not in ("race_key", "umaban")],
+        # UKC: コード・生年・フラグを数値化（名称・YYYYMMDD 日付は文字列のまま）。
+        "UKC": ["sex_code", "keiro_code", "umakigou_code", "sire_birth_year",
+                "dam_birth_year", "bms_birth_year", "owner_kai_code", "massho_flag",
+                "sire_keito_code", "bms_keito_code"],
+        # SRB: ハロンタイム18 + ペースアップ位置を数値化（位置取り/バイアス/コメントは文字列）。
+        "SRB": [k for k in L.SRB if k.startswith("harontime")] + ["pace_up_pos"],
+        # KSA/CSA: フラグ/所属/年/成績(1-2-3-着外)/リーディング/勝数を数値化。
+        # 名称・カナ・略称・地域名・コメント・各種日付・リンクコードは文字列のまま。
+        "KSA": [k for k in L.KSA if k not in (
+            "kishu_code", "massho_ymd", "kishu_name", "kishu_kana", "kishu_ryaku",
+            "shozoku_chiiki", "birth_ymd", "shozoku_chokyoshi_code", "comment",
+            "comment_ymd", "data_ymd")],
+        "CSA": [k for k in L.CSA if k not in (
+            "chokyoshi_code", "massho_ymd", "chokyoshi_name", "chokyoshi_kana",
+            "chokyoshi_ryaku", "shozoku_chiiki", "birth_ymd", "comment",
+            "comment_ymd", "data_ymd")],
+        # KTA: 指数/コード/賞金/展開指数を数値化。キー・名称・リンクコード・体型
+        # コード列・区分・出走順位（スペース）は文字列のまま。
+        "KTA": [k for k in L.KTA if k not in (
+            "race_key", "bamei_key", "ketto", "bamei", "blinker", "kishu_name",
+            "chokyoshi_name", "chokyoshi_shozoku", "shiba_tekisei", "dirt_tekisei",
+            "zenso1_seiseki_key", "zenso2_seiseki_key", "zenso3_seiseki_key",
+            "zenso4_seiseki_key", "zenso5_seiseki_key", "zenso1_race_key",
+            "zenso2_race_key", "zenso3_race_key", "zenso4_race_key",
+            "zenso5_race_key", "kishu_code", "chokyo_code", "taikei",
+            "sankou_zenso_kishu_code", "data_kubun", "shusso_juni")],
+        # BAC: 距離/コード/頭数/賞金を数値化。レース名・時刻・条件(英字)・発売フラグ
+        # (byte列)・日付・区分は文字列のまま。
+        "BAC": ["kyori", "shiba_dirt", "migi_hidari", "uchi_soto", "shubetsu",
+                "kigou", "juryo", "grade", "toushuu", "shokin1", "shokin2",
+                "shokin3", "shokin4", "shokin5", "sannyu_shokin1",
+                "sannyu_shokin2", "win5_flag"],
+        # KAB: 天候/馬場状態/馬場差/草丈/降水量を数値化。開催キー・場名・曜日・
+        # 芝種類/転圧/凍結防止剤(X)は文字列のまま。
+        "KAB": ["kaisai_kubun", "tenko_code", "shiba_baba_code", "shiba_baba_uchi",
+                "shiba_baba_naka", "shiba_baba_soto", "shiba_baba_sa",
+                "chokusen_sa_saiuchi", "chokusen_sa_uchi", "chokusen_sa_naka",
+                "chokusen_sa_soto", "chokusen_sa_oosoto", "dirt_baba_code",
+                "dirt_baba_uchi", "dirt_baba_naka", "dirt_baba_soto",
+                "dirt_baba_sa", "data_kubun", "renzoku_nichi", "kusatake",
+                "chukan_kousuiryo"],
     }[rt]
     for c in numeric:
         df[c] = _num(df[c])

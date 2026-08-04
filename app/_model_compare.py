@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 BET_POLICY_CHOICES = {
     "単勝": ("BetPolicyTansho", "tansho"),
     "複勝": ("BetPolicyFukusho", "fukusho"),
+    "複勝本命(損失最小)": ("BetPolicyFukushoHonmei", "fukusho"),
     "枠連BOX": ("BetPolicyWakurenBox", "wakuren"),
     "馬連BOX": ("BetPolicyUmarenBox", "umaren"),
     "馬単BOX": ("BetPolicyUmatanBox", "umatan"),

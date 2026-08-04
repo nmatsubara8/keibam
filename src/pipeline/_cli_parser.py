@@ -133,6 +133,11 @@ def _add_retrain(sub: argparse._SubParsersAction) -> None:
              "全40年がメモリに載らない環境で Elo 有無等の A/B を回すための行数上限。",
     )
     retrain_p.add_argument(
+        "--jra-only", action="store_true",
+        help="中央（JRA・場コード01-10）のレースだけで学習する。地方(NAR)の netkeiba データが"
+             "壊れている（1レース数頭しか無い）場合に除外するためのフィルタ。backtest も同フラグを付ける。",
+    )
+    retrain_p.add_argument(
         "--float32-features", action="store_true",
         help="数値特徴（float64）を float32 に落として学習時のピーク RAM を約半減する。"
              "全データ学習が OOM で落ちる環境向け（--since-year で行を削らずデータ量を保てる）。"
@@ -370,6 +375,10 @@ def _add_backtest(sub: argparse._SubParsersAction) -> None:
     bt_p.add_argument(
         "--bet-types", nargs="+", default=None,
         help="評価する券種（省略時は全券種）。例: fukusho wide sanrenpuku",
+    )
+    bt_p.add_argument(
+        "--jra-only", action="store_true",
+        help="中央（JRA・場コード01-10）のレースだけで評価する（retrain --jra-only と対で使う）。",
     )
     bt_p.add_argument("--json", action="store_true", help="結果を JSON で出力")
     bt_p.add_argument(
