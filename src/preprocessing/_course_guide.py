@@ -67,7 +67,18 @@ def add_course_guide_features(results: pd.DataFrame, guide_master: pd.DataFrame,
     feat_cols = [f"guide_{c}" for c in COURSE_GUIDE_VALUE_COLS]
 
     needed = {"開催", "race_type", "course_len"}
-    if guide_master is None or guide_master.empty or not needed.issubset(out.columns):
+    master_missing = guide_master is None or guide_master.empty
+    keys_missing = not needed.issubset(out.columns)
+    if master_missing or keys_missing:
+        # require_coverage 指定時は「master 不存在/空」「join 対象0件(キー欠損)」も明示失敗させる
+        # （silent NaN のまま成功扱いにしない）。未指定なら従来どおり NaN で列パリティを保つ。
+        if require_coverage is not None:
+            why = "guide_master が不存在/空" if master_missing else \
+                f"結合キー {sorted(needed - set(out.columns))} が results に無い(join 対象0件)"
+            raise RuntimeError(
+                f"course guide unavailable: {why}"
+                "（course_guide_master.csv を scripts/scrape_course_master.py で生成し、"
+                "開催×race_type×course_len が featured に揃っているか確認せよ）。")
         for c in feat_cols:
             out[c] = float("nan")
         return out

@@ -118,3 +118,28 @@ class TestCoverageGuard:
         # require_coverage 未指定は従来どおり（低一致でも raise しない）
         out = add_course_guide_features(self._results([9999, 9999]), gm)
         assert out["guide_run_style_bias"].isna().all()
+
+    def test_require_coverage_raises_on_empty_master(self):
+        # master 不存在/空 でも require_coverage 指定なら明示失敗（silent NaN 禁止）
+        empty = pd.DataFrame()
+        try:
+            add_course_guide_features(self._results([14, 24]), empty, require_coverage=0.9)
+            assert False, "should have raised on empty master"
+        except RuntimeError as e:
+            assert "unavailable" in str(e)
+
+    def test_empty_master_default_returns_nan(self):
+        # require_coverage 未指定なら空 master は従来どおり NaN（後方互換・列パリティ）
+        out = add_course_guide_features(self._results([14, 24]), pd.DataFrame())
+        assert out["guide_run_style_bias"].isna().all()
+
+    def test_require_coverage_raises_on_missing_keys(self, tmp_path):
+        gm = load_course_guide_master(_seed(tmp_path))
+        # 結合キー(course_len)が無い→join 対象0件→require_coverage 指定で失敗
+        bad = pd.DataFrame({"開催": pd.array([5], dtype="Int64"), "race_type": ["芝"]},
+                           index=pd.Index(["a"], name="race_id"))
+        try:
+            add_course_guide_features(bad, gm, require_coverage=0.9)
+            assert False, "should have raised on missing keys"
+        except RuntimeError as e:
+            assert "unavailable" in str(e)

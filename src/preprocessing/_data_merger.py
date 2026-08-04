@@ -56,6 +56,8 @@ class DataMerger:
         yoso_predictor_df: Optional[pd.DataFrame] = None,
         odds_signals_df: Optional[pd.DataFrame] = None,
         rating_df: Optional[pd.DataFrame] = None,
+        *,
+        require_guide_coverage: Optional[float] = None,
     ):
         self._results = results_processor.preprocessed_data
         self._race_info = race_info_processor.preprocessed_data
@@ -81,6 +83,8 @@ class DataMerger:
         self._course_shape = _cs.load_course_master(LocalPaths.COURSE_MASTER_PATH)
         # 距離別コースガイド（書籍/ガイド由来・place×race_type×距離で静的結合）。未生成なら空表。
         self._course_guide = _cg.load_course_guide_master(LocalPaths.COURSE_GUIDE_MASTER_PATH)
+        # guide join の fail-closed 閾値（None=従来どおり silent NaN 許容。build では 0.9 を渡す）。
+        self._require_guide_coverage = require_guide_coverage
         self._target_cols = target_cols
         # (horse_id, group_col) 集計は着順のみに限定して列爆発を防ぐ（馬×騎手の組合せは
         # 多窓×多統計で膨らみやすい）。馬単独の多窓集計は target_cols 全体を使う。
@@ -175,7 +179,9 @@ class DataMerger:
         _merge_race_info の後に呼ぶ（開催/race_type/course_len が必要）。CSV 未生成でも
         guide_* は NaN で生成され、ライブ推論とも同じ CSV を読むため列パリティが保たれる。
         """
-        self._results = _cg.add_course_guide_features(self._results, self._course_guide)
+        self._results = _cg.add_course_guide_features(
+            self._results, self._course_guide,
+            require_coverage=self._require_guide_coverage)
 
     def _merge_race_day_notes(self):
         """調教評価/パドック/厩舎コメントを (race_id, 馬番) で results に左結合する。

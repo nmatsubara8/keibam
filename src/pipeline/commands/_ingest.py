@@ -274,6 +274,9 @@ def _build_featured_data(config):
         yoso_predictor_df=_read_optional_pickle(LocalPaths.RAW_YOSO_PREDICTOR_PATH),
         odds_signals_df=_build_odds_signal_frame(config),
         rating_df=_build_rating_frame(config),
+        # 本線 featured build は guide join を fail-closed（master 生成漏れ/キー不整合を
+        # silent NaN のまま成功扱いにしない）。master 未生成なら scripts/scrape_course_master.py。
+        require_guide_coverage=0.9,
     )
     merger.merge()
     fe = (
